@@ -4888,10 +4888,20 @@ mod macos {
         assert_eq!(blob.len(), 40, "expected a 40-hex blob SHA, got {blob:?}");
         for odb in [&wt_a, &repo_path] {
             assert_eq!(
-                rev_parse(odb, reference),
+                rev_parse(odb, &format!("{reference}:file")),
                 blob,
-                "receipt ref must resolve to the logged backup blob in {}",
+                "receipt tree entry must resolve to the logged backup blob in {}",
                 odb.display()
+            );
+            let tree = Command::new("git")
+                .current_dir(odb)
+                .args(["ls-tree", reference])
+                .output()
+                .unwrap();
+            assert!(tree.status.success());
+            assert_eq!(
+                tree.stdout,
+                format!("100644 blob {blob}\tfile\n").as_bytes()
             );
             assert!(
                 git_ok(odb, &["cat-file", "-e", blob]),
@@ -5116,11 +5126,26 @@ mod macos {
                     assert_eq!(entry.backup_refs.len(), 1);
                     let output = Command::new("git")
                         .current_dir(&wt_a)
-                        .args(["cat-file", "blob", &entry.backup_refs[0]])
+                        .args([
+                            "cat-file",
+                            "blob",
+                            &format!("{}:file", entry.backup_refs[0]),
+                        ])
                         .output()
                         .unwrap();
                     assert!(output.status.success());
                     assert_eq!(output.stdout, original);
+                    let tree = Command::new("git")
+                        .current_dir(&wt_a)
+                        .args(["ls-tree", &entry.backup_refs[0]])
+                        .output()
+                        .unwrap();
+                    assert!(tree.status.success());
+                    let blob = rev_parse(&wt_a, &format!("{}:file", entry.backup_refs[0]));
+                    assert_eq!(
+                        tree.stdout,
+                        format!("100644 blob {blob}\tfile\n").as_bytes()
+                    );
                 }
             });
             unmount(cx, kagi, win);

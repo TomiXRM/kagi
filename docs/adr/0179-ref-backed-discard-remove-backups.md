@@ -58,8 +58,11 @@ Legacy naked-OID receipts are not retroactively pinned or claimed GC-safe.
 Symlink blobs contain the exact Unix `read_link` target bytes, including
 non-UTF-8 and dangling targets; they never contain dereferenced target content.
 On other platforms unrepresentable targets refuse before discard rather than
-substituting replacement characters. Regular entries preserve their executable
-mode. The reader validates the single-entry tree format and allowed file modes.
+substituting replacement characters. Regular entries use Git's executable
+policy: only Unix owner-execute (0100) sets 100755 when `core.fileMode=true`;
+with `core.fileMode=false` or on non-Unix platforms the index mode is retained
+(new regular files default to 100644). The reader validates the single-entry
+tree format and allowed file modes.
 
 There is currently **no filesystem file-backup restore consumer** in the
 UI/MCP/CLI/backend: this correction does not add a restore API. Manual Unix Git

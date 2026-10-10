@@ -729,6 +729,20 @@ fn retiring_one_entry_cleans_only_its_refs_and_gc_reclaims_its_bytes() {
     let second = f.discard(b"retained content\n");
     let raw = git2::Repository::open(&f.repo).unwrap();
     let oid = raw.refname_to_id(&first.backup_refs[0]).unwrap();
+    let blob_oid = git2::Oid::from_str(
+        &first
+            .recovery
+            .iter()
+            .find(|handle| handle.path.as_deref() == Some("tracked"))
+            .unwrap()
+            .oid,
+    )
+    .unwrap();
+    assert!(raw.find_object(oid, None).is_ok());
+    assert_eq!(
+        raw.find_blob(blob_oid).unwrap().content(),
+        b"first disposable content\n"
+    );
     let backend = f.backend();
     let plan = backend.plan_forget_oplog_entry(&first).unwrap();
     assert_eq!(
@@ -748,8 +762,15 @@ fn retiring_one_entry_cleans_only_its_refs_and_gc_reclaims_its_bytes() {
     gc(&f.repo);
     assert!(git2::Repository::open(&f.repo)
         .unwrap()
-        .find_blob(oid)
+        .find_object(oid, None)
         .is_err());
+    assert!(
+        git2::Repository::open(&f.repo)
+            .unwrap()
+            .find_blob(blob_oid)
+            .is_err(),
+        "retirement must reclaim the file bytes as well as the tree root"
+    );
     assert_eq!(
         backend.read_backup(&second.backup_refs[0]).unwrap(),
         b"retained content\n"

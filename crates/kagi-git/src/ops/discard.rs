@@ -392,10 +392,19 @@ pub(crate) fn execute_discard(
     // Any failure aborts the whole discard BEFORE the working tree is touched.
     let mut backups: Vec<DiscardBackup> = Vec::with_capacity(rels.len());
     let backup_id = super::backup::operation_id();
-    #[cfg(not(unix))]
     let backup_index = repo
         .index()
         .map_err(|e| GitError::Other(e.message().into()))?;
+    #[cfg(unix)]
+    let trust_filemode = match repo
+        .config()
+        .map_err(|e| GitError::Other(e.message().into()))?
+        .get_bool("core.filemode")
+    {
+        Ok(value) => value,
+        Err(e) if e.code() == git2::ErrorCode::NotFound => true,
+        Err(e) => return Err(GitError::Other(e.message().into())),
+    };
     for rel in &rels {
         let abs = workdir.join(rel);
         // Inspect the entry itself, including dangling links; never ingest an
@@ -419,13 +428,26 @@ pub(crate) fn execute_discard(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if metadata
-                    .as_ref()
-                    .is_some_and(|m| m.permissions().mode() & 0o111 != 0)
-                {
-                    0o100755
+                if trust_filemode {
+                    if metadata
+                        .as_ref()
+                        .is_some_and(|m| m.permissions().mode() & 0o100 != 0)
+                    {
+                        0o100755
+                    } else {
+                        0o100644
+                    }
                 } else {
-                    0o100644
+                    backup_index
+                        .get_path(Path::new(rel), 0)
+                        .map(|entry| {
+                            if entry.mode == 0o100755 {
+                                0o100755
+                            } else {
+                                0o100644
+                            }
+                        })
+                        .unwrap_or(0o100644)
                 }
             }
             #[cfg(not(unix))]

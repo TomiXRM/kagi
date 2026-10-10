@@ -265,6 +265,9 @@ macro_rules! advice_template_en {
     (ConflictsAbortStartUnavailable) => {
         "abort refused: pre-sequence HEAD cannot be established from the operation's start record; no repository state was changed. Inspect the sequencer state before recovering manually."
     };
+    (ConflictsAbortHeadMoved) => {
+        "abort refused: HEAD moved since the sequence started; not rewinding. The current HEAD no longer matches the sequencer's safe rollback tip. No repository state was changed."
+    };
     (ConflictsResolutionMarkers) => {
         "conflict markers remain in the resolution buffer"
     };

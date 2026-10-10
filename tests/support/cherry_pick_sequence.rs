@@ -17,6 +17,7 @@ impl Fixture {
         let root = dir.path();
         init_repo(root, "main");
         write_file(root, "a.txt", "base\n");
+        write_file(root, "unrelated.txt", "unrelated tracked base\n");
         commit_all(root, "base");
         git(root, &["switch", "-c", "side"]);
         write_file(root, "first.txt", "first pick\n");

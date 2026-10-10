@@ -15,6 +15,8 @@ pub(crate) const ADVICE_CONFLICTS_CONFLICT_GONE: &str =
     "conflict は既に終了しています。リポジトリを再読み込みしてください。";
 pub(crate) const ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE: &str =
     "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。";
+pub(crate) const ADVICE_CONFLICTS_ABORT_HEAD_MOVED: &str =
+    "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。";
 pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
     "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。";
 pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =
@@ -48,6 +50,9 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         ConflictsNote::ConflictGone => super::advice_text(Msg::AdviceConflictsConflictGone, &[]),
         ConflictsNote::AbortStartUnavailable => {
             super::advice_text(Msg::AdviceConflictsAbortStartUnavailable, &[])
+        }
+        ConflictsNote::AbortHeadMoved => {
+            super::advice_text(Msg::AdviceConflictsAbortHeadMoved, &[])
         }
         ConflictsNote::ResolutionMarkers => {
             super::advice_text(Msg::AdviceConflictsResolutionMarkers, &[])

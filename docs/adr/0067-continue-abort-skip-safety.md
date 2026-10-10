@@ -32,6 +32,10 @@ Conflict Mode 中の Continue / Abort / Skip / Mark resolved / Save は **直接
 cherry-pick が更新しない古い ORIG_HEAD へ戻さない。開始記録を conflict revision
 に含め、確認後の差替えを拒否する。live sequencer の開始記録が欠損・不正、
 または commit を読めない場合は EN/JA の blocker で mutation 前に拒否する。
+`sequencer/abort-safety` は現在 HEAD と一致することを要求する（Git の
+`rollback_is_safe()` と同じ安全基準）。不一致なら手動 commit 等で HEAD が
+移動したため巻き戻さないと EN/JA で拒否し、欠損・不正も mutation 前に拒否する。
+安全基準も conflict revision に含め、承認後の差替えを拒否する。
 sequencer を使わない単一 pick は現在 HEAD が開始点。復元は既存の touched-path
 checkout・index 復元・ref CAS と buffer 退避・receipt を共有し、適用結果の
 手編集 guard は現在 HEAD（先行 pick を含む）へ replay して再構成する。

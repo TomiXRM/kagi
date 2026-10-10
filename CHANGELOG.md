@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合は成功扱いせず EN/JA の理由で拒否します。単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)
+- 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合や HEAD が sequencer の安全基準から移動した場合は成功扱いせず EN/JA の理由で拒否します。無関係な手動 commit・未追跡ファイル・tracked file の未 stage 編集を保持し、単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)
 - Toolbar の件数 badge は固定 9px をやめ、100% で 11.7pt の文字・行高・chip 寸法を UI zoom に揃えました。70%／167% でも 1・99・99+ が切れず、primary button と同じ読みやすい foreground を使います。拡大した chip は矢印を覆わないよう外側へ伸ばし、操作できない button では件数も淡く表示します。(#1067)
 - 大きな diff の未計測行を高さ 0 として扱い、scrollbar の範囲が誤ったり末尾に届かなかったりする問題を修正しました。末尾方向への大きなホイール入力 1 回で実際の最終行に到達し、thread の開閉、同じファイルの再クリック、Editor の未変更 reload、幅変更でも読んでいる位置を保ちます。(#1122)
 - `gh` が未導入の場合は PR の共有 Open 情報と Closed / All 一覧の読み込みを開始せず、repository の切替や一覧を開くたびに不要な GitHub error を表示・記録しないようにしました。native E2E の注入済み読み込みは `gh` の有無にかかわらず維持します。(PR #1119 review)

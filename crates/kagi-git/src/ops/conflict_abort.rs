@@ -168,6 +168,19 @@ pub(crate) fn preflight_conflict_abort(
         );
     let oid = if sequence {
         let raw = std::fs::read_to_string(sequencer.join("head")).map_err(|_| unavailable())?;
+        let safety =
+            std::fs::read_to_string(sequencer.join("abort-safety")).map_err(|_| unavailable())?;
+        let safety = git2::Oid::from_str(safety.trim()).map_err(|_| unavailable())?;
+        let head = repo
+            .head()
+            .and_then(|head| head.peel_to_commit())
+            .map_err(|_| unavailable())?
+            .id();
+        if safety != head {
+            return Err(GitError::Blocked(Box::new(PlanNote::Conflicts(
+                ConflictsNote::AbortHeadMoved,
+            ))));
+        }
         git2::Oid::from_str(raw.trim()).map_err(|_| unavailable())?
     } else {
         repo.head()

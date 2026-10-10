@@ -27,17 +27,34 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
         lang: i18n::lang(),
         _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
     };
-    for (lang, unavailable) in [
-        (Lang::En, "pre-sequence HEAD cannot be established"),
-        (Lang::Ja, "sequence 開始前の HEAD を確認できません"),
+    for (lang, unavailable, moved) in [
+        (
+            Lang::En,
+            "pre-sequence HEAD cannot be established",
+            "HEAD moved since the sequence started",
+        ),
+        (
+            Lang::Ja,
+            "sequence 開始前の HEAD を確認できません",
+            "sequence 開始後に HEAD が移動したため",
+        ),
     ] {
         i18n::set_lang(lang);
-        for missing_start in [false, true] {
+        for case in ["ready", "missing-start", "head-moved"] {
             let fixture = cherry_pick_sequence::Fixture::new(true, false);
             let repo = fixture.path().canonicalize().unwrap();
-            if missing_start {
-                std::fs::remove_file(repo.join(".git/sequencer/head")).unwrap();
-            }
+            let refusal = match case {
+                "missing-start" => {
+                    std::fs::remove_file(repo.join(".git/sequencer/head")).unwrap();
+                    Some(unavailable)
+                }
+                "head-moved" => {
+                    std::fs::write(repo.join(".git/sequencer/abort-safety"), &fixture.start)
+                        .unwrap();
+                    Some(moved)
+                }
+                _ => None,
+            };
             let (app, window) = mount(cx, &repo);
             app.update(cx, |app, cx| app.detect_conflict_mode(cx));
             cx.run_until_parked();
@@ -46,12 +63,12 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
             cx.read(|cx| {
                 let state = app.read(cx);
                 let modal = state.conflict_abort_modal().expect("abort confirmation");
-                if missing_start {
+                if let Some(reason) = refusal {
                     assert!(modal
                         .plan
                         .blockers
                         .iter()
-                        .any(|note| i18n::plan::plan_note_text(note).contains(unavailable)));
+                        .any(|note| i18n::plan::plan_note_text(note).contains(reason)));
                 } else {
                     assert!(modal.plan.predicted.head.contains(&fixture.start[..7]));
                 }
@@ -65,7 +82,7 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
                 .collect();
             assert_eq!(entries.len(), 1);
             let backend = kagi_git::Backend::open(&repo).unwrap();
-            if missing_start {
+            if let Some(reason) = refusal {
                 assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
                 assert!(repo.join(".git/sequencer").exists());
                 cx.read(|cx| {
@@ -78,7 +95,7 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
                         .toasts()
                         .last()
                         .unwrap();
-                    assert!(toast.message.contains(unavailable), "{}", toast.message);
+                    assert!(toast.message.contains(reason), "{}", toast.message);
                 });
             } else {
                 assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));

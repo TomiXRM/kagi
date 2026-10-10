@@ -1,6 +1,8 @@
 //! #1127: abort restores the whole sequence, not only the conflicting pick.
 #[path = "../../../tests/support/cherry_pick_sequence.rs"]
 mod cherry_pick_sequence;
+#[path = "../../../tests/support/git_fixture.rs"]
+mod git_fixture;
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
 use cherry_pick_sequence::Fixture;
@@ -231,6 +233,202 @@ fn cherry_pick_abort_sequence_preserves_guard_on_earlier_pick_edits() {
         assert_eq!(
             std::fs::read_to_string(root.join("first.txt")).unwrap(),
             "user edit during conflict\\n"
+        );
+    }
+}
+
+#[test]
+fn cherry_pick_abort_stale_sequence_refuses_to_rewind_unrelated_commits() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    use git_fixture::{commit_all, git, git_output, git_succeeds, init_repo, write_file};
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    init_repo(root, "main");
+    write_file(root, "a.txt", "base\n");
+    commit_all(root, "base");
+    git(root, &["switch", "-c", "topic"]);
+    write_file(root, "a.txt", "topic A\n");
+    commit_all(root, "A");
+    let a = git_output(root, &["rev-parse", "HEAD"]);
+    write_file(root, "b.txt", "B\n");
+    commit_all(root, "B");
+    let b = git_output(root, &["rev-parse", "HEAD"]);
+    write_file(root, "c.txt", "C\n");
+    commit_all(root, "C");
+    let c = git_output(root, &["rev-parse", "HEAD"]);
+    write_file(root, "a.txt", "new single pick\n");
+    commit_all(root, "new pick");
+    let next = git_output(root, &["rev-parse", "HEAD"]);
+    git(root, &["switch", "main"]);
+    write_file(root, "a.txt", "main\n");
+    commit_all(root, "main diverges");
+    assert!(!git_succeeds(root, &["cherry-pick", &a, &b, &c]));
+    write_file(root, "a.txt", "manually resolved A\n");
+    commit_all(root, "manual A resolution");
+    assert!(root.join(".git/sequencer").exists());
+    assert!(!root.join(".git/CHERRY_PICK_HEAD").exists());
+    for name in ["D", "E"] {
+        write_file(root, name, &format!("unrelated commit {name}\n"));
+        commit_all(root, name);
+    }
+    let head = git_output(root, &["rev-parse", "HEAD"]);
+    // libgit2 writes a real new conflict without refreshing Git's old
+    // sequencer safety marker. Kagi's guarded single-pick executor currently
+    // refuses conflicts before writing; abort must still handle this state.
+    {
+        let repo = Repository::open(root).unwrap();
+        let commit = repo.find_commit(Oid::from_str(&next).unwrap()).unwrap();
+        repo.cherrypick(&commit, None).unwrap();
+        assert!(repo.index().unwrap().has_conflicts());
+    }
+    assert_ne!(
+        std::fs::read_to_string(root.join(".git/sequencer/abort-safety"))
+            .unwrap()
+            .trim(),
+        head
+    );
+    let index = std::fs::read(root.join(".git/index")).unwrap();
+    let conflict = std::fs::read(root.join("a.txt")).unwrap();
+    let backend = Backend::open(root).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let preview = backend.plan_operation_abort().unwrap();
+    assert!(preview
+        .blockers
+        .iter()
+        .any(|note| note.message_en().contains("HEAD moved")));
+    let request = Backend::conflict_abort_request(&snapshot.in_progress());
+    let error = Backend::plan_recorded_conflict(root, request).unwrap_err();
+    assert!(error.to_string().contains("HEAD moved"));
+    let buffer = backend.resolution_buffer_from_repo().unwrap();
+    let error = backend
+        .execute_conflict_abort(&snapshot.session, &buffer)
+        .unwrap_err();
+    assert!(error.to_string().contains("HEAD moved"));
+    assert_eq!(git_output(root, &["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), conflict);
+    for name in ["D", "E"] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(name)).unwrap(),
+            format!("unrelated commit {name}\n")
+        );
+    }
+    assert!(root.join(".git/sequencer").exists());
+    assert!(root.join(".git/CHERRY_PICK_HEAD").exists());
+}
+
+#[test]
+fn cherry_pick_abort_sequence_preserves_unrelated_dirty_tracked_and_untracked_files() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(true, false);
+    let root = fixture.path();
+    let tracked = b"local tracked edit\0\n";
+    let untracked = b"local untracked file\0\n";
+    std::fs::write(root.join("unrelated.txt"), tracked).unwrap();
+    std::fs::write(root.join("untracked.txt"), untracked).unwrap();
+    let backend = Backend::open(root).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let request = Backend::conflict_abort_request(&snapshot.in_progress());
+    let plan = Backend::plan_recorded_conflict(root, request).unwrap();
+    let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::default(), None);
+    assert_eq!(
+        report.evidence.progress,
+        ConflictProgress::Verified,
+        "{report:?}"
+    );
+    let repo = Repository::open(root).unwrap();
+    assert_eq!(
+        repo.head().unwrap().target().unwrap().to_string(),
+        fixture.start
+    );
+    assert_eq!(std::fs::read(root.join("unrelated.txt")).unwrap(), tracked);
+    assert_eq!(
+        std::fs::read(root.join("untracked.txt")).unwrap(),
+        untracked
+    );
+    let mut index = repo.index().unwrap();
+    assert_eq!(
+        index.write_tree().unwrap(),
+        repo.head().unwrap().peel_to_tree().unwrap().id()
+    );
+    assert_eq!(repo.state(), RepositoryState::Clean);
+}
+
+#[test]
+fn cherry_pick_abort_sequence_safety_marker_drift_after_confirmation_is_refused() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let fixture = Fixture::new(true, false);
+    let root = fixture.path();
+    let backend = Backend::open(root).unwrap();
+    let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+    let request = Backend::conflict_abort_request(&snapshot.in_progress());
+    let plan = Backend::plan_recorded_conflict(root, request).unwrap();
+    std::fs::write(root.join(".git/sequencer/abort-safety"), &fixture.start).unwrap();
+    let head = Repository::open(root)
+        .unwrap()
+        .head()
+        .unwrap()
+        .target()
+        .unwrap();
+    let index = std::fs::read(root.join(".git/index")).unwrap();
+    let report = Backend::run_recorded_conflict(&plan, ExecutionPolicy::default(), None);
+    assert_eq!(report.evidence.progress, ConflictProgress::NotStarted);
+    assert!(matches!(
+        report.blocker,
+        Some(kagi_domain::plan_note::PlanNote::Conflicts(
+            kagi_domain::plan_note::ConflictsNote::PlanChanged
+        ))
+    ));
+    assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(
+        Repository::open(root).unwrap().head().unwrap().target(),
+        Some(head)
+    );
+}
+
+#[test]
+fn cherry_pick_abort_sequence_missing_or_invalid_safety_marker_is_refused() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for marker in [None, Some("not-an-oid")] {
+        let fixture = Fixture::new(true, false);
+        let root = fixture.path();
+        let path = root.join(".git/sequencer/abort-safety");
+        match marker {
+            Some(marker) => std::fs::write(&path, marker).unwrap(),
+            None => std::fs::remove_file(&path).unwrap(),
+        }
+        let backend = Backend::open(root).unwrap();
+        let preview = backend.plan_operation_abort().unwrap();
+        assert!(matches!(
+            preview.blockers.as_slice(),
+            [kagi_domain::plan_note::PlanNote::Conflicts(
+                kagi_domain::plan_note::ConflictsNote::AbortStartUnavailable
+            )]
+        ));
+        let snapshot = backend.conflict_snapshot().unwrap().unwrap();
+        let buffer = backend.resolution_buffer_from_repo().unwrap();
+        let head = Repository::open(root)
+            .unwrap()
+            .head()
+            .unwrap()
+            .target()
+            .unwrap();
+        let index = std::fs::read(root.join(".git/index")).unwrap();
+        backend
+            .execute_conflict_abort(&snapshot.session, &buffer)
+            .unwrap_err();
+        assert_eq!(std::fs::read(root.join(".git/index")).unwrap(), index);
+        assert_eq!(
+            Repository::open(root).unwrap().head().unwrap().target(),
+            Some(head)
         );
     }
 }

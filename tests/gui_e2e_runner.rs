@@ -2341,6 +2341,14 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_freezes_path),
             ),
             (
+                "discard_literal_backslash",
+                Box::new(crate::file_menu_owner::scenario_discard_literal_backslash),
+            ),
+            (
+                "discard_unsafe_selection",
+                Box::new(crate::file_menu_owner::scenario_discard_unsafe_selection),
+            ),
+            (
                 "file_menu_rejects_stale_owner",
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),

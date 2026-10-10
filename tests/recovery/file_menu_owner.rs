@@ -35,6 +35,283 @@ fn draw_menu_and_bounds(
         .expect("the real Discard menu item was not laid out")
 }
 
+fn discard_row_probes(path: &str) -> [String; 4] {
+    let directory = if path == r"a\b.txt" { "a\\" } else { "a/" };
+    [
+        format!("modal-file-{path}"),
+        format!("modal-file-badge-{path}-M"),
+        format!("modal-path-dir-{path}-{directory}"),
+        format!("modal-path-name-{path}-b.txt"),
+    ]
+}
+
+/// Probe IDs are derived from the actual text passed to each painted child,
+/// not from the approval model. Assert row, directory/name and M badge paints.
+fn assert_discard_painted_rows(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    bulk: bool,
+) {
+    for path in [r"a\b.txt", "a/b.txt"] {
+        for probe in discard_row_probes(path) {
+            e2e::clear_control_bounds(window.window_id(), &probe);
+        }
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let selected = e2e::control_bounds(window.window_id(), r"modal-file-a\b.txt")
+        .expect("literal backslash row is drawn");
+    for path in if bulk {
+        &[r"a\b.txt", "a/b.txt"][..]
+    } else {
+        &[r"a\b.txt"][..]
+    } {
+        let probes = discard_row_probes(path);
+        let row = e2e::control_bounds(window.window_id(), &probes[0]).unwrap();
+        for probe in probes {
+            let paint = e2e::control_paint(window.window_id(), &probe)
+                .unwrap_or_else(|| panic!("actual row text/badge was not painted: {probe}"));
+            assert!(paint.bounds.size.width > px(0.) && paint.bounds.size.height > px(0.));
+            crate::recovery_layout::contained(paint.mask, paint.bounds, &probe);
+            crate::recovery_layout::contained(row, paint.bounds, &probe);
+        }
+    }
+    let neighbor = e2e::control_bounds(window.window_id(), "modal-file-a/b.txt");
+    if bulk {
+        let neighbor = neighbor.expect("slash path has its own painted row");
+        assert!(
+            selected.bottom() <= neighbor.top() || neighbor.bottom() <= selected.top(),
+            "literal backslash and slash filenames must be distinct drawn rows"
+        );
+    } else {
+        assert!(
+            neighbor.is_none(),
+            "single confirmation must not draw the unselected neighbor"
+        );
+    }
+}
+
+/// #1125: actual menu selection, confirmation, execution and backup agree on
+/// a literal POSIX filename; bulk keeps the two distinct identities too.
+pub fn scenario_discard_literal_backslash(cx: &mut VisualTestAppContext) {
+    for bulk in [false, true] {
+        let fixture = build_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        std::fs::create_dir(repo.join("a")).unwrap();
+        std::fs::write(repo.join(r"a\b.txt"), b"selected base\n").unwrap();
+        std::fs::write(repo.join("a/b.txt"), b"neighbor base\n").unwrap();
+        crate::macos::git(&repo, &["add", "-A"]);
+        crate::macos::git(&repo, &["commit", "-qm", "literal paths"]);
+        std::fs::write(repo.join(r"a\b.txt"), b"selected dirty\n").unwrap();
+        std::fs::write(repo.join("a/b.txt"), b"neighbor dirty\n").unwrap();
+        let index_before = kagi_git::Backend::open(&repo)
+            .unwrap()
+            .staged_set_digest()
+            .unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+        });
+        cx.run_until_parked();
+        if bulk {
+            e2e::clear_control_bounds(window.window_id(), "cp-discard-all");
+            cx.update_window(window, |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            let bounds = e2e::control_bounds(window.window_id(), "cp-discard-all")
+                .expect("real Discard-all control was drawn");
+            cx.simulate_mouse_move(window, bounds.center(), None, Modifiers::none());
+            cx.run_until_parked();
+            cx.simulate_click(window, bounds.center(), Modifiers::none());
+        } else {
+            let row = cx.read(|cx| {
+                app.read(cx)
+                    .ui()
+                    .commit_panel
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .state
+                    .unstaged
+                    .iter()
+                    .position(|f| f.path == std::path::Path::new(r"a\b.txt"))
+                    .unwrap()
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    e2e::defer_file_menu(app, row, point(px(120.0), px(120.0)), window, cx)
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            let bounds = draw_menu_and_bounds(cx, window);
+            cx.simulate_mouse_move(window, bounds.center(), None, Modifiers::none());
+            cx.run_until_parked();
+            cx.simulate_click(window, bounds.center(), Modifiers::none());
+        }
+        cx.run_until_parked();
+        assert_discard_painted_rows(cx, window, bulk);
+        cx.read(|cx| {
+            let modal = app.read(cx).discard_modal().unwrap();
+            assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);
+            assert!(modal.paths.iter().any(|p| p == r"a\b.txt"));
+            assert_eq!(modal.paths.len(), if bulk { 2 } else { 1 });
+            assert!(modal.plan.title.message_en().contains(if bulk {
+                "2 file(s)"
+            } else {
+                r"a\b.txt"
+            }));
+            for path in &modal.paths {
+                assert!(modal
+                    .plan
+                    .preview_files
+                    .iter()
+                    .any(|f| f.path == std::path::Path::new(path)));
+                assert!(
+                    modal.kinds.contains_key(path),
+                    "badge must use literal identity"
+                );
+            }
+        });
+        app.update(cx, |app, cx| app.start_discard(cx));
+        assert_eq!(
+            std::fs::read(repo.join(r"a\b.txt")).unwrap(),
+            b"selected dirty\n"
+        );
+        app.update(cx, |app, cx| app.start_discard(cx));
+        cx.run_until_parked();
+        assert_eq!(
+            std::fs::read(repo.join(r"a\b.txt")).unwrap(),
+            b"selected base\n"
+        );
+        assert_eq!(
+            std::fs::read(repo.join("a/b.txt")).unwrap(),
+            if bulk {
+                b"neighbor base\n".as_slice()
+            } else {
+                b"neighbor dirty\n".as_slice()
+            }
+        );
+        let backend = kagi_git::Backend::open(&repo).unwrap();
+        // UI reload may repair stat/cache-tree data (ADR-0193); approved index
+        // path/OID/mode/stage identity must remain exactly the same.
+        assert_eq!(backend.staged_set_digest().unwrap(), index_before);
+        let receipts = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 20);
+        let receipt = receipts.iter().rev().find(|r| r.op == "discard").unwrap();
+        assert!(matches!(
+            receipt.outcome,
+            kagi_git::oplog::OpOutcome::Success { .. }
+        ));
+        assert_eq!(receipt.backup_refs.len(), if bulk { 2 } else { 1 });
+        let contents: Vec<_> = receipt
+            .backup_refs
+            .iter()
+            .map(|reference| backend.read_backup(reference).unwrap())
+            .collect();
+        assert_eq!(
+            contents
+                .iter()
+                .filter(|bytes| bytes.as_slice() == b"selected dirty\n")
+                .count(),
+            1
+        );
+        if bulk {
+            assert_eq!(
+                contents
+                    .iter()
+                    .filter(|bytes| bytes.as_slice() == b"neighbor dirty\n")
+                    .count(),
+                1
+            );
+        }
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS discard_literal_backslash");
+}
+
+/// Non-UTF-8 input is refused before any write, including an entire bulk
+/// selection. The invalid name is in memory: macOS cannot create it on disk.
+pub fn scenario_discard_unsafe_selection(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::i18n::{self, Lang, Msg};
+    use std::os::unix::ffi::OsStringExt;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_language = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let fixture = dirty_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| {
+            e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+        });
+        cx.run_until_parked();
+        let invalid =
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(b"invalid-\xff".to_vec()));
+        let owner = cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .commit_panel
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .owner
+        });
+        let expected = Msg::DiscardUnsafePath
+            .t()
+            .replace("{}", &invalid.display().to_string());
+        for bulk in [false, true] {
+            app.update(cx, |app, cx| {
+                if bulk {
+                    let panel = app.ui().commit_panel.as_ref().unwrap().clone();
+                    panel.update(cx, |panel, _| {
+                        panel.state.unstaged[0].path = invalid.clone()
+                    });
+                    app.open_discard_all_modal(owner, cx);
+                } else {
+                    app.open_discard_modal_for_path(
+                        owner,
+                        invalid.clone(),
+                        kagi::ui::worktree_wip::WriteOrigin::CommitPanel,
+                        cx,
+                    );
+                }
+            });
+            cx.run_until_parked();
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(state.discard_modal().is_none());
+                assert!(
+                    matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(text)
+                    if text.as_ref() == expected)
+                );
+            });
+            assert_eq!(
+                std::fs::read(repo.join("alpha.txt")).unwrap(),
+                b"alpha dirty\n"
+            );
+            assert_eq!(
+                std::fs::read(repo.join("zeta.txt")).unwrap(),
+                b"zeta dirty\n"
+            );
+            let records = kagi_git::oplog::read_oplog_tail_for_repo(&repo, 20);
+            let record = records.iter().rev().find(|r| r.op == "discard").unwrap();
+            assert!(matches!(
+                record.outcome,
+                kagi_git::oplog::OpOutcome::Refused { .. }
+            ));
+            assert!(record.backup_refs.is_empty());
+        }
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(original_language);
+    eprintln!("[gui-e2e] PASS discard_unsafe_selection");
+}
+
 pub fn scenario_file_menu_freezes_path(cx: &mut VisualTestAppContext) {
     let fixture = dirty_fixture();
     let repo = fixture.path().canonicalize().unwrap();

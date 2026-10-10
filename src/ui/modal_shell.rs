@@ -50,17 +50,7 @@ pub(crate) fn modal_compact() -> bool {
 /// Observe actual layout without adding a wrapper or participating in flex sizing.
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn modal_probe(name: impl Into<String>) -> impl IntoElement {
-    let name = name.into();
-    gpui::canvas(
-        move |bounds, window, _| {
-            super::e2e::record_control_bounds(window.window_handle().window_id(), &name, bounds);
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+    super::e2e::measure_inside(name)
 }
 
 /// Height for a scrolling modal list of `rows` rows: it hugs its content while
@@ -491,6 +481,17 @@ pub(crate) fn modal_file_row(
     let path = path.into();
     #[cfg(feature = "gui-e2e")]
     let probe_name = format!("modal-file-{path}");
+    let badge = div()
+        .flex_shrink_0()
+        .w(theme::scaled_px(10.))
+        .font_family(MONO_FONT)
+        .text_xs()
+        .text_color(rgb(color))
+        .child(SharedString::from(letter.to_string()));
+    #[cfg(feature = "gui-e2e")]
+    let badge = badge
+        .relative()
+        .child(modal_probe(format!("modal-file-badge-{path}-{letter}")));
     let row = div()
         .flex_shrink_0()
         .h(theme::scaled_px(MODAL_LIST_ROW_H))
@@ -499,15 +500,7 @@ pub(crate) fn modal_file_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(theme::scaled_px(10.))
-                .font_family(MONO_FONT)
-                .text_xs()
-                .text_color(rgb(color))
-                .child(SharedString::from(letter.to_string())),
-        )
+        .child(badge)
         .child(modal_path_text(path));
     #[cfg(feature = "gui-e2e")]
     let row = row.relative().child(modal_probe(probe_name));
@@ -540,18 +533,23 @@ pub(crate) fn modal_path_text(path: SharedString) -> gpui::Div {
         .font_family(MONO_FONT)
         .text_xs();
     if !dir.is_empty() {
-        row = row.child(
-            // Shrinks first and loses its head: `…/src/ops/` still tells you
-            // where you are, and the rows stay aligned on the name.
+        #[cfg(feature = "gui-e2e")]
+        let probe_name = format!("modal-path-dir-{path}-{dir}");
+        let directory =
+            // Shrinks first and loses its head while retaining the separator.
             div()
                 .min_w(gpui::px(0.))
                 .overflow_hidden()
                 .text_ellipsis_start()
                 .text_color(rgb(current_theme().text_muted))
-                .child(SharedString::from(dir)),
-        );
+                .child(SharedString::from(dir));
+        #[cfg(feature = "gui-e2e")]
+        let directory = directory.relative().child(modal_probe(probe_name));
+        row = row.child(directory);
     }
-    row.child(
+    #[cfg(feature = "gui-e2e")]
+    let probe_name = format!("modal-path-name-{path}-{name}");
+    let filename =
         // `flex_shrink_0`: the name yields width only after the directory has
         // given up all of its own.
         div()
@@ -559,8 +557,10 @@ pub(crate) fn modal_path_text(path: SharedString) -> gpui::Div {
             .overflow_hidden()
             .text_ellipsis()
             .text_color(rgb(current_theme().text_main))
-            .child(SharedString::from(name)),
-    )
+            .child(SharedString::from(name));
+    #[cfg(feature = "gui-e2e")]
+    let filename = filename.relative().child(modal_probe(probe_name));
+    row.child(filename)
 }
 
 /// Letter + theme colour for a change kind. The letters match

@@ -389,9 +389,12 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .when(cfg!(feature = "gui-e2e"), |area| {
                     area.child(super::e2e::measure_inside("pr-home-table"))
                 })
-                // The pinned scrollbar is 16 logical px, independent of zoom.
-                // Reserve its lane so it never covers the last visible row.
-                .pb(px(16.))
+                // Overlay modes need no lane. Always keeps the last row clear
+                // of the pinned scrollbar's fixed 16 logical px track.
+                .when(
+                    gpui_component::Theme::global(cx).scrollbar_show == ScrollbarShow::Always,
+                    |area| area.pb(px(16.)),
+                )
                 .child(
                     div()
                         .id("pr-home-table-scroll")
@@ -411,9 +414,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                         })
                         .child(table),
                 )
-                .child(
-                    Scrollbar::horizontal(&horizontal_scroll).scrollbar_show(ScrollbarShow::Always),
-                ),
+                .child(Scrollbar::horizontal(&horizontal_scroll)),
         );
     }
 
@@ -479,6 +480,7 @@ fn render_column_header() -> gpui::Div {
         .gap(theme::scaled_px(super::timeline_row::GAP))
         .border_b_1()
         .border_color(rgb(theme().surface))
+        .map(|header| super::e2e::probe_chrome_border("pr-table-header", header))
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))

@@ -113,3 +113,11 @@ Its calculated sRGB contrast is 3.276:1 on white and 3.058:1 against the adjacen
 control boundary. Labels, placeholder/body colours, focused accent ring, 1px
 outline, radius 6 and field sizes are unchanged. Apple Dark and custom themes
 retain their current input-boundary mapping to preserve existing contrast.
+
+## Amendment — 2026-10-11: system scrollbar visibility (#1182)
+
+The PR table keeps its single horizontal viewport and independent virtualized Y
+list from #1095. Its pinned Scrollbar uses the gpui-kit theme's macOS visibility
+policy instead of overriding it with `Always`. The 16px bottom lane is reserved
+only for `Always`; `Scrolling` and `Hover` overlay the full viewport. No global
+scrollbar colour, keyboard or wheel routing is changed.

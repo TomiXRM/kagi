@@ -152,7 +152,10 @@ fn discard_receipt_recovers_from_ref_after_gc_without_auto_snapshot() {
     gc(&f.repo);
     let name = &persisted.backup_refs[0];
     assert_eq!(f.backend().read_backup(name).unwrap(), content);
-    assert_eq!(git(&f.repo, &["cat-file", "blob", name]), content);
+    assert_eq!(
+        git(&f.repo, &["cat-file", "blob", &format!("{name}:file")]),
+        content
+    );
     let oid = git2::Repository::open(&f.repo)
         .unwrap()
         .refname_to_id(name)

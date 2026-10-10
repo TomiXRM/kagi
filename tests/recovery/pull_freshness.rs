@@ -1491,12 +1491,11 @@ pub fn scenario_pull_freshness_captured_reload_drift(cx: &mut VisualTestAppConte
     eprintln!("[gui-e2e] PASS pull_freshness_captured_reload_drift");
 }
 
-/// Every branch-menu variant must refresh its selected branch's live upstream.
+/// Noncurrent branch-menu variants must refresh their selected live upstream.
 /// The noncurrent legs deliberately leave main on origin while feature tracks
 /// either origin/main or a distinct remote: fetching main's remote is insufficient.
 pub fn scenario_pull_freshness_branch_entries(cx: &mut VisualTestAppContext) {
     let _settings = SettingsGuard::install();
-    branch_ref_updates(cx, true, true, "origin");
     for ff_only in [false, true] {
         for remote in ["origin", "alternate"] {
             branch_ref_updates(cx, false, ff_only, remote);

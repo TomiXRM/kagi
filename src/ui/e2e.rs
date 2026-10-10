@@ -49,6 +49,7 @@ thread_local! {
     static CONTROL_PAINTS: RefCell<std::collections::HashMap<(gpui::WindowId, String), ControlPaint>> = RefCell::new(Default::default());
     static CONTROL_PAINT_ORDER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static TAB_LOAD_LIMITS: RefCell<std::collections::HashMap<crate::app::SessionId, usize>> = RefCell::new(Default::default());
+    static EDITOR_DIFF_SEEDS: RefCell<std::collections::HashMap<gpui::EntityId, u64>> = RefCell::new(Default::default());
     static BUSY_ADVICE: RefCell<Option<String>> = const { RefCell::new(None) };
     static SETTINGS_ZOOM_LABEL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -185,6 +186,18 @@ pub(crate) fn record_tab_load_commit_limit(session: crate::app::SessionId, limit
 #[cfg(feature = "gui-e2e")]
 pub fn tab_load_commit_limit(session: crate::app::SessionId) -> Option<usize> {
     TAB_LOAD_LIMITS.with(|limits| limits.borrow().get(&session).copied())
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_editor_diff_seed_request(editor: gpui::EntityId, req: u64) {
+    EDITOR_DIFF_SEEDS.with(|seeds| {
+        seeds.borrow_mut().insert(editor, req);
+    });
+}
+/// Last accepted WIP-diff request, recorded only after the Editor's admission
+/// checks and typed installation. A previously loaded diff is not a receipt.
+#[cfg(feature = "gui-e2e")]
+pub fn editor_diff_seed_request(editor: gpui::EntityId) -> Option<u64> {
+    EDITOR_DIFF_SEEDS.with(|seeds| seeds.borrow().get(&editor).copied())
 }
 pub(crate) fn measure_control(
     name: impl Into<String>,

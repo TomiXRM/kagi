@@ -68,6 +68,7 @@ pub struct PrTab {
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
     pub diff_scroll: ListState,
+    pub(crate) diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The 概要/レビュー page's virtualized list. The tabs are navigation:
     /// they reveal an item of this list instead of swapping the body
     /// (ADR-0200); the state lives here so the scroll survives a tab switch.
@@ -97,6 +98,7 @@ pub struct PrTab {
     pub conflict_selected: Option<usize>,
     /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
     pub conflict_scroll: ListState,
+    pub(crate) conflict_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Which conflict within the file the jump control is on (0-based).
     pub conflict_at: usize,
     /// One loaded conflict file's rows/jumps; raw marker text is dropped after
@@ -308,6 +310,7 @@ impl KagiApp {
             selected_file: None,
             diff: None,
             diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            diff_layout: Default::default(),
             // A fresh tab opens on the description — "what is this PR" first,
             // the diff once a file/commit is picked (user request).
             reviews: Vec::new(),
@@ -320,6 +323,7 @@ impl KagiApp {
             conflicts: None,
             conflict_selected: None,
             conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            conflict_layout: Default::default(),
             conflict_preview: None,
             conflict_at: 0,
             merge_status: None,
@@ -460,7 +464,7 @@ impl KagiApp {
                     return;
                 };
                 let line_comments = kagi_domain::review_thread::feed_comments(&threads);
-                t.threads.set(threads);
+                t.threads.set(threads, &t.diff_scroll, t.diff.as_ref());
                 klog!(
                     "pr-mode: conversation #{} reviews={} comments={} line={}",
                     number,
@@ -538,26 +542,26 @@ impl KagiApp {
                     // index addresses a different element there.
                     let split = super::theme::diff_split();
                     let (count, target) = if split {
-                        let sp = super::diff_split::split_rows(&rows);
-                        let t = super::diff_split::split_index_of(&sp, row).unwrap_or(row);
-                        (sp.len(), t)
+                        let projection = super::diff_split::split_projection(&rows);
+                        let target =
+                            super::diff_split::split_index_of(&projection.rows, row).unwrap_or(row);
+                        (projection.rows.len(), target)
                     } else {
                         (rows.len(), row)
                     };
-                    // Sync the count first. `render_diff_list` resets the list
-                    // whenever its count disagrees, and `reset` clears
-                    // `logical_scroll_top` — so scrolling before the list has
-                    // been told how many rows there are is thrown away on the
-                    // very next frame, which is why this did nothing.
-                    if t.conflict_scroll.item_count() != count {
-                        t.conflict_scroll.reset(count);
-                    }
-                    // `scroll_to`, not `scroll_to_reveal_item`: revealing seeks
-                    // by accumulated height, and the list only measures rows it
-                    // has drawn, so downward targets land short. Setting the
-                    // top item is exact regardless of what has been measured —
-                    // and puts the conflict header at the top, which is where
-                    // it belongs.
+                    // Initialize the same source/layout memo as the renderer
+                    // before setting the explicit item anchor.
+                    let Some(preview) = t.conflict_preview.as_mut() else {
+                        return;
+                    };
+                    let (view, _) = preview.snapshot();
+                    t.conflict_layout.sync(
+                        &t.conflict_scroll,
+                        view.height_source,
+                        split,
+                        false,
+                        count,
+                    );
                     t.conflict_scroll.scroll_to(gpui::ListOffset {
                         item_ix: target,
                         offset_in_item: px(0.),
@@ -616,6 +620,13 @@ impl KagiApp {
     pub fn pr_mode_select_commit(&mut self, sel: Option<usize>, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
+            if m.active
+                .and_then(|i| m.tabs.get(i))
+                .is_some_and(|tab| tab.selected_commit == sel)
+            {
+                cx.notify();
+                return;
+            }
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
             return;
@@ -709,6 +720,13 @@ impl KagiApp {
     pub fn pr_mode_select_file(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             m.view = PrView::Diff;
+            if m.active
+                .and_then(|i| m.tabs.get(i))
+                .is_some_and(|tab| tab.selected_file == Some(ix))
+            {
+                cx.notify();
+                return;
+            }
         }
         let Some(mut tab) = self.pr_mode_take_active() else {
             return;
@@ -1049,13 +1067,14 @@ impl KagiApp {
                 },
             ),
         };
-        tab.diff = match result {
+        let built = match result {
             Ok(fd) => Some(build_main_diff_view(&fd, &path, fi, source)),
             Err(e) => {
                 klog!("pr-mode: diff error: {}", e);
                 None
             }
         };
+        super::diff_view::highlight::install(&mut tab.diff, built);
     }
 }
 
@@ -1478,6 +1497,13 @@ fn render_center(
                 .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(all_click)
+                .map(|el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el
+                        .relative()
+                        .child(super::e2e::measure_inside("pr-mode-commits-all"));
+                    el
+                })
                 .child(
                     div()
                         .text_xs()
@@ -1732,8 +1758,18 @@ fn render_center(
                     )
                 });
                 let header = DiffHeader::leading(nav);
-                render_diff_list::<KagiApp>(dv, header, conflict_scroll, None, cx)
-                    .into_any_element()
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                render_diff_list::<KagiApp>(
+                    dv,
+                    header,
+                    conflict_scroll,
+                    &tab.conflict_layout,
+                    None,
+                    cx,
+                )
+                .into_any_element()
             }
         };
         content = content.child(body);
@@ -1745,17 +1781,27 @@ fn render_center(
         let diff_el: gpui::AnyElement = match diff {
             Some(dv) => {
                 let header = threads::diff_header(app, ix, &dv, cx);
-                render_diff_list::<KagiApp>(dv, header, scroll, None, cx).into_any_element()
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                render_diff_list::<KagiApp>(dv, header, scroll, &tab.diff_layout, None, cx)
+                    .into_any_element()
             }
-            None => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::PrModeNoFile.t()))
-                .into_any_element(),
+            None => {
+                let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
+                    return content.into_any_element();
+                };
+                tab.diff_layout.clear(&tab.diff_scroll);
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from(Msg::PrModeNoFile.t()))
+                    .into_any_element()
+            }
         };
         content = content.child(diff_el);
     }
@@ -1874,6 +1920,13 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .when(sel, |el| el.bg(rgb(theme().selected)))
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
+                .map(|el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el
+                        .relative()
+                        .child(super::e2e::measure_inside(format!("pr-mode-file-{i}")));
+                    el
+                })
                 .when(is_viewed == Some(true), |el| el.opacity(0.5))
                 .children(is_viewed.map(|on| viewed::checkbox(i, on, cx)))
                 .child(

@@ -159,6 +159,7 @@ mod tests {
             title: "same-file.rs".into(),
             stats: "+2 −2".into(),
             rows: moved_diff(),
+            height_source: Default::default(),
             source: MainDiffSource::Synthetic,
             images: None,
             lang: None,
@@ -166,6 +167,7 @@ mod tests {
         };
         let mut second = MainDiffView {
             rows: moved_diff(),
+            height_source: Default::default(),
             ..first.clone()
         };
         Arc::make_mut(&mut second.rows)[2] = line(DiffLineKind::Added, CHANGED);

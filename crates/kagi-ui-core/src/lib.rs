@@ -14,6 +14,7 @@ pub mod change_badge;
 pub mod color_vision;
 pub mod commit_header;
 pub mod commit_row;
+pub mod diff_list;
 pub mod divider;
 pub mod file_tree;
 pub mod fonts;

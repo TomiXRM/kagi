@@ -204,6 +204,42 @@ The current suite covers:
   remain unchanged, and admission releases. Existing successful Enter/button
   removal legs still run. Tier B: right-click a locked linked worktree, open
   Remove, press Enter on the blocked plan, and inspect the notice in EN/JA.
+- diff estimated extent (`KAGI_GUI_E2E_ONLY='pr_diff_extent,editor_diff_extent_unchanged_reload'`,
+  #1122 / [ADR-0222](../../../docs/adr/0222-diff-list-estimated-height.md)):
+  seven native scenarios use production reads and real wheel events, not installed
+  test rows, hints or scroll offsets. `pr_diff_extent_unified` / `_split` assert
+  initial global extent, one huge wheel reaching the true tail and return to the
+  first row; `_reflow` asserts a fractional reading anchor across width changes;
+  `_threads` asserts measured-node splicing, expansion geometry and collapse
+  retiring expansion height; `_source_recolor` asserts equal-count source replacement
+  invalidates heights while recoloring preserves identity and position;
+  `_same_selection` asserts same-file re-click / reload retains the reading position;
+  `editor_diff_extent_unchanged_reload` asserts one huge wheel reaches the actual
+  Editor tail and unchanged reload retains source identity and position.
+  Fork: `https://github.com/TomiXRM/zed`, rev
+  `caf5007618c309a8ea66002d44a9c9ab629a2d35` (pending upstream).
+  Rows that fit must be fully inside the viewport. An oversized tail must
+  bottom-align within 1px, with its top above the viewport; an oversized first
+  content row must return to native item 0 / offset 0, its hunk header top-aligned
+  within 1px and its own top at header.bottom within 1px, extending below the viewport.
+  A thread card taller than viewport.height − badge.height requires a fully visible
+  badge, card.top ≥ badge.bottom − 1px, body.top inside the viewport and body inside
+  the card; otherwise both card and badge must fully fit. Collapse removes one item,
+  restores item 9 to code-row height (row 8 ±1px), and decreases extent by a positive
+  amount at least expansion.height − viewport.height.
+  Before for `_same_selection`: save a toggle patch reverting only the three
+  `src/ui/pr_mode.rs` logic hunks (same-file / commit short-circuits and reload's
+  `highlight::install` / adopt), **keep the recorders**, apply it with `git apply`,
+  and run the exact same filtered oracle. The recorded Before fails at
+  `tests/recovery/pr_diff_extent_same_selection.rs:260` on reading-position reset;
+  restore with `git apply -R` and rerun unchanged (recorded PASS).
+  The recorded patch was `/tmp/kagi-hig-audit-20261008/before-same-selection.patch`;
+  recreate it from the named logic hunks if that local artifact is unavailable.
+  Genuine Before failures also cover GPUI
+  `test_estimated_end_resolves_taller_tail_without_following` and the Editor
+  tail remaining outside the viewport after one huge wheel. Acceptance records
+  GPUI unit 30/30 and all seven native oracles PASS; no FPS / CPU claim.
+  Tier B real-app comparison is pending.
 - refusal reasons (`KAGI_GUI_E2E_ONLY=refusal_reasons`,
   `tests/recovery/refusal_reasons.rs`): #353. For delete-branch (current
   branch, two blockers), push (no remote), pull (no upstream, the core's

@@ -57,12 +57,14 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                view.diff_layout.clear(&view.diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.diff_scroll.clone(),
+                &view.diff_layout,
                 None,
                 cx,
             )
@@ -77,12 +79,14 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                view.history_diff_layout.clear(&view.history_diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.history_diff_scroll.clone(),
+                &view.history_diff_layout,
                 None,
                 cx,
             )
@@ -413,12 +417,32 @@ impl KagiApp {
                 build_main_diff_view(&d, &bg_path, 0, source)
             })
         });
+        #[cfg(feature = "gui-e2e")]
+        let editor_id = view.entity_id();
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let built = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = built.map(|d| Box::new(d) as Box<dyn std::any::Any>);
-                v.seed_diff(req, &path, diff, cx);
+                v.seed_diff(
+                    req,
+                    &path,
+                    built,
+                    |slot, next| {
+                        match (
+                            slot.as_mut()
+                                .and_then(|stored| stored.downcast_mut::<MainDiffView>()),
+                            next,
+                        ) {
+                            (Some(current), Some(next)) => current.adopt(next),
+                            (_, next) => {
+                                *slot = next.map(|next| Box::new(next) as Box<dyn std::any::Any>);
+                            }
+                        }
+                        #[cfg(feature = "gui-e2e")]
+                        super::e2e::record_editor_diff_seed_request(editor_id, req);
+                    },
+                    cx,
+                );
             });
         })
         .detach();

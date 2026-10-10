@@ -36,16 +36,11 @@ use super::KagiApp;
 
 /// Fat entity for the standalone (center-slot) main diff.
 pub struct MainDiffPane {
-    /// The diff currently shown. Replaced in place on j/k file steps and on
-    /// re-opens while the pane is up, so the `ListState` keeps the same
-    /// lifecycle the old persistent `KagiApp.main_diff_scroll_handle` had
-    /// (reset-to-top only when the row count changes — see
-    /// `render_helpers::render_diff_list`).
+    /// Source/projection changes reset; highlighting and ordinary paints do not.
     pub view: MainDiffView,
-    /// T-UI-003 / T-DIFF-WRAP-001: `ListState` (variable-height) for the
-    /// "main-diff-list" — see `render_helpers::render_diff_list` for the
-    /// item-count sync/reset lifecycle.
+    /// Native variable-height measurements for this diff only.
     scroll: ListState,
+    list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
     /// Session that owns this retained pane.
@@ -60,6 +55,7 @@ impl MainDiffPane {
         Self {
             view,
             scroll: new_diff_list_state(),
+            list_layout: Default::default(),
             app,
             owner,
             fit: HeaderFit::default(),
@@ -177,6 +173,7 @@ impl Render for MainDiffPane {
                 ..DiffHeader::default()
             },
             self.scroll.clone(),
+            &self.list_layout,
             // #842: a Commit Panel side carries Stage / Unstage hunk.
             crate::ui::diff_view::hunk_action::HunkAction::for_source(
                 &self.view.source,

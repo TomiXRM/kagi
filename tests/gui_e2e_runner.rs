@@ -235,6 +235,22 @@ mod pr_same_number;
 mod pr_viewed;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent.rs"]
+mod pr_diff_extent;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent_invalidation.rs"]
+mod pr_diff_extent_invalidation;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent_same_selection.rs"]
+mod pr_diff_extent_same_selection;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_diff_extent_reload.rs"]
+mod editor_diff_extent_reload;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
 mod pr_threads;
 
@@ -1852,6 +1868,34 @@ mod macos {
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            (
+                "pr_diff_extent_unified",
+                Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),
+            ),
+            (
+                "pr_diff_extent_split",
+                Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_split),
+            ),
+            (
+                "pr_diff_extent_reflow",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_reflow),
+            ),
+            (
+                "pr_diff_extent_threads",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_threads),
+            ),
+            (
+                "pr_diff_extent_source_recolor",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_source_recolor),
+            ),
+            (
+                "pr_diff_extent_same_selection",
+                Box::new(crate::pr_diff_extent_same_selection::scenario_pr_diff_extent_same_selection),
+            ),
+            (
+                "editor_diff_extent_unchanged_reload",
+                Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
+            ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             (
                 "pr_threads_via_gh",

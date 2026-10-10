@@ -4,24 +4,24 @@ use super::*;
 // discard (W17-DISCARD, ADR-0046) — backup-then-discard
 // ────────────────────────────────────────────────────────────
 
-/// Normalise a user/UI-supplied path to the repository-relative, forward-slash
-/// form that git status reports, so plan/execute and status comparisons line up.
-///
-/// **Never consults the process CWD** (issue #282). A *relative* input is already
-/// repo-relative (all three UI call sites pass repo-relative strings) and is only
-/// normalised lexically — feeding it to `fs::canonicalize` resolved it against the
-/// process CWD, which discarded a different, same-named file when kagi was started
-/// from inside the workdir. An *absolute* input has the workdir prefix stripped;
-/// `canonicalize` is safe there because an absolute path never depends on the CWD.
+/// Resolve legacy absolute/`./` inputs against the workdir, never the CWD.
+/// Repository-relative filename bytes are otherwise preserved, including POSIX
+/// backslashes. Do not canonicalize the target: a symlink is itself the target.
 fn discard_rel_path(workdir: &Path, raw: &str) -> String {
     let raw_path = Path::new(raw);
+    if !raw_path.is_absolute() && !raw.starts_with("./") {
+        return raw.to_owned();
+    }
     let rel = if raw_path.is_absolute() {
-        // Try canonical and lexical forms of both sides so a symlinked workdir
-        // (e.g. /tmp → /private/tmp on macOS) still matches, and so an absolute
-        // path to a *deleted* file (canonicalize fails) still strips correctly.
+        // Only resolve workdir aliases (e.g. /tmp → /private/tmp on macOS).
+        // The target may be a symlink or a deleted file and is never resolved.
         let abs_forms = [
-            std::fs::canonicalize(raw_path).ok(),
             Some(normalize_path(raw_path)),
+            raw_path.parent().and_then(|parent| {
+                std::fs::canonicalize(parent)
+                    .ok()
+                    .map(|p| raw_path.file_name().map(|name| p.join(name)).unwrap_or(p))
+            }),
         ];
         let wd_forms = [
             std::fs::canonicalize(workdir).ok(),
@@ -40,7 +40,7 @@ fn discard_rel_path(workdir: &Path, raw: &str) -> String {
     } else {
         normalize_path(raw_path)
     };
-    rel.to_string_lossy().replace('\\', "/")
+    rel.to_str().unwrap_or(raw).to_owned()
 }
 
 /// The workdir of `repo`, or an empty path for a bare repo (plan-time only —
@@ -104,27 +104,15 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     // A `HashMap` rather than a per-row `find`: the card exists for the
     // hundreds-of-files case, and the old scan allocated a `String` per
     // comparison (O(targets x unstaged)).
-    let unstaged_kinds: std::collections::HashMap<String, kagi_domain::status::ChangeKind> = status
+    let unstaged_kinds: std::collections::HashMap<&Path, kagi_domain::status::ChangeKind> = status
         .unstaged
         .iter()
-        .map(|f| {
-            (
-                f.path.to_string_lossy().replace('\\', "/"),
-                f.change.clone(),
-            )
-        })
+        .map(|f| (f.path.as_path(), f.change.clone()))
         .collect();
-    let unstaged_set: std::collections::HashSet<String> = unstaged_kinds.keys().cloned().collect();
-    let untracked_set: std::collections::HashSet<String> = status
-        .untracked
-        .iter()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .collect();
-    let conflicted_set: std::collections::HashSet<String> = status
-        .conflicted
-        .iter()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .collect();
+    let untracked_set: std::collections::HashSet<&Path> =
+        status.untracked.iter().map(PathBuf::as_path).collect();
+    let conflicted_set: std::collections::HashSet<&Path> =
+        status.conflicted.iter().map(PathBuf::as_path).collect();
 
     let plan_workdir = workdir_or_empty(repo);
     let rels: Vec<String> = paths
@@ -139,8 +127,16 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
     // Count untracked targets — they are discarded by DELETING the file (after
     // an ODB backup), not by restoring from the index (ADR-0083).
     let mut untracked_targets = 0usize;
-    for rel in &rels {
-        if conflicted_set.contains(rel) {
+    for (raw, rel) in paths.iter().zip(&rels) {
+        if !discard_path_is_safe(rel)
+            || Path::new(raw)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            blockers.push(PlanNote::Discard(DiscardNote::UnsafePath {
+                path: raw.clone(),
+            }));
+        } else if conflicted_set.contains(Path::new(rel)) {
             blockers.push(PlanNote::Discard(DiscardNote::TargetConflicted {
                 path: rel.clone(),
             }));
@@ -151,9 +147,9 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
             blockers.push(PlanNote::Discard(DiscardNote::TargetSubmodule {
                 path: rel.clone(),
             }));
-        } else if untracked_set.contains(rel) {
+        } else if untracked_set.contains(Path::new(rel)) {
             untracked_targets += 1;
-        } else if !unstaged_set.contains(rel) {
+        } else if !unstaged_kinds.contains_key(Path::new(rel)) {
             blockers.push(PlanNote::Discard(DiscardNote::NoUnstagedChanges {
                 path: rel.clone(),
             }));
@@ -219,7 +215,7 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
             .map(|r| kagi_domain::status::FileStatus {
                 path: std::path::PathBuf::from(r),
                 change: unstaged_kinds
-                    .get(r)
+                    .get(Path::new(r))
                     .cloned()
                     .unwrap_or(kagi_domain::status::ChangeKind::Modified),
             })
@@ -228,6 +224,61 @@ pub fn plan_discard(repo: &Repository, paths: &[String]) -> Result<OperationPlan
         destructive: true,
         equivalent_command: None,
     })
+}
+
+/// Refuse unrepresentable or escaping targets before backup creates any refs.
+/// Windows cannot express a literal Git backslash filename without treating it
+/// as a separator, so do not reinterpret it as a neighboring path.
+fn discard_path_is_safe(rel: &str) -> bool {
+    !rel.is_empty()
+        && !rel.contains('\0')
+        && !(cfg!(windows) && rel.contains('\\'))
+        && Path::new(rel).components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+fn preflight_discard(
+    repo: &Repository,
+    plan: &OperationPlan,
+    paths: &[String],
+) -> Result<Vec<String>, GitError> {
+    preflight_check(repo, plan)?;
+    // Validate raw inputs too: lexical normalization must not hide `..`.
+    let workdir = workdir_or_empty(repo);
+    let rels: Vec<String> = paths
+        .iter()
+        .map(|p| discard_rel_path(&workdir, p))
+        .collect();
+    if rels.is_empty() {
+        return Err(GitError::Other("discard: no target paths".to_string()));
+    }
+    for (raw, rel) in paths.iter().zip(&rels) {
+        if !discard_path_is_safe(rel)
+            || Path::new(raw)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            return Err(GitError::Other(
+                DiscardNote::UnsafePath { path: raw.clone() }.message_en(),
+            ));
+        }
+    }
+    let planned: std::collections::HashSet<&Path> = plan
+        .preview_files
+        .iter()
+        .map(|f| f.path.as_path())
+        .collect();
+    let requested: std::collections::HashSet<&Path> = rels.iter().map(Path::new).collect();
+    if requested != planned {
+        return Err(GitError::Other(
+            "discard refused: target paths differ from the approved plan. Please re-plan before proceeding.".into(),
+        ));
+    }
+    Ok(rels)
 }
 
 /// Execute a discard following the **mandatory** ADR-0046 order:
@@ -263,42 +314,58 @@ pub(crate) fn execute_discard(
             plan.blockers.len()
         )));
     }
-    preflight_check(repo, plan)?;
+    let rels = preflight_discard(repo, plan, paths)?;
 
     let workdir = repo
         .workdir()
         .ok_or_else(|| GitError::Other("bare repositories are not supported".to_string()))?
         .to_path_buf();
 
-    let rels: Vec<String> = paths
-        .iter()
-        .map(|p| discard_rel_path(&workdir, p))
-        .collect();
-    if rels.is_empty() {
-        return Err(GitError::Other("discard: no target paths".to_string()));
-    }
-    // #295: a plan is for a specific set of paths. Refuse any path it did not
-    // cover, so a stale or mismatched plan cannot be replayed to discard
-    // something the user never confirmed.
-    let planned: std::collections::HashSet<&str> = plan
-        .preview_files
-        .iter()
-        .filter_map(|f| f.path.to_str())
-        .collect();
-    if let Some(rogue) = rels.iter().find(|r| !planned.contains(r.as_str())) {
-        return Err(GitError::Other(format!(
-            "discard refused: '{rogue}' is not among the paths this plan was built for.              Please re-plan before proceeding."
-        )));
-    }
-
     // Classify targets up front: untracked targets are deleted, tracked targets
     // are restored from the index (ADR-0083).
     let status_before = working_tree_status(repo)?;
-    let untracked_set: std::collections::HashSet<String> = status_before
+    let untracked_set: std::collections::HashSet<&Path> = status_before
         .untracked
         .iter()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .map(PathBuf::as_path)
         .collect();
+
+    let (untracked_rels, tracked_rels): (Vec<&String>, Vec<&String>) = rels
+        .iter()
+        .partition(|r| untracked_set.contains(Path::new(r.as_str())));
+
+    // #1125: libgit2 computes a glob-unescaped common prefix even with
+    // DISABLE_PATHSPEC_MATCH, so a single backslash path can match nothing.
+    // A separate handle uses only approved, byte-exact entries as its index.
+    // Both target and baseline are then restricted: a detached in-memory index
+    // has no on-disk baseline, so checkout cannot remove unselected HEAD files.
+    // The actual repository's index and the caller's cached handle stay intact.
+    let checkout_repo = if tracked_rels.is_empty() {
+        None
+    } else {
+        let index = repo
+            .index()
+            .map_err(|e| GitError::Other(e.message().into()))?;
+        let mut selected_index =
+            git2::Index::new().map_err(|e| GitError::Other(e.message().into()))?;
+        for rel in &tracked_rels {
+            let entry = index.get_path(Path::new(rel.as_str()), 0).ok_or_else(|| {
+                GitError::Other(format!(
+                    "discard refused: '{}' is absent from the index",
+                    rel
+                ))
+            })?;
+            selected_index
+                .add(&entry)
+                .map_err(|e| GitError::Other(e.message().into()))?;
+        }
+        let checkout_repo =
+            Repository::open(&workdir).map_err(|e| GitError::Other(e.message().into()))?;
+        checkout_repo
+            .set_index(&mut selected_index)
+            .map_err(|e| GitError::Other(e.message().into()))?;
+        Some(checkout_repo)
+    };
 
     // ── 1. BACKUP — write each target's current WT content to the ODB. ──
     // Any failure aborts the whole discard BEFORE the working tree is touched.
@@ -354,24 +421,16 @@ pub(crate) fn execute_discard(
         )?);
     }
 
-    // Partition into tracked (restore from index) vs untracked (delete).
-    let (untracked_rels, tracked_rels): (Vec<&String>, Vec<&String>) =
-        rels.iter().partition(|r| untracked_set.contains(*r));
-
-    // ── 2a. checkout_index with path filter + force (restore WT from index). ──
-    // update_index(false): the index (staged changes) is NEVER modified.
-    if !tracked_rels.is_empty() {
+    // ── 2a. checkout only the approved index entries (restore WT). ──
+    // update_index(false): the repository's staged content is NEVER modified.
+    if let Some(checkout_repo) = &checkout_repo {
         let mut cb = git2::build::CheckoutBuilder::new();
         cb.force();
         cb.update_index(false);
-        cb.disable_pathspec_match(true);
-        for rel in &tracked_rels {
-            cb.path(rel.as_str());
-        }
         // #281: the working tree may already be partly rewritten here, so a
         // failure returns the PARTIAL outcome (backups included) rather than an
         // `Err` that would drop the only handle on the overwritten content.
-        if let Err(e) = repo.checkout_index(None, Some(&mut cb)) {
+        if let Err(e) = checkout_repo.checkout_index(None, Some(&mut cb)) {
             // The untracked targets are unverified too: step 2b never runs on
             // this path, so none of them were deleted (#280 review, item 7).
             let unverified = tracked_rels
@@ -424,26 +483,20 @@ pub(crate) fn execute_discard(
 
     // ── 3. VERIFY — tracked targets left the unstaged set; untracked are gone. ──
     let status = working_tree_status(repo)?;
-    let still_unstaged: std::collections::HashSet<String> = status
-        .unstaged
-        .iter()
-        .map(|f| f.path.to_string_lossy().replace('\\', "/"))
-        .collect();
-    let still_untracked: std::collections::HashSet<String> = status
-        .untracked
-        .iter()
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .collect();
+    let still_unstaged: std::collections::HashSet<&Path> =
+        status.unstaged.iter().map(|f| f.path.as_path()).collect();
+    let still_untracked: std::collections::HashSet<&Path> =
+        status.untracked.iter().map(PathBuf::as_path).collect();
     let mut leftover: Vec<&String> = tracked_rels
         .iter()
         .copied()
-        .filter(|r| still_unstaged.contains(*r))
+        .filter(|r| still_unstaged.contains(Path::new(r.as_str())))
         .collect();
     leftover.extend(
         untracked_rels
             .iter()
             .copied()
-            .filter(|r| still_untracked.contains(*r)),
+            .filter(|r| still_untracked.contains(Path::new(r.as_str()))),
     );
     if !leftover.is_empty() {
         // #281: verify runs AFTER the working tree was rewritten — return the

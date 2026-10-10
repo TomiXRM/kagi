@@ -313,6 +313,15 @@ macro_rules! advice_template_en {
     (BranchRenameConfigChanged) => {
         "Local branch config changed after confirmation. Review a new rename plan."
     };
+    (BranchRenameConfigExternal) => {
+        "Branch config is outside the repository's Git directories. Move these settings into local Git config before renaming.\nConfig: {}"
+    };
+    (BranchRenameConfigConditional) => {
+        "Branch-dependent config may disappear during rename. Remove or update the conditional include before renaming.\nCondition: onbranch:{}"
+    };
+    (BranchRenameConfigHeader) => {
+        "Git cannot safely rename this branch config header. Normalize its section/subsection spelling before renaming.\nConfig: {}"
+    };
     (BranchDeleteCurrentBranch) => {
         "Branch '{}' is the currently checked-out branch. Checkout a different branch before deleting this one."
     };

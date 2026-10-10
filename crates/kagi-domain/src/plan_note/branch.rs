@@ -17,7 +17,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchNote {
     /// blocker (`plan_create_branch`) — the target commit does not exist.
-    CommitMissing { sha: String },
+    CommitMissing {
+        sha: String,
+    },
     /// warning (`plan_rename_branch`) — rename is ref-only; dirty WT is
     /// untouched by it.
     RenameRefOnlyDirty,
@@ -26,23 +28,51 @@ pub enum BranchNote {
     RenameRemoteNotRenamed,
     /// Local config keys displayed for approval; digest binds every ordered
     /// source/destination value and its include origin to the confirmation.
-    RenameConfig { keys: Vec<String>, digest: String },
+    RenameConfig {
+        keys: Vec<String>,
+        digest: String,
+    },
     /// Refuse before mutation when branch config changed after approval.
     RenameConfigChanged,
+    RenameConfigExternal {
+        path: String,
+    },
+    RenameConfigConditional {
+        condition: String,
+    },
+    RenameConfigHeader {
+        path: String,
+    },
     /// blocker (`plan_delete_branch`) — the branch is the current HEAD branch.
-    DeleteCurrentBranch { name: String },
+    DeleteCurrentBranch {
+        name: String,
+    },
     /// blocker — any main/linked worktree has the branch checked out.
-    DeleteBranchCheckedOut { name: String, path: String },
+    DeleteBranchCheckedOut {
+        name: String,
+        path: String,
+    },
     /// blocker — a locked linked worktree has the branch checked out.
-    DeleteBranchInLockedWorktree { name: String, path: String },
+    DeleteBranchInLockedWorktree {
+        name: String,
+        path: String,
+    },
     /// blocker (`plan_delete_branch`) — a dirty linked worktree has the branch
     /// checked out.
-    DeleteBranchInDirtyWorktree { name: String, path: String },
+    DeleteBranchInDirtyWorktree {
+        name: String,
+        path: String,
+    },
     /// Legacy receipt note (ADR-0129 F-3). New delete plans refuse every
     /// checked-out branch; preserve this variant for historical data/logs.
-    DeleteRemovesPinningWorktree { name: String, path: String },
+    DeleteRemovesPinningWorktree {
+        name: String,
+        path: String,
+    },
     /// blocker (`plan_delete_branch`) — HEAD is detached at the branch's tip.
-    DeleteDetachedAtTip { name: String },
+    DeleteDetachedAtTip {
+        name: String,
+    },
     /// warning (`plan_delete_branch`) — unmerged deletion requires two confirmations.
     DeleteUnmerged {
         name: String,
@@ -51,12 +81,17 @@ pub enum BranchNote {
     },
     /// warning (`plan_delete_branch`) — the branch has an upstream that is not
     /// deleted by this operation.
-    DeleteKeepsRemote { name: String },
+    DeleteKeepsRemote {
+        name: String,
+    },
     /// warning (`plan_delete_branch`) — the branch tip is not an ancestor of
     /// HEAD, but its whole diff is already in HEAD as one squashed commit.
     /// Worth saying out loud: the graph shows the branch as a dead-end leaf,
     /// so "safe to delete" looks wrong until you know why.
-    DeleteSquashMerged { name: String, squash: String },
+    DeleteSquashMerged {
+        name: String,
+        squash: String,
+    },
 }
 
 impl BranchNote {
@@ -79,6 +114,15 @@ impl BranchNote {
             BranchNote::RenameConfigChanged => {
                 crate::advice_template_en!(BranchRenameConfigChanged).into()
             }
+            BranchNote::RenameConfigExternal { path } => format!(
+                crate::advice_template_en!(BranchRenameConfigExternal), path
+            ),
+            BranchNote::RenameConfigConditional { condition } => format!(
+                crate::advice_template_en!(BranchRenameConfigConditional), condition
+            ),
+            BranchNote::RenameConfigHeader { path } => format!(
+                crate::advice_template_en!(BranchRenameConfigHeader), path
+            ),
             BranchNote::DeleteCurrentBranch { name } => format!(
                 crate::advice_template_en!(BranchDeleteCurrentBranch),
                 name

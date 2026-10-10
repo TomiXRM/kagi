@@ -137,7 +137,7 @@ fn rename_config_preserves_verbatim_values_and_local_includes() {
         return;
     }
     let dir = fixture();
-    let include = dir.path().join("branch-settings");
+    let include = dir.path().join(".git/branch-settings");
     let text = "[branch \"foo\"]\n\tpushRemote = fork\n\trebase = merges\n\tdescription = \"spaces \\\"quotes\\\" and \\\\ escape\"\n\tmerge = refs/heads/one\n\tmerge = refs/heads/two\n[branch \"foo.bar\"]\n\tremote = canonical\n";
     std::fs::write(&include, text).unwrap();
     git(
@@ -215,11 +215,19 @@ fn rename_config_preserves_global_config_and_existing_destination() {
         return;
     }
     let dir = fixture();
-    let global = dir.path().join("global-config");
-    let text = "[branch \"foo\"]\n\tmerge = refs/heads/global\n\tdescription = global only\n";
+    let home = tempfile::tempdir().unwrap();
+    let global = home.path().join(".gitconfig");
+    let text = "[branch \"foo\"]\n\tmerge = refs/heads/global\n\tglobalOnly = must not move\n";
     std::fs::write(&global, text).unwrap();
     // This test owns a child process, so no parallel test observes this env.
-    std::env::set_var("GIT_CONFIG_GLOBAL", &global);
+    std::env::set_var("HOME", home.path());
+    std::env::set_var("XDG_CONFIG_HOME", home.path());
+    std::env::remove_var("GIT_CONFIG_GLOBAL");
+    let config = git2::Config::open_default().unwrap();
+    assert_eq!(
+        config.get_string("branch.foo.globalonly").unwrap(),
+        "must not move"
+    );
     git(
         dir.path(),
         &["config", "--add", "branch.foo.merge", "refs/heads/local"],
@@ -338,7 +346,7 @@ fn rename_config_refuses_include_destination_and_reordered_values() {
         ("rebase", "branch.foo.rebase"),
     ] {
         let dir = fixture();
-        let include = dir.path().join("settings");
+        let include = dir.path().join(".git/settings");
         std::fs::write(&include, "[branch \"foo\"]\n\tdescription = approved\n").unwrap();
         git(
             dir.path(),
@@ -387,4 +395,164 @@ fn rename_config_refuses_include_destination_and_reordered_values() {
     )
     .unwrap();
     assert_eq!(log.lines().count(), 4, "one receipt per refused attempt");
+}
+
+fn assert_plan_refuses_origin(path: &Path) {
+    let mut backend = Backend::open_with_policy(path, ExecutionPolicy::human(false)).unwrap();
+    let op = Operation::RenameBranch {
+        old_name: "foo".into(),
+        new_name: "renamed".into(),
+    };
+    let before = git_output(
+        path,
+        &["config", "--local", "--includes", "--null", "--list"],
+    );
+    let plan = backend.plan(&op).unwrap();
+    assert!(
+        !plan.blockers.is_empty(),
+        "unsafe origin must block at plan: {plan:?}"
+    );
+    assert!(backend.run(&op, &plan).is_err());
+    assert_eq!(
+        git_output(
+            path,
+            &["config", "--local", "--includes", "--null", "--list"]
+        ),
+        before
+    );
+    assert!(!git_output(path, &["branch", "--list", "foo"]).is_empty());
+    assert!(git_output(path, &["branch", "--list", "renamed"]).is_empty());
+}
+
+#[test]
+fn rename_config_blocks_external_include_origin() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let include = dir.path().join("tracked-settings");
+    let original = "[branch \"foo\"]\n\tmerge = refs/heads/one\n";
+    std::fs::write(&include, original).unwrap();
+    git(
+        dir.path(),
+        &["config", "include.path", include.to_str().unwrap()],
+    );
+    assert_plan_refuses_origin(dir.path());
+    assert_eq!(std::fs::read_to_string(include).unwrap(), original);
+}
+
+#[test]
+fn rename_config_blocks_onbranch_include_origin() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let include = dir.path().join(".git/settings");
+    let original = "[branch \"foo\"]\n\tmerge = refs/heads/one\n";
+    std::fs::write(&include, original).unwrap();
+    git(
+        dir.path(),
+        &[
+            "config",
+            "includeIf.onbranch:foo.path",
+            include.to_str().unwrap(),
+        ],
+    );
+    git(dir.path(), &["checkout", "-q", "foo"]);
+    assert_plan_refuses_origin(dir.path());
+    assert_eq!(std::fs::read_to_string(include).unwrap(), original);
+}
+
+#[test]
+fn rename_config_blocks_case_variant_headers() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for header in ["[Branch \"foo\"]", "[branch.Foo]"] {
+        let dir = fixture();
+        let file = dir.path().join(".git/config");
+        let mut original = std::fs::read_to_string(&file).unwrap();
+        original.push_str(&format!("{header}\n\tmerge = refs/heads/one\n"));
+        std::fs::write(&file, &original).unwrap();
+        assert_plan_refuses_origin(dir.path());
+        assert_eq!(std::fs::read_to_string(file).unwrap(), original);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn rename_config_blocks_symlinked_external_origin() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("shared");
+    let original = "[branch \"foo\"]\n\tmerge = refs/heads/one\n";
+    std::fs::write(&target, original).unwrap();
+    let include = dir.path().join(".git/settings");
+    std::os::unix::fs::symlink(&target, &include).unwrap();
+    git(
+        dir.path(),
+        &["config", "include.path", include.to_str().unwrap()],
+    );
+    assert_plan_refuses_origin(dir.path());
+    assert_eq!(std::fs::read_to_string(target).unwrap(), original);
+}
+
+#[test]
+fn rename_config_preserves_worktree_config_values() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    git(dir.path(), &["config", "extensions.worktreeConfig", "true"]);
+    let worktree = dir.path().join("linked");
+    git(
+        dir.path(),
+        &["worktree", "add", "-q", worktree.to_str().unwrap(), "foo"],
+    );
+    git(
+        &worktree,
+        &[
+            "config",
+            "--worktree",
+            "--add",
+            "branch.foo.merge",
+            "refs/heads/one",
+        ],
+    );
+    git(
+        &worktree,
+        &[
+            "config",
+            "--worktree",
+            "--add",
+            "branch.foo.merge",
+            "refs/heads/two",
+        ],
+    );
+    let mut backend = Backend::open_with_policy(&worktree, ExecutionPolicy::human(false)).unwrap();
+    let op = Operation::RenameBranch {
+        old_name: "foo".into(),
+        new_name: "renamed".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|note| note.message_en().contains("branch.foo.merge")));
+    backend.run(&op, &plan).unwrap();
+    assert_eq!(
+        git_output(
+            &worktree,
+            &["config", "--worktree", "--get-all", "branch.renamed.merge"]
+        ),
+        "refs/heads/one\nrefs/heads/two"
+    );
+    assert_eq!(
+        git_output(&worktree, &["symbolic-ref", "--short", "HEAD"]),
+        "renamed"
+    );
 }

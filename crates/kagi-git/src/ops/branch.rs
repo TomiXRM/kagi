@@ -245,6 +245,99 @@ struct RenameConfig {
     files: Vec<String>,
     keys: Vec<String>,
     digest: String,
+    blockers: Vec<PlanNote>,
+}
+
+fn local_config_records(repo: &Repository, scope: &str) -> Result<String, GitError> {
+    let output = run_git(
+        repo.workdir().unwrap_or(repo.path()),
+        &[
+            "config",
+            scope,
+            "--includes",
+            "--null",
+            "--show-origin",
+            "--list",
+        ],
+    )?;
+    if output.status != 0 {
+        return Err(GitError::Other(format!(
+            "local branch config read failed: {}",
+            output.stderr
+        )));
+    }
+    Ok(output.stdout)
+}
+
+fn rename_config_header_is_safe(
+    root: &Path,
+    file: &str,
+    old: &str,
+    new: &str,
+) -> Result<bool, GitError> {
+    let scratch = tempfile::NamedTempFile::new()
+        .map_err(|e| GitError::Other(format!("cannot reserve config dry-run file: {e}")))?;
+    std::fs::copy(file, scratch.path())
+        .map_err(|e| GitError::Other(format!("cannot copy config for dry-run: {e}")))?;
+    let scratch_path = scratch
+        .path()
+        .to_str()
+        .ok_or_else(|| GitError::Other("config dry-run path is not UTF-8".into()))?;
+    let before = run_git(
+        root,
+        &[
+            "config",
+            "--file",
+            scratch_path,
+            "--no-includes",
+            "--null",
+            "--list",
+        ],
+    )?;
+    if before.status != 0 {
+        return Ok(false);
+    }
+    let expected: Vec<_> = before
+        .stdout
+        .split_terminator('\0')
+        .map(|entry| {
+            let key = entry.split_once('\n').map_or(entry, |(key, _)| key);
+            match branch_config_variable(key, old) {
+                Some(variable) => format!("branch.{new}.{variable}{}", &entry[key.len()..]),
+                None => entry.to_owned(),
+            }
+        })
+        .collect();
+    let renamed = run_git(
+        root,
+        &[
+            "config",
+            "--file",
+            scratch_path,
+            "--rename-section",
+            &format!("branch.{old}"),
+            &format!("branch.{new}"),
+        ],
+    )?;
+    if renamed.status != 0 {
+        return Ok(false);
+    }
+    let after = run_git(
+        root,
+        &[
+            "config",
+            "--file",
+            scratch_path,
+            "--no-includes",
+            "--null",
+            "--list",
+        ],
+    )?;
+    Ok(after.status == 0
+        && after
+            .stdout
+            .split_terminator('\0')
+            .eq(expected.iter().map(String::as_str)))
 }
 
 fn rename_config(repo: &Repository, old: &str, new: &str) -> Result<RenameConfig, GitError> {
@@ -253,33 +346,58 @@ fn rename_config(repo: &Repository, old: &str, new: &str) -> Result<RenameConfig
     // includes, without consulting global/system config. Unlike libgit2's
     // entry API, --show-origin identifies which included file must be edited.
     let root = repo.workdir().unwrap_or(repo.path());
-    let output = run_git(
-        root,
-        &[
-            "config",
-            "--local",
-            "--includes",
-            "--null",
-            "--show-origin",
-            "--list",
-        ],
-    )?;
-    if output.status != 0 || output.stdout.contains('\u{fffd}') {
-        return Err(GitError::Other(format!(
-            "local branch config read failed: {}",
-            output.stderr
-        )));
+    let mut output = local_config_records(repo, "--local")?;
+    if repo
+        .config()
+        .ok()
+        .and_then(|config| config.get_bool("extensions.worktreeConfig").ok())
+        == Some(true)
+        && repo.path().join("config.worktree").exists()
+    {
+        output.push_str(&local_config_records(repo, "--worktree")?);
     }
-    let mut records = output.stdout.split_terminator('\0');
+    if output.contains('\u{fffd}') {
+        return Err(GitError::Other(
+            "local branch config is not representable as UTF-8".into(),
+        ));
+    }
+    let mut records = output.split_terminator('\0');
     let mut entries = Vec::new();
     let mut files = Vec::new();
     let mut keys = Vec::new();
     let mut hash = Sha256::new();
+    let mut blockers = Vec::new();
+    let gitdir = std::fs::canonicalize(repo.path())
+        .map_err(|e| GitError::Other(format!("cannot resolve Git directory: {e}")))?;
+    let commondir = std::fs::canonicalize(repo.commondir())
+        .map_err(|e| GitError::Other(format!("cannot resolve common Git directory: {e}")))?;
     while let Some(origin) = records.next() {
         let record = records
             .next()
             .ok_or_else(|| GitError::Other("incomplete local config record".into()))?;
         let (key, value) = record.split_once('\n').unwrap_or((record, ""));
+        if let Some(condition) = key
+            .strip_prefix("includeif.")
+            .and_then(|tail| tail.strip_suffix(".path"))
+            .and_then(|condition| condition.strip_prefix("onbranch:"))
+        {
+            let matches = if condition.ends_with('/') {
+                old.starts_with(condition)
+            } else if condition.contains(['*', '?', '[']) {
+                git2::Pathspec::new([condition])
+                    .map(|pattern| {
+                        pattern.matches_path(Path::new(old), git2::PathspecFlags::USE_CASE)
+                    })
+                    .unwrap_or(false)
+            } else {
+                condition == old
+            };
+            if matches {
+                blockers.push(PlanNote::Branch(BranchNote::RenameConfigConditional {
+                    condition: condition.to_owned(),
+                }));
+            }
+        }
         let source = branch_config_variable(key, old).is_some();
         if !source && branch_config_variable(key, new).is_none() {
             continue;
@@ -287,7 +405,18 @@ fn rename_config(repo: &Repository, old: &str, new: &str) -> Result<RenameConfig
         let file = origin
             .strip_prefix("file:")
             .ok_or_else(|| GitError::Other("local config has no file origin".into()))?;
-        for field in [origin, key, value] {
+        let path = std::fs::canonicalize(root.join(file)).map_err(|e| {
+            GitError::Other(format!("cannot resolve branch config origin '{file}': {e}"))
+        })?;
+        let file = path
+            .to_str()
+            .ok_or_else(|| GitError::Other("branch config origin is not UTF-8".into()))?;
+        if source && !path.starts_with(&gitdir) && !path.starts_with(&commondir) {
+            blockers.push(PlanNote::Branch(BranchNote::RenameConfigExternal {
+                path: file.to_owned(),
+            }));
+        }
+        for field in [file, record] {
             hash.update((field.len() as u64).to_le_bytes());
             hash.update(field.as_bytes());
         }
@@ -301,11 +430,24 @@ fn rename_config(repo: &Repository, old: &str, new: &str) -> Result<RenameConfig
         }
         entries.push((file.to_owned(), key.to_owned(), value.to_owned()));
     }
+    if blockers.is_empty()
+        && old != new
+        && git2::Reference::is_valid_name(&format!("refs/heads/{new}"))
+    {
+        for file in &files {
+            if !rename_config_header_is_safe(root, file, old, new)? {
+                blockers.push(PlanNote::Branch(BranchNote::RenameConfigHeader {
+                    path: file.clone(),
+                }));
+            }
+        }
+    }
     Ok(RenameConfig {
         entries,
         files,
         keys,
         digest: format!("{:x}", hash.finalize()),
+        blockers,
     })
 }
 
@@ -315,7 +457,11 @@ pub fn preflight_rename_branch(
     old: &str,
     new: &str,
 ) -> Result<(), GitError> {
-    check_rename_config(plan, &rename_config(repo, old, new)?.digest)
+    let current = rename_config(repo, old, new)?;
+    if let Some(blocker) = current.blockers.into_iter().next() {
+        return Err(GitError::Blocked(Box::new(blocker)));
+    }
+    check_rename_config(plan, &current.digest)
 }
 
 fn check_rename_config(plan: &OperationPlan, current_digest: &str) -> Result<(), GitError> {
@@ -388,6 +534,7 @@ pub fn plan_rename_branch(
     }
     warnings.push(PlanNote::Branch(BranchNote::RenameRemoteNotRenamed));
     let config = rename_config(repo, old_name, new_name)?;
+    blockers.extend(config.blockers);
     warnings.push(PlanNote::Branch(BranchNote::RenameConfig {
         keys: config.keys,
         digest: config.digest,
@@ -451,6 +598,9 @@ pub(crate) fn execute_rename_branch(
     }
 
     let saved_config = rename_config(repo, old_name, new_name)?;
+    if let Some(blocker) = saved_config.blockers.first() {
+        return Err(GitError::Blocked(Box::new(blocker.clone())));
+    }
     check_rename_config(plan, &saved_config.digest)?;
     // Branch::rename also rewrites config with set_str, losing repeated values
     // and escapes. Reference::rename is ref-only and retargets all worktree HEADs.

@@ -25,6 +25,12 @@ pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG: &str = "引き継ぐ local branch の設定キー: {}。";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CHANGED: &str =
     "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_EXTERNAL: &str =
+    "branch の設定が Git directory の外にあります。リネーム前に local Git config へ移してください。\n設定ファイル: {}";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CONDITIONAL: &str =
+    "branch 名に依存する設定はリネーム時に参照できなくなります。先に条件付き include を削除または更新してください。\n条件: onbranch:{}";
+pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_HEADER: &str =
+    "Git がこの branch 設定の header を安全にリネームできません。先に section／subsection の表記を揃えてください。\n設定ファイル: {}";
 pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
     "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
@@ -62,6 +68,15 @@ pub fn note_ja(note: &BranchNote) -> String {
         }
         BranchNote::RenameConfigChanged => {
             super::advice_text(Msg::AdviceBranchRenameConfigChanged, &[])
+        }
+        BranchNote::RenameConfigExternal { path } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigExternal, &[path])
+        }
+        BranchNote::RenameConfigConditional { condition } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigConditional, &[condition])
+        }
+        BranchNote::RenameConfigHeader { path } => {
+            super::advice_text(Msg::AdviceBranchRenameConfigHeader, &[path])
         }
         BranchNote::DeleteCurrentBranch { name } => {
             super::advice_text(Msg::AdviceBranchDeleteCurrentBranch, &[name])

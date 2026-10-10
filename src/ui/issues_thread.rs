@@ -62,7 +62,6 @@ fn detail_status(app: &KagiApp) -> Option<AnyElement> {
     } else {
         None
     }
-
 }
 
 pub(super) fn render_thread(

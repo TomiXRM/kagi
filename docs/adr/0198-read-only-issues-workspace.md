@@ -93,6 +93,10 @@ literal-code preparation policy. It adds no write operation.
   that post's source revision. Localized empty-body placeholders participate
   in the same source contract. No second parser or raw-Markdown Copy path is
   introduced.
+- The E2E accepted-body setter reconciles the session-owned conversation after
+  replacing the detail-cache body, using the same reconcile as successful
+  production detail acceptance. Mutating only the raw cache is not accepted
+  projection publication; Composer draft-input setters remain separate.
 - List reconciliation preserves the stable post plus intra-post pixel offset
   at the viewport top across prepend/removal. Source changes remeasure changed
   rows; current theme/width/zoom remeasure geometry separately. Loading/error

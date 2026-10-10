@@ -209,6 +209,7 @@ mod tests {
         .is_repo_scoped());
         assert!(ActiveModal::TrustRepo(TrustRepoModal {
             repo_path: std::path::PathBuf::from("/tmp/repo"),
+            error: None,
         })
         .is_repo_scoped());
     }

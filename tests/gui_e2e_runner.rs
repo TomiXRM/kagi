@@ -1747,6 +1747,10 @@ mod macos {
                 Box::new(crate::modal_polish_b::scenario_modal_polish_stash_after),
             ),
             (
+                "trust_failure_feedback",
+                Box::new(crate::modal_polish_b::scenario_trust_failure_feedback),
+            ),
+            (
                 "worktree_folder_picker",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),

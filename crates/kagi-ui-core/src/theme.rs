@@ -1164,7 +1164,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.secondary_active = to_hsla(k.surface);
 
     // ── Input border (Input, Checkbox unchecked) ────────────────
-    gc.colors.input = to_hsla(k.text_muted);
+    // Apple Light separates identifying control boundaries from readable labels.
+    // Dark and custom palettes retain their established boundary/focus contrast.
+    gc.colors.input = to_hsla(if k.slug == "apple-light" {
+        crate::theme_apple_light::INPUT_BORDER
+    } else {
+        k.text_muted
+    });
     gc.colors.caret = to_hsla(k.text_main);
 
     // ── Buttons (0.5.2 reads `button_*`, not primary/secondary) ─
@@ -1441,13 +1447,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            let expected = if t.slug == "apple-light" {
+                0x8e8e8e
+            } else {
+                t.text_muted
+            };
+            assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
+            assert_eq!(gc.colors.ring, to_hsla(t.color_branch));
+            assert_eq!(gc.colors.border, to_hsla(t.text_muted).alpha(0.85));
+            if t.slug == "apple-light" {
+                assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
+                assert!(contrast_ratio(expected, t.panel) >= 3.0);
+                assert!(
+                    contrast_ratio(expected, t.bg_base) < contrast_ratio(t.text_muted, t.bg_base)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn chrome_separators_do_not_borrow_selection_or_label_colors() {
         let sites = [
             include_str!("../../../src/ui/render_header.rs"),
             include_str!("../../../src/ui/timeline_row.rs"),
             include_str!("../../../src/ui/command_palette.rs"),
         ];
-        assert!(sites[0].contains(".bg(rgb(theme().surface))"));
+        let toolbar_sep = sites[0]
+            .split("let sep = || {")
+            .nth(1)
+            .unwrap()
+            .split("};")
+            .next()
+            .unwrap();
+        assert!(toolbar_sep.contains(".bg(rgb(theme().surface))"));
+        assert!(toolbar_sep.contains(".w(px(1.0))"));
+        assert!(!toolbar_sep.contains("selected"));
+        assert!(!toolbar_sep.contains("text_muted"));
         assert!(!sites[1].contains(".border_color(rgb(theme().selected))"));
         assert!(!sites[2].contains(".border_color(rgb(theme().selected))"));
     }

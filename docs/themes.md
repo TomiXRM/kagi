@@ -4,6 +4,12 @@ kagi ships built-in colour themes (Settings → Appearance, the command palette'
 `Theme: …` entries, and View → Theme). You can add your own as JSON files.
 Design record: [ADR-0220](adr/0220-json-user-themes.md).
 
+Apple Light's built-in resting input and unchecked-checkbox boundary is a
+dedicated neutral `#8e8e8e`, not its readable `text_muted` label colour. Focus
+continues to use the accent ring. Other built-ins and custom themes retain the
+`text_muted` input-boundary mapping; `surface` supplies decorative chrome
+separators, and the stronger markdown-table border bridge is unchanged.
+
 ## Where theme files live
 
 | Situation | Folder |

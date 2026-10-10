@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Apple Light resting input/unchecked-checkbox borders use a quieter neutral `#8e8e8e` (3.276:1 on white; 3.058:1 on panel grey). Existing 1px outlines, radius, field heights, accent focus rings, label/placeholder colours and Apple Dark remain unchanged. (#1183)
 - Toolbar group hairlines, PR feed/table dividers and the command-palette frame now use neutral `surface`, not selection blue or label grey. Selection, focus rings and readable markdown-table borders remain unchanged. (#1175)
 - PR 詳細は scaled 420px の本文幅を優先し、狭幅・高 zoom では swimlane、必要なら navigator を折り畳みます。toolbar／View menu／palette／⌘B・⌘⌥L から補助 pane を本文内に再表示でき、既存 Sidebar 設定、PR・file 選択、未送信 draft、opened thread、scroll を保持します。dashboard の navigator は維持し、inline に戻った reveal は破棄して Escape を飲み込まないようにしました。Overview／Review／Files・All PRs・composer の native bounds、dashboard toggle、Escape、resize の回帰を追加しました。(#1118)
 - Smart Commit の LLM／CLI 生成中・生成成功・利用不可時のルールベース fallback・生成失敗の status を EN／JA に対応しました。生成メッセージの言語とは独立して UI 言語を使い、既存の診断ログと session 所有権は維持します。(#1168)

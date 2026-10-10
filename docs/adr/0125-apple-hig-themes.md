@@ -103,3 +103,13 @@ frame/search divider use `surface` at 1 logical px. `selected` remains a row
 state, and `text_muted` remains readable secondary text. The shared gpui-kit
 `colors.border` bridge is not changed: markdown tables depend on its stronger
 muted tint. No new control, focus behavior or selection palette is introduced.
+
+## Amendment — 2026-10-11: identifying input boundaries (#1183)
+
+Apple Light's resting input/unchecked-checkbox boundary is `#8e8e8e`, owned by
+the Apple Light palette and mapped only to `colors.input` in the theme bridge.
+Its calculated sRGB contrast is 3.276:1 on white and 3.058:1 against the adjacent
+`#f7f7f7` panel. `surface` is suitable for decorative separators, not an identifying
+control boundary. Labels, placeholder/body colours, focused accent ring, 1px
+outline, radius 6 and field sizes are unchanged. Apple Dark and custom themes
+retain their current input-boundary mapping to preserve existing contrast.

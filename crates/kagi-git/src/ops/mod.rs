@@ -245,24 +245,25 @@ pub(crate) fn status_summary_display(status: &super::status::WorkingTreeStatus) 
     }
 }
 
-/// Build a `git2::Signature` from the repository config.
-///
-/// Falls back to `"kagi <kagi@local>"` if either `user.name` or `user.email`
-/// is not configured.
+/// Build the effective Git committer signature without inventing an identity.
+/// Libgit2 commit writers share Git's config/env semantics with CLI commits.
 pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
-    let config = repo
-        .config()
-        .map_err(|e| GitError::Other(format!("failed to open config: {}", e.message())))?;
-
-    let name = config
-        .get_string("user.name")
-        .unwrap_or_else(|_| "kagi".to_string());
-    let email = config
-        .get_string("user.email")
-        .unwrap_or_else(|_| "kagi@local".to_string());
-
-    git2::Signature::now(&name, &email)
-        .map_err(|e| GitError::Other(format!("failed to create signature: {}", e.message())))
+    let workdir = repo.workdir().unwrap_or_else(|| repo.path());
+    let output = crate::cli::run_git(workdir, &["var", "GIT_COMMITTER_IDENT"])?;
+    if output.status != 0 {
+        return Err(GitError::Blocked(Box::new(PlanNote::Commit(
+            kagi_domain::plan_note::commit::CommitNote::IdentityUnavailable,
+        ))));
+    }
+    let invalid = || GitError::Other("failed to parse Git committer identity".into());
+    let (name, remainder) = output.stdout.trim().rsplit_once(" <").ok_or_else(invalid)?;
+    let (email, date) = remainder.rsplit_once("> ").ok_or_else(invalid)?;
+    let (seconds, offset) = date.split_once(' ').ok_or_else(invalid)?;
+    let seconds = seconds.parse::<i64>().map_err(|_| invalid())?;
+    let offset = offset.parse::<i32>().map_err(|_| invalid())?;
+    let minutes = (offset / 100) * 60 + offset % 100;
+    git2::Signature::new(name, email, &git2::Time::new(seconds, minutes))
+        .map_err(|e| GitError::Other(format!("failed to parse Git identity: {}", e.message())))
 }
 
 pub(crate) fn short_oid(oid: git2::Oid) -> String {

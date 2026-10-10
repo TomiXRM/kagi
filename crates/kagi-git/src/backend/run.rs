@@ -229,9 +229,7 @@ impl Backend {
             Operation::Commit { .. } | Operation::MergeCommit { .. } => {
                 ops::preflight_commit(&self.repo, plan)
             }
-            Operation::Amend { mode, .. } if mode.includes_staged() => {
-                ops::preflight_amend(&self.repo, plan)
-            }
+            Operation::Amend { .. } => ops::preflight_amend(&self.repo, plan),
             _ => Ok(()),
         })
         .and_then(|()| {

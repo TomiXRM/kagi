@@ -33,6 +33,8 @@ impl CommitLeftoverParts {
 /// Plan notes for the commit op family (`ops/commit.rs::plan_commit`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommitNote {
+    /// Git cannot resolve the effective author or committer identity.
+    IdentityUnavailable,
     /// blocker — the commit message is empty after trimming.
     EmptyMessage,
     /// blocker — nothing is staged in the index.
@@ -53,6 +55,7 @@ impl CommitNote {
     /// strings — golden-tested below).
     pub fn message_en(&self) -> String {
         match self {
+            CommitNote::IdentityUnavailable => "Git author or committer identity is unavailable. Set user.name and user.email before committing.".to_string(),
             CommitNote::EmptyMessage => "Commit message must not be empty.".to_string(),
             CommitNote::NothingStaged => {
                 crate::advice_template_en!(CommitNothingStaged).to_string()

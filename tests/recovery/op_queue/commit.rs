@@ -456,6 +456,7 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
         commit_planning_refusal(cx);
+        commit_identity_unavailable_footer(cx, lang);
         for queued in [false, true] {
             let fixture = branches_fixture();
             let repo = fixture.path().canonicalize().unwrap();
@@ -638,5 +639,47 @@ fn commit_planning_refusal(cx: &mut VisualTestAppContext) {
         "a planning refusal must not start or record execution"
     );
     drop(repository);
+    unmount(cx, app, window);
+}
+
+/// The typed identity refusal uses the same localized planning-failure surface
+/// as other Commit notes; this leg isolates presentation from Git configuration.
+fn commit_identity_unavailable_footer(
+    cx: &mut VisualTestAppContext,
+    lang: kagi_ui_core::i18n::Lang,
+) {
+    use kagi::ui::{FooterStatus, ToastKind};
+    use kagi_domain::plan_note::{CommitNote, PlanNote};
+    use kagi_ui_core::i18n::{self, Lang, Op};
+
+    let fixture = branches_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    let head = rev_parse(&repo, &["HEAD"]);
+    let index = std::fs::read(repo.join(".git/index")).unwrap();
+    let reason = match lang {
+        Lang::En => "Git author or committer identity is unavailable. Set user.name and user.email before committing.",
+        Lang::Ja => "Git の作者またはコミッターの情報が設定されていません。コミットする前に user.name と user.email を設定してください。",
+    };
+    let note = PlanNote::Commit(CommitNote::IdentityUnavailable);
+    assert_eq!(i18n::plan_note_text(&note), reason);
+    let expected = i18n::op_plan_failed(Op::Commit, reason);
+    let error = kagi_git::GitError::Blocked(Box::new(note));
+    app.update(cx, |app, cx| app.commit_plan_result_for_e2e(Err(error), cx));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(matches!(&app.status_footer, FooterStatus::Failed(message) if message.as_ref() == expected),
+            "identity refusal must reach the localized footer: {:?}", app.status_footer);
+        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+        assert!(matches!(toast.kind, ToastKind::Error) && toast.message.as_ref() == expected,
+            "identity refusal must reach the localized error toast: {}", toast.message);
+        assert!(!app.app_sessions.has_leases() && app.write_busy_op.is_none());
+    });
+    assert_eq!(rev_parse(&repo, &["HEAD"]), head);
+    assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+    assert!(kagi_git::oplog::read_oplog_tail_for_repo(&repo, 10).is_empty());
     unmount(cx, app, window);
 }

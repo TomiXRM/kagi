@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit／Amend／解決済み MergeCommit は実行と同じ Git CLI で作者・コミッターの identity を確認し、未設定なら user.name／user.email の設定を促す EN／JA の blocker を表示します。承認後も再確認し、`kagi <kagi@local>` の仮 identity は使いません。libgit2 の commit writer も Git の有効な committer を使い、backend fixture の identity は repo-local に明示します。
 - Commit／Amend の private index は stat-cache と skip-worktree flag を保持し、sparse なファイルを hook に削除として見せたり、全 tracked file を再 hash したりしないようにしました。empty commit の message-only Amend と HEAD の差分をなくす staged／both Amend を維持し、署名設定は Git の conditional include を含む実際の CLI policy に揃えます。(#1132／#1133 review)
 - `commit.gpgsign=true` の Commit／fixup・全 Amend mode・解決済み MergeCommit は、system Git の `gpg.format`／署名鍵設定を使って署名します。鍵が無い場合は HEAD と元 index を進めず、Git の理由を操作記録と EN／JA の失敗表示に残します。成功後も要求された署名 header を確認し、hook による unsigned HEAD への置換を成功として扱いません。使い捨て SSH 鍵による署名と `git verify-commit` の backend 回帰を追加しました。(#1133)
 - Commit／fixup・Amend・解決済み merge の Commit は user の Git hook を実行し、`core.hooksPath` を尊重するようにしました。拒否 hook の stderr は操作記録と EN／JA の失敗 footer／toast に残し、HEAD と元 index を保持します。承認時の staged identity を再照合した private index で実行し、完了後に HEAD の tree と parents を検証します。(#1132)

@@ -30,10 +30,9 @@
 //! Default workspace tests omit this target (including its recovery modules).
 //! With `gui-e2e` but without `KAGI_GUI_E2E`, it still prints SKIP and exits 0.
 //!
-//! PNGs would land in `$CARGO_TARGET_DIR/gui_e2e_poc/{before,after}.png` — but
-//! the locked gpui rev does not implement `render_to_image` for the real Mac
-//! window, so capture is best-effort and currently skipped (state assertions,
-//! not the screenshot, are the pass/fail oracle — ADR-0166 §3).
+//! Native image capture is enabled only by `gui-e2e` through the platform's
+//! test-support feature. Paint regressions can assert Metal-rendered pixels;
+//! screenshots do not replace state/safety assertions (ADR-0166 §3).
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
@@ -62,6 +61,10 @@ mod proc_identity;
 #[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/primary_button.rs"]
+mod primary_button;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
@@ -1084,6 +1087,10 @@ mod macos {
             (
                 "wip_selected_roles",
                 Box::new(crate::recovery_operations::scenario_wip_selected_roles),
+            ),
+            (
+                "primary_button_states",
+                Box::new(crate::primary_button::scenario_primary_button_states),
             ),
             (
                 "dialog_a11y_roles",

@@ -816,6 +816,24 @@ fn discard_untracked_symlink_does_not_ingest_target_bytes() {
         std::fs::symlink_metadata(&link).is_err(),
         "the symlink must be removed from the working tree"
     );
+
+    // #1138: the recovery root must retain the link's type, not just its bytes.
+    let tree = repo
+        .find_reference(&backup.reference)
+        .unwrap()
+        .peel_to_tree()
+        .unwrap();
+    let entry = tree.get_name("file").unwrap();
+    assert_eq!(entry.filemode(), 0o120000);
+    assert_eq!(entry.id().to_string(), backup.blob);
+    restore_backup_with_git(&d, &backup.reference, "link");
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(std::fs::read_link(&link).unwrap(), secret_path);
+    assert_eq!(std::fs::read(&secret_path).unwrap(), secret_bytes);
+    assert_eq!(kagi_git::oplog::read_oplog_tail(10).len(), 1);
 }
 
 // ────────────────────────────────────────────────────────────
@@ -925,6 +943,218 @@ fn discard_dirty_submodule_is_blocked_and_other_files_complete() {
         "submodule must remain dirty (not discarded, not aborted): {:?}",
         status.unstaged
     );
+}
+
+/// Exercise manual Git recovery, not a new Kagi filesystem restore API.
+/// Export into an empty directory with a private index, then rename the entry:
+/// neither checkout nor rename follows an existing destination symlink.
+#[cfg(unix)]
+fn restore_backup_with_git(dir: &Path, reference: &str, path: &str) {
+    let export = TempDir::new().unwrap();
+    let index = export.path().join("index");
+    let prefix = format!("{}/", export.path().join("export").display());
+    std::fs::create_dir(export.path().join("export")).unwrap();
+    for args in [
+        vec!["read-tree", reference],
+        vec![
+            "-c",
+            "core.symlinks=true",
+            "checkout-index",
+            "--all",
+            "--prefix",
+            &prefix,
+        ],
+    ] {
+        let out = git_command(dir)
+            .env("GIT_INDEX_FILE", &index)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    std::fs::rename(export.path().join("export/file"), dir.join(path)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn discard_symlink_backup_round_trip_preserves_types_targets_and_receipts() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    use kagi_git::{Backend, Operation, OperationOutcome};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let outside = TempDir::new().unwrap();
+    let sentinel = outside.path().join("sentinel");
+    let secret = b"EXTERNAL-SYMLINK-SENTINEL\0\xff\n";
+    std::fs::write(&sentinel, secret).unwrap();
+    for path in ["modified-link", "link-to-file"] {
+        symlink(&sentinel, d.join(path)).unwrap();
+    }
+    write_file(&d, "file-to-link", "committed regular\n");
+    git(&d, &["add", "."]);
+    git(&d, &["commit", "-qm", "tracked link types"]);
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    std::fs::remove_file(d.join("modified-link")).unwrap();
+    symlink("tracked.txt", d.join("modified-link")).unwrap();
+    std::fs::remove_file(d.join("link-to-file")).unwrap();
+    std::fs::write(d.join("link-to-file"), b"dirty executable\n").unwrap();
+    std::fs::set_permissions(
+        d.join("link-to-file"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::remove_file(d.join("file-to-link")).unwrap();
+    symlink(&sentinel, d.join("file-to-link")).unwrap();
+    symlink(&sentinel, d.join("outside-link")).unwrap();
+    symlink("./missing-target", d.join("dangling-link")).unwrap();
+    let raw_target = std::ffi::OsString::from_vec(b"missing-\xff-target".to_vec());
+    symlink(&raw_target, d.join("raw-link")).unwrap();
+    write_file(&d, "plain-file", "untracked regular\n");
+
+    let expected = [
+        ("modified-link", 0o120000, b"tracked.txt".to_vec()),
+        ("link-to-file", 0o100755, b"dirty executable\n".to_vec()),
+        (
+            "file-to-link",
+            0o120000,
+            sentinel.as_os_str().as_bytes().to_vec(),
+        ),
+        (
+            "outside-link",
+            0o120000,
+            sentinel.as_os_str().as_bytes().to_vec(),
+        ),
+        ("dangling-link", 0o120000, b"./missing-target".to_vec()),
+        ("raw-link", 0o120000, raw_target.as_bytes().to_vec()),
+        ("plain-file", 0o100644, b"untracked regular\n".to_vec()),
+    ];
+    let paths = expected
+        .iter()
+        .map(|(path, _, _)| path.to_string())
+        .collect();
+    let op = Operation::Discard { paths };
+    let mut backend = Backend::open(&d).unwrap();
+    backend.set_auto_snapshot(false);
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let report = backend.run_recorded(&op, &plan);
+    let OperationOutcome::Discard(outcome) = report.result.unwrap() else {
+        panic!("not discard");
+    };
+    assert!(!outcome.is_partial(), "{outcome:?}");
+    let receipts = kagi_git::oplog::read_oplog_tail(10);
+    assert_eq!(
+        receipts.len(),
+        1,
+        "exactly one receipt for the discard batch"
+    );
+    assert_eq!(
+        receipts[0].backup_refs,
+        report.recording.entry().backup_refs
+    );
+    let repo = Repository::open(&d).unwrap();
+    for (path, mode, bytes) in expected {
+        let backup = outcome.backups.iter().find(|b| b.path == path).unwrap();
+        let tree = repo
+            .find_reference(&backup.reference)
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
+        assert_eq!(tree.len(), 1);
+        let entry = tree.get_name("file").unwrap();
+        assert_eq!(entry.filemode(), mode, "{path}");
+        assert_eq!(entry.id().to_string(), backup.blob);
+        assert_eq!(
+            repo.find_blob(entry.id()).unwrap().content(),
+            bytes,
+            "{path}"
+        );
+        assert_eq!(
+            backend.read_backup(&backup.reference).unwrap(),
+            bytes,
+            "{path}"
+        );
+        restore_backup_with_git(&d, &backup.reference, path);
+        let metadata = std::fs::symlink_metadata(d.join(path)).unwrap();
+        if mode == 0o120000 {
+            assert!(metadata.file_type().is_symlink(), "{path}");
+            assert_eq!(
+                std::fs::read_link(d.join(path))
+                    .unwrap()
+                    .as_os_str()
+                    .as_bytes(),
+                bytes,
+                "{path}"
+            );
+        } else {
+            assert!(metadata.is_file(), "{path}");
+            assert_eq!(std::fs::read(d.join(path)).unwrap(), bytes, "{path}");
+            assert_eq!(
+                metadata.permissions().mode() & 0o111 != 0,
+                mode == 0o100755,
+                "{path}"
+            );
+        }
+        assert_eq!(std::fs::read(&sentinel).unwrap(), secret);
+    }
+    assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+    assert!(!object_exists(&d, &hash_object(&d, secret)));
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail(10).len(),
+        1,
+        "manual recovery adds no Kagi receipt"
+    );
+}
+
+#[test]
+fn discard_backup_reader_preserves_legacy_blob_roots_and_rejects_wrong_trees() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let repo = Repository::open(&d).unwrap();
+    let bytes = b"legacy target-looking content\0\xff\n";
+    let oid = repo.blob(bytes).unwrap();
+    let reference = "refs/kagi/backups/legacy/0";
+    repo.reference(reference, oid, false, "legacy backup fixture")
+        .unwrap();
+    let backend = kagi_git::Backend::open(&d).unwrap();
+    assert_eq!(backend.read_backup(reference).unwrap(), bytes);
+    let output = git_command(&d)
+        .args(["cat-file", "blob", reference])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout, bytes,
+        "legacy recovery remains byte-identical"
+    );
+    for (name, mode) in [("not-file", 0o100644), ("file", 0o040000)] {
+        let mut tree = repo.treebuilder(None).unwrap();
+        let entry_oid = if mode == 0o040000 {
+            repo.treebuilder(None).unwrap().write().unwrap()
+        } else {
+            oid
+        };
+        tree.insert(name, entry_oid, mode).unwrap();
+        let root = tree.write().unwrap();
+        let reference = format!("refs/kagi/backups/invalid/{mode}");
+        repo.reference(&reference, root, false, "invalid backup fixture")
+            .unwrap();
+        assert!(
+            backend.read_backup(&reference).is_err(),
+            "arbitrary trees are not file backups"
+        );
+    }
 }
 
 #[path = "../../../tests/support/isolated.rs"]

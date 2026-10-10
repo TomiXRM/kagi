@@ -793,6 +793,15 @@ pub fn preflight_check_stash(
     plan: &OperationPlan,
     expected_stash_count: usize,
 ) -> Result<(), GitError> {
+    // Push needs an actual HEAD commit, independently of the approved plan.
+    // Check before generic drift so the live missing prerequisite stays typed.
+    if matches!(plan.title, PlanTitle::Stash(StashTitle::Push { .. }))
+        && matches!(resolve_head(repo)?, Head::Unborn { .. })
+    {
+        return Err(GitError::Blocked(Box::new(PlanNote::Stash(
+            StashNote::HeadRequired,
+        ))));
+    }
     // 1. Head check (re-use existing).
     preflight_check(repo, plan)?;
 

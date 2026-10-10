@@ -314,7 +314,11 @@ impl Backend {
             evidence.conflict_identity_before = self.stash_conflict_identity()?;
         }
         if matches!(op, Operation::StashPush { .. }) {
-            evidence.untracked_before = self.working_tree_status()?.untracked;
+            let mut status = self.working_tree_status()?;
+            status
+                .untracked
+                .retain(|path| ops::stash_push_retains_untracked(&status.staged, path));
+            evidence.untracked_before = status.untracked;
         }
         if matches!(fault, Some(stash::StashFaultPoint::BeforeMutation)) {
             panic!("stash fault before mutation");

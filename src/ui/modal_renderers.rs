@@ -278,6 +278,8 @@ fn plan_state(
 }
 
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    let predicted_detail =
+        kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
     div()
         .id("plan-state-comparison")
         .relative()
@@ -305,7 +307,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
                     &plan.predicted.head,
-                    &plan.predicted.dirty,
+                    &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",
                     "plan-state-after-label",
@@ -315,19 +317,12 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                             .predicted
                             .dirty
                             .strip_suffix(" file(s) (resolve in Conflict Mode)")
-                            .map(|short| (short, plan.predicted.dirty.as_str())),
+                            .map(|short| (short, predicted_detail.as_ref())),
                         // A blocked plan can retain CURRENT as its prediction;
                         // do not claim an operation happened in that case.
                         _ if plan.predicted.dirty == plan.current.dirty => None,
-                        title => kagi_ui_core::i18n::plan::after_state_label(title).map(|short| {
-                            (
-                                short,
-                                kagi_ui_core::i18n::plan::after_state_detail(
-                                    title,
-                                    &plan.predicted.dirty,
-                                ),
-                            )
-                        }),
+                        title => kagi_ui_core::i18n::plan::after_state_label(title)
+                            .map(|short| (short, predicted_detail.as_ref())),
                     },
                 )),
         )

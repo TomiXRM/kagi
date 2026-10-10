@@ -496,6 +496,9 @@ macro_rules! advice_template_en {
     (PullRemotePreviewStale) => {
         "Remote pull preview no longer matches the host's branch, upstream, HEAD commit, or working-tree changes. Refresh the remote view and try again."
     };
+    (StashHeadRequired) => {
+        "Stash push requires a HEAD commit. Create an initial commit before stashing."
+    };
     (StashUntrackedIncluded) => {
         "{} untracked file(s) will be included in the stash (equivalent to `git stash push -u`)."
     };

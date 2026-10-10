@@ -30,13 +30,14 @@ the rule names it.
   with a reply that gives the reason, and the limit is written into the ADR. Aim
   for one review round per PR; Codex keeps finding the next corner otherwise.
 - **User-authorized substitute review**: when GitHub Codex cannot run, an
-  explicitly authorized, fresh independent Codex/Sol reviewer may review the
+  explicitly authorized, fresh independent Codex/Sol (GPT Sol 6.1 SubAgent) reviewer may review the
   exact head through herdr. Publish its model, agent identity, reviewed SHA,
   read set, findings and Japanese responses on the PR. State that the GitHub
   bot did not run; static review is not runtime verification. The reviewed-head,
   green-CI and unanswered-comment merge gates still apply.
-- **Merge** only the head commit Codex reviewed, with CI green and no unanswered
-  Codex comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
+- **Merge** only the head commit Codex (or the user-authorized substitute reviewer:
+  a Sol 6.1 / Opus SubAgent or herdr reviewer pane) reviewed, with CI green and no
+  unanswered review comment: `gh pr merge N --merge --match-head-commit <sha>`, then confirm the
   PR reads `MERGED`.
 - **Stacked PRs** set their base to the parent branch and say "change the base to
   main after #N merges" at the top of the body.
@@ -50,16 +51,17 @@ When a PM session drives implementation agents in herdr panes:
 - **Mail is the only task transport.** PM assignments, amendments, decisions and
   agent replies use herdr mail, not `agent prompt`, `pane send-text` or simulated
   terminal Enter. Read the installed mail command help and verify support in the
-  selected server before dispatch. If unavailable, report the missing capability
-  to the PM and pause dispatch; do not silently fall back or restart/upgrade a
-  shared server.
+  selected server before dispatch. If unavailable, the PM reports the missing
+  capability to the user outside herdr and pauses dispatch; an agent that cannot
+  send mail stops the affected action and waits, without a terminal-prompt fallback.
+  Do not silently fall back or restart/upgrade a shared server.
 - **Every assignment names its contract.** Include a stable task name, sender and
   reply destination, session/workspace, owned worktree/branch, Issue/PR and exact
   head when applicable, scope, acceptance criteria and prohibited actions.
   Resolve addresses from live IDs; do not infer them from pane order.
 - **Replies must also use mail.** A recipient sends `[ack]` before starting, then
   replies in the same task/thread with `[done]`, `[status]`, `[ask]` or `[info]`.
-  Include the task name and exact head in both receipt and final report.
+  Include the task name, and the exact head when applicable (base or PR head), in both receipt and final report.
   `[done]` names the actual changes or reviewed files, findings/responses,
   observed checks and evidence links; an implementation report includes remote
   head verification and UI Tier B links where required. Explicitly distinguish
@@ -74,8 +76,8 @@ When a PM session drives implementation agents in herdr panes:
 - **Verify the premise before assigning.** Before writing "reuse the existing X",
   search for X — issue bodies go stale. An agent that finds the premise wrong says
   so instead of building around it.
-- **Messages are scoped to the workspace.** A prompt about another repository or an
-  issue number that does not match this repository is a misroute: report it, do
+- **Messages are scoped to the workspace.** An assignment (mail) about another
+  repository or a non-matching issue number is a misroute: report it by mail, do
   not act on it.
 - Watch usage limits in `herdr agent list` (`limit`); an agent near its limit gets
   small, finishable tasks.

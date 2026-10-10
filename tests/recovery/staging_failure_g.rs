@@ -60,7 +60,7 @@ fn index_lock_failure_has_the_same_footer_and_receipt_for_single_and_batch() {
                     StageAction::Unstage
                 };
                 let count = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len();
-                let failure = StageFailure::record(action, repo, &paths, &error.to_string(), false);
+                let failure = StageFailure::record(action, repo, &paths, &error, false);
                 assert!(failure.footer.contains("f.txt"));
                 assert!(failure.footer.contains(&repo.display().to_string()));
                 assert!(
@@ -111,7 +111,7 @@ fn failed_append_keeps_attempted_failure_and_explains_missing_record() {
         StageAction::Stage,
         dir.path(),
         &["f.txt".into()],
-        "index.lock held",
+        &GitError::Other("index.lock held".into()),
         false,
     );
     assert!(matches!(failure.recording, Recording::Failed { .. }));
@@ -137,7 +137,7 @@ fn trust_refusal_is_recorded_without_a_modal_or_index_change() {
         StageAction::Stage,
         dir.path(),
         &["f.txt".into()],
-        &error.to_string(),
+        &error,
         matches!(error, GitError::Untrusted(_)),
     );
     assert!(matches!(
@@ -166,7 +166,7 @@ fn repo_open_failure_preserves_the_original_cause_and_target() {
         StageAction::Unstage,
         dir.path(),
         &["missing.txt".into()],
-        &error.to_string(),
+        &error,
         false,
     );
     assert!(failure.footer.contains(&error.to_string()));

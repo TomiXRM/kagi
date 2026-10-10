@@ -1,6 +1,8 @@
 //! JA strings for the cross-op `CommonNote` templates (ADR-0129 §A).
 
-use kagi_domain::plan_note::{CommonNote, DirtyParts, OpPhrase, PlanOp, UntrackedCtx};
+use kagi_domain::plan_note::{
+    CommonNote, DirtyParts, OpPhrase, PlanOp, SparseCheckoutKind, UntrackedCtx,
+};
 
 use crate::i18n::{branch_name_error, worktree_path_error, Msg};
 
@@ -35,6 +37,19 @@ pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
 /// JA template for `Msg::AdviceCommonSparseExcludedPath`.
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
     "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
+
+/// JA template for `Msg::AdviceCommonExternalFilter`.
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
+    "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。";
+
+pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER_SYNC: &str =
+    "'{}' は外部 filter ({}) を使用しています。Kagi は強制 checkout でその filter を実行できないため、まだ sync できません。書込みは行っていません。filter に対応するまで git で sync してください。";
+
+pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
+    "この repository は {} を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
+
+pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
+    "'{}' は{}の submodule です。内部の作業ツリーを保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
 
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =
@@ -135,6 +150,34 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::SparseExcludedPath { path } => {
             super::advice_text(Msg::AdviceCommonSparseExcludedPath, &[path])
         }
+        CommonNote::ExternalFilter { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilter, &[path, filter])
+        }
+        CommonNote::ExternalFilterSync { path, filter } => {
+            super::advice_text(Msg::AdviceCommonExternalFilterSync, &[path, filter])
+        }
+        CommonNote::SparseCheckoutUnsupported { kind } => super::advice_text(
+            Msg::AdviceCommonSparseCheckoutUnsupported,
+            &[&match kind {
+                SparseCheckoutKind::Cone => "cone sparse-checkout",
+                SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
+            }],
+        ),
+        CommonNote::SubmoduleCheckoutUnsupported {
+            path,
+            uninitialized,
+        } => super::advice_text(
+            Msg::AdviceCommonSubmoduleCheckoutUnsupported,
+            &[
+                path,
+                &if *uninitialized {
+                    "未初期化"
+                } else {
+                    "未保存の変更あり"
+                },
+            ],
+        ),
         CommonNote::HunkChanged { path } => {
             super::advice_text(Msg::AdviceCommonHunkChanged, &[path])
         }

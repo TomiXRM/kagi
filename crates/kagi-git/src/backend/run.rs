@@ -248,6 +248,11 @@ impl Backend {
             // the family requirements again before any snapshot or mutation (#502).
             let fresh = self.plan(op)?;
             if !fresh.blockers.is_empty() {
+                if matches!(op, Operation::SyncToRemote { .. }) {
+                    // Keep the fresh plan's typed reason before any savepoint,
+                    // without another full status/attribute scan here.
+                    return Err(GitError::Blocked(Box::new(fresh.blockers[0].clone())));
+                }
                 return Err(GitError::Other(
                     fresh
                         .blockers

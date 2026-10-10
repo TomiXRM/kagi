@@ -41,6 +41,9 @@ pub(crate) fn preflight_hunk<'a>(
     repo: &'a Repository,
     plan: &HunkPlan<'_>,
 ) -> Result<Diff<'a>, GitError> {
+    if !plan.staged {
+        crate::special_repo::FilterCheck::new(repo)?.require_supported(plan.path)?;
+    }
     let mut opts = pathspec_options(plan.path)?;
     let mut index = repo.index().map_err(|e| other("repo.index", e))?;
     index.read(true).map_err(|e| other("index.read", e))?;

@@ -74,6 +74,7 @@ pub mod resolution;
 pub mod ruleset;
 pub mod session;
 mod snapshot;
+mod special_repo;
 mod staging;
 mod status;
 pub mod trust;

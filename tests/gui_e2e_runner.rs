@@ -2457,6 +2457,10 @@ mod macos {
                 Box::new(crate::worktree_graph::scenario_cross_worktree_merge),
             ),
             (
+                "stage_external_filter",
+                Box::new(crate::recovery_operations::scenario_stage_external_filter),
+            ),
+            (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
             ),

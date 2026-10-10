@@ -118,6 +118,14 @@ pub enum UntrackedCtx {
     Untouched,
 }
 
+/// The worktree semantics that a force checkout cannot preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseCheckoutKind {
+    Cone,
+    NonCone,
+    SkipWorktree,
+}
+
 /// Cross-op notes (ADR-0129 appendix §A).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommonNote {
@@ -141,6 +149,14 @@ pub enum CommonNote {
     /// the working tree on purpose. Staging it would record a deletion the user
     /// never made — Git refuses the same operation.
     SparseExcludedPath { path: String },
+    /// #1136: named clean/smudge filters are not executed by libgit2.
+    ExternalFilter { path: String, filter: String },
+    /// #1137: filter refusal for Sync, with checkout-specific guidance.
+    ExternalFilterSync { path: String, filter: String },
+    /// #1137: force checkout does not preserve sparse index/worktree semantics.
+    SparseCheckoutUnsupported { kind: SparseCheckoutKind },
+    /// #1137: nested work cannot be retained by a superproject blob backup.
+    SubmoduleCheckoutUnsupported { path: String, uninitialized: bool },
     /// blocker (#842, #1131): the displayed hunk's range or raw patch content
     /// no longer matches the live diff. Never substitute new content at the
     /// same range, or a neighbouring hunk the user did not choose.
@@ -227,6 +243,42 @@ impl CommonNote {
             ),
             CommonNote::SparseExcludedPath { path } => {
                 format!(crate::advice_template_en!(CommonSparseExcludedPath), path)
+            }
+            CommonNote::ExternalFilter { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilter),
+                    path, filter
+                )
+            }
+            CommonNote::ExternalFilterSync { path, filter } => {
+                format!(
+                    crate::advice_template_en!(CommonExternalFilterSync),
+                    path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { kind } => {
+                format!(
+                    crate::advice_template_en!(CommonSparseCheckoutUnsupported),
+                    match kind {
+                        SparseCheckoutKind::Cone => "cone sparse-checkout",
+                        SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                        SparseCheckoutKind::SkipWorktree => "skip-worktree entries",
+                    }
+                )
+            }
+            CommonNote::SubmoduleCheckoutUnsupported {
+                path,
+                uninitialized,
+            } => {
+                format!(
+                    crate::advice_template_en!(CommonSubmoduleCheckoutUnsupported),
+                    if *uninitialized {
+                        "an uninitialized"
+                    } else {
+                        "a dirty"
+                    },
+                    path
+                )
             }
             CommonNote::HunkChanged { path } => {
                 format!(crate::advice_template_en!(CommonHunkChanged), path)

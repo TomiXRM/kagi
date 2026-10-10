@@ -88,6 +88,18 @@ macro_rules! advice_template_en {
     (CommonSparseExcludedPath) => {
         "'{}' is excluded by sparse-checkout, so it is absent from the working tree on purpose — not deleted. Staging it would record a deletion you did not make. Git refuses this too; widen the sparse-checkout definition first if you meant to change it."
     };
+    (CommonExternalFilter) => {
+        "'{}' uses an external filter ({}). Kagi cannot preserve its filtered content yet; stage or discard it with git until Kagi supports filters. Nothing was written."
+    };
+    (CommonExternalFilterSync) => {
+        "Kagi cannot force-checkout '{}' because it uses an external filter ({}), which Kagi cannot run. Nothing was written; sync with git until Kagi supports filters."
+    };
+    (CommonSparseCheckoutUnsupported) => {
+        "Kagi cannot safely force-checkout a repository using {}: sparse paths and index flags cannot yet be preserved. Use git to manage this repository. Nothing was written."
+    };
+    (CommonSubmoduleCheckoutUnsupported) => {
+        "Kagi cannot safely force-checkout a repository with {} submodule ('{}'): its nested worktree cannot be preserved. Initialize or save the submodule with git first. Nothing was written."
+    };
     (CommonHunkChanged) => {
         "The hunk in '{}' has changed since the diff was drawn, so nothing was staged or unstaged. Check the refreshed diff and choose the hunk again."
     };

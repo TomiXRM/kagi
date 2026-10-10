@@ -695,7 +695,6 @@ impl CommitPanelView {
                 let fresh = cx.new(|cx| {
                     InputState::new(window, cx)
                         .multi_line(true)
-                        .auto_grow(3, 12)
                         .placeholder(Msg::CommitBody.t())
                 });
                 fresh.update(cx, |s, cx| s.set_value(text, window, cx));

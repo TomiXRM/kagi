@@ -61,6 +61,7 @@ pub fn plan_sync_to_remote(repo: &Repository, branch: &str) -> Result<OperationP
     let work_backup = format!("{}{}/1", super::backup::PREFIX, operation_id);
 
     let mut blockers = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings = Vec::new();
 
     let from = repo
@@ -304,6 +305,7 @@ pub(crate) fn preflight_sync_to_remote(
         ));
     }
     preflight_check(repo, plan)?;
+    super::check_git_identity(repo)?;
     if let Some(op) = super::in_progress_op(repo) {
         return Err(GitError::Other(format!(
             "sync-to-remote refused at preflight: {} is in progress",
@@ -336,7 +338,7 @@ fn retain_work(
     head: &git2::Commit<'_>,
     operation_id: &str,
 ) -> Result<SyncWorkBackup, GitError> {
-    let sig = super::build_signature(repo)?;
+    let sig = super::internal_signature()?;
     let index_tree = repo
         .index()
         .and_then(|mut i| i.write_tree())
@@ -434,6 +436,7 @@ pub(crate) fn execute_sync_to_remote(
 ) -> Result<crate::OperationOutcome, GitError> {
     let (resolved, tip_backup_name, work_backup_name) =
         preflight_sync_to_remote(repo, plan, branch)?;
+    let sig = super::build_signature(repo)?;
     let operation_id = tip_backup_name
         .strip_prefix(super::backup::PREFIX)
         .and_then(|rest| rest.strip_suffix("/0"))
@@ -529,7 +532,6 @@ pub(crate) fn execute_sync_to_remote(
             "'{branch}' moved during execution; branch not updated"
         )));
     }
-    let sig = super::build_signature(repo)?;
     transaction
         .set_target(
             &refname,

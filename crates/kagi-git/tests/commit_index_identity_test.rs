@@ -388,3 +388,223 @@ fn commit_index_identity_rejects_resolved_merge_blob_swap() {
         swap_blob,
     );
 }
+
+fn checkout_state(path: &Path) -> (String, String, String, String, Vec<u8>) {
+    (
+        git_output(path, &["symbolic-ref", "HEAD"]),
+        git_output(path, &["show-ref"]),
+        git_output(path, &["ls-files", "--stage"]),
+        git_output(path, &["status", "--porcelain", "--untracked-files=all"]),
+        std::fs::read(path.join("a")).unwrap(),
+    )
+}
+
+fn assert_generic_identity_refusal(path: &Path, op: Operation) {
+    let mut backend = Backend::open(path).unwrap();
+    let before = checkout_state(path);
+    let plan = backend
+        .plan(&op)
+        .expect("missing identity must yield a plan");
+    assert!(
+        plan.blockers
+            .contains(&kagi_domain::plan_note::PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::GitIdentityUnavailable,
+            )),
+        "{:?}",
+        plan.blockers
+    );
+    assert_eq!(checkout_state(path), before, "planning changed checkout");
+    assert!(backend.list_snapshots().unwrap().is_empty());
+    assert!(read_oplog_tail_for_repo(path, 10).is_empty());
+    let report = backend.run_recorded(&op, &plan);
+    assert!(
+        matches!(&report.result, Err(GitError::Other(reason)) if reason == "plan has blockers"),
+        "{:?}",
+        report.result,
+    );
+    assert_eq!(checkout_state(path), before, "refusal changed checkout");
+    assert!(backend.list_snapshots().unwrap().is_empty());
+    assert_eq!(read_oplog_tail_for_repo(path, 10).len(), 1);
+    git(path, &["config", "--local", "user.name", "Explicit Test"]);
+    git(
+        path,
+        &["config", "--local", "user.email", "explicit@example.com"],
+    );
+    let approved = backend.plan(&op).unwrap();
+    assert!(approved.blockers.is_empty(), "{:?}", approved.blockers);
+    remove_effective_identity(path);
+    let report = backend.run_recorded(&op, &approved);
+    assert!(
+        matches!(&report.result, Err(GitError::Preflight(_))),
+        "{:?}",
+        report.result
+    );
+    assert_eq!(
+        checkout_state(path),
+        before,
+        "late refusal changed checkout"
+    );
+    assert!(backend.list_snapshots().unwrap().is_empty());
+    assert_eq!(read_oplog_tail_for_repo(path, 10).len(), 2);
+}
+
+#[test]
+fn merge_branch_missing_identity_blocks_before_checkout() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    commit_all(path, "approved base");
+    git(path, &["checkout", "-q", "-b", "side"]);
+    write_file(path, "side", "side work\n");
+    commit_all(path, "side work");
+    git(path, &["checkout", "-q", "main"]);
+    write_file(path, "main", "main work\n");
+    commit_all(path, "main work");
+    remove_effective_identity(path);
+    assert_generic_identity_refusal(
+        path,
+        Operation::MergeBranch {
+            target: "side".into(),
+        },
+    );
+    assert!(
+        !path.join("side").exists(),
+        "merge checked out the source tree"
+    );
+    assert!(!path.join(".git/MERGE_HEAD").exists());
+}
+
+#[test]
+fn sync_to_remote_missing_identity_blocks_before_checkout() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    commit_all(path, "local work");
+    let remote = TempDir::new().unwrap();
+    let origin = remote.path();
+    git(path, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+    git(path, &["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(path, &["push", "-q", "-u", "origin", "main"]);
+    write_file(path, "a", "upstream work\n");
+    commit_all(path, "upstream work");
+    git(path, &["push", "-q", "origin", "main"]);
+    git(path, &["checkout", "-q", "-b", "local", "HEAD~1"]);
+    git(path, &["branch", "--set-upstream-to=origin/main", "local"]);
+    write_file(path, "a", "precious local edits\n");
+    remove_effective_identity(path);
+    assert_generic_identity_refusal(
+        path,
+        Operation::SyncToRemote {
+            branch: "local".into(),
+        },
+    );
+}
+
+#[test]
+fn stash_push_missing_identity_yields_generic_blocker() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    write_file(path, "untracked", "precious untracked content\n");
+    remove_effective_identity(path);
+    assert_generic_identity_refusal(
+        path,
+        Operation::StashPush {
+            message: Some("save local edits".into()),
+            include_untracked: true,
+        },
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join("untracked")).unwrap(),
+        "precious untracked content\n"
+    );
+    assert!(!git_succeeds(
+        path,
+        &["rev-parse", "--verify", "refs/stash"]
+    ));
+}
+
+fn assert_internal_snapshot_signature(path: &Path, id: &str) {
+    let reference = format!("refs/kagi/snapshots/{id}");
+    assert_eq!(
+        git_output(
+            path,
+            &["show", "-s", "--format=%an <%ae>|%cn <%ce>", &reference]
+        ),
+        "kagi <kagi@local>|kagi <kagi@local>"
+    );
+}
+
+#[test]
+fn create_snapshot_without_git_identity_uses_internal_signature() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    remove_effective_identity(path);
+    let backend = Backend::open(path).unwrap();
+    let before = checkout_state(path);
+    let index = std::fs::read(path.join(".git/index")).unwrap();
+    let head = git_output(path, &["rev-parse", "HEAD"]);
+    let saved = backend.create_snapshot("identity-free savepoint").unwrap();
+    assert_internal_snapshot_signature(path, &saved.id);
+    assert_eq!(
+        git_output(
+            path,
+            &["show", &format!("refs/kagi/snapshots/{}:a", saved.id)]
+        ),
+        "APPROVED"
+    );
+    let after = checkout_state(path);
+    assert_eq!(after.0, before.0);
+    assert_eq!(after.2, before.2);
+    assert_eq!(after.3, before.3);
+    assert_eq!(after.4, before.4);
+    assert_eq!(std::fs::read(path.join(".git/index")).unwrap(), index);
+    assert_eq!(git_output(path, &["rev-parse", "HEAD"]), head);
+    assert_eq!(backend.list_snapshots().unwrap().len(), 1);
+}
+
+#[test]
+fn auto_snapshot_without_git_identity_preserves_edits_before_discard() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = fixture();
+    let path = dir.path();
+    commit_all(path, "approved base");
+    write_file(path, "a", "precious local edits\n");
+    remove_effective_identity(path);
+    let mut backend =
+        Backend::open_with_policy(path, kagi_git::backend::ExecutionPolicy::human(true)).unwrap();
+    let op = Operation::Discard {
+        paths: vec!["a".into()],
+    };
+    let head = git_output(path, &["rev-parse", "HEAD"]);
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.destructive);
+    backend.run(&op, &plan).unwrap();
+    let saved = backend.list_snapshots().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_internal_snapshot_signature(path, &saved[0].id);
+    assert_eq!(
+        git_output(
+            path,
+            &["show", &format!("refs/kagi/snapshots/{}:a", saved[0].id)]
+        ),
+        "precious local edits"
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join("a")).unwrap(),
+        "APPROVED\n"
+    );
+    assert_eq!(git_output(path, &["rev-parse", "HEAD"]), head);
+}

@@ -248,11 +248,43 @@ pub(crate) fn status_summary_display(status: &super::status::WorkingTreeStatus) 
 /// Build the effective Git committer signature without inventing an identity.
 /// Libgit2 commit writers share Git's config/env semantics with CLI commits.
 pub(crate) fn build_signature(repo: &Repository) -> Result<git2::Signature<'static>, GitError> {
+    git_signature(repo, "GIT_COMMITTER_IDENT")
+}
+
+/// Fixed application provenance is reserved for private recovery refs/objects.
+pub(crate) fn internal_signature() -> Result<git2::Signature<'static>, GitError> {
+    git2::Signature::now("kagi", "kagi@local")
+        .map_err(|error| GitError::Other(error.message().into()))
+}
+
+pub(crate) fn check_git_identity(repo: &Repository) -> Result<(), GitError> {
+    for variable in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+        git_signature(repo, variable)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn add_git_identity_blocker(
+    repo: &Repository,
+    blockers: &mut Vec<PlanNote>,
+) -> Result<(), GitError> {
+    match check_git_identity(repo) {
+        Err(GitError::Blocked(note)) => blockers.push(*note),
+        result => result?,
+    }
+    Ok(())
+}
+
+/// Read and parse identity with the same CLI/config/environment as execution.
+pub(crate) fn git_signature(
+    repo: &Repository,
+    variable: &str,
+) -> Result<git2::Signature<'static>, GitError> {
     let workdir = repo.workdir().unwrap_or_else(|| repo.path());
-    let output = crate::cli::run_git(workdir, &["var", "GIT_COMMITTER_IDENT"])?;
+    let output = crate::cli::run_git(workdir, &["var", variable])?;
     if output.status != 0 {
-        return Err(GitError::Blocked(Box::new(PlanNote::Commit(
-            kagi_domain::plan_note::commit::CommitNote::IdentityUnavailable,
+        return Err(GitError::Blocked(Box::new(PlanNote::Common(
+            CommonNote::GitIdentityUnavailable,
         ))));
     }
     let invalid = || GitError::Other("failed to parse Git committer identity".into());

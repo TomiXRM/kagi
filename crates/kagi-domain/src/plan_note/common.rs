@@ -121,6 +121,8 @@ pub enum UntrackedCtx {
 /// Cross-op notes (ADR-0129 appendix §A).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommonNote {
+    /// A user-visible writer cannot resolve the effective Git identity.
+    GitIdentityUnavailable,
     /// §A1 — blocker: conflicted files must be resolved first.
     ConflictedFiles { count: usize, before: OpPhrase },
     /// §A2 — blocker: dirty working tree blocks the op.
@@ -176,6 +178,7 @@ impl CommonNote {
     /// Byte-identical to the legacy producer strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            CommonNote::GitIdentityUnavailable => "This operation needs a Git identity. Set user.name and user.email before continuing.".to_string(),
             CommonNote::ConflictedFiles { count, before } => format!(
                 crate::advice_template_en!(CommonConflictedFiles),
                 count,

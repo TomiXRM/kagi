@@ -47,16 +47,12 @@ fn check_commit_index(index: &git2::Index, plan: &OperationPlan) -> Result<(), G
 
 /// Ask Git itself, preserving the exact config and environment used by commit.
 pub(crate) fn check_commit_identity(repo: &Repository) -> Result<(), GitError> {
-    let workdir = repo.workdir().unwrap_or_else(|| repo.path());
-    for variable in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
-        let output = crate::cli::run_git(workdir, &["var", variable])?;
-        if output.status != 0 {
-            return Err(GitError::Blocked(Box::new(PlanNote::Commit(
-                CommitNote::IdentityUnavailable,
-            ))));
-        }
+    match super::check_git_identity(repo) {
+        Err(GitError::Blocked(_)) => Err(GitError::Blocked(Box::new(PlanNote::Commit(
+            CommitNote::IdentityUnavailable,
+        )))),
+        result => result,
     }
-    Ok(())
 }
 
 pub(crate) fn add_commit_identity_blocker(

@@ -33,6 +33,7 @@ pub fn plan_merge_branch(
     };
     let mut warnings = merge_dirty_warnings_notes(&status, OpPhrase::Merging);
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
 
     let (current_branch, head_oid) = match &head {
         Head::Attached { branch, target } => {
@@ -327,6 +328,7 @@ pub fn plan_merge_branch(
 /// ref. Non-fast-forward execution creates the merge commit without moving any
 /// ref, checks out the merge tree, then advances the current branch.
 pub(crate) fn execute_merge_branch(repo: &Repository, target: &str) -> Result<CommitId, GitError> {
+    let committer = build_signature(repo)?;
     // #299: refuse if a merge/rebase/cherry-pick/revert is in progress — never
     // stack a second operation (which could drop a pending MERGE_HEAD).
     if let Some(op) = super::in_progress_op(repo) {
@@ -452,7 +454,6 @@ pub(crate) fn execute_merge_branch(repo: &Repository, target: &str) -> Result<Co
 
     // Checkout succeeded: the working tree and index now match the merge tree.
     // Only now write the commit and move the ref (last).
-    let committer = build_signature(repo)?;
     let author = committer.clone();
     let merge_message = format!("Merge branch '{}' into {}", target, current_branch);
     let new_oid = repo
@@ -501,6 +502,7 @@ pub(crate) fn execute_merge_into_conflict(
     repo: &Repository,
     target: &str,
 ) -> Result<Vec<String>, GitError> {
+    super::check_git_identity(repo)?;
     // #299: refuse if another operation is already in progress.
     if let Some(op) = super::in_progress_op(repo) {
         return Err(GitError::Other(format!(

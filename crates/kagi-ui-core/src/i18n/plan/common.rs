@@ -110,6 +110,9 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one cross-op note.
 pub fn note_ja(note: &CommonNote) -> String {
     match note {
+        CommonNote::GitIdentityUnavailable => {
+            super::advice_text(Msg::AdviceGitIdentityUnavailable, &[])
+        }
         CommonNote::ConflictedFiles { count, before } => super::advice_text(
             Msg::AdviceCommonConflictedFiles,
             &[count, &phrase_ja(*before)],

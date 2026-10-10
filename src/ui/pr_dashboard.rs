@@ -386,6 +386,9 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .min_h(px(0.))
                 .flex()
                 .flex_col()
+                .when(cfg!(feature = "gui-e2e"), |area| {
+                    area.child(super::e2e::measure_inside("pr-home-table"))
+                })
                 // The pinned scrollbar is 16 logical px, independent of zoom.
                 // Reserve its lane so it never covers the last visible row.
                 .pb(px(16.))
@@ -475,7 +478,7 @@ fn render_column_header() -> gpui::Div {
         .px(theme::scaled_px(super::timeline_row::GUTTER))
         .gap(theme::scaled_px(super::timeline_row::GAP))
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))

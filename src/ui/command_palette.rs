@@ -398,7 +398,7 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().selected))
+            .border_color(rgb(theme().surface))
             .bg(rgb(theme().panel))
             .shadow_lg();
         #[cfg(feature = "gui-e2e")]
@@ -419,7 +419,7 @@ impl KagiApp {
                             .child(super::e2e::measure_inside("palette-input"))
                     })
                     .border_b_1()
-                    .border_color(rgb(theme().selected))
+                    .border_color(rgb(theme().surface))
                     .child(Input::new(input).appearance(true)),
             );
         }

@@ -1441,6 +1441,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chrome_separators_do_not_borrow_selection_or_label_colors() {
+        let sites = [
+            include_str!("../../../src/ui/render_header.rs"),
+            include_str!("../../../src/ui/timeline_row.rs"),
+            include_str!("../../../src/ui/command_palette.rs"),
+        ];
+        assert!(sites[0].contains(".bg(rgb(theme().surface))"));
+        assert!(!sites[1].contains(".border_color(rgb(theme().selected))"));
+        assert!(!sites[2].contains(".border_color(rgb(theme().selected))"));
+    }
+
+    #[test]
     fn body_links_meet_wcag_aa_in_every_theme() {
         for t in THEMES {
             let mut gc = gpui_component::Theme::default();

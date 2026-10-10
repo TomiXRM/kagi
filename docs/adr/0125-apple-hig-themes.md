@@ -95,3 +95,11 @@ foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
 gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
+
+## Amendment — 2026-10-11: neutral structural separators (#1175)
+
+Toolbar group hairlines, timeline/PR-table row boundaries and the command-palette
+frame/search divider use `surface` at 1 logical px. `selected` remains a row
+state, and `text_muted` remains readable secondary text. The shared gpui-kit
+`colors.border` bridge is not changed: markdown tables depend on its stronger
+muted tint. No new control, focus behavior or selection palette is introduced.

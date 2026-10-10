@@ -166,6 +166,10 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    MenuHideApp,
+    MenuHideOthers,
+    MenuShowAll,
+    MenuServices,
     AppNoticeDismiss,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
@@ -1420,6 +1424,9 @@ pub enum Msg {
     TrustRepoBody,
     /// Trust-confirmation: the "trust this repository" confirm button.
     TrustRepoConfirm,
+    TrustRepoSaveFailed,
+    TrustRepoReopenFailed,
+    TrustRepoRetry,
 
     // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ─
     /// Right-pane tab: the open file's WIP hunks (default, unchanged v1
@@ -1640,6 +1647,14 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, MenuHideApp) => "Hide Kagi",
+            (Ja, MenuHideApp) => "Kagiを隠す",
+            (En, MenuHideOthers) => "Hide Others",
+            (Ja, MenuHideOthers) => "ほかを隠す",
+            (En, MenuShowAll) => "Show All",
+            (Ja, MenuShowAll) => "すべてを表示",
+            (En, MenuServices) => "Services",
+            (Ja, MenuServices) => "サービス",
             (language, OplogPanel(key)) => key.t_for(language),
             (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
             (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
@@ -3636,6 +3651,12 @@ impl Msg {
             }
             (En, TrustRepoConfirm) => "Trust this repository",
             (Ja, TrustRepoConfirm) => "このリポジトリを信頼する",
+            (En, TrustRepoSaveFailed) => "Could not save trust for repository {}.",
+            (Ja, TrustRepoSaveFailed) => "リポジトリ {} の信頼設定を保存できませんでした。",
+            (En, TrustRepoReopenFailed) => "Trust was saved, but repository {} could not be reopened. The existing session was kept.",
+            (Ja, TrustRepoReopenFailed) => "信頼設定は保存されましたが、リポジトリ {} を開き直せませんでした。既存のセッションは保持しています。",
+            (En, TrustRepoRetry) => "Retry",
+            (Ja, TrustRepoRetry) => "再試行",
 
             // ── Editor Workspace History/Snapshot tabs (T-WS-EDITOR-008) ──
             (En, EditorRightTabDiff) => "Diff",
@@ -4267,6 +4288,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "app.about" => "kagi について",
         "app.settings" => "設定…",
         "app.quit" => "kagi を終了",
+        "app.hide" => Msg::MenuHideApp.t_for(Lang::Ja),
+        "app.hideOthers" => Msg::MenuHideOthers.t_for(Lang::Ja),
+        "app.showAll" => Msg::MenuShowAll.t_for(Lang::Ja),
         "file.newTab" => "新規タブ",
         "file.closeTab" => "タブを閉じる",
         "file.cloneRepository" => "リポジトリを clone…",
@@ -4317,3 +4341,21 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "i18n_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod standard_app_menu_tests {
+    use super::*;
+
+    #[test]
+    fn standard_app_menu_labels_en_ja() {
+        for (message, en, ja) in [
+            (Msg::MenuHideApp, "Hide Kagi", "Kagiを隠す"),
+            (Msg::MenuHideOthers, "Hide Others", "ほかを隠す"),
+            (Msg::MenuShowAll, "Show All", "すべてを表示"),
+            (Msg::MenuServices, "Services", "サービス"),
+        ] {
+            assert_eq!(message.t_for(Lang::En), en);
+            assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}

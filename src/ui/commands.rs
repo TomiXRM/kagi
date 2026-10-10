@@ -144,6 +144,20 @@ actions!(
     ]
 );
 
+#[cfg(target_os = "macos")]
+actions!(kagi_menu, [HideApp, HideOtherApps, ShowAllApps]);
+
+/// Shared dispatch for native actions and registry-based palette/dropdown calls.
+#[cfg(target_os = "macos")]
+fn visibility_command_handler(id: &str) -> Option<fn(&App)> {
+    match id {
+        "app.hide" => Some(App::hide),
+        "app.hideOthers" => Some(App::hide_other_apps),
+        "app.showAll" => Some(App::unhide_other_apps),
+        _ => None,
+    }
+}
+
 /// Switch to the registered theme with this slug, built-in or custom (#922).
 ///
 /// The View → Theme menus list every theme in [`theme::themes_by_name`], and
@@ -210,6 +224,8 @@ pub enum MenuNode {
     /// `MenuItem::os_action`).  Only ever appears inside a `mac_only` section,
     /// so Linux skips it wholesale (it has no responder chain — see ADR-0085 §4).
     OsEdit(OsEditItem),
+    #[cfg(target_os = "macos")]
+    Services,
 }
 
 /// The two dynamic submenus under View (ADR-0036 theme, ADR-0048 language).
@@ -252,6 +268,18 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("app.about"),
             MenuNode::Separator,
             MenuNode::Command("app.settings"),
+            MenuNode::Separator,
+            #[cfg(target_os = "macos")]
+            MenuNode::Services,
+            #[cfg(target_os = "macos")]
+            MenuNode::Separator,
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.hide"),
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.hideOthers"),
+            #[cfg(target_os = "macos")]
+            MenuNode::Command("app.showAll"),
+            #[cfg(target_os = "macos")]
             MenuNode::Separator,
             MenuNode::Command("app.quit"),
         ],
@@ -441,6 +469,27 @@ pub const COMMANDS: &[Command] = &[
         id: "app.quit",
         label: "Quit kagi",
         keystroke: Some("secondary-q"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.hide",
+        label: "Hide Kagi",
+        keystroke: Some("cmd-h"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.hideOthers",
+        label: "Hide Others",
+        keystroke: Some("cmd-alt-h"),
+        dangerous: false,
+    },
+    #[cfg(target_os = "macos")]
+    Command {
+        id: "app.showAll",
+        label: "Show All",
+        keystroke: None,
         dangerous: false,
     },
     Command {
@@ -795,6 +844,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
+        #[cfg(target_os = "macos")]
+        "app.hide" | "app.hideOthers" | "app.showAll" => Enabled,
         // ── Always available ────────────────────────────────────────────
         "app.about"
         | "app.settings"
@@ -944,6 +995,21 @@ fn action_menu_item(id: &str) -> MenuItem {
         "app.about" => MenuItem::action(label, About),
         "app.settings" => MenuItem::action(label, OpenSettings),
         "app.quit" => MenuItem::action(label, Quit),
+        #[cfg(target_os = "macos")]
+        "app.hide" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideApp,
+        ),
+        #[cfg(target_os = "macos")]
+        "app.hideOthers" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            HideOtherApps,
+        ),
+        #[cfg(target_os = "macos")]
+        "app.showAll" => MenuItem::action(
+            super::command_palette::command_label(id, i18n::lang()),
+            ShowAllApps,
+        ),
         // File
         "file.newTab" => MenuItem::action(label, NewTab),
         "file.closeTab" => MenuItem::action(label, CloseTab),
@@ -1035,6 +1101,10 @@ pub fn build_menus() -> Vec<Menu> {
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
                     MenuNode::OsEdit(kind) => os_edit_menu_item(kind),
+                    #[cfg(target_os = "macos")]
+                    MenuNode::Services => {
+                        MenuItem::os_submenu(Msg::MenuServices.t(), gpui::SystemMenuType::Services)
+                    }
                 })
                 .collect();
             Menu {
@@ -1292,6 +1362,16 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
 pub(crate) fn setup_app(cx: &mut App) {
     bind_app_keys(cx);
     register_keybindings(cx);
+    #[cfg(target_os = "macos")]
+    {
+        cx.bind_keys([
+            KeyBinding::new("cmd-h", HideApp, None),
+            KeyBinding::new("cmd-alt-h", HideOtherApps, None),
+        ]);
+        cx.on_action(|_: &HideApp, cx| cx.hide());
+        cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
+    }
     cx.set_menus(build_menus());
 }
 
@@ -1668,6 +1748,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         klog!("menu: invoke {}", id);
+        #[cfg(target_os = "macos")]
+        if let Some(handler) = visibility_command_handler(id) {
+            handler(cx);
+            return;
+        }
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
@@ -2732,5 +2817,108 @@ mod theme_menu_order_tests {
         registered.sort();
         assert_eq!(slugs, registered);
         assert_eq!(entries.iter().filter(|e| e.active).count(), 1);
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod standard_app_menu_tests {
+    use super::*;
+
+    #[test]
+    fn standard_app_menu_order() {
+        let menus = build_menus();
+        let items = &menus[0].items;
+        let labels: Vec<&str> = items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Action { name, .. } => name.as_ref(),
+                MenuItem::SystemMenu(menu) => menu.name.as_ref(),
+                MenuItem::Separator => "---",
+                MenuItem::Submenu(menu) => menu.name.as_ref(),
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "About kagi",
+                "---",
+                "Settings…",
+                "---",
+                "Services",
+                "---",
+                "Hide Kagi",
+                "Hide Others",
+                "Show All",
+                "---",
+                "Quit kagi",
+            ]
+        );
+        assert!(matches!(&items[4], MenuItem::SystemMenu(menu)
+            if menu.menu_type == gpui::SystemMenuType::Services));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod standard_app_action_tests {
+    use super::*;
+    use gpui::Action;
+
+    #[test]
+    fn registry_visibility_commands_have_platform_handlers_and_localized_labels() {
+        for (id, handler, en, ja) in [
+            ("app.hide", App::hide as fn(&App), "Hide Kagi", "Kagiを隠す"),
+            (
+                "app.hideOthers",
+                App::hide_other_apps as fn(&App),
+                "Hide Others",
+                "ほかを隠す",
+            ),
+            (
+                "app.showAll",
+                App::unhide_other_apps as fn(&App),
+                "Show All",
+                "すべてを表示",
+            ),
+        ] {
+            assert!(std::ptr::fn_addr_eq(
+                visibility_command_handler(id).unwrap(),
+                handler
+            ));
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::En),
+                en
+            );
+            assert_eq!(
+                super::super::command_palette::command_label(id, Lang::Ja),
+                ja
+            );
+        }
+        assert!(visibility_command_handler("app.quit").is_none());
+    }
+
+    #[test]
+    fn visibility_actions_and_standard_keystrokes() {
+        assert_eq!(command("app.hide").unwrap().keystroke, Some("cmd-h"));
+        assert_eq!(
+            command("app.hideOthers").unwrap().keystroke,
+            Some("cmd-alt-h")
+        );
+        assert_eq!(command("app.showAll").unwrap().keystroke, None);
+        for (id, expected) in [
+            ("app.hide", HideApp.name()),
+            ("app.hideOthers", HideOtherApps.name()),
+            ("app.showAll", ShowAllApps.name()),
+        ] {
+            match action_menu_item(id) {
+                MenuItem::Action {
+                    action, os_action, ..
+                } => {
+                    assert_eq!(action.name(), expected);
+                    // This GPUI revision has no visibility OsAction variants.
+                    assert!(os_action.is_none());
+                }
+                _ => panic!("visibility command must be an action"),
+            }
+        }
     }
 }

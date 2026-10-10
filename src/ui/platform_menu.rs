@@ -170,6 +170,8 @@ impl KagiApp {
                 // OsEdit only ever appears in `mac_only` sections, which are
                 // filtered out before we get here — but match exhaustively.
                 commands::MenuNode::OsEdit(_) => {}
+                #[cfg(target_os = "macos")]
+                commands::MenuNode::Services => {}
             }
         }
 

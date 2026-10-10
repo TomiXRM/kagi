@@ -1759,6 +1759,10 @@ mod macos {
                 Box::new(crate::modal_polish_b::scenario_modal_polish_stash_after),
             ),
             (
+                "trust_failure_feedback",
+                Box::new(crate::modal_polish_b::scenario_trust_failure_feedback),
+            ),
+            (
                 "worktree_folder_picker",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),
@@ -1845,6 +1849,10 @@ mod macos {
             (
                 "palette_selection_scroll",
                 Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
+            ),
+            (
+                "palette_viewport",
+                Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),
             (
                 "settings_close_returns_focus",

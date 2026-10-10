@@ -153,6 +153,7 @@ fn cp_tree_slot(
 /// * element ids keep their per-variant prefixes, and the staged diffstat keeps
 ///   its `fi + 100_000` id seed so the two lists never collide.
 fn render_cp_file_row(
+    view: &CommitPanelView,
     staged: bool,
     tree: bool,
     fi: usize,
@@ -178,6 +179,13 @@ fn render_cp_file_row(
         (true, true) => ("cp-st-file", "cp-st-unstage-btn", ""),
     };
     let (badge, badge_color, _) = status_badge(change, is_conflicted);
+    let state = &view.state;
+    let file = if staged {
+        &state.staged[fi]
+    } else {
+        &state.unstaged[fi]
+    };
+    let full_path = SharedString::from(file.path.to_string_lossy().into_owned());
     let file_ref = if staged {
         CommitPanelFileRef::Staged { index: fi }
     } else {
@@ -205,6 +213,7 @@ fn render_cp_file_row(
                 Some(is_sel),
             )
         })
+        .aria_description(full_path.clone())
         .when(wip_hit, |el| el.bg(rgb(theme().selected)))
         .w_full()
         .flex()
@@ -234,6 +243,11 @@ fn render_cp_file_row(
             div()
                 .flex_1()
                 .min_w(px(0.))
+                .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
+                .aria_label(full_path.clone())
+                .tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
+                })
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .overflow_hidden()
@@ -307,6 +321,12 @@ fn render_cp_file_row(
             .xsmall()
             .ml_2()
             .flex_shrink_0()
+            .relative()
+            .child(super::e2e::measure_inside(if staged {
+                "cp-row-unstage"
+            } else {
+                "cp-row-stage"
+            }))
             .on_click(action_click),
     )
 }
@@ -471,6 +491,7 @@ fn cp_unstaged_file_element(
         .is_some_and(|(st, p)| !*st && &f.path == p);
     Some(
         render_cp_file_row(
+            view,
             false,
             false,
             fi,
@@ -509,6 +530,7 @@ fn cp_staged_file_element(
         .is_some_and(|(st, p)| *st && &f.path == p);
     Some(
         render_cp_file_row(
+            view,
             true,
             false,
             fi,
@@ -637,6 +659,7 @@ pub(crate) fn render_unstaged_tree_row(
                 .is_some_and(|((st, p), fp)| !*st && fp == p);
             Some(
                 render_cp_file_row(
+                    view,
                     false,
                     true,
                     fi,
@@ -705,6 +728,7 @@ pub(crate) fn render_staged_tree_row(
                 .is_some_and(|((st, p), fp)| *st && fp == p);
             Some(
                 render_cp_file_row(
+                    view,
                     true,
                     true,
                     fi,
@@ -1037,6 +1061,8 @@ impl CommitPanelView {
         let seg = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
+                .relative()
+                .child(super::e2e::measure_inside(id))
                 .px_1p5()
                 .py_px()
                 .text_xs()
@@ -1056,6 +1082,7 @@ impl CommitPanelView {
         let toggle_btn = div()
             .flex()
             .flex_row()
+            .flex_shrink_0()
             .rounded_sm()
             .overflow_hidden()
             .border_1()
@@ -1081,6 +1108,8 @@ impl CommitPanelView {
             .child(
                 div()
                     .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
                     .text_sm()
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
@@ -1163,6 +1192,8 @@ impl CommitPanelView {
             .child(
                 div()
                     .flex_1()
+                    .min_w(px(0.))
+                    .truncate()
                     .text_sm()
                     .text_color(rgb(theme().text_label))
                     .child(SharedString::from(format!("Staged ({})", staged_count))),

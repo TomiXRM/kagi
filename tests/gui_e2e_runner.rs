@@ -30,10 +30,9 @@
 //! Default workspace tests omit this target (including its recovery modules).
 //! With `gui-e2e` but without `KAGI_GUI_E2E`, it still prints SKIP and exits 0.
 //!
-//! PNGs would land in `$CARGO_TARGET_DIR/gui_e2e_poc/{before,after}.png` — but
-//! the locked gpui rev does not implement `render_to_image` for the real Mac
-//! window, so capture is best-effort and currently skipped (state assertions,
-//! not the screenshot, are the pass/fail oracle — ADR-0166 §3).
+//! Native image capture is enabled only by `gui-e2e` through the platform's
+//! test-support feature. Paint regressions can assert Metal-rendered pixels;
+//! screenshots do not replace state/safety assertions (ADR-0166 §3).
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
@@ -62,6 +61,10 @@ mod proc_identity;
 #[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/primary_button.rs"]
+mod primary_button;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
@@ -1088,6 +1091,10 @@ mod macos {
             (
                 "wip_selected_roles",
                 Box::new(crate::recovery_operations::scenario_wip_selected_roles),
+            ),
+            (
+                "primary_button_states",
+                Box::new(crate::primary_button::scenario_primary_button_states),
             ),
             (
                 "dialog_a11y_roles",
@@ -5093,9 +5100,9 @@ mod macos {
         eprintln!("[gui-e2e] PASS worktree_panel_discard_recording_failure current + stale owner");
     }
 
-    /// Try to capture a PNG; tolerate the locked gpui rev's unimplemented
-    /// `render_to_image` for the real Mac window. When capture works, assert the
-    /// frame is non-blank and save it to `$CARGO_TARGET_DIR/gui_e2e_poc/<tag>.png`.
+    /// Try to capture a native Metal PNG. Capture remains best-effort for
+    /// platforms without image support; successful frames must be non-blank
+    /// and are saved to `$CARGO_TARGET_DIR/gui_e2e_poc/<tag>.png`.
     pub(super) fn capture_screenshot_best_effort(
         cx: &mut VisualTestAppContext,
         win: gpui::AnyWindowHandle,
@@ -5115,10 +5122,7 @@ mod macos {
                 img.save(&path).expect("save png");
                 eprintln!("[gui-e2e] screenshot {tag}: {}", path.display());
             }
-            Err(e) => eprintln!(
-                "[gui-e2e] screenshot {tag}: skipped (gpui render_to_image \
-                 unavailable on this platform: {e})"
-            ),
+            Err(e) => eprintln!("[gui-e2e] screenshot {tag}: skipped (native capture failed: {e})"),
         }
     }
 }

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Smart Commit のモデル一覧は共有 modal body／window 高さに追従する list 上限を使い、低い window でも Cancel 行へはみ出さないようにしました。fake Ollama の試験専用同期には追加 dependency を使いません。(#1080 review)
 - Smart Commit でローカルモデルが0件の場合、Generate／初回同意の後に既存のルールベース生成を実際に1回実行し、EN／JA で下書きの挿入を報告します。開始した tab 以外には適用せず、以前の LLM 応答による二重適用も防ぎます。(#1082)
 - Smart Commit のモデル選択に1つの list Tab stop、矢印／Home／End／Page key と選択先への scroll、focus ring と AX の選択状態を追加しました。Enter／Space だけでモデルを保存して生成を開始でき、Escape・一覧表示だけでは生成しません。(#1080)
 - 外部 filter の拒否は内容を取り込む Stage と index から復元する Discard に限定し、filter 対象の削除 Stage（単体・一括）と untracked file の raw backup→Discard は維持します。無効化した sparse-checkout の残存設定・patterns と別 worktree の patterns は Sync を妨げず、手動 skip-worktree entry と Sync の filter 拒否には専用の EN／JA 案内を表示します。(#1136／#1137 review)

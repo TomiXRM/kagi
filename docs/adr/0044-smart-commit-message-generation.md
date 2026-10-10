@@ -141,3 +141,12 @@ redirect insertion to another tab. An explicit rule-based suggestion advances
 the panel's existing generation revision and clears a pending draft, preventing
 an older LLM completion from applying a second result.
 
+
+Review clarification (#1080): the picker uses #454's `modal_body()` and
+`modal_list_max_h()` rather than a fixed pixel list ceiling. The middle section
+clips/shrinks inside the modal while the Cancel action remains fixed.
+Model rows use the same zoom-scaled `MODAL_LIST_ROW_H` as that height helper,
+with the fixed keyboard-ring width removed from the text's line box; one
+model therefore fits completely rather than receiving an 18px viewport for
+an independently padded taller row.
+

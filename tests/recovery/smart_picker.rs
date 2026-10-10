@@ -1,10 +1,18 @@
 //! Smart Commit gates against a real loopback Ollama fixture.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::VisualTestAppContext;
-use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+// Preserve the request evidence even if a fixture thread panicked while
+// recording it; poisoning must not hide the original scenario failure.
+fn request_log(log: &Mutex<Vec<String>>) -> MutexGuard<'_, Vec<String>> {
+    match log.lock() {
+        Ok(log) => log,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
 
 struct Ollama {
     host: String,
@@ -61,9 +69,7 @@ impl Ollama {
                 let response = if generating {
                     let body: serde_json::Value =
                         serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap();
-                    requests
-                        .lock()
-                        .push(body["model"].as_str().unwrap().to_string());
+                    request_log(&requests).push(body["model"].as_str().unwrap().to_string());
                     serde_json::json!({"response": "Update staged fixture", "done": true})
                         .to_string()
                 } else {
@@ -146,7 +152,7 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
         paint(cx, window);
         paint(cx, window);
         assert!(
-            server.generated.lock().is_empty(),
+            request_log(&server.generated).is_empty(),
             "opening rows must not generate"
         );
         // Opening the picker owns row focus; no pointer or focus seam is used.
@@ -201,7 +207,7 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
             "keyboard must persist focused model"
         );
         assert_eq!(
-            *server.generated.lock(),
+            *request_log(&server.generated),
             vec![models.last().unwrap().clone()],
             "saved model must match exactly one actual generation"
         );
@@ -217,7 +223,7 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
         paint(cx, window);
         paint(cx, window);
         press(cx, window, "escape");
-        assert_eq!(server.generated.lock().len(), 1);
+        assert_eq!(request_log(&server.generated).len(), 1);
         assert!(cx.read(|cx| app.read(cx).smart_commit.model.is_none()
             && app.read(cx).smart_commit_modal().is_none()));
         unmount(cx, app, window);
@@ -325,7 +331,7 @@ pub fn empty(cx: &mut VisualTestAppContext) {
                 );
             });
             assert!(
-                server.generated.lock().is_empty(),
+                request_log(&server.generated).is_empty(),
                 "empty fallback sends no generation request"
             );
         }

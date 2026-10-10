@@ -6,7 +6,8 @@ use super::button_style::{modal_button, modal_button_without_tab_stop, ModalButt
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
-    modal_body, modal_card, modal_card_sized, modal_scroll_body, MODAL_W_MD, MODAL_W_SM,
+    modal_body, modal_card, modal_card_sized, modal_list_max_h, modal_scroll_body,
+    MODAL_LIST_ROW_H, MODAL_W_MD, MODAL_W_SM,
 };
 use super::modals::AppNotice;
 use super::theme::{self, theme as current_theme};
@@ -145,15 +146,21 @@ pub(crate) fn render_smart_commit_modal(
                         ),
                     )
                     .w_full()
+                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                    .flex()
+                    .items_center()
                     .px(super::keyboard_nav::inset(12.))
-                    .py(super::keyboard_nav::inset(4.))
+                    .py_0()
                     .rounded_sm()
                     .bg(rgb(if selected == Some(i) {
                         current_theme().selected
                     } else {
                         current_theme().surface
                     }))
-                    .text_sm()
+                    .text_xs()
+                    .line_height(
+                        theme::scaled_px(MODAL_LIST_ROW_H) - px(2. * super::keyboard_nav::RING),
+                    )
                     .text_color(rgb(current_theme().text_main))
                     .on_click(move |_, window, cx| {
                         entity.update(cx, |app, cx| {
@@ -170,7 +177,7 @@ pub(crate) fn render_smart_commit_modal(
                     .into_any_element()
                 })
                 .w_full()
-                .h(theme::scaled_px((size as f32 * 32.).min(280.)));
+                .h(modal_list_max_h(size));
                 modal_card(MODAL_W_SM)
                     .child(div().flex_shrink_0().child(render_modal_title_row(
                         SharedString::from(Msg::SmartModelTitle.t()),
@@ -180,10 +187,7 @@ pub(crate) fn render_smart_commit_modal(
                         )),
                     )))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .min_h_0()
+                        modal_body()
                             .gap_2()
                             .child(
                                 div()

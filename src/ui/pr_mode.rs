@@ -1226,8 +1226,24 @@ fn vdivider(kind: DividerKind) -> gpui::Stateful<gpui::Div> {
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface)),
+        )
         .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .drag_over::<DividerDrag>(move |style, drag, _, _| {
+            if drag.kind == kind {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(DividerDrag { kind }, |_drag, _position, _window, cx| {
             cx.new(|_| DividerGhost)

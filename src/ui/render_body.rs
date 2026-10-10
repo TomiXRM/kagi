@@ -115,8 +115,32 @@ impl KagiApp {
             .w(theme::scaled_px(4.))
             .flex_shrink_0()
             .h_full()
-            .bg(rgb(theme().surface))
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |divider| {
+                divider.child(e2e::measure_inside("divider-sidebar"))
+            })
+            .bg(rgb(theme().sidebar))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w(px(1.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-sidebar-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::Sidebar {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {
@@ -710,8 +734,28 @@ impl KagiApp {
             .when(cfg!(feature = "gui-e2e"), |divider| {
                 divider.child(e2e::measure_inside("divider-panel"))
             })
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().panel))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .w(px(1.))
+                    .h_full()
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface))
+                    .when(cfg!(feature = "gui-e2e"), |line| {
+                        line.child(e2e::measure_inside("divider-panel-line"))
+                    }),
+            )
             .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .drag_over::<DividerDrag>(|style, drag, _, _| {
+                if drag.kind == DividerKind::Panel {
+                    style.bg(rgb(theme().color_branch))
+                } else {
+                    style
+                }
+            })
             .cursor_col_resize()
             .on_drag(
                 DividerDrag {

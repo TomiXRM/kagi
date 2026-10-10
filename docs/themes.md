@@ -263,6 +263,15 @@ selection tint, typography and geometry are unchanged. Reference: macOS body
 links, not filled ref chips; required rest/selection states keep the existing
 TextView behavior (no separate button/loading state).
 
+## Pane separators
+
+Resize targets retain scaled 4px geometry, independently of their resting paint.
+Sidebar sections and outer panes, PR, conflict, Editor and File History panes paint centered
+1 logical-pixel `surface` hairlines over `sidebar` / `panel` backgrounds.
+Hover and same-kind drag-over keep the `color_branch` accent. The line does not scale with
+UI zoom; the hit region does. Apple Light uses its neutral `#e5e5e5` surface;
+Apple Dark and custom themes use their own tokens unchanged.
+
 ## Token reference
 
 Every token a theme defines. The middle column is the default theme's

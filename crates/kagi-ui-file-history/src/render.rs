@@ -250,8 +250,24 @@ pub fn render_file_history_view(
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface)),
+        )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::Panel {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_col_resize()
         .on_drag(
             DividerDrag {
@@ -380,8 +396,25 @@ pub(crate) fn render_fh_list_and_diff(
         .w_full()
         .h(theme::scaled_px(4.))
         .flex_shrink_0()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface)),
+        )
         .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::FileHistoryRows {
+                style.bg(rgb(theme().color_branch))
+            } else {
+                style
+            }
+        })
         .cursor_row_resize()
         .on_drag(
             DividerDrag {

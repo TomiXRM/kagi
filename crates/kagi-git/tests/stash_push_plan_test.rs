@@ -112,7 +112,7 @@ fn stash_push_prediction_matches_retained_untracked() {
     if !test_support::run_isolated() {
         return;
     }
-    for tracked in ["modified", "staged", "both", "none"] {
+    for tracked in ["modified", "staged", "both", "none", "deleted_untracked"] {
         for untracked in [0, 2] {
             for include_untracked in [false, true] {
                 let fixture = tempfile::tempdir().unwrap();
@@ -130,6 +130,9 @@ fn stash_push_prediction_matches_retained_untracked() {
                     }
                     if tracked == "both" {
                         std::fs::write(repo.join("tracked"), "second change\n").unwrap();
+                    }
+                    if tracked == "deleted_untracked" {
+                        git(repo, &["rm", "--cached", "tracked"]);
                     }
                 }
                 for n in 0..untracked {
@@ -159,11 +162,14 @@ fn stash_push_prediction_matches_retained_untracked() {
                     plan.predicted.dirty, expected,
                     "{tracked}, untracked={untracked}, include={include_untracked}"
                 );
-                if retained != 0 {
-                    assert!(plan
-                        .warnings
-                        .iter()
-                        .any(|note| note.message_en().contains("will remain")));
+                if !include_untracked {
+                    let excluded = plan.warnings.iter().find_map(|note| match note {
+                        kagi_domain::plan_note::PlanNote::Stash(
+                            kagi_domain::plan_note::StashNote::UntrackedExcluded { count },
+                        ) => Some(*count),
+                        _ => None,
+                    });
+                    assert_eq!(excluded, (retained > 0).then_some(retained));
                 }
                 backend.run(&op, &plan).unwrap();
                 let status = git_output(repo, &["status", "--porcelain"]);

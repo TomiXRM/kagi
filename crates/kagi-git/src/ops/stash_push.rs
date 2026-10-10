@@ -103,10 +103,21 @@ pub fn plan_stash_push(
         }));
     }
 
-    // When include_untracked=false, warn that untracked files will NOT be stashed.
-    if !include_untracked && !status.untracked.is_empty() {
+    // Git restores HEAD paths deleted from the index even when those paths
+    // also appear as untracked (e.g. `git rm --cached`). Only genuinely
+    // retained untracked paths belong in the exclusion warning and After.
+    let retained_untracked_count = if include_untracked {
+        0
+    } else {
+        status
+            .untracked
+            .iter()
+            .filter(|path| stash_push_retains_untracked(&status.staged, path))
+            .count()
+    };
+    if retained_untracked_count > 0 {
         warnings.push(PlanNote::Stash(StashNote::UntrackedExcluded {
-            count: status.untracked.len(),
+            count: retained_untracked_count,
         }));
     }
 
@@ -116,8 +127,8 @@ pub fn plan_stash_push(
     let predicted = if blockers.is_empty() {
         StateSummary {
             head: head_display.clone(),
-            dirty: if !include_untracked && !status.untracked.is_empty() {
-                format!("{} untracked retained", status.untracked.len())
+            dirty: if retained_untracked_count > 0 {
+                format!("{retained_untracked_count} untracked retained")
             } else {
                 "clean".to_string()
             },
@@ -159,6 +170,14 @@ pub fn plan_stash_push(
         destructive: false,
         equivalent_command: None,
     })
+}
+
+/// HEAD paths removed from the index are restored by stash push, not retained
+/// as untracked. Planning and verification must use the same path policy.
+pub(crate) fn stash_push_retains_untracked(staged: &[FileStatus], path: &Path) -> bool {
+    !staged
+        .iter()
+        .any(|entry| entry.change == ChangeKind::Deleted && entry.path == path)
 }
 
 // ────────────────────────────────────────────────────────────

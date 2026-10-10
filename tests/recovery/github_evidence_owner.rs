@@ -355,6 +355,24 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
 }
 
 pub fn scenario_github_evidence_detached_owner(cx: &mut VisualTestAppContext) {
+    // Reopen starts both the tab's immediate read and a fresh ticker. Only the
+    // former has a queued result; the ticker must answer through a fixture too,
+    // rather than letting a real gh auth failure masquerade as stale delivery.
+    let _gh = crate::pr_fields_focus::OfflineGh::with_script(
+        r#"#!/bin/sh
+case "$*" in
+  "--version")
+    printf 'gh version 2.0.0 (detached owner fixture)\n' ;;
+  "repo view --json url")
+    printf '%s\n' '{"url":"https://github.com/example/repo"}' ;;
+  "api graphql --hostname github.com -F owner=example -F name=repo -F cursor=null -f states[]=OPEN -f query="*"pullRequests(first: 100,"*)
+    printf '%s\n' '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' ;;
+  *)
+    printf 'unsupported detached owner fixture gh request: %s\n' "$*" >&2
+    exit 1 ;;
+esac
+"#,
+    );
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().expect("repo path");
     let (app, window) = mount(cx, &repo);
@@ -382,6 +400,14 @@ pub fn scenario_github_evidence_detached_owner(cx: &mut VisualTestAppContext) {
             ui_domain(app),
             attached_domain(app),
             "UI domain was invalid before completion"
+        );
+        assert!(
+            app.ui().github_error.is_none(),
+            "reopened owner's own reads must settle without an error"
+        );
+        assert!(
+            !app.ui().github_prs_loading,
+            "reopened owner's own reads must settle before stale delivery"
         );
         (new_owner, ui_domain(app), app.ui().github_unavailable)
     });

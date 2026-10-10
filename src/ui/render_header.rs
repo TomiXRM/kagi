@@ -380,9 +380,8 @@ impl KagiApp {
             };
             let chip_bg = theme().color_branch;
 
-            // Icon cell — `.relative()` so the count chip can be `.absolute()`
-            // anchored to the icon's top-right corner (gpui has no negative
-            // clip, so the chip is placed inside the icon bounds).
+            // The count is an overlay on the icon cell. Native probes stay
+            // inside that cell so they do not change the toolbar's layout.
             let mut icon_cell = div()
                 .relative()
                 .flex()
@@ -393,7 +392,10 @@ impl KagiApp {
                 .child(
                     icon.with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
                         .text_color(rgb(text_color)),
-                );
+                )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(format!("{id}-icon")))
+                });
             if count > 0 {
                 let chip_text = if count > 99 {
                     "99+".to_string()
@@ -407,13 +409,17 @@ impl KagiApp {
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
-                        .top(theme::scaled_px(-2.0))
-                        .right(theme::scaled_px(-2.0))
+                        // Grow towards the outside, never left across the arrow.
+                        .top(theme::scaled_px(
+                            -2.0 - (theme::TOOLBAR_COUNT_HEIGHT - 14.0) / 2.0,
+                        ))
+                        .left(theme::scaled_px(22.0 - theme::TOOLBAR_COUNT_ICON_OVERLAP))
                         .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
                         .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
                         .px(theme::scaled_px(3.0))
                         .rounded_full()
                         .bg(rgb(chip_bg))
+                        .when(!enabled, |el| el.opacity(0.5))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -543,7 +549,9 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
-            .child(super::e2e::measure_inside("toolbar-row"))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside("toolbar-row"))
+            })
             // ── LEFT column (flex_1, equal width to the RIGHT column so the
             // centre cluster is window-centred regardless of side widths).
             // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──

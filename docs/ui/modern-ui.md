@@ -327,9 +327,14 @@ The count text role is nominal 13px (11.7 logical points at the 14.4px/rem
 100% base); line-height 16px and pill height/min-width 18px are Kagi theme
 tokens. Text, pill, padding and position follow the same UI zoom.
 The text's natural width plus horizontal padding accommodates `99+`.
+The pill starts in the icon cell's right quadrant (8-unit horizontal overlap)
+and grows outwards, so `99+` cannot grow left across the arrow. Its top moves
+outwards by half the added height. Native coverage must remain below the old
+14-unit pill's icon intersection area.
 
 States: rest/hover/focus-visible/unavailable/loading inherit the owning toolbar
-button; the badge does not add a Tab stop or intercept a press. Zero is empty
+button; unavailable badges dim to 0.5 opacity with the muted icon/caption.
+The badge does not add a Tab stop or intercept a press. Zero is empty
 and hides it; 1–99 show the actual count, larger counts retain `99+`.
 Selected/error are not badge states (no selection or operation outcome).
 The existing unavailable reason, AX button name, keyboard path and Git safety
@@ -343,6 +348,10 @@ Observed native Before: fixed 9px fails `badge font: ratio 1 must follow zoom
 1.667`. After: this scenario plus `toolbar_keyboard_reasons` and
 `workspace_mode_toolbar` pass (3/3). Text-width comparison accounts for GPUI's
 whole-pixel outward rounding; the font and pill ratios retain the 0.06 tolerance.
+Review regression Before: the enlarged pill at the old anchor covered 196
+logical pixel² versus the old coverage limit 116.64 at 100%, and failed.
+After the outward anchor, all three native scenarios pass again, including
+the coverage assertion for every count and zoom.
 Tier B is PM-owned: compare identical repository/counts at those zooms in
 Light/Dark/custom themes and narrow EN/JA windows; inspect actual digits,
 hover/focus/unavailable appearance and before/after captures. Native state

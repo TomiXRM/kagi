@@ -33,6 +33,19 @@ fn inspect(window: AnyWindowHandle, button: &str) -> (f32, f32, f32) {
         "count pill inside toolbar row",
     );
     contained(paint.mask, text, "count text inside paint mask");
+    let icon = bounds(window, &format!("{button}-icon"));
+    let overlap_width =
+        f32::from(badge.right().min(icon.right()) - badge.left().max(icon.left())).max(0.);
+    let overlap_height =
+        f32::from(badge.bottom().min(icon.bottom()) - badge.top().max(icon.top())).max(0.);
+    // The old 14-unit pill overhung the icon cell by 2 units on each axis.
+    // Neither the larger pill nor a wider 99+ label may cover more icon area.
+    let old_coverage = theme::scaled(14.0 - 2.0).powi(2);
+    assert!(
+        overlap_width * overlap_height <= old_coverage + 0.5,
+        "{button}: badge covers {} icon pixels, above old 14-unit coverage {old_coverage}",
+        overlap_width * overlap_height
+    );
     (
         f32::from(badge.size.height),
         f32::from(paint.font_size),

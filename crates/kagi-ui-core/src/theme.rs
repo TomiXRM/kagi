@@ -589,6 +589,8 @@ pub fn scaled_px(n: f32) -> gpui::Pixels {
 pub const TOOLBAR_COUNT_TEXT: f32 = 13.0;
 pub const TOOLBAR_COUNT_LINE_HEIGHT: f32 = 16.0;
 pub const TOOLBAR_COUNT_HEIGHT: f32 = 18.0;
+/// Keep the enlarged pill to the icon's right quadrant; wider counts grow outwards.
+pub const TOOLBAR_COUNT_ICON_OVERLAP: f32 = 8.0;
 
 /// W28: bare-`f32` sibling of [`scaled_px`] for coordinate math.
 ///

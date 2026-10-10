@@ -344,7 +344,7 @@ impl KagiApp {
                             // repository again, which may have moved since
                             // `id` was verified (#940 review).
                             app.address_issues_to(&id, cx);
-                            app.show_issues_mode(cx);
+                            app.show_issues_mode_opening(Some(key.1), cx);
                             app.load_github_issue_detail(key.1, window, cx);
                         }
                         return;

@@ -30,6 +30,28 @@
 - headless: `KAGI_COMPARE_HEAD=<row>` / `KAGI_COMPARE_WT=<row>` で
   `[kagi] compare: <base> <-> <target> files=N` ログ
 
+### PR Peek の表示と承認 (#1102)
+
+- PR table／sidebar の Peek は、base / head OID から read-only Compare を解決してから
+  既存 Graph／Inspector へ表示する。read failure では destination を切り替えない。
+- graph の読み込み範囲に PR head がなくても、既存 Inspector の Compare header・
+  Path／Tree・changed files 領域を描画する。PR head の row がある場合だけ選択し、
+  ない場合は以前の選択を解除して files-only にする。別 commit の header／message／
+  actions を PR banner の下に残さず、detail や commit identity を捏造しない。
+- 成功時は Inspector を表示し、旧 MainDiff と `commit_panel_open` の表示 gate を閉じる。
+  Commit Panel entity と未送信 draft は保持する。ファイル選択は既存 Compare source の
+  main diff を開き、固定した base / head OID と path を使う。
+- Peek は PR mode の表示 gate だけを閉じ、open tabs と comment drafts を保持する。
+  PRs button／PR open は同じ状態を復元する。Graph button による明示的な mode exit は
+  従来どおり PR mode を破棄する。非表示の PR mode は Graph の keyboard routing を奪わない。
+- dirty Editor は既存の単一 dirty guard と `EditorPendingIntent::PrPeek` を使う。
+  `Attachment` と editor／active input entity・open path を凍結し、承認時に全て照合してから
+  discard と navigation を行う。別 tab／再訪・editor／input の置換後の古い承認は何も捨てない。
+  Cancel は buffer と表示文脈を維持する。解決済み Compare は一度だけ取り出して表示し、
+  再描画ごとに payload を複製せず、承認後に refs を読み直して比較対象を変えない。
+- Peek は fetch／checkout／repo write／oplog を開始しない。HEAD・index の staged 内容・
+  working files・refs・stash は不変である。
+
 ## Consequences
 
 - MainDiffSource の enum 拡張に伴い、再読込・復帰経路(close 時の戻り先)の場合分けが増える

@@ -484,11 +484,10 @@ pub(crate) fn render_load_more_row(
 // moved there under the ADR-0165 change to keep this file under 800 LOC).
 
 /// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
-/// 0 — the caller syncs it to the real row count via `render_diff_list`'s
-/// count check, see its doc comment for the lifecycle). Shared by the three
-/// owners (`MainDiffPane.scroll`, `FileHistoryState.diff_scroll`,
-/// `EditorWorkspaceView.diff_scroll`) so the overdraw tuning lives in one
-/// place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
+/// 0 — the caller syncs source/layout identity and count in `render_diff_list`).
+/// Each embedding retains its own native list and invalidation memo, so no
+/// measurements or scroll positions cross owner boundaries. The overdraw tuning
+/// lives in one place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
 /// line-oriented variable-height list).
 pub(crate) fn new_diff_list_state() -> gpui::ListState {
     gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
@@ -508,16 +507,10 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// clipped to a fixed row height (user report). `scroll_handle` is a
 /// `gpui::ListState` — construct one per owner via [`new_diff_list_state`].
 ///
-/// ListState lifecycle: the item count is synced here, once per render, by
-/// comparing `scroll_handle.item_count()` against `row_count` and calling
-/// `.reset(row_count)` on mismatch. This is centralized instead of resetting
-/// at every `MainDiffView`-assignment call site (there are ~10 across
-/// `diff_view.rs` / `file_history_render.rs` / `editor_workspace.rs`) because
-/// every one of them calls `cx.notify()`, so the next render through here sees
-/// the new count. `reset` also drops the scroll offset back to the top, which
-/// only fires on an actual count change — matching (and slightly improving)
-/// the pre-existing behaviour, where the scroll position was never explicitly
-/// reset on file switch either.
+/// Source/layout changes invalidate native measurements, including a different
+/// same-sized source. Highlight-only changes preserve the height-source identity.
+/// Offscreen heights are estimates; visible wrapped rows and expansions replace
+/// them with their actual sizes. Unchanged renders do not rebuild the height tree.
 ///
 /// #495: every embedding's highlight is requested here, off the UI thread,
 /// once per (rows, theme) — see `diff_view::highlight`.
@@ -528,6 +521,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     view: MainDiffView,
     mut header: DiffHeader,
     scroll_handle: gpui::ListState,
+    list_layout: &kagi_ui_core::diff_list::DiffListLayout,
     hunk: Option<super::diff_view::hunk_action::HunkAction>,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -555,9 +549,13 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             .map(|projection| projection.rows.len())
             .unwrap_or_else(|| view.rows.len()),
     };
-    if scroll_handle.item_count() != row_count {
-        scroll_handle.reset(row_count);
-    }
+    list_layout.sync(
+        &scroll_handle,
+        view.height_source,
+        split,
+        overlay.is_some(),
+        row_count,
+    );
     let title = view.title.clone();
     let stats = view.stats.clone();
     let images = view.images.clone();
@@ -672,13 +670,13 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .child(with_vertical_scrollbar(
                     "main-diff-list-scroll",
                     &scrollbar_handle,
-                    gpui::list(scroll_handle, move |ix, _window, cx| {
+                    gpui::list(scroll_handle, move |ix, window, cx| {
                         let base = match (&items, &overlay, &layout) {
                             (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
                                 Some(row_overlay::Item::Expansion(b)) => {
                                     let rows = row_overlay::expansion_rows(layout, *b, overlay);
-                                    return overlay.expansion(&rows, cx);
+                                    return overlay.expansion(&rows, window, cx);
                                 }
                                 None => return div().into_any_element(),
                             },

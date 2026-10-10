@@ -104,9 +104,9 @@ impl KagiApp {
         }
     }
 
-    /// Confirm the create-branch plan: run preflight, execute, then reload.
+    /// Confirm the create-branch plan: run preflight, execute, verify, then reload.
     ///
-    /// On failure the modal remains open and shows the error text.
+    /// Only verified success dismisses the form; failures retain its input.
     pub fn confirm_create_branch(&mut self, cx: &mut Context<Self>) {
         // The live plan is debounced; rebuild it from the latest input so a
         // fast type-then-click can never execute a stale plan.
@@ -188,6 +188,10 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 klog!("verify: repo open error: {}", e);
+                self.present_report("create-branch", &report, &repo_path, cx);
+                if let Some(m) = self.create_branch_modal_mut() {
+                    m.error = Some(i18n::op_failed(i18n::Op::RepoOpen, e).into());
+                }
                 self.reload(cx);
                 return;
             }
@@ -201,6 +205,21 @@ impl KagiApp {
                 modal.input
             );
         }
+        if branch_exists {
+            self.clear_create_branch_modal();
+            // The input-confirm and root Enter paths have no Window. Reuse
+            // the existing next-render handoff so an undrawn input cannot
+            // swallow subsequent root actions.
+            self.focus_root_for_modal();
+        } else if let Some(m) = self.create_branch_modal_mut() {
+            m.error = Some(
+                i18n::op_failed(
+                    i18n::Op::CreateBranch,
+                    format!("branch '{}' not found after create", modal.input),
+                )
+                .into(),
+            );
+        }
 
         // The combined Backend operation already performed optional checkout and
         // persisted one receipt; present that receipt (ADR-0196 Wave 2).
@@ -211,6 +230,63 @@ impl KagiApp {
 
         // Reload display data (new branch badge should appear).
         self.reload(cx);
+    }
+
+    /// Resolve the selected branch's live upstream before constructing its preview.
+    pub(crate) fn open_branch_pull_modal(&mut self, branch: String, cx: &mut Context<Self>) {
+        if self.remote_view.is_some()
+            || !self.fetch_async_for(
+                false,
+                Some(super::super::commands::PullTarget::BranchFfOnly(branch)),
+                cx,
+            )
+        {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+        }
+    }
+
+    pub(crate) fn offer_fetched_branch_pull(&mut self, branch: String, remote: &str) {
+        self.open_branch_plan_modal(branch, BranchPlanKind::PullFfOnly);
+        let Some(modal) = self.branch_plan_modal() else {
+            return;
+        };
+        // The title's upstream shorthand is display-only; admission uses the
+        // exact configured remote. Blocked plans have no executable identity.
+        let matches_remote = matches!(
+            &modal.plan.title,
+            kagi_domain::plan_note::PlanTitle::Pull(
+                kagi_domain::plan_note::PullTitle::PullBranchFf { branch: planned, .. }
+            ) if planned == &modal.branch_name
+        ) && (!modal.plan.blockers.is_empty()
+            || modal.plan.pull_identity.as_ref().is_some_and(|identity| {
+                identity.branch == modal.branch_name && identity.remote == remote
+            }));
+        if !matches_remote {
+            self.clear_branch_plan_modal();
+            self.report_plan_failure(i18n::Op::Pull, Msg::PullUpstreamChangedDuringFetch.t());
+            return;
+        }
+        let Some(repo) = self.ui().repo_session.as_ref() else {
+            self.clear_branch_plan_modal();
+            return;
+        };
+        let refs = match repo.backend().pull_branch_ref_state(&modal.branch_name) {
+            Ok(refs) => refs,
+            Err(error) => {
+                self.clear_branch_plan_modal();
+                self.report_plan_failure(i18n::Op::Pull, error);
+                return;
+            }
+        };
+        let fetch_owner = self.active_session().and_then(|session| {
+            self.app_sessions
+                .visit(session)
+                .map(|visit| (session, visit))
+        });
+        if let Some(modal) = self.branch_plan_modal_mut() {
+            modal.fetch_owner = fetch_owner;
+            modal.fetched_refs = Some(refs);
+        }
     }
 
     pub fn open_branch_plan_modal(&mut self, branch_name: String, kind: BranchPlanKind) {
@@ -232,11 +308,18 @@ impl KagiApp {
                 return;
             }
         };
+        let mut dirty_digest = None;
         let plan_result = match kind {
             BranchPlanKind::SyncToRemote => repo.plan(&kagi_git::Operation::SyncToRemote {
                 branch: branch_name.clone(),
             }),
-            BranchPlanKind::PullFfOnly => repo.plan_pull_branch_ff(&branch_name),
+            BranchPlanKind::PullFfOnly => {
+                repo.plan_pull_branch_ff_preview(&branch_name)
+                    .map(|(plan, digest)| {
+                        dirty_digest = Some(digest);
+                        plan
+                    })
+            }
             BranchPlanKind::Push => repo.plan_push_branch(&branch_name, false),
             BranchPlanKind::PushSetUpstream => repo.plan_push_branch(&branch_name, true),
         };
@@ -256,6 +339,9 @@ impl KagiApp {
                     plan: std::sync::Arc::new(plan),
                     error: None,
                     confirm_armed: false,
+                    fetch_owner: None,
+                    dirty_digest,
+                    fetched_refs: None,
                 });
                 self.focus_root_for_modal(); // #817: Enter / Escape via the root
             }
@@ -1048,7 +1134,7 @@ impl KagiApp {
                     if is_current {
                         self.open_pull_modal(cx);
                     } else {
-                        self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                        self.open_branch_pull_modal(state.name, cx);
                     }
                 }
             }
@@ -1121,7 +1207,7 @@ impl KagiApp {
             }
             BranchAction::PullFfOnly => {
                 if matches!(state.kind, BranchKind::Local) {
-                    self.open_branch_plan_modal(state.name, BranchPlanKind::PullFfOnly);
+                    self.open_branch_pull_modal(state.name, cx);
                 }
             }
             BranchAction::SyncToRemote => {

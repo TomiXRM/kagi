@@ -7,6 +7,7 @@
 //! `pub(super)` so the siblings can call them while they remain crate-internal.
 
 use super::*;
+use kagi_domain::plan::PullIdentity;
 
 /// Resolve upstream info for a local branch.
 ///
@@ -81,6 +82,14 @@ pub(super) fn resolve_upstream_oid(
     }
 
     // Fall back to following the upstream ref from the branch config.
+    resolve_configured_upstream_oid(repo, branch_name)
+}
+
+/// Resolve exactly the configured upstream tip, without preferring a same-name branch.
+pub(super) fn resolve_configured_upstream_oid(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<git2::Oid, GitError> {
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
         .map_err(|e| {
@@ -122,4 +131,73 @@ pub(super) fn local_branch_oid(
         .get()
         .target()
         .ok_or_else(|| GitError::Other(format!("branch '{}' has no target OID", branch_name)))
+}
+
+pub(super) fn capture_pull_identity(
+    repo: &Repository,
+    branch_name: &str,
+) -> Result<PullIdentity, GitError> {
+    let branch = repo
+        .find_branch(branch_name, git2::BranchType::Local)
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let upstream = branch
+        .upstream()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let local_oid = branch
+        .get()
+        .target()
+        .ok_or_else(|| GitError::Other("pull branch has no target".into()))?;
+    let upstream_ref = upstream
+        .get()
+        .name()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let remote = repo
+        .config()
+        .map_err(|error| GitError::Other(error.to_string()))?
+        .get_string(&format!("branch.{branch_name}.remote"))
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    Ok(PullIdentity {
+        branch: branch_name.to_owned(),
+        local_oid: CommitId(local_oid.to_string()),
+        remote,
+        upstream_ref: upstream_ref.to_owned(),
+    })
+}
+
+pub(super) fn check_pull_identity(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
+    let Some(expected) = plan.pull_identity.as_ref() else {
+        return Ok(());
+    };
+    let branch = repo
+        .find_branch(&expected.branch, git2::BranchType::Local)
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let upstream = branch
+        .upstream()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let local_oid = git2::Oid::from_str(&expected.local_oid.0)
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let config = repo
+        .config()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let remote = config
+        .get_entry(&format!("branch.{}.remote", expected.branch))
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    let upstream_ref = upstream
+        .get()
+        .name()
+        .map_err(|error| GitError::Other(error.to_string()))?;
+    if branch.get().target() != Some(local_oid)
+        || upstream_ref != expected.upstream_ref
+        || !remote.has_value()
+        || remote
+            .value()
+            .map_err(|error| GitError::Other(error.to_string()))?
+            != expected.remote
+    {
+        return Err(GitError::Other(
+            "Pull branch or upstream changed since planning. Fetch and re-plan before proceeding."
+                .into(),
+        ));
+    }
+    Ok(())
 }

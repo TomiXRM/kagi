@@ -84,6 +84,9 @@ pub struct PullPlanModal {
     /// stashing first hides any later change from every downstream guard.
     /// `None` for a remote pull, which stashes nothing.
     pub dirty_digest: Option<kagi_domain::status::WorktreeDigest>,
+    /// Successful-fetch origin, frozen to the requesting tab's visit. Only
+    /// these confirmations may survive their own unchanged repository reload.
+    pub fetch_owner: Option<(crate::app::SessionId, u64)>,
 }
 
 /// State for an in-progress operation-history Undo/Redo confirmation
@@ -570,6 +573,15 @@ pub enum EditorPendingIntent {
     /// #482 stage 1: the tab to close is named by its session, so a guard the
     /// user resolves later can never close a tab reopened on the same path.
     CloseRepoTab(crate::app::SessionId),
+    /// Finish the frozen read-only PR Compare after discarding its original
+    /// editor. No re-read or navigation occurs until this guard is approved.
+    PrPeek {
+        owner: crate::app::Attachment,
+        editor: gpui::EntityId,
+        input: Option<gpui::EntityId>,
+        path: Option<std::path::PathBuf>,
+        view: super::CompareView,
+    },
 }
 
 /// State for the Editor Workspace "unsaved changes" confirmation

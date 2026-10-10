@@ -19,6 +19,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui::{div, prelude::*, px, rgb, uniform_list, Context, SharedString};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use kagi_domain::github::{PrAttention, PrDetailAvailability, PrReason, PullRequest};
 use kagi_domain::list_filter::apply_prs;
 
@@ -139,6 +140,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
     let mut body = div()
         .id("pr-mode-dashboard")
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .flex()
         .flex_col()
@@ -227,16 +229,30 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
             );
         }
         body = body.child(render_tiles(&buckets));
-        body = body.child(render_column_header());
+        let horizontal_scroll = app
+            .pr_mode()
+            .map(|mode| mode.dashboard_horizontal_scroll.clone())
+            .unwrap_or_default();
+        // One horizontal viewport owns the header and virtualized body. The
+        // list's height stays bounded, so width never turns into eager rows.
+        let mut table = div()
+            .w_full()
+            .min_w(theme::scaled_px(TABLE_MIN_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .child(render_column_header());
         if rows.is_empty() {
-            body = body.child(
+            table = table.child(
                 div()
                     .px_4()
                     .py_3()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::PrPaneEmpty.t())),
+                    .child(SharedString::from(Msg::HomeWorkNoMatch.t())),
             );
+            table = table.child(super::github_pr_strip::render_pr_page_tail(app, true, cx));
         } else {
             let rows: Rc<Vec<(usize, PrAttention, PrReason)>> = Rc::new(
                 rows.into_iter()
@@ -263,11 +279,11 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .min_h(px(0.))
                 .flex()
                 .flex_col();
-            body = body.child(
+            table = table.child(
                 super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
                     uniform_list(
                         "pr-home-list",
-                        row_count,
+                        row_count + usize::from(ui.pr_list_has_more()),
                         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
                             if this.active_session() != owner
                                 || this.ui().pr_list_revision() != generation
@@ -276,23 +292,21 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                             }
                             let start = range.start.saturating_sub(2);
                             let end = (range.end + 2).min(render_rows.len());
-                            let visible: BTreeSet<kagi_domain::github::PrKey> = render_rows
-                                [start..end]
-                                .iter()
-                                .filter_map(|(index, _, _)| {
-                                    this.ui().pr_list_rows().get(*index).map(|pr| pr.key())
-                                })
-                                .collect();
-                            this.observe_visible_prs(visible, cx);
+                            let first = range.start;
                             range
                                 .filter_map(|index| {
+                                    if index == render_rows.len() {
+                                        return Some(super::github_pr_strip::render_pr_page_tail(
+                                            this, true, cx,
+                                        ));
+                                    }
                                     render_rows.get(index).and_then(|(source, bucket, why)| {
                                         let pr = this.ui().pr_list_rows().get(*source)?;
                                         // Borrowed, not cloned: a `clone()` here
                                         // copied the whole avatar map for every
                                         // visible row, every frame (#750 review).
                                         let status = this.pr_status_availability(pr);
-                                        Some(render_table_row(
+                                        let row = render_table_row(
                                             pr,
                                             *bucket,
                                             why,
@@ -301,24 +315,106 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                                             &this.avatars.images,
                                             (index, render_rows.len()),
                                             cx,
-                                        ))
+                                        );
+                                        let row = if index == first {
+                                            let entity = cx.entity().downgrade();
+                                            let rows = render_rows.clone();
+                                            row.child(
+                                                gpui::canvas(
+                                                    move |bounds, window, cx| {
+                                                        // Measurement also calls this processor
+                                                        // for item zero, but never prepaints it.
+                                                        if !bounds.intersects(&window.content_mask().bounds) {
+                                                            return;
+                                                        }
+                                                        let entity = entity.clone();
+                                                        let rows = rows.clone();
+                                                        cx.defer(move |cx| {
+                                                            let _ = entity.update(cx, |app, cx| {
+                                                                if app.active_session() != owner
+                                                                    || app.ui().pr_list_revision() != generation
+                                                                    || app.workspace_mode() != super::workspace_mode::WorkspaceMode::Prs
+                                                                    || !app.pr_mode().is_some_and(|mode| mode.active.is_none())
+                                                                {
+                                                                    return;
+                                                                }
+                                                                let visible: BTreeSet<_> = rows[start..end]
+                                                                    .iter()
+                                                                    .filter_map(|(index, _, _)| app.ui().pr_list_rows().get(*index).map(|pr| pr.key()))
+                                                                    .collect();
+                                                                app.observe_visible_prs(visible, cx);
+                                                            });
+                                                        });
+                                                    },
+                                                    |_, _, _, _| {},
+                                                )
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .size_full(),
+                                            )
+                                        } else {
+                                            row
+                                        };
+                                        Some(row.into_any_element())
                                     })
                                 })
                                 .collect::<Vec<_>>()
                         }),
                     )
                     .track_scroll(&scroll)
+                    .map(|mut list| {
+                        // GPUI otherwise maps horizontal-only wheel deltas to Y.
+                        list.style().restrict_scroll_to_axis = Some(true);
+                        list
+                    })
                     .flex_1()
                     .min_h(px(0.)),
                 ),
             );
         }
+        body = body.child(
+            div()
+                .id("pr-home-table")
+                .relative()
+                .flex_1()
+                .min_w(px(0.))
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                // The pinned scrollbar is 16 logical px, independent of zoom.
+                // Reserve its lane so it never covers the last visible row.
+                .pb(px(16.))
+                .child(
+                    div()
+                        .id("pr-home-table-scroll")
+                        .flex_1()
+                        .min_w(px(0.))
+                        .min_h(px(0.))
+                        .flex()
+                        .overflow_x_scroll()
+                        .track_scroll(&horizontal_scroll)
+                        .map(|mut area| {
+                            // Vertical wheel deltas belong to the virtual list.
+                            area.style().restrict_scroll_to_axis = Some(true);
+                            area
+                        })
+                        .when(cfg!(feature = "gui-e2e"), |area| {
+                            area.child(super::e2e::measure_inside("pr-home-table-viewport"))
+                        })
+                        .child(table),
+                )
+                .child(
+                    Scrollbar::horizontal(&horizontal_scroll).scrollbar_show(ScrollbarShow::Always),
+                ),
+        );
     }
 
     div()
         .flex()
         .flex_col()
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .bg(rgb(page_bg()))
         .child(super::list_filter_strip::render_strip(
@@ -331,14 +427,25 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
         .into_any_element()
 }
 
-/// Column widths (unscaled px), shared by the header and every row so the two
-/// cannot drift. `TITLE / BRANCH` is the flexible one.
+/// Column widths (unscaled px), shared by the header and every row. The title
+/// grows at normal widths but never gives up its readable minimum to metadata.
 const COL_NO: f32 = 56.0;
+const COL_TITLE_MIN: f32 = 320.0;
 const COL_STATE: f32 = 116.0;
 const COL_AUTHOR: f32 = 116.0;
 const COL_CHECKS: f32 = 72.0;
 const COL_FILES: f32 = 52.0;
 const COL_AGE: f32 = 52.0;
+const TABLE_MIN_WIDTH: f32 = super::timeline_row::GUTTER * 2.
+    + super::timeline_row::AVATAR
+    + super::timeline_row::GAP
+    + COL_NO
+    + COL_TITLE_MIN
+    + COL_STATE
+    + COL_AUTHOR
+    + COL_CHECKS
+    + COL_FILES
+    + COL_AGE;
 /// Row padding for the triage table: denser than the feed's `ROW_PY`, because
 /// this page is scanned rather than read (PM Tier B, #750). With the shared
 /// 40px avatar and the hairline the row settles at 65px.
@@ -348,6 +455,7 @@ fn col(width: f32, label: &'static str) -> gpui::Div {
     div()
         .w(theme::scaled_px(width))
         .flex_shrink_0()
+        .whitespace_nowrap()
         .child(SharedString::from(label))
 }
 
@@ -367,6 +475,11 @@ fn render_column_header() -> gpui::Div {
         .text_xs()
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(rgb(theme().text_label))
+        .relative()
+        .whitespace_nowrap()
+        .when(cfg!(feature = "gui-e2e"), |header| {
+            header.child(super::e2e::measure_inside("pr-home-table-header"))
+        })
         // The rows' avatar column has no name; the header reserves its width,
         // and the labels sit in one strip like the row's cells, so the two
         // line up by construction rather than by two lists of paddings.
@@ -386,14 +499,24 @@ fn render_column_header() -> gpui::Div {
                 .child(
                     div()
                         .flex_1()
-                        .min_w(px(0.))
+                        .min_w(theme::scaled_px(COL_TITLE_MIN))
+                        .relative()
+                        .when(cfg!(feature = "gui-e2e"), |title| {
+                            title.child(super::e2e::measure_inside("pr-home-header-title"))
+                        })
                         .child(SharedString::from(Msg::PrColTitle.t())),
                 )
                 .child(col(COL_STATE, Msg::PrColState.t()))
                 .child(col(COL_AUTHOR, Msg::PrColAuthor.t()))
                 .child(col(COL_CHECKS, Msg::PrColChecks.t()))
                 .child(col(COL_FILES, Msg::PrColFiles.t()))
-                .child(col(COL_AGE, Msg::PrColAge.t())),
+                .child(
+                    col(COL_AGE, Msg::PrColAge.t())
+                        .relative()
+                        .when(cfg!(feature = "gui-e2e"), |age| {
+                            age.child(super::e2e::measure_inside("pr-home-header-age"))
+                        }),
+                ),
         )
 }
 
@@ -416,7 +539,7 @@ fn render_table_row(
     // #354: position (0-based) and size within the PR list.
     (position, size): (usize, usize),
     cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
+) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         this.pr_mode_open(&open, cx);
@@ -479,7 +602,14 @@ fn render_table_row(
         .child(
             div()
                 .flex_1()
-                .min_w(px(0.))
+                .min_w(theme::scaled_px(COL_TITLE_MIN))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |title| {
+                    title.child(super::e2e::measure_inside(format!(
+                        "pr-home-title-{}",
+                        pr.number
+                    )))
+                })
                 .pr_4()
                 .flex()
                 .flex_col()
@@ -547,7 +677,14 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_AGE))
                 .flex_shrink_0()
-                .child(SharedString::from(age)),
+                .child(SharedString::from(age))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |age| {
+                    age.child(super::e2e::measure_inside(format!(
+                        "pr-home-age-{}",
+                        pr.number
+                    )))
+                }),
         );
     super::list_a11y::list_item(
         "pr-list",
@@ -579,7 +716,6 @@ fn render_table_row(
     .on_click(click)
     .on_mouse_down(gpui::MouseButton::Right, menu)
     .when(pr.is_draft, |el| el.opacity(0.75))
-    .into_any_element()
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one

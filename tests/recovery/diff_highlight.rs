@@ -38,12 +38,15 @@ fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
         .unwrap();
 }
 
-fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(crate) fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     frame(cx, window);
     cx.run_until_parked();
 }
 
-fn main_view(cx: &mut VisualTestAppContext, kagi: &Entity<KagiApp>) -> Option<MainDiffView> {
+pub(crate) fn main_view(
+    cx: &mut VisualTestAppContext,
+    kagi: &Entity<KagiApp>,
+) -> Option<MainDiffView> {
     cx.read(|app| {
         kagi.read(app)
             .ui()
@@ -472,4 +475,276 @@ pub fn scenario_commit_diff_off_thread(cx: &mut VisualTestAppContext) {
 
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS commit_diff_off_thread");
+}
+
+pub(crate) fn png_bytes(color: [u8; 4]) -> Vec<u8> {
+    let image = image::RgbaImage::from_pixel(2, 2, image::Rgba(color));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+
+pub(crate) fn commit_image_index(
+    cx: &mut VisualTestAppContext,
+    kagi: &Entity<KagiApp>,
+    path: &str,
+) -> usize {
+    cx.read(|cx| {
+        let app = kagi.read(cx);
+        let files = app.ui().diff_caches.changed_files()[&app.ui().selected.unwrap()]
+            .as_ref()
+            .unwrap();
+        files
+            .iter()
+            .position(|file| file.path == std::path::Path::new(path))
+            .unwrap_or_else(|| panic!("missing image path {path}; actual changes: {files:?}"))
+    })
+}
+
+pub(crate) fn assert_image_bytes(view: &MainDiffView, old: Option<&[u8]>, new: Option<&[u8]>) {
+    let pair = view.images.as_ref().expect("supported image pair");
+    assert_eq!(
+        pair.old.as_ref().map(|image| image.bytes()),
+        old,
+        "before image"
+    );
+    assert_eq!(
+        pair.new.as_ref().map(|image| image.bytes()),
+        new,
+        "after image"
+    );
+}
+
+/// #1075: complete image views land at the real main-pane consumer boundary.
+/// Cached binaries, one-sided files, unsupported data and superseded/departed
+/// reads all use the same publication lifecycle as the text diff.
+pub fn scenario_binary_diff_prepared(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = png_bytes([255, 0, 0, 255]);
+    let staged = png_bytes([0, 255, 0, 255]);
+    let workdir = png_bytes([0, 0, 255, 255]);
+    // A distinct image is a deletion, not a similar Added+Deleted pair that
+    // the production rename detector legitimately folds into one delta.
+    let removed = image::RgbaImage::from_fn(64, 64, |x, y| {
+        image::Rgba([(x * 17) as u8, (y * 31) as u8, (x * 11 + y * 23) as u8, 255])
+    });
+    let mut removed_bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(removed)
+        .write_to(&mut removed_bytes, image::ImageFormat::Png)
+        .unwrap();
+    let deleted_before = removed_bytes.into_inner();
+    std::fs::write(repo.join("changed.png"), &before).unwrap();
+    std::fs::write(repo.join("deleted.png"), &deleted_before).unwrap();
+    std::fs::write(repo.join("unsupported.bin"), b"\0old binary").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "image base"]);
+    std::fs::write(repo.join("changed.png"), &staged).unwrap();
+    std::fs::write(repo.join("added.png"), &staged).unwrap();
+    std::fs::remove_file(repo.join("deleted.png")).unwrap();
+    std::fs::write(repo.join("unsupported.bin"), b"\0new binary").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "image changes"]);
+    let (kagi, window) = mount(cx, &repo);
+    kagi.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    settle(cx, window);
+    let changed = commit_image_index(cx, &kagi, "changed.png");
+    let added = commit_image_index(cx, &kagi, "added.png");
+    let deleted = commit_image_index(cx, &kagi, "deleted.png");
+    let unsupported = commit_image_index(cx, &kagi, "unsupported.bin");
+    for (index, old, new) in [
+        (changed, Some(before.as_slice()), Some(staged.as_slice())),
+        (added, None, Some(staged.as_slice())),
+        (deleted, Some(deleted_before.as_slice()), None),
+    ] {
+        kagi.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
+        cx.run_until_parked();
+        assert_image_bytes(&main_view(cx, &kagi).unwrap(), old, new);
+    }
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(unsupported, cx));
+    cx.run_until_parked();
+    let placeholder = main_view(cx, &kagi).unwrap();
+    assert!(placeholder.images.is_none());
+    assert!(placeholder
+        .rows
+        .iter()
+        .any(|row| matches!(row, DiffRow::Binary)));
+
+    // A cached binary still prepares off-thread. A newer open supersedes its
+    // complete image pair, not just its text rows.
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_main_diff_read_for_e2e(hold);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(changed, cx));
+    assert_eq!(main_view(cx, &kagi).unwrap().title, placeholder.title);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(added, cx));
+    cx.run_until_parked();
+    release.send(());
+    cx.run_until_parked();
+    assert_image_bytes(&main_view(cx, &kagi).unwrap(), None, Some(&staged));
+    assert_eq!(main_view(cx, &kagi).unwrap().title.as_ref(), "added.png");
+
+    // Leaving and returning to the same session is not the old visit.
+    let other = build_fixture();
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_main_diff_read_for_e2e(hold);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(deleted, cx));
+    kagi.update(cx, |app, cx| {
+        assert!(app.open_repository(other.path().canonicalize().unwrap(), cx));
+        app.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
+    settle(cx, window);
+    release.send(());
+    cx.run_until_parked();
+    assert_eq!(main_view(cx, &kagi).unwrap().title.as_ref(), "added.png");
+    assert_image_bytes(&main_view(cx, &kagi).unwrap(), None, Some(&staged));
+
+    // Compare reads use their captured base/target rather than whichever
+    // commit happens to be selected when the prepared pair arrives.
+    let base = kagi.update(cx, |app, cx| {
+        let base = app.view().rows[1].id.clone();
+        app.open_compare_with_head(base.clone(), Some(cx));
+        base
+    });
+    cx.run_until_parked();
+    let compare_index = |cx: &mut VisualTestAppContext| {
+        cx.read(|cx| {
+            kagi.read(cx)
+                .ui()
+                .compare_view
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .view()
+                .files
+                .iter()
+                .position(|file| file.path == std::path::Path::new("changed.png"))
+                .unwrap()
+        })
+    };
+    let index = compare_index(cx);
+    kagi.update(cx, |app, cx| app.open_main_diff_compare(index, cx));
+    cx.run_until_parked();
+    assert_image_bytes(&main_view(cx, &kagi).unwrap(), Some(&before), Some(&staged));
+    std::fs::write(repo.join("changed.png"), &workdir).unwrap();
+    kagi.update(cx, |app, cx| {
+        app.open_compare_with_working_tree(base, Some(cx))
+    });
+    cx.run_until_parked();
+    let index = compare_index(cx);
+    kagi.update(cx, |app, cx| app.open_main_diff_compare(index, cx));
+    cx.run_until_parked();
+    assert_image_bytes(
+        &main_view(cx, &kagi).unwrap(),
+        Some(&before),
+        Some(&workdir),
+    );
+
+    // HEAD → index and index → working tree must not accidentally reuse the
+    // tab's HEAD/working-tree pair for both sides.
+    std::fs::write(repo.join("changed.png"), &workdir).unwrap();
+    git(&repo, &["add", "changed.png"]);
+    std::fs::write(repo.join("changed.png"), &before).unwrap();
+    kagi.update(cx, |app, cx| {
+        seam::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    cx.run_until_parked();
+    let (staged_index, unstaged_index) = cx.read(|cx| {
+        let panel = &kagi
+            .read(cx)
+            .ui()
+            .commit_panel
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .state;
+        (
+            panel
+                .staged
+                .iter()
+                .position(|file| file.path == std::path::Path::new("changed.png"))
+                .unwrap(),
+            panel
+                .unstaged
+                .iter()
+                .position(|file| file.path == std::path::Path::new("changed.png"))
+                .unwrap(),
+        )
+    });
+    kagi.update(cx, |app, cx| {
+        app.open_main_diff_wip(
+            CommitPanelFileRef::Staged {
+                index: staged_index,
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert_image_bytes(
+        &main_view(cx, &kagi).unwrap(),
+        Some(&staged),
+        Some(&workdir),
+    );
+    open_wip(cx, &kagi, unstaged_index);
+    cx.run_until_parked();
+    assert_image_bytes(
+        &main_view(cx, &kagi).unwrap(),
+        Some(&workdir),
+        Some(&before),
+    );
+    std::fs::write(repo.join("changed.png"), &staged).unwrap();
+    kagi.update(cx, |app, cx| app.reload_external(cx));
+    settle(cx, window);
+    settle(cx, window);
+    cx.run_until_parked();
+    assert_image_bytes(
+        &main_view(cx, &kagi).unwrap(),
+        Some(&workdir),
+        Some(&staged),
+    );
+
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_main_diff_read_for_e2e(hold);
+    open_wip(cx, &kagi, unstaged_index);
+    kagi.update(cx, |app, _| app.close_main_diff());
+    release.send(());
+    cx.run_until_parked();
+    assert!(
+        main_view(cx, &kagi).is_none(),
+        "closed pane reopened with stale images"
+    );
+
+    // A row renumber must not read another commit's binary blobs. The
+    // immutable OID captured at dispatch survives the same carry as its text.
+    kagi.update(cx, |app, cx| {
+        app.select(0);
+        cx.notify();
+    });
+    settle(cx, window);
+    let commit = cx.read(|cx| kagi.read(cx).view().rows[0].id.clone());
+    let index = commit_image_index(cx, &kagi, "changed.png");
+    let (hold, release) = deferred::<()>(cx);
+    KagiApp::hold_next_main_diff_read_for_e2e(hold);
+    kagi.update(cx, |app, cx| app.open_main_diff_commit(index, cx));
+    git(
+        &repo,
+        &["commit", "-q", "--allow-empty", "-m", "renumber image read"],
+    );
+    kagi.update(cx, |app, cx| app.reload_external(cx));
+    settle(cx, window);
+    settle(cx, window);
+    release.send(());
+    settle(cx, window);
+    let shown = main_view(cx, &kagi).expect("carried image diff");
+    assert_image_bytes(&shown, Some(&before), Some(&staged));
+    assert!(matches!(&shown.source, MainDiffSource::Commit {
+        row_index: 1, commit: Some(id), ..
+    } if id == &commit));
+    unmount(cx, kagi, window);
+    eprintln!("[gui-e2e] PASS binary_diff_prepared");
 }

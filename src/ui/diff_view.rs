@@ -202,12 +202,14 @@ pub struct MainDiffView {
     /// frame for the length of a reading session. `render_diff_list` wrapped
     /// this in an `Arc` immediately anyway, so the deep copy bought nothing.
     pub rows: std::sync::Arc<Vec<DiffRow>>,
+    /// Preserved across highlight-only row allocation changes.
+    pub(crate) height_source: kagi_ui_core::diff_list::DiffListSource,
     /// Where this diff was opened from (for re-load / back navigation).
     #[allow(dead_code)]
     pub source: MainDiffSource,
-    /// W-IMG: decoded before/after images for binary image files
-    /// (png/jpeg/webp/gif, sniffed from the blob bytes). When set, the diff
-    /// pane renders the image panel instead of the "Binary file" placeholder.
+    /// W-IMG: before/after GPUI images wrapping supported binary image bytes.
+    /// When set, the pane renders the image panel instead of the "Binary file"
+    /// placeholder. Pixel decoding remains GPUI's responsibility.
     pub images: Option<DiffImagePair>,
     /// #495: grammar for the rows (from the file path); `None` = plain text.
     pub lang: Option<&'static str>,
@@ -222,11 +224,6 @@ pub struct MainDiffView {
 pub struct DiffImagePair {
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
-}
-
-/// Decode blob bytes into a gpui image if they sniff as a supported format.
-fn image_side(bytes: Option<Vec<u8>>) -> Option<std::sync::Arc<gpui::Image>> {
-    bytes.and_then(super::avatar_fetch::image_from_bytes)
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -457,6 +454,7 @@ pub(crate) fn build_main_diff_view(
         title: fdv.file_name,
         stats: SharedString::from(format!("+{} \u{2212}{}", added, removed)),
         rows: std::sync::Arc::new(fdv.rows),
+        height_source: Default::default(),
         source,
         images: None,
         lang: lang_for_path(path),
@@ -706,78 +704,6 @@ pub(crate) fn render_main_diff_row(
     }
 }
 
-impl KagiApp {
-    /// W-IMG: decode before/after images for a binary image file diff.
-    ///
-    /// Returns `None` for non-binary diffs, unsupported formats, or when
-    /// neither side decodes (keeps the "Binary file" placeholder). Blob reads
-    /// go through the Backend; the working-tree side reads the file directly.
-    pub(crate) fn diff_images_for(
-        &self,
-        file_diff: &FileDiff,
-        source: &MainDiffSource,
-        path: &std::path::Path,
-    ) -> Option<DiffImagePair> {
-        if !file_diff.is_binary {
-            return None;
-        }
-        let repo = self.ui().repo_session.as_ref()?.backend();
-        let workdir_bytes = || {
-            self.repo_path
-                .as_ref()
-                .and_then(|rp| std::fs::read(rp.join(path)).ok())
-        };
-        let (old_bytes, new_bytes) = match source {
-            // Nothing on disk behind it, so no image pair to load.
-            MainDiffSource::Synthetic => return None,
-            MainDiffSource::Commit { row_index, .. } => {
-                let id = CommitId(self.view().details.get(*row_index)?.full_sha.to_string());
-                let parent = repo.first_parent(&id).ok().flatten();
-                let old = parent.and_then(|p| repo.blob_bytes_at(&p, path).ok().flatten());
-                let new = repo.blob_bytes_at(&id, path).ok().flatten();
-                (old, new)
-            }
-            MainDiffSource::Compare { base, target, .. } => {
-                let old = repo.blob_bytes_at(base, path).ok().flatten();
-                let new = match target {
-                    CompareTarget::Head => repo.blob_bytes_head(path).ok().flatten(),
-                    CompareTarget::WorkingTree => workdir_bytes(),
-                    CompareTarget::Commit(id) => repo.blob_bytes_at(id, path).ok().flatten(),
-                };
-                (old, new)
-            }
-            MainDiffSource::Unstaged { .. } => {
-                // Working tree vs index (fallback HEAD for files never staged).
-                let old = repo
-                    .blob_bytes_index(path)
-                    .ok()
-                    .flatten()
-                    .or_else(|| repo.blob_bytes_head(path).ok().flatten());
-                (old, workdir_bytes())
-            }
-            MainDiffSource::Staged { .. } => {
-                let old = repo.blob_bytes_head(path).ok().flatten();
-                let new = repo.blob_bytes_index(path).ok().flatten();
-                (old, new)
-            }
-        };
-        let pair = DiffImagePair {
-            old: image_side(old_bytes),
-            new: image_side(new_bytes),
-        };
-        if pair.old.is_none() && pair.new.is_none() {
-            return None;
-        }
-        klog!(
-            "diff-image: {} old={} new={}",
-            path.display(),
-            pair.old.is_some(),
-            pair.new.is_some()
-        );
-        Some(pair)
-    }
-}
-
 // Main-diff open/step methods on `KagiApp`, moved from `src/ui/mod.rs`
 // (T-HOTSPOT-UIMOD-001). Behaviour-preserving relocation.
 impl KagiApp {
@@ -889,10 +815,8 @@ impl KagiApp {
         }
     }
 
-    /// Show a commit's file diff in the full-width pane. Shared by the local
-    /// (`git2`) path and the remote (SSH) path so both render identically.
-    /// The text goes up now; the pane's render requests the highlight
-    /// (#495, [`highlight::ensure_highlight`]).
+    /// Install cached non-binary text or stage a headless commit diff.
+    /// Binary UI opens use the complete background preparation instead.
     pub(crate) fn set_commit_main_diff(
         &mut self,
         file_diff: &FileDiff,
@@ -902,8 +826,8 @@ impl KagiApp {
         cx: Option<&mut Context<Self>>,
     ) {
         let (added, removed) = diff_line_counts(file_diff);
-        eprintln!(
-            "[kagi] diff: {} hunks={} (+{} -{})",
+        klog!(
+            "diff: {} hunks={} (+{} -{})",
             path.display(),
             file_diff.hunks.len(),
             added,
@@ -914,18 +838,17 @@ impl KagiApp {
             file_index,
             commit: self.commit_id_for_row(selected),
         };
-        let mut view = build_main_diff_view(file_diff, path, file_index, source);
+        let view = build_main_diff_view(file_diff, path, file_index, source);
         match cx {
             Some(cx) => {
-                view.images = self.diff_images_for(file_diff, &view.source, path);
                 self.show_main_diff(view, cx);
             }
             // Headless (pre-window) hook: no gpui context yet, so stage the
             // view; `render` promotes it into the pane entity on the first
             // frame (ADR-0121 B2), and that frame requests the highlight.
             None => {
-                eprintln!(
-                    "[kagi] main-diff: open {} rows={} highlight={}",
+                klog!(
+                    "main-diff: open {} rows={} highlight={}",
                     path.display(),
                     view.rows.len(),
                     view.lang.unwrap_or("none")
@@ -1016,16 +939,14 @@ impl KagiApp {
     }
 
     /// Open the first changed file's diff in the main pane (headless path).
-    /// Calls the synchronous highlight variant since headless has no cx and is
-    /// test-only (no UI latency concern).
+    /// Without an executor it reads text synchronously and stages the view;
+    /// the first render promotes it and requests syntax highlighting.
     pub fn open_main_diff_commit_headless(&mut self, file_index: usize) {
-        // Delegate to the shared open path with a dummy sync-highlight by
-        // calling set_commit_main_diff_sync directly after acquiring the diff.
         self.open_main_diff_commit_inner(file_index, None);
     }
 
-    /// Open the main diff (UI path): a cached file installs now, a cache miss
-    /// is read off the UI thread (#829); the highlight follows asynchronously.
+    /// Open the main diff (UI path): cached text installs now; a cache miss or
+    /// cached binary prepares its complete view off-thread before publication.
     pub fn open_main_diff_commit(&mut self, file_index: usize, cx: &mut Context<Self>) {
         self.open_main_diff_commit_inner(file_index, Some(cx));
     }
@@ -1076,6 +997,18 @@ impl KagiApp {
             .get(&(selected, file_index))
             .cloned()
         {
+            if cached.is_binary {
+                if let Some(cx) = cx.as_deref_mut() {
+                    let read = super::main_diff_pane::MainDiffRead::Commit {
+                        commit: id,
+                        row: selected,
+                        file_index,
+                        epoch: self.ui().cache_epoch,
+                        cached: Some(cached),
+                    };
+                    return self.read_main_diff(repo_path, path, read, cx);
+                }
+            }
             self.set_commit_main_diff(&cached, &path, selected, file_index, cx.as_deref_mut());
             return;
         }
@@ -1090,6 +1023,7 @@ impl KagiApp {
                 row: selected,
                 file_index,
                 epoch: self.ui().cache_epoch,
+                cached: None,
             };
             return self.read_main_diff(repo_path, path, read, cx);
         }
@@ -1140,17 +1074,67 @@ impl KagiApp {
             None => return,
         };
         let path_str = path.to_string_lossy().into_owned();
+        let Some(owner) = self
+            .active_session()
+            .and_then(|id| self.app_sessions.attachment(id))
+        else {
+            return;
+        };
+        let req = self.bump_main_diff_req();
+        let commit = CommitId(sha.clone());
+        let bg_path = path.clone();
+        let bg_commit = commit.clone();
 
         let task = cx.background_spawn(async move {
             crate::remote::remote_commit_file_diff(&host, &root, &sha, &path_str)
+                .map(|file_diff| {
+                    let source = MainDiffSource::Commit {
+                        row_index: selected,
+                        file_index,
+                        commit: Some(bg_commit),
+                    };
+                    let view = build_main_diff_view(&file_diff, &bg_path, file_index, source);
+                    (file_diff, view)
+                })
                 .map_err(|e| e.to_string())
         });
         cx.spawn(async move |this, acx| {
             let result = task.await;
             let _ = this.update(acx, |app, cx| {
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                if !current.is_some_and(|current| {
+                    current.session == owner.session && current.visit == owner.visit
+                }) || app.ui().main_diff_req != req
+                    || app
+                        .ui()
+                        .selected
+                        .and_then(|row| app.commit_id_for_row(row))
+                        .as_ref()
+                        != Some(&commit)
+                {
+                    return;
+                }
                 match result {
-                    Ok(file_diff) => {
-                        app.set_commit_main_diff(&file_diff, &path, selected, file_index, Some(cx))
+                    Ok((file_diff, mut view)) => {
+                        let Some(row_index) = app.row_for_commit_id(&commit) else {
+                            return;
+                        };
+                        view.source = MainDiffSource::Commit {
+                            row_index,
+                            file_index,
+                            commit: Some(commit),
+                        };
+                        let (added, removed) = diff_line_counts(&file_diff);
+                        klog!(
+                            "diff: {} hunks={} (+{} -{})",
+                            path.display(),
+                            file_diff.hunks.len(),
+                            added,
+                            removed
+                        );
+                        app.show_main_diff(view, cx);
                     }
                     Err(e) => klog!("remote diff error: {e}"),
                 }

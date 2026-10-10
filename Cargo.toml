@@ -20,7 +20,7 @@ rust-version = "1.92"
 
 [features]
 # Compile the native visual runner only when explicitly requested (ADR-0166).
-gui-e2e = ["gpui/test-support", "kagi-ui-core/gui-e2e"]
+gui-e2e = ["gpui/test-support", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
@@ -169,3 +169,32 @@ cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-ha
 # Cosmetic gpui / gpui-component fork patches (rounded text-run highlight
 # backgrounds; heading_top_gap on TextViewStyle) were dropped in the zed-main
 # migration; re-add by rebasing the forks if the polish is missed.
+
+# Published Kagi list fix (estimated unmeasured heights and end intent), pending upstream.
+# Keep all Zed sibling crates on the same fork revision to avoid duplicate sources.
+[patch."https://github.com/zed-industries/zed"]
+collections = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.2.2" }
+gpui_linux = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_macos = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_platform = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_shared_string = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35", version = "=0.1.0" }
+gpui_util = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_web = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_wgpu = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+gpui_windows = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+http_client = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+media = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+perf = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+scheduler = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+sum_tree = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+util_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+[patch."https://github.com/longbridge/gpui-component"]
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ae37bfd433781abe44e15edd40867fac1b7b3b2c" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ae37bfd433781abe44e15edd40867fac1b7b3b2c" }

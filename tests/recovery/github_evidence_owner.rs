@@ -1,15 +1,15 @@
 //! #643 Wave 4 S2b: GitHub evidence follows the session that observed it.
-use crate::evidence_support::{deferred, pull_request};
+use crate::evidence_support::{deferred, pr_page, pull_request};
 use crate::macos::{build_fixture, mount, unmount};
 use gpui::VisualTestAppContext;
 use kagi::app::SessionId;
 use kagi::ui::workspace_mode::WorkspaceMode;
 use kagi::ui::{e2e, list_a11y, KagiApp};
-use kagi_domain::github::PullRequest;
+use kagi_domain::github::PrListSnapshot;
 use kagi_git::github::PrFetchError;
 use std::collections::HashSet;
 
-fn queue_ready(cx: &mut VisualTestAppContext, result: Result<Vec<PullRequest>, PrFetchError>) {
+fn queue_ready(cx: &mut VisualTestAppContext, result: Result<PrListSnapshot, PrFetchError>) {
     e2e::queue_github_pr_fetch(cx.background_executor.spawn(async move { result }));
 }
 
@@ -82,13 +82,16 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
     let (app, window) = mount(cx, &repo_a);
     let a_prs = vec![pull_request(101, "A evidence", "a-pr")];
 
-    queue_ready(cx, Ok(Vec::new()));
+    queue_ready(cx, Ok(pr_page(Vec::new(), "github.com/example/repo", None)));
     let (owner_a, owner_b) = app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b, cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });
     cx.run_until_parked();
-    queue_ready(cx, Ok(a_prs.clone()));
+    queue_ready(
+        cx,
+        Ok(pr_page(a_prs.clone(), "github.com/example/repo", None)),
+    );
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
     assert_eq!(
@@ -97,7 +100,7 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         "the PRs tab must visibly list A's fetched PR before switching",
     );
 
-    queue_ready(cx, Ok(Vec::new()));
+    queue_ready(cx, Ok(pr_page(Vec::new(), "github.com/example/repo", None)));
     app.update(cx, |app, cx| {
         assert_eq!(
             app.active_session(),
@@ -117,7 +120,7 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         "the PRs tab reused A's PR row for clean B",
     );
 
-    queue_ready(cx, Ok(a_prs));
+    queue_ready(cx, Ok(pr_page(a_prs, "github.com/example/repo", None)));
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         assert_eq!(
@@ -136,10 +139,8 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         "the PRs tab did not restore A's PR row after equal-epoch B",
     );
 
-    // ADR-0200: the navigator row holds two lines (18px title + 15px meta)
-    // inside 6px of padding above and below. A row shorter than that draws its
-    // own text across the hairline under it (user report), so the row must be
-    // at least as tall as what it contains.
+    // The navigator row must retain its natural two-line height when the
+    // collection overflows the pane; the pane scrolls, not the cards' text.
     // INBOX keeps what is broken or ready *for the viewer*, so the row only
     // exists once the app knows whose PRs these are - the fixture's author,
     // as the login on the PR's own host (#906).
@@ -153,14 +154,23 @@ pub fn scenario_github_evidence_restores(cx: &mut VisualTestAppContext) {
         .expect("draw the PR navigator");
     let card = e2e::control_bounds(window.window_id(), "pr-mode-card-101")
         .expect("PR 101's navigator row is drawn");
-    let height = f32::from(card.size.height);
-    assert!(
-        height >= 45.0,
-        "a navigator row must fit its two lines and padding, got {height}"
-    );
-    assert!(
-        height < 80.0,
-        "a navigator row must stay two lines tall, got {height}"
+    let natural_size = card.size;
+    let mut many = vec![pull_request(101, "A evidence", "a-pr")];
+    many.extend((1..100).map(|n| pull_request(n, "Synthetic overflow row", "a-pr")));
+    queue_ready(cx, Ok(pr_page(many, "github.com/example/repo", None)));
+    app.update(cx, |app, cx| app.refresh_github_prs(cx));
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "pr-mode-card-101");
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .expect("draw overflowing PR navigator");
+    let overflow_card = e2e::control_bounds(window.window_id(), "pr-mode-card-101")
+        .expect("first PR card remains visible");
+    assert_eq!(
+        overflow_card.size, natural_size,
+        "100 cards must scroll without compressing their title and metadata"
     );
 
     unmount(cx, app, window);
@@ -177,23 +187,33 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
     let a_baseline = vec![pull_request(101, "A baseline", "a-pr")];
     let a_refreshed = vec![pull_request(102, "A refreshed", "a-next")];
 
-    queue_ready(cx, Ok(b_prs.clone()));
+    queue_ready(
+        cx,
+        Ok(pr_page(b_prs.clone(), "github.com/example/repo", None)),
+    );
     let (owner_a, owner_b) = app.update(cx, |app, cx| {
         assert!(app.open_repository(repo_b, cx), "open B");
         (app.tabs[0].session, app.tabs[1].session)
     });
     cx.run_until_parked();
-    queue_ready(cx, Ok(a_baseline));
+    queue_ready(cx, Ok(pr_page(a_baseline, "github.com/example/repo", None)));
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     cx.run_until_parked();
 
     let (task, success) = deferred(cx);
     e2e::queue_github_pr_fetch(task);
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
-    queue_ready(cx, Ok(b_prs.clone()));
+    queue_ready(
+        cx,
+        Ok(pr_page(b_prs.clone(), "github.com/example/repo", None)),
+    );
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     cx.run_until_parked();
-    success.send(Ok(a_refreshed.clone()));
+    success.send(Ok(pr_page(
+        a_refreshed.clone(),
+        "github.com/example/repo",
+        None,
+    )));
     cx.run_until_parked();
     app.update(cx, |app, _| {
         assert_eq!(app.active_session(), Some(owner_b), "B must remain active");
@@ -215,7 +235,14 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
             "background success changed B availability"
         );
     });
-    queue_ready(cx, Ok(a_refreshed.clone()));
+    queue_ready(
+        cx,
+        Ok(pr_page(
+            a_refreshed.clone(),
+            "github.com/example/repo",
+            None,
+        )),
+    );
     app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         assert_eq!(
@@ -234,7 +261,10 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
     let (task, failure) = deferred(cx);
     e2e::queue_github_pr_fetch(task);
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
-    queue_ready(cx, Ok(b_prs.clone()));
+    queue_ready(
+        cx,
+        Ok(pr_page(b_prs.clone(), "github.com/example/repo", None)),
+    );
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     cx.run_until_parked();
     failure.send(Err(PrFetchError::Network("offline-A".to_string())));
@@ -279,7 +309,7 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
     let (task, unavailable) = deferred(cx);
     e2e::queue_github_pr_fetch(task);
     app.update(cx, |app, cx| app.refresh_github_prs(cx));
-    queue_ready(cx, Ok(b_prs));
+    queue_ready(cx, Ok(pr_page(b_prs, "github.com/example/repo", None)));
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     cx.run_until_parked();
     unavailable.send(Err(PrFetchError::Unavailable("not-GitHub-A".to_string())));
@@ -325,6 +355,24 @@ pub fn scenario_github_evidence_background_owner(cx: &mut VisualTestAppContext) 
 }
 
 pub fn scenario_github_evidence_detached_owner(cx: &mut VisualTestAppContext) {
+    // Reopen starts both the tab's immediate read and a fresh ticker. Only the
+    // former has a queued result; the ticker must answer through a fixture too,
+    // rather than letting a real gh auth failure masquerade as stale delivery.
+    let _gh = crate::pr_fields_focus::OfflineGh::with_script(
+        r#"#!/bin/sh
+case "$*" in
+  "--version")
+    printf 'gh version 2.0.0 (detached owner fixture)\n' ;;
+  "repo view --json url")
+    printf '%s\n' '{"url":"https://github.com/example/repo"}' ;;
+  "api graphql --hostname github.com -F owner=example -F name=repo -F cursor=null -f states[]=OPEN -f query="*"pullRequests(first: 100,"*)
+    printf '%s\n' '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' ;;
+  *)
+    printf 'unsupported detached owner fixture gh request: %s\n' "$*" >&2
+    exit 1 ;;
+esac
+"#,
+    );
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().expect("repo path");
     let (app, window) = mount(cx, &repo);
@@ -336,7 +384,7 @@ pub fn scenario_github_evidence_detached_owner(cx: &mut VisualTestAppContext) {
         app.refresh_github_prs(cx);
         app.close_tab(0, cx);
     });
-    queue_ready(cx, Ok(Vec::new()));
+    queue_ready(cx, Ok(pr_page(Vec::new(), "github.com/example/repo", None)));
     app.update(cx, |app, cx| {
         assert!(app.open_repository(repo, cx), "reopen same path");
     });
@@ -353,10 +401,22 @@ pub fn scenario_github_evidence_detached_owner(cx: &mut VisualTestAppContext) {
             attached_domain(app),
             "UI domain was invalid before completion"
         );
+        assert!(
+            app.ui().github_error.is_none(),
+            "reopened owner's own reads must settle without an error"
+        );
+        assert!(
+            !app.ui().github_prs_loading,
+            "reopened owner's own reads must settle before stale delivery"
+        );
         (new_owner, ui_domain(app), app.ui().github_unavailable)
     });
 
-    reply.send(Ok(vec![pull_request(303, "stale completion", "old-a-pr")]));
+    reply.send(Ok(pr_page(
+        vec![pull_request(303, "stale completion", "old-a-pr")],
+        "github.com/example/repo",
+        None,
+    )));
     cx.run_until_parked();
     cx.read(|cx| {
         let app = app.read(cx);

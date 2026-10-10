@@ -1,15 +1,11 @@
-//! Issue conversation rendering over the existing session-owned detail cache.
-//!
-//! The workspace owns scrolling and appends its Reply composer after this
-//! content. This module neither fetches data nor owns a second copy of it.
-
+//! The retained Issue projection rendered through one outer virtual list.
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
+use gpui_component::text::{TextSelectionGroupElement as _, TextView};
 use kagi_domain::github::IssueState;
 
-use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
-use super::KagiApp;
+use super::{i18n::Msg, issue_conversation::IssueConversation, KagiApp};
 
 fn status(id: &'static str, text: impl Into<SharedString>, color: u32) -> AnyElement {
     super::e2e::measure_control(
@@ -26,7 +22,7 @@ fn status(id: &'static str, text: impl Into<SharedString>, color: u32) -> AnyEle
     .into_any_element()
 }
 
-fn back_to_issues(cx: &mut Context<KagiApp>) -> AnyElement {
+fn header(cx: &mut Context<KagiApp>) -> AnyElement {
     let click = cx.listener(|app: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
         app.return_to_issues_home(window, cx);
     });
@@ -49,122 +45,222 @@ fn back_to_issues(cx: &mut Context<KagiApp>) -> AnyElement {
     .into_any_element()
 }
 
-fn thread_shell(back: AnyElement, content: AnyElement) -> AnyElement {
-    div()
-        .w_full()
-        .flex()
-        .flex_col()
-        .child(back)
-        .child(content)
-        .into_any_element()
-}
-
-/// Render the body followed by chronological comments, without a nested scroll
-/// container. The active session is the sole source of selection and detail.
-pub(super) fn render_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+fn detail_status(app: &KagiApp) -> Option<AnyElement> {
     let ui = app.ui();
-    let Some(number) = ui.selected_github_issue else {
-        return status(
-            "issue-mode-detail-empty",
-            Msg::IssueSelect.t(),
-            theme().text_muted,
-        );
-    };
-    if ui.github_issue_detail_loading == Some(number)
-        && !ui.github_issue_details.contains_key(&number)
-    {
-        return thread_shell(
-            back_to_issues(cx),
-            status(
-                "issue-mode-detail-loading",
-                Msg::IssueLoading.t(),
-                theme().text_muted,
-            ),
-        );
-    }
-    if let Some(message) = ui
-        .github_issue_detail_error
-        .as_deref()
-        .filter(|_| !ui.github_issue_details.contains_key(&number))
-    {
-        return thread_shell(
-            back_to_issues(cx),
-            status(
-                "issue-mode-detail-error",
-                safe_text(message),
-                theme().color_blocker,
-            ),
-        );
-    }
-    let Some(issue) = ui.github_issue_details.get(&number) else {
-        return thread_shell(
-            back_to_issues(cx),
-            status(
-                "issue-mode-detail-empty",
-                Msg::IssueDetailsUnavailable.t(),
-                theme().text_muted,
-            ),
-        );
-    };
-    let mut content = div().flex().flex_col();
     if let Some(message) = ui.github_issue_detail_error.as_deref() {
-        content = content.child(status(
+        Some(status(
             "issue-mode-detail-error",
             safe_text(message),
             theme().color_blocker,
-        ));
-    } else if ui.github_issue_detail_loading == Some(number) {
-        content = content.child(status(
+        ))
+    } else if ui.github_issue_detail_loading == ui.selected_github_issue {
+        Some(status(
             "issue-mode-detail-loading",
             Msg::IssueLoading.t(),
             theme().text_muted,
-        ));
+        ))
+    } else {
+        None
     }
-    thread_shell(
-        back_to_issues(cx),
-        content
-            .child(render_conversation(app, issue, cx))
-            .into_any_element(),
-    )
 }
 
-fn render_conversation(
+pub(super) fn render_thread(
     app: &KagiApp,
-    issue: &kagi_domain::github::Issue,
+
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
-    let number = issue.number;
-    let state = match issue.state {
-        IssueState::Open => Msg::IssueStateOpen.t(),
-        IssueState::Closed => Msg::IssueStateClosed.t(),
-        IssueState::Unknown => Msg::IssueStateUnknown.t(),
+    let Some(conversation) = app.selected_issue_conversation() else {
+        return pending_thread(app, cx);
     };
-    let state_color = if matches!(issue.state, IssueState::Open) {
-        theme().color_success
-    } else {
-        theme().text_muted
-    };
-    let mut thread = div()
+    let consumer_generation = app.ui().issue_conversation_gen;
+    let session = app.active_session();
+    IssueConversation::bind_window(
+        &conversation,
+        &cx.entity(),
+        session,
+        consumer_generation,
+        window,
+        cx,
+    );
+    let owner = conversation.read(cx);
+    let state = owner.list.clone();
+    let group = owner.group.clone();
+    let generation = owner.generation();
+    let weak_owner = conversation.downgrade();
+    let weak_app = cx.entity().downgrade();
+    let render_owner = weak_owner.clone();
+    let render = cx.processor(move |app: &mut KagiApp, index: usize, window, cx| {
+        if app.active_session() != session || app.ui().issue_conversation_gen != consumer_generation
+        {
+            return div().into_any_element();
+        }
+        let Some(entity) = render_owner.upgrade() else {
+            return div().into_any_element();
+        };
+        let owner = entity.read(cx);
+        if owner.generation() != generation {
+            return div().into_any_element();
+        }
+        if index == 0 {
+            return header(cx);
+        }
+        if index == owner.posts.len() + 1 {
+            return super::issues_composer::render_composer(app, Some(owner.number), window, cx);
+        }
+        post(app, owner, index - 1, cx)
+    });
+    let scrollbar = state.clone();
+    let viewport = div()
         .id("issue-thread")
+        .flex_1()
+        .min_h(px(0.))
+        .h_full()
         .w_full()
-        .min_w(px(0.))
+        .overflow_hidden()
         .flex()
         .flex_col()
-        .child(post(
-            app,
-            format!("issue-thread-body-{number}"),
-            &issue.author,
-            &issue.created_at,
-            if issue.body.trim().is_empty() {
-                Msg::IssueNoDescription.t()
-            } else {
-                &issue.body
-            },
-            Some((&format!("#{} {}", number, issue.title), state, state_color)),
-            cx,
-        ));
-    if !issue.comments.is_empty() {
-        thread = thread.child(
+        .child(super::e2e::measure_inside("issue-thread"))
+        .child(super::render_helpers::with_vertical_scrollbar(
+            "issue-thread-scroll",
+            &scrollbar,
+            gpui::list(state, move |index, window, cx| render(index, window, cx))
+                .flex_1()
+                .min_h(px(0.)),
+            true,
+        ))
+        // Request chrome must not change a retained post's list geometry.
+        // Keep it visible without moving the scroll viewport's origin.
+        .children(detail_status(app).map(|status| div().flex_none().child(status)));
+    viewport
+        .text_selection_group(group, move |distance, _, cx| {
+            let Some(app) = weak_app.upgrade() else {
+                return;
+            };
+            let current = app.read(cx);
+            if current.active_session() != session
+                || current.ui().issue_conversation_gen != consumer_generation
+                || current.home_in_front()
+                || current.has_active_modal()
+                || current.menu_overlay.is_some()
+                || current.conflict_body_visible()
+                || current.workspace_mode() != super::workspace_mode::WorkspaceMode::Issues
+                || current.has_modal_or_visible_plan(cx)
+            {
+                return;
+            }
+            let Some(owner) = weak_owner.upgrade() else {
+                return;
+            };
+            let state = owner.read(cx);
+            if !state.active() || state.generation() != generation {
+                return;
+            }
+            state.list.scroll_by(distance);
+            app.update(cx, |_, cx| cx.notify());
+        })
+        .into_any_element()
+}
+
+fn pending_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    let state = app.ui().issue_thread_pending_list.clone();
+    state.remeasure_items(0..2);
+    let session = app.active_session();
+    let number = app.ui().selected_github_issue;
+    let generation = app.ui().issue_conversation_gen;
+    let render = cx.processor(move |app: &mut KagiApp, index: usize, window, cx| {
+        if app.active_session() != session
+            || app.ui().selected_github_issue != number
+            || app.ui().issue_conversation_gen != generation
+        {
+            return div().into_any_element();
+        }
+        if index == 0 {
+            return div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(header(cx))
+                .children(detail_status(app))
+                .when(
+                    app.ui().github_issue_detail_loading.is_none()
+                        && app.ui().github_issue_detail_error.is_none(),
+                    |row| {
+                        row.child(status(
+                            "issue-mode-detail-empty",
+                            Msg::IssueDetailsUnavailable.t(),
+                            theme().text_muted,
+                        ))
+                    },
+                )
+                .into_any_element();
+        }
+        super::issues_composer::render_composer(app, number, window, cx)
+    });
+    let scrollbar = state.clone();
+    super::render_helpers::with_vertical_scrollbar(
+        "issue-thread-pending-scroll",
+        &scrollbar,
+        gpui::list(state, move |index, window, cx| render(index, window, cx))
+            .flex_1()
+            .min_h(px(0.)),
+        true,
+    )
+    .into_any_element()
+}
+
+fn post(app: &KagiApp, owner: &IssueConversation, index: usize, cx: &gpui::App) -> AnyElement {
+    let Some(post) = owner.posts.get(index) else {
+        return div().into_any_element();
+    };
+    let id = post.comment_index.map_or_else(
+        || format!("issue-thread-body-{}", owner.number),
+        |index| format!("issue-thread-comment-{}-{index}", owner.number),
+    );
+    let mut content =
+        super::timeline_row::content_column()
+            .gap_2()
+            .child(super::timeline_row::meta(
+                &post.author,
+                &super::timeline_row::age(&post.created_at),
+            ));
+    if index == 0 {
+        content = content.child(
+            div()
+                .text_size(theme::scaled_px(20.))
+                .line_height(theme::scaled_px(28.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(rgb(theme().text_main))
+                .whitespace_normal()
+                .child(safe_text(&format!("#{} {}", owner.number, owner.title))),
+        );
+    }
+    content = content.child(super::e2e::measure_control(
+        format!("{id}-md"),
+        TextView::new(&post.text)
+            .selectable(true)
+            .scrollable(false)
+            .style(super::timeline_row::markdown_style(15., cx))
+            .font_features(kagi_ui_editor::markdown::literal_text_features()),
+    ));
+    if index == 0 {
+        let (label, color) = match owner.state {
+            IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
+            IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
+            IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
+        };
+        content = content.child(super::timeline_row::state_dot(label, color));
+    }
+    let row = super::timeline_row::row(
+        ("issue-conversation-post", post.text.entity_id()),
+        &post.author,
+        app.issue_repo_host(),
+        &app.avatars.images,
+        content,
+    );
+    let mut result = div().w_full().flex().flex_col();
+    if index == 1 {
+        result = result.child(
             div()
                 .px(theme::scaled_px(super::timeline_row::GUTTER))
                 .py_2()
@@ -173,70 +269,8 @@ fn render_conversation(
                 .text_sm()
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(rgb(theme().text_label))
-                .child(SharedString::from(super::i18n::issue_comments(
-                    issue.comments.len(),
-                ))),
+                .child(super::i18n::issue_comments(owner.posts.len() - 1)),
         );
     }
-    // Sort references, not bodies. Stable ordering preserves API order for
-    // equal timestamps; gh returns UTC ISO timestamps suitable for comparison.
-    let mut comments: Vec<_> = issue.comments.iter().enumerate().collect();
-    comments.sort_by(|(_, left), (_, right)| left.created_at.cmp(&right.created_at));
-    for (index, comment) in comments {
-        thread = thread.child(post(
-            app,
-            format!("issue-thread-comment-{number}-{index}"),
-            &comment.author,
-            &comment.created_at,
-            &comment.body,
-            None,
-            cx,
-        ));
-    }
-    super::e2e::measure_control("issue-thread", thread).into_any_element()
-}
-
-/// Both the initial post and replies are rows of the shared timeline chrome
-/// (`timeline_row`): avatar, `@login · age`, the one markdown pipeline.
-fn post(
-    app: &KagiApp,
-    id: String,
-    author: &str,
-    created_at: &str,
-    body: &str,
-    issue_meta: Option<(&str, &'static str, u32)>,
-    cx: &mut Context<KagiApp>,
-) -> AnyElement {
-    let content = super::timeline_row::content_column()
-        .gap_2()
-        .child(super::timeline_row::meta(
-            author,
-            &super::timeline_row::age(created_at),
-        ))
-        .children(issue_meta.map(|(title, _, _)| {
-            div()
-                .text_size(theme::scaled_px(20.))
-                .line_height(theme::scaled_px(28.))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(rgb(theme().text_main))
-                .whitespace_normal()
-                .child(safe_text(title))
-        }))
-        .child(super::e2e::measure_control(
-            format!("{id}-md"),
-            super::timeline_row::body_markdown(
-                SharedString::from(format!("{id}-md")),
-                body,
-                super::timeline_row::markdown_style(15., cx),
-            ),
-        ))
-        .children(issue_meta.map(|(_, label, color)| super::timeline_row::state_dot(label, color)));
-    super::timeline_row::row(
-        SharedString::from(id),
-        author,
-        app.issue_repo_host(),
-        &app.avatars.images,
-        content,
-    )
-    .into_any_element()
+    result.child(row).into_any_element()
 }

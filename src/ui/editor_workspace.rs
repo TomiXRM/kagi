@@ -57,12 +57,14 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                view.diff_layout.clear(&view.diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.diff_scroll.clone(),
+                &view.diff_layout,
                 None,
                 cx,
             )
@@ -77,12 +79,14 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                view.history_diff_layout.clear(&view.history_diff_scroll);
                 return gpui::div().into_any_element();
             };
             render_diff_list::<EditorWorkspaceView>(
                 diff.clone(),
                 DiffHeader::default(),
                 view.history_diff_scroll.clone(),
+                &view.history_diff_layout,
                 None,
                 cx,
             )
@@ -413,12 +417,32 @@ impl KagiApp {
                 build_main_diff_view(&d, &bg_path, 0, source)
             })
         });
+        #[cfg(feature = "gui-e2e")]
+        let editor_id = view.entity_id();
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let built = task.await;
             let _ = view.update(acx, |v, cx| {
-                let diff = built.map(|d| Box::new(d) as Box<dyn std::any::Any>);
-                v.seed_diff(req, &path, diff, cx);
+                v.seed_diff(
+                    req,
+                    &path,
+                    built,
+                    |slot, next| {
+                        match (
+                            slot.as_mut()
+                                .and_then(|stored| stored.downcast_mut::<MainDiffView>()),
+                            next,
+                        ) {
+                            (Some(current), Some(next)) => current.adopt(next),
+                            (_, next) => {
+                                *slot = next.map(|next| Box::new(next) as Box<dyn std::any::Any>);
+                            }
+                        }
+                        #[cfg(feature = "gui-e2e")]
+                        super::e2e::record_editor_diff_seed_request(editor_id, req);
+                    },
+                    cx,
+                );
             });
         })
         .detach();
@@ -652,10 +676,9 @@ impl KagiApp {
     /// reset `dirty` as part of navigating/reloading, so no separate
     /// "discard" step is needed here.
     pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
-        let Some(modal) = self.editor_dirty_guard_modal().cloned() else {
+        let Some(modal) = self.take_editor_dirty_guard_modal() else {
             return;
         };
-        self.clear_editor_dirty_guard_modal();
         match modal.intent {
             EditorPendingIntent::Reload => {
                 if let Some(ev) = self.ui().editor_workspace.clone() {
@@ -677,6 +700,25 @@ impl KagiApp {
                     ui.editor_workspace = None;
                 }
                 self.close_tab_by_session(session, cx);
+            }
+            EditorPendingIntent::PrPeek {
+                owner,
+                editor,
+                input,
+                path,
+                view,
+            } => {
+                let current = self.active_session() == Some(owner.session)
+                    && self.app_sessions.attachment(owner.session).as_ref() == Some(&owner)
+                    && self.ui().editor_workspace.as_ref().is_some_and(|pane| {
+                        pane.entity_id() == editor
+                            && pane.read(cx).editor.as_ref().map(|input| input.entity_id()) == input
+                            && pane.read(cx).open_path == path
+                    });
+                if current {
+                    self.close_editor_workspace();
+                    self.finish_pr_peek(owner, view, cx);
+                }
             }
         }
         cx.notify();

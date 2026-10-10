@@ -134,6 +134,18 @@ resolver の**最上流の入力**として足す。mode は per-repo の transi
 エディタからの **stage/discard 等の Git 操作は本 ADR のスコープ外**(必要になれば
 既存の pipeline + modal を経由する。invariant 4 を迂回する導線は作らない)。
 
+### Editor file-tree read projection (#1073)
+
+`EditorWorkspaceView` owns one revision-keyed projection of its accepted tree:
+visible base indices, accessibility levels and sibling positions, and file/row
+indices for keyboard selection. Accepted file reads invalidate the tree revision
+even when the replacement has the same length; folder disclosure invalidates
+the collapse revision. An unchanged repaint reuses those derived arrays.
+Theme, zoom and selection do not change tree membership and do not invalidate
+this projection. `uniform_list` still virtualizes the displayed rows; collapsed
+folders retain the selected editor buffer while their descendants leave the
+visible and accessibility projections.
+
 ## Consequences
 
 - ペイン内容の追加が「enum variant + render arm + open/close」の定型作業になり、

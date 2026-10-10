@@ -837,3 +837,178 @@ pub fn scenario_file_history_wip_changes(cx: &mut VisualTestAppContext, repo_pat
     drop(restore);
     eprintln!("[gui-e2e] PASS file_history_wip_changes");
 }
+
+fn pr_table_frame(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+    dimensions: (f32, f32),
+) {
+    kagi::ui::list_a11y::clear_recorded_lists();
+    app.update(cx, |_, cx| cx.notify());
+    draw(cx, win, dimensions);
+    let list = kagi::ui::list_a11y::recorded_list("pr-list").expect("actual PR table");
+    assert_eq!(list.role, Some(gpui::Role::List));
+    assert_eq!(list.size, 100);
+    assert!(
+        !list.rows.is_empty() && list.rows.len() < 100,
+        "the bounded virtual list must render only a visible range: {list:?}"
+    );
+}
+
+fn pr_table_alignment(win: AnyWindowHandle, number: u64, case: ((f32, f32), &str, f32, &str)) {
+    let bounds = |name: &str| {
+        e2e::control_bounds(win.window_id(), name)
+            .unwrap_or_else(|| panic!("missing table geometry: {name}"))
+    };
+    let header = bounds("pr-home-table-header");
+    let header_title = bounds("pr-home-header-title");
+    let title = bounds(&format!("pr-home-title-{number}"));
+    let row = bounds(&format!("pr-home-row-{number}"));
+    let header_age = bounds("pr-home-header-age");
+    let age = bounds(&format!("pr-home-age-{number}"));
+    assert!(
+        header_title.size.width >= theme::scaled_px(320.) - px(EPS)
+            && title.size.width >= theme::scaled_px(300.) - px(EPS),
+        "title/header must retain readable width: {header_title:?}, {title:?}"
+    );
+    assert!(
+        header_title.top() >= header.top() - px(EPS)
+            && header_title.bottom() <= header.bottom() + px(EPS)
+            && row.top() >= header.bottom() - px(EPS),
+        "the nonwrapping header must not overlap controls or rows: header={header:?}, header-title={header_title:?}, row={row:?}, number={number}, case=(dimensions, locale, zoom, phase)={case:?}"
+    );
+    assert!(
+        (title.left() - header_title.left()).abs() <= px(EPS)
+            && (age.left() - header_age.left()).abs() <= px(EPS),
+        "header and body must align at both ends: {header_title:?}, {title:?}, {header_age:?}, {age:?}"
+    );
+}
+
+/// #1095: actual KagiApp table, narrow/normal width, EN/JA and 100%/167%.
+/// Wheel input must move header/body together without turning X into Y, and
+/// the independently virtualized Y list must still reach its last PR.
+pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
+    use crate::evidence_support::pull_request;
+    use gpui::{point, ScrollDelta, ScrollStrategy, ScrollWheelEvent, TouchPhase};
+
+    let _restore = GlobalSettings::capture();
+    let fixture = crate::macos::build_fixture();
+    assert!(kagi_git::github::gh_available(), "PR mode requires gh");
+    for dimensions in [(940., 660.), (1440., 900.)] {
+        let state = e2e::app_state(fixture.path()).expect("fixture app state");
+        let captured: Rc<RefCell<Option<gpui::Entity<KagiApp>>>> = Rc::default();
+        let output = captured.clone();
+        let win = crate::macos::open_offscreen(
+            cx,
+            size(px(dimensions.0), px(dimensions.1)),
+            move |window, cx| e2e::mount_root(state, window, cx, &output),
+        );
+        let win: AnyWindowHandle = win.into();
+        let app = captured.borrow_mut().take().expect("captured KagiApp");
+        cx.run_until_parked();
+        let prs = (1..=100)
+            .map(|number| {
+                pull_request(
+                    number,
+                    &format!("PR {number}: readable title / 日本語の長いタイトル"),
+                    &format!("feature/readable-branch-{number}"),
+                )
+            })
+            .collect();
+        e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(crate::evidence_support::pr_page(
+            prs, "", None,
+        ))));
+        app.update(cx, |app, cx| app.refresh_github_prs(cx));
+        cx.run_until_parked();
+        app.update(cx, |app, cx| app.show_pr_mode(cx));
+        cx.run_until_parked();
+        let (horizontal, vertical, first, last) = cx.read(|cx| {
+            let app = app.read(cx);
+            let mode = app.pr_mode().expect("PR mode");
+            let ui = app.ui();
+            let prs = &ui.github_prs;
+            let rows = kagi_domain::list_filter::apply_prs(prs, &ui.github_pr_filter, |_| {
+                kagi_domain::github::PrDetailAvailability::Missing
+            });
+            assert_eq!(rows.len(), 100);
+            (
+                mode.dashboard_horizontal_scroll.clone(),
+                mode.dashboard_scroll.clone(),
+                prs[rows[0]].number,
+                prs[rows[99]].number,
+            )
+        });
+        for locale in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            for zoom in [1., 1.667] {
+                theme::set_zoom(zoom);
+                horizontal.set_offset(point(px(0.), px(0.)));
+                vertical.scroll_to_item_strict(0, ScrollStrategy::Top);
+                pr_table_frame(cx, &app, win, dimensions);
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "initial"));
+                let viewport = e2e::control_bounds(win.window_id(), "pr-home-table-viewport")
+                    .expect("horizontal viewport");
+                let center = e2e::control_bounds(win.window_id(), "pr-mode-center-pane")
+                    .expect("PR center pane");
+                contained(center, viewport, "table stays inside its center pane");
+                let row = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{first}"))
+                    .expect("first row");
+                let position = point(viewport.center().x, row.center().y);
+                let before_y = vertical.0.borrow().base_handle.offset().y;
+                let before_title =
+                    e2e::control_bounds(win.window_id(), "pr-home-header-title").unwrap();
+                cx.simulate_event(
+                    win,
+                    ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(point(px(-10_000.), px(0.))),
+                        touch_phase: TouchPhase::Moved,
+                        ..Default::default()
+                    },
+                );
+                pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(
+                    vertical.0.borrow().base_handle.offset().y,
+                    before_y,
+                    "horizontal wheel input must not move the vertical list"
+                );
+                let after_title =
+                    e2e::control_bounds(win.window_id(), "pr-home-header-title").unwrap();
+                if horizontal.max_offset().x > px(EPS) {
+                    assert!(after_title.left() < before_title.left() - px(EPS));
+                }
+                pr_table_alignment(win, first, (dimensions, locale, zoom, "horizontal-wheel"));
+                let age = e2e::control_bounds(win.window_id(), &format!("pr-home-age-{first}"))
+                    .expect("last metadata column");
+                assert!(
+                    age.left() >= viewport.left() - px(EPS)
+                        && age.right() <= viewport.right() + px(EPS),
+                    "horizontal wheel must expose the trailing metadata: {age:?}, {viewport:?}"
+                );
+                let before_x = horizontal.offset().x;
+                cx.simulate_event(
+                    win,
+                    ScrollWheelEvent {
+                        position,
+                        delta: ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                        touch_phase: TouchPhase::Moved,
+                        ..Default::default()
+                    },
+                );
+                e2e::clear_control_bounds(win.window_id(), &format!("pr-home-row-{last}"));
+                pr_table_frame(cx, &app, win, dimensions);
+                assert_eq!(horizontal.offset().x, before_x, "Y must not become X");
+                let tail = e2e::control_bounds(win.window_id(), &format!("pr-home-row-{last}"))
+                    .expect("vertical wheel reaches the last PR");
+                assert!(tail.bottom() <= viewport.bottom() + px(EPS));
+                pr_table_alignment(win, last, (dimensions, locale, zoom, "vertical-tail"));
+                let list = kagi::ui::list_a11y::recorded_list("pr-list").unwrap();
+                assert!(list.rows[&99].0.contains(&format!("#{last}")));
+            }
+        }
+        unmount(cx, app, win);
+    }
+    eprintln!("[gui-e2e] PASS pr_dashboard_responsive: readable aligned columns, shared X wheel, independent virtualized Y tail, 8 width/locale/zoom cells");
+}

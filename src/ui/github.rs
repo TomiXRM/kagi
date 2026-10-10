@@ -13,7 +13,7 @@ use super::modals::{ActiveModal, PrMergeModal};
 use super::operations::modal_state::{AsyncPlanOffer, PlanningPresentation};
 use super::operations::RunPresentation;
 use super::types::ToastKind;
-use super::{CompareTarget, CompareView, FooterStatus, KagiApp};
+use super::{CompareTarget, CompareView, EditorPendingIntent, FooterStatus, KagiApp};
 
 /// Refresh cadence for shared open-PR evidence and visible volatile status.
 /// Strip-only Closed/All collections are refreshed explicitly, not by this ticker.
@@ -63,50 +63,38 @@ impl KagiApp {
         #[cfg(feature = "gui-e2e")]
         let injected = super::e2e::take_github_pr_fetch();
         #[cfg(not(feature = "gui-e2e"))]
-        let injected: Option<
-            gpui::Task<
-                Result<Vec<kagi_domain::github::PullRequest>, kagi_git::github::PrFetchError>,
-            >,
-        > = None;
+        let injected = None;
         if injected.is_none() && !kagi_git::github::gh_available() {
             return;
         }
-        // Shared evidence is always Open, independent of the workspace strip.
+        // Shared evidence is always Open, independent of workspace strip intent.
         let generation = {
             let Some(ui) = self.ui.get_mut(&owner) else {
                 return;
             };
             ui.begin_github_prs_request()
         };
+        let task = super::github_pr_strip::pr_list_task(
+            repo.clone(),
+            None,
+            None,
+            kagi_domain::list_filter::StateFilter::Open,
+            injected,
+            cx,
+        );
+        cx.notify();
         cx.spawn(async move |this, acx| {
-            let fetch_repo = repo.clone();
-            let result = match injected {
-                Some(task) => task.await,
-                None => {
-                    acx.background_executor()
-                        .spawn(async move {
-                            kagi_git::github::list_prs(
-                                &fetch_repo,
-                                kagi_domain::list_filter::StateFilter::Open,
-                            )
-                        })
-                        .await
-                }
-            };
+            let result = task.await;
             let _ = this.update(acx, |app, cx| {
                 let owner_is_active = app.active_session() == Some(owner);
                 let answered = {
                     let Some(ui) = app.ui.get_mut(&owner) else {
                         return;
                     };
-                    if !ui.accept_github_prs_completion(generation) {
+                    let was_loaded = ui.github_prs_loaded;
+                    let Some(outcome) = ui.finish_github_prs_request(generation, result) else {
                         return;
-                    }
-                    // #506: only a fetch that actually answered may replace the
-                    // list. `apply_pr_fetch` holds that rule for both PR callers —
-                    // an expired token or an offline machine keeps the last good
-                    // data instead of being shown as an empty inbox.
-                    let outcome = kagi_git::github::apply_pr_fetch(&mut ui.github_prs, result);
+                    };
                     let moved = match &outcome.error {
                         None => {
                             ui.github_error = None;
@@ -141,10 +129,8 @@ impl KagiApp {
                             return;
                         }
                     };
-                    if outcome.changed || !ui.github_prs_loaded {
+                    if outcome.changed || !was_loaded {
                         klog!("github: prs={}", ui.github_prs.len());
-                        ui.github_prs_loaded = true;
-                        ui.github_prs_epoch = ui.github_prs_epoch.wrapping_add(1);
                     }
                     // #906: "mine" is the login on the PRs' own host.
                     (moved, distinct_base_repos(&ui.github_prs))
@@ -226,7 +212,25 @@ impl KagiApp {
                     if app.repo_path.is_none() {
                         return false;
                     }
-                    app.refresh_github_prs(cx);
+                    // A first-page replacement would revoke the continuation
+                    // or discard accepted pages the active PR consumer is using.
+                    // Defer only this automatic L1 read; manual/owner refreshes
+                    // still cut over normally. Membership stays last accepted,
+                    // while currently visible/opened volatile details refresh.
+                    let defer_first_page = app.workspace_mode()
+                        == super::workspace_mode::WorkspaceMode::Prs
+                        && app.ui().github_prs_strip.rows.is_none()
+                        && (app.ui().github_prs_paging.page > 1
+                            || app.ui().github_prs_paging.append.is_some());
+                    if defer_first_page {
+                        if let (Some(owner), Some(repo)) =
+                            (app.active_session(), app.repo_path.clone())
+                        {
+                            app.refresh_pr_detail_targets(owner, repo, cx);
+                        }
+                    } else {
+                        app.refresh_github_prs(cx);
+                    }
                     true
                 });
                 if !matches!(keep, Ok(true)) {
@@ -272,6 +276,19 @@ impl KagiApp {
     /// Read-only PR peek: Compare pane over merge-base(base, head) → head using
     /// the fetched remote tips. Both branches must exist as `origin/…`.
     pub fn open_pr_peek(&mut self, pr: &PullRequest, cx: &mut Context<Self>) {
+        // A newer Peek owns this navigation, even when its refs cannot be read.
+        if self
+            .editor_dirty_guard_modal()
+            .is_some_and(|modal| matches!(&modal.intent, EditorPendingIntent::PrPeek { .. }))
+        {
+            self.cancel_editor_dirty_guard();
+        }
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
+            return;
+        };
         let tip = |name: &str| {
             self.view()
                 .remote_branches
@@ -300,21 +317,36 @@ impl KagiApp {
         match repo.compare_commits(&base, &head_tip) {
             Ok(files) => {
                 klog!("pr-peek: #{} files={}", pr.number, files.len());
-                if let Some(row) = self.row_for_commit_id(&head_tip) {
-                    if self.ui().selected != Some(row) {
-                        self.select(row);
-                    }
-                }
-                if let Some(ui) = self.ui_mut() {
-                    ui.main_diff = None;
-                }
+                // Freeze the successful read before asking to discard an
+                // editor hidden under the PR takeover. Cancel changes neither.
                 let view = CompareView {
                     base,
                     target: CompareTarget::Commit(head_tip),
                     files,
                     title: SharedString::from(format!("#{} {}", pr.number, pr.head)),
                 };
-                self.show_compare(view, cx);
+                if let Some(editor) = self.ui().editor_workspace.as_ref() {
+                    if editor.read(cx).any_dirty() {
+                        let input = editor
+                            .read(cx)
+                            .editor
+                            .as_ref()
+                            .map(|input| input.entity_id());
+                        let path = editor.read(cx).open_path.clone();
+                        self.open_editor_dirty_guard(
+                            EditorPendingIntent::PrPeek {
+                                owner,
+                                editor: editor.entity_id(),
+                                input,
+                                path,
+                                view,
+                            },
+                            cx,
+                        );
+                        return;
+                    }
+                }
+                self.finish_pr_peek(owner, view, cx);
             }
             Err(e) => {
                 klog!("pr-peek: error: {}", e);
@@ -322,6 +354,40 @@ impl KagiApp {
                     FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::PrPeek, e)));
             }
         }
+    }
+
+    /// Publish only to the attachment that requested this immutable Compare.
+    pub(crate) fn finish_pr_peek(
+        &mut self,
+        owner: crate::app::Attachment,
+        view: CompareView,
+        cx: &mut Context<Self>,
+    ) {
+        if self.active_session() != Some(owner.session)
+            || self.app_sessions.attachment(owner.session).as_ref() != Some(&owner)
+        {
+            return;
+        }
+        self.show_graph_for_pr_peek(cx);
+        self.inspector_visible = true;
+        if let CompareTarget::Commit(head) = &view.target {
+            if let Some(row) = self.row_for_commit_id(head) {
+                if self.ui().selected != Some(row) {
+                    self.select(row);
+                }
+            } else {
+                // An unloaded PR head has no commit identity in this Graph.
+                self.with_ui(|ui| ui.selected = None);
+            }
+        }
+        // CommitPanel outranks Compare in the right slot. Hide its gate, not
+        // its retained entity or draft, even when no Graph row was selected.
+        self.with_ui(|ui| {
+            ui.commit_panel_open = false;
+            ui.main_diff = None;
+        });
+        self.show_compare(view, cx);
+        cx.notify();
     }
 
     pub fn open_pr_in_browser(&mut self, pr: &PullRequest) {

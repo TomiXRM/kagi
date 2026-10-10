@@ -59,3 +59,23 @@ pub fn pull_request(number: u64, title: &str, head: &str) -> kagi_domain::github
         ..Default::default()
     }
 }
+
+/// A bounded transport page. Nonempty pages take their resolved identity from
+/// the actual fixture rows; empty pages must still name their repository.
+pub fn pr_page(
+    prs: Vec<kagi_domain::github::PullRequest>,
+    empty_base_repo: &str,
+    next_cursor: Option<&str>,
+) -> kagi_domain::github::PrListSnapshot {
+    let base_repo = prs
+        .first()
+        .map_or(empty_base_repo, |pr| pr.base_repo.as_str())
+        .to_owned();
+    assert!(!base_repo.is_empty(), "a page needs a resolved repository");
+    assert!(prs.iter().all(|pr| pr.base_repo == base_repo));
+    kagi_domain::github::PrListSnapshot {
+        prs,
+        base_repo,
+        next_cursor: next_cursor.map(str::to_owned),
+    }
+}

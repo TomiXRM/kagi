@@ -21,16 +21,9 @@ impl KagiApp {
             // Re-arm detection: its outcome decides whether the retained
             // conflict pane is updated in place or replaced.
             ui.conflict_detected = false;
-            // PR mode is dropped rather than re-checked. A `PrTab` is a snapshot
-            // of the refs *and* of GitHub (reviews, merge status, conflict
-            // preview) taken when it was opened, and nothing refreshes it while
-            // the tab is away; rebuilding it on activation needs the PR list
-            // that the activation is still fetching, races the loads started
-            // before departure, and loses the user's position anyway. Carrying
-            // PR mode across a switch is out of scope for #643 Wave 4 S6 — the
-            // tab reopens the PR. The *ownership* stays session-scoped, so B
-            // never sees A's PRs.
-            ui.leave_pr_mode();
+            // PR collections and pane entities remain owned by this session.
+            // Departure revoked list requests; activation's list/detail reads
+            // revalidate the retained heads without discarding user intent.
         }
     }
 
@@ -160,7 +153,7 @@ impl KagiApp {
         self.reads.forget(session);
         self.ui.remove(&session);
         if let Some(flight) = &mut self.fetch_in_flight {
-            flight.waiters.retain(|(waiter, _)| *waiter != session);
+            flight.waiters.retain(|(waiter, _, _)| *waiter != session);
         }
     }
 

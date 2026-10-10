@@ -162,6 +162,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
@@ -363,6 +364,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
         preview_files: Vec::new(),
@@ -542,6 +544,7 @@ pub fn plan_stash_drop_remote(stash_label: &str, head_summary: String) -> Operat
         },
         stash_count_at_plan: 0,
         stash_identity: None,
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -611,6 +614,7 @@ pub fn plan_stash_drop(repo: &mut Repository, index: usize) -> Result<OperationP
         head_at_plan: head,
         stash_count_at_plan: stash_count,
         stash_identity: Some(identity),
+        pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),

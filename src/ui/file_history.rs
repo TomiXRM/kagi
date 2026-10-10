@@ -29,10 +29,9 @@ use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
 pub struct FhDiffPane {
     /// Diff of the selected entry, reusing the existing diff renderer.
     pub diff: Option<MainDiffView>,
-    /// T-DIFF-WRAP-001: `ListState` (variable-height) for the diff viewer
-    /// list — see `render_helpers::render_diff_list` for the item-count
-    /// sync/reset lifecycle.
+    /// Native variable-height measurements for this selected diff.
     pub scroll: gpui::ListState,
+    pub list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Monotonic per-diff request token, bumped on every diff load.
     pub req: u64,
     /// #809: the embedded diff's toggle falls back to its icon when the
@@ -60,19 +59,23 @@ impl Render for FhDiffPane {
                     ..Default::default()
                 },
                 self.scroll.clone(),
+                &self.list_layout,
                 None,
                 cx,
             )
             .into_any_element(),
-            None => div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("No diff available for this entry."))
-                .into_any_element(),
+            None => {
+                self.list_layout.clear(&self.scroll);
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_sm()
+                    .text_color(rgb(theme().text_muted))
+                    .child(SharedString::from("No diff available for this entry."))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -159,6 +162,7 @@ impl KagiApp {
         let diff_pane = cx.new(|_| FhDiffPane {
             diff: None,
             scroll: render_helpers::new_diff_list_state(),
+            list_layout: Default::default(),
             req: 0,
             fit: render_helpers::HeaderFit::default(),
         });
@@ -221,6 +225,7 @@ impl KagiApp {
         // in place when HEAD actually moves (see `refresh_overlays_after_reload`).
         let head = self.view().head_oid.clone();
         if let Some(ui) = self.ui_mut() {
+            ui.retire_issue_conversation_scope();
             ui.file_history = Some(view);
             ui.file_history_head = head;
         }

@@ -25,13 +25,14 @@ fn render_section_header(
     section: PrSection,
     count: Option<usize>,
     open: bool,
+    more: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     super::workspace_mode::sidebar_section_header(
         ("pr-mode-section", section.index()),
         pr_section_label(section),
         match count {
-            Some(n) => SectionCount::Known { n, more: false },
+            Some(n) => SectionCount::Known { n, more },
             None => SectionCount::Unknown,
         },
         open,
@@ -152,11 +153,13 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
 
     let mut body = div()
         .id("pr-mode-list-body")
+        .relative()
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
         .flex()
         .flex_col();
+    body = body.child(super::e2e::measure_inside("pr-sidebar-list-viewport"));
     if all.is_empty() {
         body = body.child(
             div()
@@ -172,7 +175,13 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
     let viewer_known = row_viewers(app, all).iter().all(Option::is_some);
     for (section, open, members) in pr_sections(app) {
         let count = viewer_known.then_some(members.len());
-        body = body.child(render_section_header(section, count, open, cx));
+        body = body.child(render_section_header(
+            section,
+            count,
+            open,
+            app.ui().pr_list_has_more(),
+            cx,
+        ));
         if !open {
             continue;
         }
@@ -202,6 +211,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
         focused,
     )
     .child(body)
+    .child(super::github_pr_strip::render_pr_page_tail(app, false, cx))
     .into_any_element()
 }
 

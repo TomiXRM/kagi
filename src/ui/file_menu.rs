@@ -295,15 +295,16 @@ where
         .child(label)
 }
 
-/// PRs tab context menu — Open on GitHub / Copy URL / Jump to branch.
+/// PR context menu — Peek / Jump to branch / Open on GitHub / Copy URL.
 pub(crate) fn render_pr_menu_overlay(
     pr: kagi_domain::github::PullRequest,
     pos: gpui::Point<gpui::Pixels>,
     viewport: gpui::Size<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let pos =
-        kagi_ui_core::theme::clamp_menu_pos(pos, 190.0, 4.0 + 2.0 * FILE_MENU_ROW_H, viewport);
+    // Keep the shared anchor margin, then fit the actual laid-out card below:
+    // text line height, all four rows, scaled padding and fixed borders count.
+    let pos = kagi_ui_core::theme::clamp_menu_pos(pos, 0.0, 0.0, viewport);
     let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
         this.with_ui(|ui| ui.pr_menu = None);
         cx.notify();
@@ -341,38 +342,52 @@ pub(crate) fn render_pr_menu_overlay(
         .occlude()
         .on_mouse_down(MouseButton::Left, dismiss)
         .child(
-            div()
-                .absolute()
-                .left(pos.x)
-                .top(pos.y)
-                .w(theme::scaled_px(190.))
-                .occlude()
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(theme().surface))
-                .rounded_md()
-                .shadow_lg()
-                .py(theme::scaled_px(2.))
-                .child(item(
-                    ("pr-menu-peek", n),
-                    SharedString::from(Msg::PrPeek.t()),
-                    peek_click,
-                ))
-                .child(item(
-                    ("pr-menu-jump", n),
-                    SharedString::from(Msg::PrJumpToBranch.t()),
-                    jump_click,
-                ))
-                .child(item(
-                    ("pr-menu-open", n),
-                    SharedString::from(Msg::PrOpenOnGitHub.t()),
-                    open_click,
-                ))
-                .child(item(
-                    ("pr-menu-copy", n),
-                    SharedString::from(Msg::PrCopyUrl.t()),
-                    copy_click,
-                )),
+            gpui::anchored()
+                .position(pos)
+                .snap_to_window_with_margin(px(8.))
+                .child(
+                    div()
+                        .w(theme::scaled_px(190.))
+                        .occlude()
+                        .bg(rgb(theme().panel))
+                        .border_1()
+                        .border_color(rgb(theme().surface))
+                        .rounded_md()
+                        .shadow_lg()
+                        .py(theme::scaled_px(2.))
+                        .child(super::e2e::measure_control(
+                            "pr-menu-peek",
+                            item(
+                                ("pr-menu-peek", n),
+                                SharedString::from(Msg::PrPeek.t()),
+                                peek_click,
+                            ),
+                        ))
+                        .child(super::e2e::measure_control(
+                            "pr-menu-jump",
+                            item(
+                                ("pr-menu-jump", n),
+                                SharedString::from(Msg::PrJumpToBranch.t()),
+                                jump_click,
+                            ),
+                        ))
+                        .child(super::e2e::measure_control(
+                            "pr-menu-open",
+                            item(
+                                ("pr-menu-open", n),
+                                SharedString::from(Msg::PrOpenOnGitHub.t()),
+                                open_click,
+                            ),
+                        ))
+                        .child(super::e2e::measure_control(
+                            "pr-menu-copy",
+                            super::e2e::probe_pr_menu_copy(item(
+                                ("pr-menu-copy", n),
+                                SharedString::from(Msg::PrCopyUrl.t()),
+                                copy_click,
+                            )),
+                        )),
+                ),
         )
         .into_any_element()
 }

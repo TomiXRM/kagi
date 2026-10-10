@@ -75,6 +75,18 @@ impl TabUiState {
         self.github_issues_loading = false;
         match result {
             Ok(snapshot) => {
+                if self
+                    .issue_composer
+                    .base_repo
+                    .as_ref()
+                    .is_some_and(|base| base != &snapshot.base_repo)
+                {
+                    self.retire_issue_conversation_scope();
+                    self.issue_conversations.clear();
+                    self.github_issue_details.clear();
+                    self.issue_composer.editors.clear();
+                    self.clear_github_issue_selection();
+                }
                 self.github_issues_list.reset(0);
                 self.github_issues = snapshot.issues;
                 self.github_issue_mentions = snapshot.mentioned_numbers;
@@ -215,6 +227,9 @@ impl TabUiState {
 
     /// Select an issue and begin a detail request for it.
     pub(super) fn begin_github_issue_detail_request(&mut self, number: u64) -> u64 {
+        if self.selected_github_issue != Some(number) {
+            self.retire_issue_conversation_scope();
+        }
         self.selected_github_issue = Some(number);
         self.github_issue_detail_gen = self.github_issue_detail_gen.wrapping_add(1);
         self.github_issue_detail_loading = Some(number);
@@ -226,6 +241,7 @@ impl TabUiState {
     /// Reply draft. Advancing the generation prevents an in-flight detail read
     /// from reviving the selection after the user left it.
     pub(super) fn clear_github_issue_selection(&mut self) {
+        self.retire_issue_conversation_scope();
         self.github_issue_detail_gen = self.github_issue_detail_gen.wrapping_add(1);
         self.selected_github_issue = None;
         self.github_issue_detail_loading = None;
@@ -273,6 +289,8 @@ impl TabUiState {
     /// generations advance, so a list, page or detail read still in flight
     /// for the previous repository is refused when it completes.
     pub(super) fn retarget_github_issues(&mut self, identity: &str) {
+        self.retire_issue_conversation_scope();
+        self.issue_conversations.clear();
         self.issue_composer.base_repo = Some(identity.to_string());
         // Their drafts are the old repository's: they stay stored there and
         // the composers are made again for `identity`.
@@ -299,3 +317,27 @@ impl TabUiState {
 #[cfg(test)]
 #[path = "github_issue_state_tests.rs"]
 mod tests;
+
+impl TabUiState {
+    pub(super) fn retire_issue_conversation_scope(&mut self) {
+        self.issue_conversation_gen = self.issue_conversation_gen.wrapping_add(1);
+        if let Some(scope) = &self.issue_conversation_scope {
+            scope.0.retire();
+        }
+    }
+
+    pub(super) fn bind_issue_conversation_scope(
+        &mut self,
+        scope: std::rc::Rc<super::issue_conversation::ConversationScope>,
+    ) {
+        if self
+            .issue_conversation_scope
+            .as_ref()
+            .is_some_and(|current| std::rc::Rc::ptr_eq(&current.0, &scope))
+        {
+            return;
+        }
+        self.issue_conversation_scope =
+            Some(super::issue_conversation::ConversationActivation(scope));
+    }
+}

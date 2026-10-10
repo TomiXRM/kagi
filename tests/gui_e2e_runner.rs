@@ -99,6 +99,14 @@ mod reconcile_unobservable;
 mod recovery_pull;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pull_freshness.rs"]
+mod pull_freshness;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pull_fetch_blocker.rs"]
+mod pull_fetch_blocker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cli_capability.rs"]
 mod recovery_cli_capability;
 
@@ -152,6 +160,9 @@ mod home_p2;
 #[path = "recovery/home_rows.rs"]
 mod home_rows;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_search_incomplete.rs"]
+mod home_search_incomplete;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_work.rs"]
 mod home_work;
 #[cfg(target_os = "macos")]
@@ -191,6 +202,10 @@ mod refusal_reasons;
 mod diff_highlight;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/binary_diff_owner.rs"]
+mod binary_diff_owner;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -218,6 +233,22 @@ mod pr_same_number;
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_viewed.rs"]
 mod pr_viewed;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent.rs"]
+mod pr_diff_extent;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent_invalidation.rs"]
+mod pr_diff_extent_invalidation;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_diff_extent_same_selection.rs"]
+mod pr_diff_extent_same_selection;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_diff_extent_reload.rs"]
+mod editor_diff_extent_reload;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
@@ -314,6 +345,10 @@ mod platform_menu_scroll;
 mod platform_menu_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_menu_bounds.rs"]
+mod pr_menu_bounds;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/field_picker_owner.rs"]
 mod field_picker_owner;
 
@@ -328,6 +363,10 @@ mod evidence_support;
 #[cfg(target_os = "macos")]
 #[path = "recovery/github_evidence_owner.rs"]
 mod github_evidence_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_peek_visible.rs"]
+mod pr_peek_visible;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/cleanup_evidence_owner.rs"]
@@ -362,12 +401,32 @@ mod worktree_graph;
 mod workspace_mode_toolbar;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/issue_conversation_selection.rs"]
+mod issue_conversation_selection;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_conversation_lifecycle.rs"]
+mod issue_conversation_lifecycle;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_enabled_input_copy.rs"]
+mod issue_enabled_input_copy;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/issue_offscreen_select_all.rs"]
+mod issue_offscreen_select_all;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_keyboard.rs"]
 mod toolbar_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/issues_pagination.rs"]
 mod issues_pagination;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_pagination.rs"]
+mod pr_pagination;
 
 #[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
@@ -1007,6 +1066,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
             ),
             (
+                "pr_dashboard_responsive",
+                Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),
@@ -1135,8 +1198,24 @@ mod macos {
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys_last_tab),
             ),
             (
+                "pr_menu_bounds",
+                Box::new(crate::pr_menu_bounds::scenario_pr_menu_bounds),
+            ),
+            (
                 "home_list_place",
                 Box::new(crate::home_list_place::scenario_home_list_place),
+            ),
+            (
+                "home_search_incomplete_repos",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_repos),
+            ),
+            (
+                "home_search_incomplete_refreshing",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_refreshing),
+            ),
+            (
+                "home_search_incomplete_work",
+                Box::new(crate::home_search_incomplete::scenario_home_search_incomplete_work),
             ),
             (
                 "home_review_avatar_host",
@@ -1181,6 +1260,12 @@ mod macos {
                 ),
             ),
             (
+                "create_branch_execution_failure_keeps_input",
+                Box::new(
+                    crate::recovery_operations::scenario_create_branch_execution_failure_keeps_input,
+                ),
+            ),
+            (
                 "run_success_unrecorded_keeps_partial_footer",
                 Box::new(
                     crate::recovery_operations::scenario_run_success_unrecorded_keeps_partial_footer,
@@ -1190,6 +1275,98 @@ mod macos {
                 "backend_cli_capability_observation",
                 Box::new(
                     crate::recovery_cli_capability::scenario_backend_cli_capability_observation,
+                ),
+            ),
+            (
+                "pull_freshness_clean_updates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_clean_updates),
+            ),
+            (
+                "pull_current_slash_remote",
+                Box::new(crate::pull_freshness::scenario_pull_current_slash_remote),
+            ),
+            (
+                "pull_current_local_upstream",
+                Box::new(crate::pull_freshness::scenario_pull_current_local_upstream),
+            ),
+            (
+                "pull_freshness_branch_entries",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_branch_entries),
+            ),
+            (
+                "pull_ff_only_current_tree_consistency",
+                Box::new(crate::pull_freshness::scenario_pull_ff_only_current_tree_consistency),
+            ),
+            (
+                "pull_branch_slash_remote_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_current),
+            ),
+            (
+                "pull_branch_slash_remote_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_slash_remote_noncurrent),
+            ),
+            (
+                "pull_branch_local_upstream_current",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_current),
+            ),
+            (
+                "pull_branch_local_upstream_noncurrent",
+                Box::new(crate::pull_freshness::scenario_pull_branch_local_upstream_noncurrent),
+            ),
+            (
+                "pull_freshness_synced_waits",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_synced_waits),
+            ),
+            (
+                "pull_freshness_fetch_failure",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_fetch_failure),
+            ),
+            (
+                "pull_freshness_joins_held_fetch",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_joins_held_fetch),
+            ),
+            (
+                "pull_freshness_external_head_invalidates",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_external_head_invalidates),
+            ),
+            (
+                "pull_freshness_external_worktree_invalidates",
+                Box::new(
+                    crate::pull_freshness::scenario_pull_freshness_external_worktree_invalidates,
+                ),
+            ),
+            (
+                "pull_freshness_closed_modal_displaces",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_closed_modal_displaces),
+            ),
+            (
+                "pull_freshness_captured_reload_drift",
+                Box::new(crate::pull_freshness::scenario_pull_freshness_captured_reload_drift),
+            ),
+            (
+                "pull_auto_stash_tracking_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_tracking_identity_drift),
+            ),
+            (
+                "pull_auto_stash_remote_identity_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_remote_identity_drift),
+            ),
+            (
+                "pull_auto_stash_dirty_plan_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_dirty_plan_drift),
+            ),
+            (
+                "pull_auto_stash_restore_preview_drift",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_restore_preview_drift),
+            ),
+            (
+                "pull_auto_stash_same_upstream_advancement",
+                Box::new(crate::pull_freshness::scenario_pull_auto_stash_same_upstream_advancement),
+            ),
+            (
+                "pull_fetch_preserves_conflict_blocker",
+                Box::new(
+                    crate::pull_fetch_blocker::scenario_pull_fetch_preserves_conflict_blocker,
                 ),
             ),
             (
@@ -1575,6 +1752,22 @@ mod macos {
                 Box::new(crate::diff_highlight::scenario_commit_diff_off_thread),
             ),
             (
+                "binary_diff_prepared",
+                Box::new(crate::diff_highlight::scenario_binary_diff_prepared),
+            ),
+            (
+                "binary_diff_owner_transitions",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_owner_transitions),
+            ),
+            (
+                "binary_diff_worktree_owner",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_worktree_owner),
+            ),
+            (
+                "binary_diff_linked_empty_revisit",
+                Box::new(crate::binary_diff_owner::scenario_binary_diff_linked_empty_revisit),
+            ),
+            (
                 "conflict_save_boundary",
                 Box::new(crate::app_conflict::scenario_conflict_save_boundary),
             ),
@@ -1683,6 +1876,34 @@ mod macos {
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            (
+                "pr_diff_extent_unified",
+                Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),
+            ),
+            (
+                "pr_diff_extent_split",
+                Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_split),
+            ),
+            (
+                "pr_diff_extent_reflow",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_reflow),
+            ),
+            (
+                "pr_diff_extent_threads",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_threads),
+            ),
+            (
+                "pr_diff_extent_source_recolor",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_source_recolor),
+            ),
+            (
+                "pr_diff_extent_same_selection",
+                Box::new(crate::pr_diff_extent_same_selection::scenario_pr_diff_extent_same_selection),
+            ),
+            (
+                "editor_diff_extent_unchanged_reload",
+                Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
+            ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             (
                 "pr_threads_via_gh",
@@ -2109,6 +2330,26 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
             ),
             (
+                "pr_peek_visible_table",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_table),
+            ),
+            (
+                "pr_peek_visible_edges",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_visible_edges),
+            ),
+            (
+                "pr_peek_preserves_tabs_drafts",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_preserves_tabs_drafts),
+            ),
+            (
+                "pr_peek_dirty_guard",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_dirty_guard),
+            ),
+            (
+                "pr_peek_read_failure_context",
+                Box::new(crate::pr_peek_visible::scenario_pr_peek_read_failure_context),
+            ),
+            (
                 "github_evidence_restores",
                 Box::new(crate::github_evidence_owner::scenario_github_evidence_restores),
             ),
@@ -2275,6 +2516,64 @@ mod macos {
                 Box::new(crate::workspace_mode_toolbar::scenario_workspace_mode_toolbar),
             ),
             (
+                "markdown_preparation_edges",
+                Box::new(
+                    crate::workspace_mode_toolbar::markdown_preparation_edges::scenario_markdown_preparation_edges,
+                ),
+            ),
+            (
+                "issue_conversation_offscreen_copy",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_offscreen_copy),
+            ),
+            (
+                "issue_conversation_giant_copy",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_giant_copy),
+            ),
+            (
+                "issue_conversation_accepted_identity",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_accepted_identity),
+            ),
+            (
+                "issue_conversation_refresh_anchor",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_refresh_anchor),
+            ),
+            (
+                "issue_conversation_geometry",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_geometry),
+            ),
+            (
+                "issue_conversation_edge_drag",
+                Box::new(crate::issue_conversation_selection::scenario_issue_conversation_edge_drag),
+            ),
+            (
+                "issue_conversation_delayed_rejected",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_delayed_rejected),
+            ),
+            (
+                "issue_conversation_return_pending",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_return_pending),
+            ),
+            (
+                "issue_conversation_return_failed",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_return_failed),
+            ),
+            (
+                "issue_conversation_two_owners",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_two_owners),
+            ),
+            (
+                "issue_conversation_copy_priority",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_copy_priority),
+            ),
+            (
+                "issue_conversation_enabled_input_copy",
+                Box::new(crate::issue_enabled_input_copy::scenario_issue_conversation_enabled_input_copy),
+            ),
+            (
+                "issue_conversation_offscreen_select_all",
+                Box::new(crate::issue_offscreen_select_all::scenario_issue_conversation_offscreen_select_all),
+            ),
+            (
                 "toolbar_a11y_disabled",
                 Box::new(crate::workspace_mode_toolbar::scenario_toolbar_a11y_disabled),
             ),
@@ -2285,6 +2584,44 @@ mod macos {
             (
                 "issues_pagination",
                 Box::new(crate::issues_pagination::scenario_issues_pagination),
+            ),
+            (
+                "pr_pagination",
+                Box::new(crate::pr_pagination::scenario_pr_pagination),
+            ),
+            (
+                "pr_pagination_races",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_races),
+            ),
+            (
+                "pr_pagination_closed_tab_retention",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_closed_tab_retention),
+            ),
+            (
+                "pr_pagination_all_tab_retention",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_all_tab_retention),
+            ),
+            (
+                "pr_pagination_pending_closed_tab_return",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_pending_closed_tab_return),
+            ),
+            (
+                "pr_pagination_pending_all_tab_return",
+                Box::new(crate::pr_pagination::scenario_pr_pagination_pending_all_tab_return),
+            ),
+            (
+                "pr_paging_survives_periodic_tick",
+                Box::new(crate::pr_pagination::scenario_pr_paging_survives_periodic_tick),
+            ),
+            (
+                "pr_periodic_pending_sidebar_and_other_collections",
+                Box::new(
+                    crate::pr_pagination::scenario_pr_periodic_pending_sidebar_and_other_collections,
+                ),
+            ),
+            (
+                "pr_single_page_periodic_scroll_retention",
+                Box::new(crate::pr_pagination::scenario_pr_single_page_periodic_scroll_retention),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (

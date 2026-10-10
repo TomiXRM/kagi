@@ -15,7 +15,7 @@
 //! cannot conflict between commits; the collision is working-tree content
 //! against incoming content when the auto-stash is restored after the pull.
 
-use super::remote_common::resolve_upstream_oid;
+use super::remote_common::resolve_configured_upstream_oid;
 use super::*;
 
 /// Dirty paths that the tree change from `old_tree` to `new_tree` also touches.
@@ -112,12 +112,11 @@ pub(super) struct RestorePrediction {
 pub(super) fn plan_pull_restore_conflicts(
     repo: &Repository,
     branch_name: &str,
-    remote_name: &str,
 ) -> Result<RestorePrediction, GitError> {
     let Some(head_oid) = repo.head().ok().and_then(|head| head.target()) else {
         return Ok(RestorePrediction::default());
     };
-    let Ok(upstream_oid) = resolve_upstream_oid(repo, branch_name, remote_name) else {
+    let Ok(upstream_oid) = resolve_configured_upstream_oid(repo, branch_name) else {
         return Ok(RestorePrediction::default());
     };
     if head_oid == upstream_oid {
@@ -384,10 +383,9 @@ pub(super) fn pull_changed_paths_between_trees(
 pub(super) fn predict_merge_conflict(
     repo: &Repository,
     branch_name: &str,
-    remote_name: &str,
 ) -> Result<bool, GitError> {
     let head_oid = repo.head().ok().and_then(|r| r.target());
-    let upstream_oid = resolve_upstream_oid(repo, branch_name, remote_name).ok();
+    let upstream_oid = resolve_configured_upstream_oid(repo, branch_name).ok();
 
     let (head_oid, upstream_oid) = match (head_oid, upstream_oid) {
         (Some(h), Some(u)) => (h, u),

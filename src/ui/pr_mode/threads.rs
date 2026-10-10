@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, AnyElement, App, Context, Entity, SharedString};
+use gpui::{div, px, rgb, AnyElement, App, Context, Entity, SharedString, Window};
 use kagi_domain::review_thread::{anchor_rows, DiffSide, ReviewThread};
 
 use super::{KagiApp, PrView};
@@ -24,6 +24,9 @@ use crate::ui::theme::{self, theme};
 
 type Placement = Rc<BTreeMap<usize, Vec<usize>>>;
 
+/// Cached placement stays tied to its file and immutable row allocation.
+type PlacedThreads = (String, std::sync::Weak<Vec<DiffRow>>, Placement);
+
 /// A PR tab's review threads and which of their rows are open.
 #[derive(Default)]
 pub struct PrThreads {
@@ -32,21 +35,40 @@ pub struct PrThreads {
     /// starts closed.
     open: BTreeSet<usize>,
     open_path: String,
-    /// Where the threads sit in the diff last drawn: (path, row count,
-    /// placement). Rows are re-read only when the diff or the threads change.
-    placed: RefCell<Option<(String, usize, Placement)>>,
+    /// Placement belongs to the immutable row allocation, not its count.
+    placed: RefCell<Option<PlacedThreads>>,
 }
 
 impl PrThreads {
-    pub(crate) fn set(&mut self, threads: Vec<ReviewThread>) {
+    pub(crate) fn set(
+        &mut self,
+        threads: Vec<ReviewThread>,
+        list: &gpui::ListState,
+        diff: Option<&MainDiffView>,
+    ) {
         self.threads = Rc::new(threads);
         self.placed.replace(None);
+        if let Some(diff) = diff.filter(|diff| self.open_path == diff.title.as_ref()) {
+            if !self.open.is_empty() {
+                let layout = row_overlay::layout(&diff.rows, theme::diff_split());
+                let mut item = 0;
+                for base in &layout {
+                    item += 1;
+                    if base.iter().flatten().any(|row| self.open.contains(row)) {
+                        if item < list.item_count() {
+                            list.remeasure_items(item..item + 1);
+                        }
+                        item += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Where the threads sit in `rows`, the diff of `path`.
     pub fn placement(&self, path: &str, rows: &Arc<Vec<DiffRow>>) -> Placement {
-        if let Some((cached_path, len, placed)) = self.placed.borrow().as_ref() {
-            if cached_path == path && *len == rows.len() {
+        if let Some((cached_path, source, placed)) = self.placed.borrow().as_ref() {
+            if cached_path == path && std::ptr::eq(source.as_ptr(), Arc::as_ptr(rows)) {
                 return placed.clone();
             }
         }
@@ -62,8 +84,11 @@ impl PrThreads {
             })
             .collect();
         let placed = Rc::new(anchor_rows(&self.threads, path, &lines));
-        self.placed
-            .replace(Some((path.to_string(), rows.len(), placed.clone())));
+        self.placed.replace(Some((
+            path.to_string(),
+            Arc::downgrade(rows),
+            placed.clone(),
+        )));
         placed
     }
 
@@ -135,22 +160,25 @@ impl RowOverlay for ThreadOverlay {
                 app.update(cx, |app, cx| app.pr_mode_toggle_thread(row, cx));
             })
             .child(SharedString::from(here.len().to_string()));
-        Some(crate::ui::e2e::measure_control(
-            format!("pr-thread-badge-{row}{suffix}"),
-            badge,
-        ))
+        #[cfg(feature = "gui-e2e")]
+        let badge = badge
+            .relative()
+            .child(crate::ui::e2e::measure_inside(format!(
+                "pr-thread-badge-{row}{suffix}"
+            )));
+        Some(badge.into_any_element())
     }
 
     fn expanded(&self, row: usize) -> bool {
         self.open.contains(&row)
     }
 
-    fn expansion(&self, rows: &[usize], cx: &mut App) -> AnyElement {
+    fn expansion(&self, rows: &[usize], window: &mut Window, cx: &mut App) -> AnyElement {
         let style = crate::ui::timeline_row::markdown_style(14., cx);
         let mut column = div().w_full().flex().flex_col().gap_1().py_1();
         for &row in rows {
             for (k, (_, thread)) in self.threads_at(row).enumerate() {
-                column = column.child(thread_card(row, k, thread, &style));
+                column = column.child(thread_card(row, k, thread, &style, window, cx));
             }
         }
         column.into_any_element()
@@ -162,6 +190,8 @@ fn thread_card(
     k: usize,
     thread: &ReviewThread,
     style: &gpui_component::text::TextViewStyle,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AnyElement {
     let is_outdated = outdated(thread);
     let line = thread.anchor().map(|(line, _)| line).unwrap_or(0);
@@ -222,7 +252,10 @@ fn thread_card(
                     crate::ui::timeline_row::body_markdown(
                         SharedString::from(body_id),
                         &comment.body,
+                        crate::ui::timeline_row::BodyMarkdownFormat::Original,
                         style.clone(),
+                        window,
+                        cx,
                     ),
                 )),
         );

@@ -282,6 +282,7 @@ impl KagiApp {
         if let Some(input) = &self.command_palette_input {
             input.update(cx, |st, cx| st.focus(window, cx));
         }
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
         self.menu_overlay = Some(MenuOverlay::CommandPalette);
         cx.notify();
     }

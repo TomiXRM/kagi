@@ -17,14 +17,17 @@
 //! they keep their own `MainDiffView` + `ListState` fields and render via
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
+mod ownership;
+mod preparation;
+
 use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::SharedString;
 use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
 
 use super::diff_view::highlight::DiffHighlightHost;
 use super::diff_view::{
-    build_main_diff_view, diff_line_counts, CompareTarget, CompareView, MainDiffSource,
-    MainDiffView,
+    build_main_diff_view, diff_line_counts, CompareTarget, CompareView, DiffImagePair,
+    MainDiffSource, MainDiffView,
 };
 use super::render_helpers::{
     header_button, new_diff_list_state, render_diff_list, DiffHeader, HeaderFit,
@@ -33,16 +36,11 @@ use super::KagiApp;
 
 /// Fat entity for the standalone (center-slot) main diff.
 pub struct MainDiffPane {
-    /// The diff currently shown. Replaced in place on j/k file steps and on
-    /// re-opens while the pane is up, so the `ListState` keeps the same
-    /// lifecycle the old persistent `KagiApp.main_diff_scroll_handle` had
-    /// (reset-to-top only when the row count changes — see
-    /// `render_helpers::render_diff_list`).
+    /// Source/projection changes reset; highlighting and ordinary paints do not.
     pub view: MainDiffView,
-    /// T-UI-003 / T-DIFF-WRAP-001: `ListState` (variable-height) for the
-    /// "main-diff-list" — see `render_helpers::render_diff_list` for the
-    /// item-count sync/reset lifecycle.
+    /// Native variable-height measurements for this diff only.
     scroll: ListState,
+    list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
     /// Session that owns this retained pane.
@@ -57,6 +55,7 @@ impl MainDiffPane {
         Self {
             view,
             scroll: new_diff_list_state(),
+            list_layout: Default::default(),
             app,
             owner,
             fit: HeaderFit::default(),
@@ -174,6 +173,7 @@ impl Render for MainDiffPane {
                 ..DiffHeader::default()
             },
             self.scroll.clone(),
+            &self.list_layout,
             // #842: a Commit Panel side carries Stage / Unstage hunk.
             crate::ui::diff_view::hunk_action::HunkAction::for_source(
                 &self.view.source,
@@ -219,7 +219,7 @@ impl KagiApp {
     }
 
     /// Start a new main-diff request generation and return it.
-    fn bump_main_diff_req(&mut self) -> u64 {
+    pub(crate) fn bump_main_diff_req(&mut self) -> u64 {
         self.ui_mut().map_or(0, |ui| {
             ui.main_diff_req = ui.main_diff_req.wrapping_add(1);
             ui.main_diff_req
@@ -366,9 +366,8 @@ impl KagiApp {
         self.read_main_diff(repo, path, read, cx);
     }
 
-    /// Read `path`'s diff for the main pane off the UI thread (#495) and show
-    /// its text when it lands — unless the owner is no longer the tab on
-    /// screen, or another install, read or close moved `main_diff_req` since.
+    /// Read the complete text/image view off-thread. Only the frozen session,
+    /// visit, request, published model and source owner may install its result.
     pub(crate) fn read_main_diff(
         &mut self,
         repo: std::path::PathBuf,
@@ -376,17 +375,29 @@ impl KagiApp {
         read: MainDiffRead,
         cx: &mut Context<Self>,
     ) {
-        let Some(owner) = self.active_session() else {
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
+            return;
+        };
+        let Some(source_owner) = read.source_owner(self, cx) else {
             return;
         };
         let req = self.bump_main_diff_req();
+        let publish_gen = self.ui().view_publish_gen;
         if matches!(read, MainDiffRead::Commit { .. }) {
             self.with_ui(|ui| ui.main_diff_commit_read = Some(req));
         }
         let bg_path = path.clone();
         let bg_read = read.clone();
+        let bg_repo = repo.clone();
         // #355: a large diff explains itself once slow; no Skip.
-        let slow = self.begin_slow_read(owner, Some(kagi_ui_core::slow_read::SlowRead::Diff), cx);
+        let slow = self.begin_slow_read(
+            owner.session,
+            Some(kagi_ui_core::slow_read::SlowRead::Diff),
+            cx,
+        );
         #[cfg(feature = "gui-e2e")]
         let hold = MAIN_DIFF_READ_HOLD.with(|slot| slot.borrow_mut().take());
         let task = cx.background_spawn(async move {
@@ -395,12 +406,22 @@ impl KagiApp {
             if let Some(hold) = hold {
                 hold.await;
             }
-            bg_read.run(&repo, &bg_path)
+            bg_read.run(&bg_repo, &bg_path)
         });
         cx.spawn(async move |this, acx| {
             let landed = task.await;
             let _ = this.update(acx, |app, cx| {
-                if app.active_session() == Some(owner) && app.ui().main_diff_req == req {
+                let current = app
+                    .active_session()
+                    .and_then(|id| app.app_sessions.attachment(id));
+                if current.is_some_and(|current| {
+                    current.session == owner.session && current.visit == owner.visit
+                }) && app.ui().main_diff_req == req
+                    && (matches!(read, MainDiffRead::Commit { .. })
+                        || app.ui().view_publish_gen == publish_gen)
+                    && read.source_owner(app, cx) == Some(source_owner)
+                    && read.is_current(app, &repo, &path, cx)
+                {
                     app.land_main_diff(read, &path, landed, cx);
                     cx.notify();
                 }
@@ -419,7 +440,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let refresh = matches!(read, MainDiffRead::Wip { refresh: true, .. });
-        let (file_diff, mut view) = match landed {
+        let (file_diff, view) = match landed {
             Landed::Show(shown) => *shown,
             Landed::Nothing if refresh => return self.close_main_diff(),
             Landed::Nothing => return,
@@ -443,6 +464,7 @@ impl KagiApp {
             row,
             file_index,
             epoch,
+            ..
         } = &read
         {
             let key = (*row, *file_index);
@@ -473,7 +495,7 @@ impl KagiApp {
                 view.lang.unwrap_or("none")
             );
         }
-        view.images = self.diff_images_for(&file_diff, &view.source, path);
+        log_diff_images(&view, path);
         self.show_main_diff(view, cx);
     }
 }
@@ -503,7 +525,7 @@ impl KagiApp {
     #[allow(clippy::too_many_arguments)]
     fn land_commit_diff(
         &mut self,
-        file_diff: kagi_git::FileDiff,
+        file_diff: std::sync::Arc<kagi_git::FileDiff>,
         mut view: MainDiffView,
         path: &std::path::Path,
         commit: &kagi_git::CommitId,
@@ -533,7 +555,6 @@ impl KagiApp {
             added,
             removed
         );
-        let file_diff = std::sync::Arc::new(file_diff);
         if current {
             self.with_ui(|ui| {
                 ui.diff_caches
@@ -541,7 +562,7 @@ impl KagiApp {
                     .insert((row, file_index), file_diff.clone())
             });
         }
-        view.images = self.diff_images_for(&file_diff, &view.source, path);
+        log_diff_images(&view, path);
         self.show_main_diff(view, cx);
     }
 }
@@ -565,88 +586,30 @@ pub(crate) enum MainDiffRead {
         row: usize,
         file_index: usize,
         epoch: u64,
+        /// Reuse cached immutable text while gathering its image sides.
+        cached: Option<std::sync::Arc<kagi_git::FileDiff>>,
     },
 }
 
-/// What a [`MainDiffRead`] produced: the raw diff (image blobs are read from
-/// it on the UI thread) and its text-only view.
+/// What a [`MainDiffRead`] produced: the raw diff and complete prepared view.
 pub(crate) enum Landed {
-    Show(Box<(kagi_git::FileDiff, MainDiffView)>),
+    Show(Box<(std::sync::Arc<kagi_git::FileDiff>, MainDiffView)>),
     /// Nothing to show: no HEAD to compare against, or (refresh) no change left.
     Nothing,
     OpenFailed(String),
     Failed(String),
 }
 
-impl MainDiffRead {
-    /// Open `repo` read-only, diff `path`, and build the text rows — all of
-    /// the I/O and projection, none of it on the UI thread.
-    fn run(&self, repo: &std::path::Path, path: &std::path::Path) -> Landed {
-        let backend = match kagi_git::Backend::open(repo) {
-            Ok(backend) => backend,
-            Err(e) => return Landed::OpenFailed(e.to_string()),
-        };
-        let (result, source, file_index) = match self {
-            MainDiffRead::Compare {
-                base,
-                target,
-                file_index,
-            } => {
-                let result = match target {
-                    CompareTarget::Head => match backend.head_commit_id() {
-                        Some(head) => backend.compare_file_diff(base, &head, path),
-                        None => return Landed::Nothing,
-                    },
-                    CompareTarget::WorkingTree => {
-                        backend.compare_commit_to_workdir_file_diff(base, path)
-                    }
-                    CompareTarget::Commit(id) => backend.compare_file_diff(base, id, path),
-                };
-                let source = MainDiffSource::Compare {
-                    base: base.clone(),
-                    target: target.clone(),
-                    file_index: *file_index,
-                };
-                (result, source, *file_index)
-            }
-            MainDiffRead::Wip { staged, refresh } => {
-                let result = if *staged {
-                    backend.staged_file_diff(path)
-                } else {
-                    backend.unstaged_file_diff(path)
-                };
-                if *refresh && matches!(&result, Ok(fd) if fd.hunks.is_empty() && !fd.is_binary) {
-                    return Landed::Nothing;
-                }
-                let path = path.to_path_buf();
-                let source = if *staged {
-                    MainDiffSource::Staged { path }
-                } else {
-                    MainDiffSource::Unstaged { path }
-                };
-                (result, source, 0)
-            }
-            MainDiffRead::Commit {
-                commit,
-                row,
-                file_index,
-                ..
-            } => {
-                let source = MainDiffSource::Commit {
-                    row_index: *row,
-                    file_index: *file_index,
-                    commit: Some(commit.clone()),
-                };
-                (backend.commit_file_diff(commit, path), source, *file_index)
-            }
-        };
-        match result {
-            Ok(file_diff) => {
-                let view = build_main_diff_view(&file_diff, path, file_index, source);
-                Landed::Show(Box::new((file_diff, view)))
-            }
-            Err(e) => Landed::Failed(e.to_string()),
-        }
+/// Contract logging belongs to accepted foreground publication, not a worker
+/// whose complete view may be superseded before it lands.
+fn log_diff_images(view: &MainDiffView, path: &std::path::Path) {
+    if let Some(pair) = &view.images {
+        klog!(
+            "diff-image: {} old={} new={}",
+            path.display(),
+            pair.old.is_some(),
+            pair.new.is_some()
+        );
     }
 }
 

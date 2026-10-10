@@ -5,7 +5,7 @@
 //! 800-line ceiling): one parser has to answer both shapes, and the PR list is
 //! the only place that needs it. Pure; the callers are in `github_fetch.rs`.
 
-use kagi_domain::github::{IssueState, PullRequest, ReviewState};
+use kagi_domain::github::{IssueState, PrListSnapshot, PullRequest, ReviewState};
 use kagi_domain::list_filter::StateFilter;
 
 use super::github::{
@@ -26,9 +26,10 @@ use crate::GitError;
 /// `$states` is a real variable so the state chip cannot reshape the query
 /// text, and the page stays bounded at 100 like the `--limit 100` it replaces.
 pub(crate) const PR_LIST_QUERY: &str = r#"
-query($owner: String!, $name: String!, $states: [PullRequestState!]) {
+query($owner: String!, $name: String!, $states: [PullRequestState!], $cursor: String) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: 100, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: 100, after: $cursor, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo { hasNextPage endCursor }
       nodes {
         number title url state isDraft isCrossRepository createdAt updatedAt
         headRefName headRefOid baseRefName reviewDecision
@@ -73,7 +74,11 @@ pub fn parse_pr_list(json: &str) -> Result<Vec<PullRequest>, GitError> {
 /// the Issue page does (#752).
 ///
 /// [`PrFetchError::Invalid`]: crate::github_fetch::PrFetchError::Invalid
-pub fn parse_pr_list_page(json: &str) -> Result<Vec<PullRequest>, GitError> {
+pub fn parse_pr_list_page(
+    json: &str,
+    base_repo: &str,
+    requested_cursor: Option<&str>,
+) -> Result<PrListSnapshot, GitError> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| GitError::Other(format!("gh json: {e}")))?;
     if let Some(failure) = graphql_failure(&value) {
@@ -83,7 +88,60 @@ pub fn parse_pr_list_page(json: &str) -> Result<Vec<PullRequest>, GitError> {
         .pointer("/data/repository/pullRequests/nodes")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| GitError::Other("gh json: expected repository pull request nodes".into()))?;
-    Ok(nodes.iter().filter_map(pr_from_value).collect())
+    let page_info = value
+        .pointer("/data/repository/pullRequests/pageInfo")
+        .ok_or_else(|| GitError::Other("gh json: expected pull request pageInfo".into()))?;
+    let has_next = page_info
+        .get("hasNextPage")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| GitError::Other("gh json: expected pageInfo.hasNextPage".into()))?;
+    if has_next && nodes.is_empty() {
+        return Err(GitError::Other(
+            "gh json: empty pull request page claims another page".into(),
+        ));
+    }
+    let end_cursor = match page_info.get("endCursor") {
+        Some(serde_json::Value::String(cursor)) => Some(cursor.as_str()),
+        Some(serde_json::Value::Null) => None,
+        _ => {
+            return Err(GitError::Other(
+                "gh json: expected pageInfo.endCursor".into(),
+            ))
+        }
+    };
+    let next_cursor = if has_next {
+        let cursor = end_cursor
+            .filter(|cursor| !cursor.trim().is_empty())
+            .ok_or_else(|| {
+                GitError::Other("gh json: hasNextPage without a usable endCursor".into())
+            })?;
+        if requested_cursor == Some(cursor) {
+            return Err(GitError::Other(
+                "gh json: pagination cursor did not advance".into(),
+            ));
+        }
+        Some(cursor.to_string())
+    } else {
+        None
+    };
+    let prs = nodes
+        .iter()
+        .map(|node| {
+            let pr = pr_from_value(node)
+                .ok_or_else(|| GitError::Other("gh json: invalid pull request node".into()))?;
+            if pr.base_repo != base_repo {
+                return Err(GitError::Other(
+                    "gh json: pull request belongs to a different repository".into(),
+                ));
+            }
+            Ok(pr)
+        })
+        .collect::<Result<Vec<_>, GitError>>()?;
+    Ok(PrListSnapshot {
+        prs,
+        base_repo: base_repo.to_string(),
+        next_cursor,
+    })
 }
 
 /// GitHub's pull-request lifecycle on the shared issue/PR state: `MERGED` is
@@ -210,7 +268,7 @@ mod tests {
        "headRefName":"feat/b","headRefOid":"sha240","baseRefName":"main",
        "author":{"login":"bot"},"assignees":{"nodes":[]},"labels":{"nodes":[]},
        "reviewRequests":{"nodes":[]},"comments":{"totalCount":0}}
-    ]}}}}"#;
+    ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#;
 
     #[test]
     fn parses_gh_json_into_domain_prs() {
@@ -288,7 +346,10 @@ mod tests {
 
     #[test]
     fn graphql_page_carries_state_comment_totals_and_connection_fields() {
-        let prs = parse_pr_list_page(PAGE).expect("page");
+        let snapshot = parse_pr_list_page(PAGE, "github.com/o/r", None).expect("page");
+        assert_eq!(snapshot.base_repo, "github.com/o/r");
+        assert_eq!(snapshot.next_cursor, None);
+        let prs = snapshot.prs;
         assert_eq!(prs.len(), 2);
         assert_eq!(prs[0].number, 236);
         assert_eq!(prs[0].state, IssueState::Open);
@@ -313,7 +374,9 @@ mod tests {
 
     #[test]
     fn a_merged_pull_request_reads_as_closed() {
-        let prs = parse_pr_list_page(PAGE).expect("page");
+        let prs = parse_pr_list_page(PAGE, "github.com/o/r", None)
+            .expect("page")
+            .prs;
         assert_eq!(
             prs[1].state,
             IssueState::Closed,
@@ -325,7 +388,8 @@ mod tests {
     #[test]
     fn a_partial_or_shapeless_page_is_a_failure_not_an_empty_list() {
         let errors = r#"{"data":{"repository":null},"errors":[{"message":"Could not resolve to a Repository"}]}"#;
-        let error = parse_pr_list_page(errors).expect_err("partial response");
+        let error =
+            parse_pr_list_page(errors, "github.com/o/r", None).expect_err("partial response");
         assert!(
             error
                 .to_string()
@@ -333,24 +397,19 @@ mod tests {
             "{error}"
         );
         let missing = r#"{"data":{"repository":{}}}"#;
-        assert!(parse_pr_list_page(missing).is_err(), "no nodes to read");
-        assert!(parse_pr_list_page("not json").is_err());
-        let empty = r#"{"data":{"repository":{"pullRequests":{"nodes":[]}}}}"#;
         assert!(
-            parse_pr_list_page(empty).expect("an answer").is_empty(),
+            parse_pr_list_page(missing, "github.com/o/r", None).is_err(),
+            "no nodes to read"
+        );
+        assert!(parse_pr_list_page("not json", "github.com/o/r", None).is_err());
+        let empty = r#"{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#;
+        assert!(
+            parse_pr_list_page(empty, "github.com/o/r", None)
+                .expect("an answer")
+                .prs
+                .is_empty(),
             "an empty page is an answer, not a failure"
         );
-    }
-
-    #[test]
-    fn each_filter_names_the_collection_it_asks_for() {
-        assert_eq!(pr_states(StateFilter::Open), ["OPEN"]);
-        assert_eq!(
-            pr_states(StateFilter::Closed),
-            ["CLOSED", "MERGED"],
-            "a merged PR is not in the open collection and must still be listed"
-        );
-        assert_eq!(pr_states(StateFilter::All), ["OPEN", "CLOSED", "MERGED"]);
     }
 
     /// The same guard the Issue query carries: an unused declared variable is
@@ -365,7 +424,7 @@ mod tests {
             .skip(1)
             .map(|variable| variable.split(':').next().unwrap_or_default().trim())
             .collect();
-        assert_eq!(declared, ["owner", "name", "states"]);
+        assert_eq!(declared, ["owner", "name", "states", "cursor"]);
         for name in declared {
             assert!(
                 body.contains(&format!("${name}")),

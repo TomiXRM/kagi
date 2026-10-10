@@ -256,6 +256,7 @@ impl KagiApp {
     /// own Escape through the root, so the focus goes to the root on the
     /// next render pass ([`Self::sync_pending_focus`]).
     pub(super) fn leave_settings_for_overlay(&mut self) {
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
             self.pending_focus = self.pending_root_focus();
         }
@@ -282,6 +283,7 @@ impl KagiApp {
         // Settings' Tab cycling unseen behind it (#976 review).
         self.close_layers_above(super::front_layer::LayerKind::MenuOverlay, cx);
         self.capture_overlay_return_focus(window, cx);
+        self.with_ui(|ui| ui.retire_issue_conversation_scope());
         self.menu_overlay = Some(MenuOverlay::Settings);
         let trap = self
             .settings_focus

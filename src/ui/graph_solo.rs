@@ -68,10 +68,7 @@ impl KagiApp {
             self.invalidate_caches_for_row_renumber(session);
             // Solo renumbers rows without publishing a read, so nothing re-anchors
             // the open panes: close them.
-            self.with_ui(|ui| {
-                ui.main_diff = None;
-                ui.compare_view = None;
-            });
+            self.close_compare_view();
         }
 
         if already_soloed {

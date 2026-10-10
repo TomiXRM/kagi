@@ -395,6 +395,9 @@ pub struct TabUiState {
     pub github_prs_epoch: u64,
     pub github_prs_gen: u64,
     pub github_prs_loading: bool,
+    pub(super) github_prs_paging: super::github_pr_strip::PrPageState,
+    /// PR workspace incarnation; departure/state change invalidates appends.
+    pub(super) github_prs_visit: u64,
     /// #753 this session's PR-list filter intent. A fresh tab holds
     /// [`default_pr_filter`], not the domain default: `common.state` is the
     /// only predicate the *fetch* carries, and the list a tab opens on is the
@@ -437,6 +440,11 @@ pub struct TabUiState {
     pub github_issue_detail_loading: Option<u64>,
     pub github_issue_detail_error: Option<String>,
     pub github_issue_detail_gen: u64,
+    pub(super) issue_conversations:
+        HashMap<String, HashMap<u64, Entity<super::issue_conversation::IssueConversation>>>,
+    pub(super) issue_conversation_gen: u64,
+    pub(super) issue_conversation_scope: Option<super::issue_conversation::ConversationActivation>,
+    pub(super) issue_thread_pending_list: gpui::ListState,
     pub(super) issue_composer: super::issues_composer::IssuesComposerState,
     /// Scan revisions reject superseded completions without consulting the active tab.
     pub cleanup_gen: u64,
@@ -537,6 +545,8 @@ impl Default for TabUiState {
             github_prs_epoch: 0,
             github_prs_gen: 0,
             github_prs_loading: false,
+            github_prs_paging: Default::default(),
+            github_prs_visit: 0,
             github_pr_filter: default_pr_filter(),
             github_prs_strip: Default::default(),
             pr_details: Default::default(),
@@ -560,6 +570,15 @@ impl Default for TabUiState {
             github_issue_detail_loading: None,
             github_issue_detail_error: None,
             github_issue_detail_gen: 0,
+            issue_conversations: HashMap::new(),
+            issue_conversation_gen: 0,
+            issue_conversation_scope: None,
+            issue_thread_pending_list: gpui::ListState::new(
+                2,
+                gpui::ListAlignment::Top,
+                gpui::px(400.),
+            )
+            .with_uniform_item_height(gpui::px(120.)),
             issue_composer: Default::default(),
             cleanup_gen: 0,
             cleanup_scanning: false,
@@ -586,38 +605,6 @@ impl Default for TabUiState {
             main_diff_commit_read: None,
             compare_view: None,
         }
-    }
-}
-
-impl TabUiState {
-    pub(super) fn begin_github_prs_request(&mut self) -> u64 {
-        self.github_prs_gen = self.github_prs_gen.wrapping_add(1);
-        self.github_prs_loading = true;
-        self.github_prs_gen
-    }
-
-    pub(super) fn accept_github_prs_completion(&mut self, generation: u64) -> bool {
-        if generation != self.github_prs_gen {
-            return false;
-        }
-        self.github_prs_loading = false;
-        true
-    }
-}
-
-#[cfg(test)]
-mod github_pr_state_tests {
-    use super::*;
-
-    #[test]
-    fn later_pr_list_request_rejects_delayed_completion() {
-        let mut state = TabUiState::default();
-        let old = state.begin_github_prs_request();
-        let newest = state.begin_github_prs_request();
-        assert!(!state.accept_github_prs_completion(old));
-        assert!(state.github_prs_loading);
-        assert!(state.accept_github_prs_completion(newest));
-        assert!(!state.github_prs_loading);
     }
 }
 

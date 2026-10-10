@@ -131,6 +131,8 @@ pub struct ControlPaint {
     pub bounds: gpui::Bounds<gpui::Pixels>,
     pub mask: gpui::Bounds<gpui::Pixels>,
     pub order: u64,
+    /// Resolved inherited text size at the actual paint stage.
+    pub font_size: gpui::Pixels,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -149,6 +151,7 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         bounds,
         mask: window.content_mask().bounds,
         order,
+        font_size: window.text_style().font_size.to_pixels(window.rem_size()),
     };
     CONTROL_PAINTS.with(|map| {
         map.borrow_mut()

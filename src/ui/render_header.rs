@@ -341,6 +341,9 @@ impl KagiApp {
         });
 
         use toolbar_a11y::{button_flags, ButtonState};
+        // No allocation or contrast work when no count chip is drawn; share
+        // one foreground calculation if both Pull and Push have counts.
+        let chip_fg = std::cell::LazyCell::new(|| theme::primary_button_foreground(&theme()));
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
@@ -376,11 +379,9 @@ impl KagiApp {
                 theme().text_muted
             };
             let chip_bg = theme().color_branch;
-            let chip_fg = theme().bg_base;
 
-            // Icon cell — `.relative()` so the count chip can be `.absolute()`
-            // anchored to the icon's top-right corner (gpui has no negative
-            // clip, so the chip is placed inside the icon bounds).
+            // The count is an overlay on the icon cell. Native probes stay
+            // inside that cell so they do not change the toolbar's layout.
             let mut icon_cell = div()
                 .relative()
                 .flex()
@@ -391,31 +392,45 @@ impl KagiApp {
                 .child(
                     icon.with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
                         .text_color(rgb(text_color)),
-                );
+                )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(format!("{id}-icon")))
+                });
             if count > 0 {
                 let chip_text = if count > 99 {
                     "99+".to_string()
                 } else {
                     count.to_string()
                 };
+                let chip_label = SharedString::from(chip_text).into_any_element();
+                #[cfg(feature = "gui-e2e")]
+                let chip_label =
+                    super::e2e::measure_control(format!("{id}-count-text"), chip_label);
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
-                        .top(theme::scaled_px(-2.0))
-                        .right(theme::scaled_px(-2.0))
-                        .min_w(theme::scaled_px(14.0))
-                        .h(theme::scaled_px(14.0))
+                        // Grow towards the outside, never left across the arrow.
+                        .top(theme::scaled_px(
+                            -2.0 - (theme::TOOLBAR_COUNT_HEIGHT - 14.0) / 2.0,
+                        ))
+                        .left(theme::scaled_px(22.0 - theme::TOOLBAR_COUNT_ICON_OVERLAP))
+                        .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
+                        .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
                         .px(theme::scaled_px(3.0))
                         .rounded_full()
                         .bg(rgb(chip_bg))
+                        .when(!enabled, |el| el.opacity(0.5))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_color(rgb(chip_fg))
-                        .text_size(px(9.0))
+                        .text_color(rgb(*chip_fg))
+                        .text_size(theme::scaled_px(theme::TOOLBAR_COUNT_TEXT))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(theme::scaled_px(14.0))
-                        .child(SharedString::from(chip_text)),
+                        .line_height(theme::scaled_px(theme::TOOLBAR_COUNT_LINE_HEIGHT))
+                        .child(chip_label)
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            el.child(super::e2e::measure_inside(format!("{id}-count")))
+                        }),
                 );
             }
 
@@ -534,6 +549,9 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside("toolbar-row"))
+            })
             // ── LEFT column (flex_1, equal width to the RIGHT column so the
             // centre cluster is window-centred regardless of side widths).
             // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──

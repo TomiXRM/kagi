@@ -140,3 +140,99 @@ fn unstage_literal_bulk_preserves_neighbour() {
         literal_unstage(true);
     }
 }
+
+#[test]
+fn unstage_literal_conflict_restores_only_head_stage() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_repo(dir, "main");
+    write_file(dir, "a[b].txt", "base\n");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-qm", "base"]);
+    git(dir, &["checkout", "-qb", "other"]);
+    write_file(dir, "a[b].txt", "other\n");
+    git(dir, &["commit", "-qam", "other"]);
+    git(dir, &["checkout", "-q", "main"]);
+    write_file(dir, "a[b].txt", "main\n");
+    git(dir, &["commit", "-qam", "main"]);
+    assert!(!git_fixture::git_succeeds(dir, &["merge", "other"]));
+    let before = std::fs::read(dir.join("a[b].txt")).unwrap();
+    let repo = git2::Repository::open(dir).unwrap();
+    assert!(repo.index().unwrap().has_conflicts());
+    Backend::open(dir)
+        .unwrap()
+        .unstage_file(Path::new("a[b].txt"))
+        .unwrap();
+    let mut index = repo.index().unwrap();
+    index.read(true).unwrap();
+    for stage in 1..=3 {
+        assert!(index.get_path(Path::new("a[b].txt"), stage).is_none());
+    }
+    let expected = repo
+        .head()
+        .unwrap()
+        .peel_to_tree()
+        .unwrap()
+        .get_path(Path::new("a[b].txt"))
+        .unwrap();
+    let actual = index.get_path(Path::new("a[b].txt"), 0).unwrap();
+    assert_eq!(
+        (actual.id, actual.mode),
+        (expected.id(), expected.filemode() as u32)
+    );
+    git(dir, &["status", "--porcelain"]);
+    assert_eq!(std::fs::read(dir.join("a[b].txt")).unwrap(), before);
+}
+
+#[test]
+fn unstage_literal_directory_to_file_single_and_bulk() {
+    if !isolated::run_isolated() {
+        return;
+    }
+    for bulk in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        init_repo(dir, "main");
+        std::fs::create_dir(dir.join("d")).unwrap();
+        write_file(dir, "d/x", "base\n");
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "base"]);
+        std::fs::remove_file(dir.join("d/x")).unwrap();
+        std::fs::remove_dir(dir.join("d")).unwrap();
+        write_file(dir, "d", "replacement\n");
+        git(dir, &["add", "."]);
+        let backend = Backend::open(dir).unwrap();
+        if bulk {
+            assert_eq!(
+                backend.unstage_files(&["d".into(), "d/x".into()]).unwrap(),
+                2
+            );
+        } else {
+            backend.unstage_file(Path::new("d")).unwrap();
+        }
+        let repo = git2::Repository::open(dir).unwrap();
+        let index = repo.index().unwrap();
+        assert!(index.get_path(Path::new("d"), 0).is_none());
+        if bulk {
+            let actual = index.get_path(Path::new("d/x"), 0).unwrap();
+            let expected = repo
+                .head()
+                .unwrap()
+                .peel_to_tree()
+                .unwrap()
+                .get_path(Path::new("d/x"))
+                .unwrap();
+            assert_eq!(
+                (actual.id, actual.mode),
+                (expected.id(), expected.filemode() as u32)
+            );
+        } else {
+            assert!(index.get_path(Path::new("d/x"), 0).is_none());
+        }
+        assert_eq!(std::fs::read(dir.join("d")).unwrap(), b"replacement\n");
+        git(dir, &["status", "--porcelain"]);
+    }
+}

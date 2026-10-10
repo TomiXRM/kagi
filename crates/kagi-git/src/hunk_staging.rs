@@ -124,7 +124,7 @@ pub(crate) fn unstage_hunk(
     };
     if shown.change != ChangeKind::Modified || head_tree.is_none() {
         let plan = crate::ops::unstage::plan_unstage(repo, std::iter::once(path))?;
-        crate::ops::unstage::preflight_unstage(std::iter::once(path), &plan)?;
+        crate::ops::unstage::preflight_unstage(repo, &plan)?;
         crate::ops::unstage::execute_unstage(repo, &plan)?;
         return Ok(());
     }

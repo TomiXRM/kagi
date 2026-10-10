@@ -256,7 +256,8 @@ pub fn augment_commit_plan(
     };
 
     let email = signature_email(repo);
-    let mut findings = rs.validate_commit(message, &email, &email, signing_configured(repo));
+    let email = email.as_deref().unwrap_or_default();
+    let mut findings = rs.validate_commit(message, email, email, signing_configured(repo));
 
     // Per-staged-file rules — skip deletions (no content is pushed) and
     // gitlinks / blobless entries.
@@ -295,12 +296,12 @@ pub fn augment_branch_create_plan(plan: &mut OperationPlan, repo: &git2::Reposit
     }
 }
 
-/// The email git would stamp on the commit (author == committer for Kagi),
-/// falling back to `build_signature`'s default.
-fn signature_email(repo: &git2::Repository) -> String {
-    repo.config()
-        .and_then(|c| c.get_string("user.email"))
-        .unwrap_or_else(|_| "kagi@local".to_string())
+/// The effective author email Git would stamp on a new commit.
+/// Missing identity remains absent rather than inventing a fallback identity.
+fn signature_email(repo: &git2::Repository) -> Option<String> {
+    crate::ops::git_signature(repo, "GIT_AUTHOR_IDENT")
+        .ok()
+        .and_then(|signature| signature.email().ok().map(str::to_owned))
 }
 
 /// Whether commit signing is configured (`commit.gpgsign` true, or a

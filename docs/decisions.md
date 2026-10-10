@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-10
+> **Last updated:** 2026-10-11
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,8 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-11 | user-visible libgit2 writer も operation-independent な identity blocker を plan／preflight に持ち、signature は checkout／untracked removal 前に確定する。一方 `refs/kagi/` の snapshot／savepoint／backup は専用 `internal_signature()` による application provenance を使う | identity 未設定で recovery が失われたり、途中 checkout 後に拒否されるのを避ける。明示 snapshot も ref namespace が内部なので同じ policy。固定 `kagi <kagi@local>` は user commit の fallback ではなく internal recovery object 専用とする。下の共通 helper 方針を internal と user writer に分離。ruleset の作者 email も同じ Git parser から読む。 |
+| 2026-10-11 | Commit／Amend／resolved MergeCommit の identity は実行と同じ hardened Git CLI の `git var GIT_AUTHOR_IDENT`／`GIT_COMMITTER_IDENT` で plan と preflight に確認する。user-visible libgit2 commit writer の共通 signature helper も Git の committer を読み、架空 identity への fallback を廃止する | #1154 後の hermetic Linux fixture は global identity に依存していた。環境変数・conditional config・`user.useConfigOnly` は Git 自身に解釈させ、identity が無ければ typed EN／JA blocker とする。plan は receipt を書かず、run を試みたときだけ一件記録する。conflict fixture は repo-local identity を明示する。internal recovery writer は上の専用 helper 方針に分離した。[ADR-0039](adr/0039-commit-operation-safety-policy.md)。 |
 | 2026-10-10 | #1131 の backend 回帰は既存 `tests/support/isolated.rs` でテストごとに child process と専用 `KAGI_LOG_DIR` を所有する。単独 cargo 実行でも Refused 一件を検証し、whole-file hunk は born／unborn の literal 名でも Stage→Unstage と各一件の receipt を検証する | origin/dev 統合後の receipt 件数 0 は Backend の finalizer 消失ではなく、suite が外部設定した log directory に依存していたため。oplog の「tests must set KAGI_LOG_DIR」安全ガードは維持し、HOME fallback・環境変数の process-global 書換え・UI の二重記録で埋め合わせない。追加／削除 hunk は捕捉済み patch を使い、#1130 の whole-file Unstage triple と別の hunk receipt ownership を保持する。 |
 | 2026-10-10 | #1131 review: Unstage の照合も表示と同じ forward HEAD→index diff で行い、照合済みの一 hunk の raw patch を反転して適用する。HEAD receipt は `Head::display()`、実行 Failed の footer/toast は `op_failed` の EN/JA wrapper を使う。file↔symlink の二 delta 表示には hunk approval/button を付けず whole-file 操作へ委ねる | 下段 #1131 の「reverse diff で両側交換照合」を置換。xdiff の LCS は逆向きで同じ分割になるとは限らず、未変更の行交換を誤拒否する。反転は raw Git path quoting・mode・EOF marker を保持し、再 diff はしない。typechange の片側表示は全体の承認ではなく、変更していないユーザーへ HunkChanged を出すより hunk 操作を提示しない。 |
 | 2026-10-10 | Hunk の承認は range と raw patch の old/new 各側 SHA-256 を display read から UI → plan → preflight に渡す。context/change と EOF marker を含め、unstage は両側を交換して照合する。preflight が保持した同じ diff を index に適用し、Backend が一件の receipt を所有する | #1131。range 番号だけでは APPROVED → NOT_APPROVED の差替えを見逃す。lossy UTF-8 表示より前の bytes を使い、隣の hunk の変更を不必要に拒否せず、欠落 identity は承認できない。Untracked delta は捕捉済み patch から Added delta に変換し、worktree を再読込して stage_file に渡さない。UI は既存 HunkChanged の EN/JA 表示と拒否後 diff refresh を使う。 |

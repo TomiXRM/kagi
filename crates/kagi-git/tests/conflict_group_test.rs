@@ -70,6 +70,8 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
 fn init_repo() -> TempDir {
     let tmp = TempDir::new().unwrap();
     git(tmp.path(), &["init", "-q", "-b", "main"]);
+    git(tmp.path(), &["config", "user.name", "Test"]);
+    git(tmp.path(), &["config", "user.email", "test@example.com"]);
     tmp
 }
 

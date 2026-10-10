@@ -135,6 +135,7 @@ pub fn plan_merge_into_branch(
     };
     let mut warnings: Vec<PlanNote> = Vec::new();
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
 
     let current_branch = match &head {
         Head::Attached { branch, .. } => branch.clone(),
@@ -362,6 +363,7 @@ pub(crate) fn execute_merge_into_branch(
     source: &str,
     target: &str,
 ) -> Result<CommitId, GitError> {
+    let sig = build_signature(repo)?;
     // Re-derive rather than trusting the plan: between plan and execute either
     // branch may have moved.
     let (plan, kind) = plan_merge_into_branch(repo, source, target)?;
@@ -411,7 +413,6 @@ pub(crate) fn execute_merge_into_branch(
             let tree = repo
                 .find_tree(tree)
                 .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-            let sig = build_signature(repo)?;
             repo.commit(
                 // No ref update here: the ref moves last, on its own.
                 None,

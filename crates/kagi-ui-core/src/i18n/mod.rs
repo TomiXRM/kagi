@@ -1247,6 +1247,7 @@ pub enum Msg {
     PlanAmendConfirmArmed,
     PlanDiscardConfirm,
     PlanDiscardConfirmArmed,
+    DiscardUnsafePath,
     PlanSyncToRemote,
     PlanSyncToRemoteArmed,
     /// Delete-remote-branch confirm, and its armed second stage.
@@ -3396,6 +3397,8 @@ impl Msg {
             (Ja, PlanDiscardConfirm) => "{} 個のファイルを破棄",
             (En, PlanDiscardConfirmArmed) => "Permanently discard {} file(s)",
             (Ja, PlanDiscardConfirmArmed) => "{} 個のファイルを完全に破棄",
+            (En, DiscardUnsafePath) => "Cannot discard '{}': this path cannot be represented safely on this platform. No files were changed.",
+            (Ja, DiscardUnsafePath) => "「{}」はこの環境で元のパスを安全に扱えないため破棄できません。ファイルは変更していません。",
             (En, PlanReplayOnto) => "Replay {}",
             (Ja, PlanReplayOnto) => "{} を replay",
             (En, PlanReplayOntoArmed) => "\u{26a0} Really replay — rewrites the branch",

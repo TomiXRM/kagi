@@ -26,6 +26,8 @@ use gpui_component::IconName;
 /// * `ModelPicker` — choose one installed model; the choice is persisted.
 pub(crate) fn render_smart_commit_modal(
     modal: smart_commit::SmartCommitModal,
+    app: &KagiApp,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let card =
@@ -104,30 +106,71 @@ pub(crate) fn render_smart_commit_modal(
                 let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
                     this.cancel_smart_modal(cx);
                 });
-                let mut list = div().flex().flex_col().gap_1();
-                for (i, m) in models.iter().enumerate() {
-                    let model_name = m.clone();
-                    let pick = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-                        this.choose_smart_model(model_name.clone(), window, cx);
-                    });
-                    list = list.child(
-                        div()
-                            .id(("smart-model", i))
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(current_theme().surface))
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .on_click(pick)
-                            .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
-                            .child(SharedString::from(m.clone())),
-                    );
+                let state = &app.smart_model_focus;
+                let scroll = super::keyboard_nav::RowScroll::List(state.scroll.clone());
+                let rows = std::rc::Rc::new(state.focus.borrow_mut().rows(
+                    state.keys.clone(),
+                    &scroll,
+                    app.root_focus.as_ref(),
+                    window,
+                    cx,
+                ));
+                if state.focus_first.replace(false) {
+                    state.focus.borrow().focus_first(&scroll, window, cx);
                 }
-                // The installed-model list is unbounded and nothing inside it
-                // scrolls, so the body is this card's single scroll region (#454).
-                // Its rows stay `flex_shrink_0` or flex compresses them instead of
-                // handing the overflow to the scroller (T027).
+                let selected = state
+                    .focus
+                    .borrow()
+                    .focused(window)
+                    .and_then(|key| models.iter().position(|model| model == key));
+                let size = models.len();
+                let entity = cx.entity();
+                let wrapper = rows.list(super::list_a11y::list_box(
+                    "smart-model-list",
+                    div().id("smart-model-list").w_full().min_h_0(),
+                    Msg::SmartModelTitle.t(),
+                ));
+                let list = gpui::list(state.scroll.clone(), move |i, _window, _cx| {
+                    let model = models[i].clone();
+                    let entity = entity.clone();
+                    rows.row(
+                        i,
+                        super::list_a11y::list_option(
+                            "smart-model-list",
+                            div().id(("smart-model", i)),
+                            i,
+                            size,
+                            model.clone(),
+                            selected == Some(i),
+                        ),
+                    )
+                    .w_full()
+                    .px(super::keyboard_nav::inset(12.))
+                    .py(super::keyboard_nav::inset(4.))
+                    .rounded_sm()
+                    .bg(rgb(if selected == Some(i) {
+                        current_theme().selected
+                    } else {
+                        current_theme().surface
+                    }))
+                    .text_sm()
+                    .text_color(rgb(current_theme().text_main))
+                    .on_click(move |_, window, cx| {
+                        entity.update(cx, |app, cx| {
+                            app.choose_smart_model(model.clone(), window, cx)
+                        });
+                    })
+                    .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
+                    .child(
+                        div()
+                            .w_full()
+                            .truncate()
+                            .child(SharedString::from(models[i].clone())),
+                    )
+                    .into_any_element()
+                })
+                .w_full()
+                .h(theme::scaled_px((size as f32 * 32.).min(280.)));
                 modal_card(MODAL_W_SM)
                     .child(div().flex_shrink_0().child(render_modal_title_row(
                         SharedString::from(Msg::SmartModelTitle.t()),
@@ -137,7 +180,11 @@ pub(crate) fn render_smart_commit_modal(
                         )),
                     )))
                     .child(
-                        modal_scroll_body()
+                        div()
+                            .flex()
+                            .flex_col()
+                            .min_h_0()
+                            .gap_2()
                             .child(
                                 div()
                                     .flex_shrink_0()
@@ -145,7 +192,7 @@ pub(crate) fn render_smart_commit_modal(
                                     .text_color(rgb(current_theme().text_sub))
                                     .child(Msg::SmartModelRemembered.t()),
                             )
-                            .child(list.flex_shrink_0()),
+                            .child(wrapper.child(list)),
                     )
                     .child(div().flex_shrink_0().child(
                         div().flex().flex_row().justify_end().child(modal_button(

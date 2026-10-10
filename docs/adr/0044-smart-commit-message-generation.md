@@ -115,3 +115,17 @@ pub fn generate_message(backend: &MessageBackend, input: &GenInput) -> Result<St
 - trait なし・enum dispatch でバックエンド追加は分岐追加で済む
 - ureq 再利用で依存純度を保つ
 - T-COMMIT-015/016 は **unblocked**(本決定が backend 仕様)
+
+## Amendment — 2026-10-11: keyboard model confirmation (#1080)
+
+The dense modal target list reuses Kagi's `RowFocus` / `RowList` and
+`list_a11y` listbox/options, rather than a second handmade keyboard control.
+Rest/hover, focus-visible ring and selected wash are required; loading/error
+are not list states because capability detection finishes before opening it.
+One list Tab stop, arrows/Home/End/Page keys and reveal-on-move are required.
+Enter/Space explicitly confirm the focused row through `choose_smart_model`;
+Escape cancels. A single model still requires confirmation, and opening or
+adding rows never generates. Full names remain in AX when visual text truncates.
+The initiating session owns consent and model confirmation: a background or
+closed owner's modal must not apply a draft to the active tab.
+

@@ -71,6 +71,10 @@ mod primary_button;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/smart_picker.rs"]
+mod smart_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
 
@@ -1243,6 +1247,10 @@ mod macos {
             (
                 "smart_commit_modal_and_probe",
                 Box::new(crate::recovery_operations::scenario_smart_commit_modal_and_probe),
+            ),
+            (
+                "smart_picker_keyboard",
+                Box::new(crate::smart_picker::keyboard),
             ),
             (
                 "update_install_lifecycle",

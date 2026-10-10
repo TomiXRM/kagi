@@ -1097,6 +1097,7 @@ pub struct KagiApp {
     /// refresh increments it so stale probe completions can be rejected.
     pub smart_commit: smart_commit::SmartCommitState,
     pub smart_commit_probe_revision: u64,
+    pub(crate) smart_model_focus: smart_commit::ModelPickerFocus,
     /// Maps local branch name → the CommitId it points to.
     /// Built at snapshot time; used by jump_to_branch.
     /// Maps CommitId → row index in `self.view().rows`.
@@ -1431,6 +1432,7 @@ impl KagiApp {
             activity_hover: None,
             smart_commit: smart_commit::SmartCommitState::load(),
             smart_commit_probe_revision: 0,
+            smart_model_focus: Default::default(),
             tabs: Vec::new(),
             active_tab: 0,
             watcher_generation: 0,
@@ -2927,10 +2929,10 @@ impl KagiApp {
     /// delete-remote-branch, reset-current, force-with-lease-push,
     /// rebase-onto), and Enter over those modals checked out the commit
     /// selected behind them.
-    fn confirm_active_modal(&mut self, cx: &mut Context<Self>) -> bool {
+    fn confirm_active_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         match self.front_layer(cx) {
             front_layer::FrontLayer::Modal => {
-                self.confirm_open_modal(cx);
+                self.confirm_open_modal(window, cx);
                 cx.notify();
                 if let Some(owner) = self.active_session() {
                     self.offer_auto_release(owner, cx);
@@ -2953,7 +2955,7 @@ impl KagiApp {
     ///
     /// Write modals dispatch to their `start_*` entry (#493) — the same one the
     /// modal's own button uses.
-    fn confirm_open_modal(&mut self, cx: &mut Context<Self>) {
+    fn confirm_open_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use modals::ActiveModal as M;
         let Some(modal) = self.active_modal.as_ref() else {
             return;
@@ -2966,7 +2968,9 @@ impl KagiApp {
             M::SmartCommit(smart_commit::SmartCommitModal::Consent) => {
                 self.confirm_smart_consent(cx)
             }
-            M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {}
+            M::SmartCommit(smart_commit::SmartCommitModal::ModelPicker { .. }) => {
+                self.confirm_smart_model(window, cx)
+            }
             M::Checkout(_) => self.start_checkout(cx),
             M::QueuedCommit(_) => self.confirm_queued_commit(cx),
             M::Pull(_) => self.start_pull(cx),

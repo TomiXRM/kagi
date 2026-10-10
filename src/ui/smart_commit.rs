@@ -99,6 +99,40 @@ pub enum SmartCommitModal {
     },
 }
 
+/// Transient keyboard state for the modal's dense model target list.
+pub(crate) struct ModelPickerFocus {
+    pub(crate) owner: Option<crate::app::SessionId>,
+    pub(crate) keys: super::keyboard_nav::RowKeys,
+    pub(crate) focus: std::cell::RefCell<super::keyboard_nav::RowFocus>,
+    pub(crate) scroll: gpui::ListState,
+    pub(crate) focus_first: std::cell::Cell<bool>,
+}
+
+impl Default for ModelPickerFocus {
+    fn default() -> Self {
+        Self {
+            owner: None,
+            keys: std::rc::Rc::from([]),
+            focus: Default::default(),
+            scroll: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(0.)),
+            focus_first: std::cell::Cell::new(false),
+        }
+    }
+}
+
+impl ModelPickerFocus {
+    pub(crate) fn reset(&mut self, models: &[String]) {
+        self.keys = models
+            .iter()
+            .enumerate()
+            .map(|(i, model)| (model.clone(), i))
+            .collect();
+        self.focus = Default::default();
+        self.scroll.reset(models.len());
+        self.focus_first.set(true);
+    }
+}
+
 /// Process/window-global Smart Commit capabilities plus persisted settings.
 /// The modal lives in `ActiveModal`; generation status lives in `TabUiState`.
 #[derive(Clone, Debug)]

@@ -469,6 +469,16 @@ impl KagiApp {
 
     /// Consent dialog confirmed: enable LLM, then proceed to model selection.
     pub fn confirm_smart_consent(&mut self, cx: &mut Context<Self>) {
+        if self.smart_model_focus.owner.is_none()
+            || self.smart_model_focus.owner != self.active_session()
+            || !matches!(
+                self.smart_commit_modal(),
+                Some(smart_commit::SmartCommitModal::Consent)
+            )
+        {
+            self.cancel_smart_modal(cx);
+            return;
+        }
         self.clear_smart_commit_modal();
         self.smart_commit.set_enabled(true);
         klog!("smart-commit: llm enabled (consent given)");
@@ -487,10 +497,32 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.smart_model_focus.owner != self.active_session()
+            || self.smart_model_focus.owner.is_none()
+            || !matches!(self.smart_commit_modal(),
+                Some(smart_commit::SmartCommitModal::ModelPicker { models }) if models.contains(&model))
+        {
+            self.cancel_smart_modal(cx);
+            return;
+        }
         self.clear_smart_commit_modal();
         self.smart_commit.set_model(model.clone());
         klog!("smart-commit: model selected = {}", model);
         self.run_smart_generation(window, cx);
+    }
+
+    /// Root Enter only confirms a currently focused model, never an arbitrary
+    /// default or a Cancel button. Row Enter/Space uses the identical click path.
+    pub(crate) fn confirm_smart_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self
+            .smart_model_focus
+            .focus
+            .borrow()
+            .focused(window)
+            .map(str::to_owned);
+        if let Some(model) = model {
+            self.choose_smart_model(model, window, cx);
+        }
     }
 
     /// Dismiss any Smart Commit modal without action.

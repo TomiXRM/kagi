@@ -91,7 +91,7 @@ impl KagiApp {
                     cx.stop_propagation();
                     return;
                 }
-                if !this.confirm_active_modal(cx) && workspace_fallbacks {
+                if !this.confirm_active_modal(window, cx) && workspace_fallbacks {
                     this.checkout_selected_commit(window, cx);
                 }
                 cx.notify();

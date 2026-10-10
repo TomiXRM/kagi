@@ -3396,6 +3396,7 @@ dependencies = [
  "kagi-ui-file-history",
  "markdown",
  "notify",
+ "parking_lot",
  "percent-encoding",
  "portable-pty",
  "serde",

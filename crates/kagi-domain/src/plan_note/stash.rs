@@ -25,6 +25,8 @@ pub enum StashDirtyOp {
 /// Plan notes for the stash op family (ADR-0129 appendix §B-7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StashNote {
+    /// blocker: Git cannot create a stash without an initial HEAD commit.
+    HeadRequired,
     /// blocker (`plan_stash_push`, no-op family): working tree is already
     /// clean — nothing to stash.
     NothingToStash,
@@ -81,6 +83,7 @@ impl StashNote {
     /// Byte-identical to the legacy `ops/stash.rs` strings (golden-tested).
     pub fn message_en(&self) -> String {
         match self {
+            StashNote::HeadRequired => crate::advice_template_en!(StashHeadRequired).to_string(),
             StashNote::NothingToStash => "Nothing to stash: working tree is already clean \
                  (no staged, modified, or untracked files)."
                 .to_string(),

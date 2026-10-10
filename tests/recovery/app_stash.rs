@@ -69,6 +69,73 @@ fn confirm(
         cx.simulate_keystrokes(window, "enter");
     }
 }
+
+pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original_lang = i18n::lang();
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(lang);
+        let fixture = tempfile::tempdir().unwrap();
+        let repo = fixture.path().canonicalize().unwrap();
+        git_fixture::init_repo(&repo, "main");
+        std::fs::write(repo.join("new"), "keep\n").unwrap();
+        let before_head = std::fs::read(repo.join(".git/HEAD")).unwrap();
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.open_stash_push_modal(cx));
+        wait(cx, &app, |app| {
+            app.stash_push_modal().is_some_and(|m| m.plan.is_some())
+        });
+        let reason = match lang {
+            i18n::Lang::En => "Stash push requires a HEAD commit. Create an initial commit before stashing.",
+            i18n::Lang::Ja => "stash push には HEAD commit が必要です。最初の commit を作成してから stash してください。",
+        };
+        cx.read(|cx| {
+            let plan = app
+                .read(cx)
+                .stash_push_modal()
+                .unwrap()
+                .plan
+                .as_ref()
+                .unwrap();
+            assert!(plan
+                .blockers
+                .iter()
+                .any(|note| i18n::plan_note_text(note) == reason));
+            assert_eq!(plan.predicted, plan.current);
+        });
+        kagi::ui::button_style::clear_recorded_modal_buttons();
+        app.update(cx, |_, cx| cx.notify());
+        crate::recovery_operations::paint(cx, window);
+        let button = kagi::ui::button_style::recorded_modal_button("stash-push-confirm").unwrap();
+        assert!(button.disabled);
+        assert_eq!(button.description.as_deref(), Some(reason));
+        // The reason is passed to the actual rendered disabled action, not
+        // merely present in the backend plan. Clicking cannot execute it.
+        let bounds = e2e::confirm_bounds(window.window_id()).unwrap();
+        cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).stash_push_modal().is_some()));
+        confirm(cx, &app, window, false);
+        wait(cx, &app, |app| {
+            !app.app_sessions.has_leases() && app.stash_push_modal().is_none()
+        });
+        assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
+            FooterStatus::Failed(text) if text.contains(reason))));
+        let entries = read_oplog_tail_for_repo(&repo, 100);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            matches!(&entries[0].outcome, OpOutcome::Refused { blockers }
+            if blockers.iter().any(|b| b.contains("HEAD commit")))
+        );
+        assert_eq!(std::fs::read(repo.join(".git/HEAD")).unwrap(), before_head);
+        assert_eq!(std::fs::read_to_string(repo.join("new")).unwrap(), "keep\n");
+        assert!(!repo.join(".git/index").exists());
+        assert!(!repo.join(".git/refs/stash").exists());
+        unmount(cx, app, window);
+    }
+    i18n::set_lang(original_lang);
+    eprintln!("[gui-e2e] PASS stash_push_plan_accuracy EN/JA");
+}
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {
         for action in [

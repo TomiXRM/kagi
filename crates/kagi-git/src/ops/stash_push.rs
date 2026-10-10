@@ -14,6 +14,7 @@ use kagi_domain::plan_note::{OpPhrase, StashNote, StashRecovery, StashTitle};
 ///
 /// # Blocker conditions
 ///
+/// - HEAD is unborn — Git requires an initial commit to create a stash.
 /// - There are no local modifications (staged, unstaged, untracked all empty) —
 ///   nothing to stash.
 /// - The repository is in a conflict state — stash cannot be created during
@@ -72,6 +73,9 @@ pub fn plan_stash_push(
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
+    if matches!(head, Head::Unborn { .. }) {
+        blockers.push(PlanNote::Stash(StashNote::HeadRequired));
+    }
 
     // Nothing to stash.
     // When include_untracked=false, untracked files don't count as "something to stash".
@@ -109,9 +113,13 @@ pub fn plan_stash_push(
     // ── 5. Predicted StateSummary ─────────────────────────────
     // After push: working tree is clean, stash count +1.
     let msg_label = message.unwrap_or("(no message)");
-    let predicted = StateSummary {
-        head: head_display.clone(),
-        dirty: "clean".to_string(),
+    let predicted = if blockers.is_empty() {
+        StateSummary {
+            head: head_display.clone(),
+            dirty: "clean".to_string(),
+        }
+    } else {
+        current.clone()
     };
 
     // ── 6. Recovery guidance ──────────────────────────────────

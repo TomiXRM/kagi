@@ -411,4 +411,25 @@ mod tests {
             "an empty page is an answer, not a failure"
         );
     }
+
+    /// The same guard the Issue query carries: an unused declared variable is
+    /// a query GitHub refuses, and no fixture would notice.
+    #[test]
+    fn every_declared_variable_is_used_by_the_pr_query() {
+        let (declaration, body) = PR_LIST_QUERY
+            .split_once(") {")
+            .expect("a variable declaration");
+        let declared: Vec<&str> = declaration
+            .split('$')
+            .skip(1)
+            .map(|variable| variable.split(':').next().unwrap_or_default().trim())
+            .collect();
+        assert_eq!(declared, ["owner", "name", "states", "cursor"]);
+        for name in declared {
+            assert!(
+                body.contains(&format!("${name}")),
+                "${name} is declared but never used"
+            );
+        }
+    }
 }

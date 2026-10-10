@@ -5,7 +5,7 @@ use std::time::Duration;
 use gpui::VisualTestAppContext;
 use kagi::ui::e2e;
 
-use super::fixture::periodic_refresh_gh;
+use super::fixture::{periodic_refresh_gh, periodic_single_page_gh};
 use super::{assert_lazy_demand, bottom, click, info, measure, page, ready};
 use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, mount_state, repo_fingerprint, unmount};
@@ -66,6 +66,120 @@ fn assert_periodic_status(
             );
         }
     });
+}
+
+pub fn scenario_pr_single_page_periodic_scroll_retention(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    let before = repo_fingerprint(&repo);
+    let receipt = fixture.path().join(".git/periodic-gh-argv");
+    let _gh = periodic_single_page_gh(&receipt);
+    let mut state = e2e::app_state(&repo).unwrap();
+    state
+        .github_host_logins
+        .insert(Some("github.com".into()), "alice".into());
+    let (app, win) = mount_state(cx, state);
+    app.update(cx, |app, cx| app.ensure_startup_repo_io(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).github_ticker_alive));
+    assert_eq!(info(cx, &app), ((1..81).collect(), None, false));
+    app.update(cx, |app, cx| app.show_pr_mode(cx));
+    cx.run_until_parked();
+
+    // Move the real virtualized table with a wheel event, retaining a partial
+    // row offset rather than only an integer row index.
+    let viewport = measure(cx, win, "pr-home-table-viewport");
+    let row_height = cx.read(|cx| {
+        app.read(cx)
+            .pr_mode()
+            .unwrap()
+            .dashboard_scroll
+            .0
+            .borrow()
+            .last_item_size
+            .expect("real uniform-list layout")
+            .contents
+            .height
+            / 80.
+    });
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                gpui::px(0.),
+                -(row_height * 35. + gpui::px(7.)),
+            )),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    measure(cx, win, "pr-home-table-viewport");
+    let anchor_index = cx.read(|cx| {
+        let scroll = app.read(cx).pr_mode().unwrap().dashboard_scroll.0.borrow();
+        (-scroll.base_handle.offset().y / row_height).floor() as usize
+    });
+    assert!(
+        (10..70).contains(&anchor_index),
+        "the real table reached a mid row: index={anchor_index}, height={row_height:?}"
+    );
+    let anchor_id = format!("pr-home-row-{}", anchor_index + 3);
+    let anchor_row = measure(cx, win, &anchor_id);
+    assert!(
+        viewport.contains(&anchor_row.center()),
+        "mid row is visible"
+    );
+    cx.run_until_parked();
+    let (generation, anchor_offset) = cx.read(|cx| {
+        let app = app.read(cx);
+        (
+            app.ui().github_prs_gen,
+            app.pr_mode()
+                .unwrap()
+                .dashboard_scroll
+                .0
+                .borrow()
+                .base_handle
+                .offset(),
+        )
+    });
+    assert!(anchor_offset.y < gpui::px(0.));
+    let reads = first_page_reads(&receipt);
+
+    // No queued fetch, explicit refresh or mode change: the production timer
+    // and strict offline gh producer must perform the next first-page read.
+    cx.advance_clock(Duration::from_secs(61));
+    cx.run_until_parked();
+    assert_eq!(first_page_reads(&receipt), reads + 1);
+    assert_eq!(info(cx, &app), ((1..81).collect(), None, false));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().github_prs_gen),
+        generation.wrapping_add(1),
+        "a single-page list must keep ordinary automatic refresh"
+    );
+    measure(cx, win, "pr-home-table-viewport");
+    assert_eq!(
+        cx.read(|cx| {
+            app.read(cx)
+                .pr_mode()
+                .unwrap()
+                .dashboard_scroll
+                .0
+                .borrow()
+                .base_handle
+                .offset()
+        }),
+        anchor_offset,
+        "automatic refresh preserves the exact row offset"
+    );
+    assert_eq!(
+        measure(cx, win, &anchor_id),
+        anchor_row,
+        "automatic first-page refresh must not move the anchor row"
+    );
+    assert_eq!(repo_fingerprint(&repo), before);
+    unmount(cx, app, win);
+    eprintln!("[gui-e2e] PASS pr_single_page_periodic_scroll_retention");
 }
 
 pub fn scenario_pr_paging_survives_periodic_tick(cx: &mut VisualTestAppContext) {

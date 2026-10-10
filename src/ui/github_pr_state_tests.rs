@@ -136,6 +136,12 @@ fn invalid_metadata_repository_and_state_keep_the_retry_position() {
 #[test]
 fn refresh_replaces_the_generation_and_a_failed_refresh_revokes_continuation() {
     let mut ui = open();
+    let accepted = ui.begin_pr_page_request().unwrap();
+    assert!(ui.finish_pr_page_request(
+        &accepted,
+        Ok(page(101..121, IssueState::Open, Some("third-page")))
+    ));
+    assert_eq!(ui.github_prs_paging.page, 2);
     let old = ui.begin_pr_page_request().unwrap();
     let generation = ui.begin_github_prs_request();
     assert!(!ui.finish_pr_page_request(&old, Ok(page(101..121, IssueState::Open, None))));
@@ -144,9 +150,17 @@ fn refresh_replaces_the_generation_and_a_failed_refresh_revokes_continuation() {
         .finish_github_prs_request(generation, Err(PrFetchError::Auth("expired".into())))
         .unwrap();
     assert!(outcome.error.is_some());
-    assert_eq!(ui.github_prs.len(), 100);
+    assert_eq!(
+        ui.github_prs.len(),
+        120,
+        "failed refresh retains accepted rows"
+    );
     assert!(ui.github_prs_paging.cursor.is_none());
     assert!(ui.begin_pr_page_request().is_none());
+    assert!(
+        !(ui.github_prs_paging.page > 1 || ui.github_prs_paging.append.is_some()),
+        "the next automatic first-page tick must not be deferred after failure"
+    );
     let obsolete = ui.begin_github_prs_request();
     let newest = ui.begin_github_prs_request();
     assert!(ui

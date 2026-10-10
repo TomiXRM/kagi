@@ -503,10 +503,12 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   nonadvancing unfinished pages are errors, not successful empty results.
 - **Failure is not exhaustion.** Failed append retains accepted rows and its
   cursor with an explicit retry of that page. Failed first-page refresh keeps
-  last-known rows but revokes the previous continuation. Success replaces the
-  first page or appends only the authorized next page; only an exhausted
-  `pageInfo` removes continuation. Branch Cleanup's reduced `list_merged_prs`
-  and Vec evidence/settlement remain independent of this paging contract.
+  last-known rows but revokes the previous continuation and resets the accepted
+  page count, permitting the next automatic first-page read to recover. Success
+  replaces the first page or appends only the authorized next page; only an
+  exhausted `pageInfo` removes continuation. Branch Cleanup's reduced
+  `list_merged_prs` and Vec evidence/settlement remain independent of this
+  paging contract.
 - **#1107 automatic admission, not newest membership.** The ordinary 60-second
   ticker defers only its shared Open L1 first-page replacement while the active
   workspace is PRs, no explicit Closed/All strip is installed, and shared Open
@@ -516,6 +518,8 @@ Issues（thread / home 一覧 / composer）と PR（feed / composer / home 表�
   refresh keep their existing first-page cutover and revoke old continuation
   authority. Closed/All (even with a pending strip append), background/Graph
   consumers and departure from PRs retain ordinary shared Open ticker reads.
+  An automatic first-page read does not reset the dashboard scroll position;
+  filter/sort changes retain their explicit viewport reset.
   The deliberate tradeoff is retained last-accepted membership while paging:
   newly opened, closed or deleted PRs require manual Refresh for an authoritative
   new membership read. Retention must never be described as the newest list.

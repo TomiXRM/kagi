@@ -2448,6 +2448,10 @@ mod macos {
                     crate::pr_pagination::scenario_pr_periodic_pending_sidebar_and_other_collections,
                 ),
             ),
+            (
+                "pr_single_page_periodic_scroll_retention",
+                Box::new(crate::pr_pagination::scenario_pr_single_page_periodic_scroll_retention),
+            ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
                 "bottom_panel_nested",

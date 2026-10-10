@@ -20,10 +20,18 @@ pub(super) fn page(numbers: std::ops::Range<u64>, next: Option<&str>) -> PrListS
 }
 
 pub(super) fn sidebar_refresh_gh() -> OfflineGh {
-    first_page_gh("")
+    first_page_gh("", page(1..101, Some("sidebar-page")))
 }
 
 pub(super) fn periodic_refresh_gh(receipt: &std::path::Path) -> OfflineGh {
+    periodic_refresh_gh_with_page(receipt, page(1..101, Some("sidebar-page")))
+}
+
+pub(super) fn periodic_single_page_gh(receipt: &std::path::Path) -> OfflineGh {
+    periodic_refresh_gh_with_page(receipt, page(1..81, None))
+}
+
+fn periodic_refresh_gh_with_page(receipt: &std::path::Path, snapshot: PrListSnapshot) -> OfflineGh {
     let phase = receipt.with_extension("status-after");
     let mut status_cases = String::new();
     for pr in page(1..121, None).prs {
@@ -57,26 +65,30 @@ pub(super) fn periodic_refresh_gh(receipt: &std::path::Path) -> OfflineGh {
             status(false),
         ));
     }
-    first_page_gh(&format!(
-        "printf '%s\\n' \"$*\" >> '{}'\n\
-         if [ \"$*\" = '--version' ]; then\n\
-           printf 'gh version 2.0.0 (pagination fixture)\\n'\n\
-           exit 0\n\
-         fi\n\
-         if [ \"$#\" -eq 7 ] && [ \"$1\" = 'pr' ] && [ \"$2\" = 'view' ] &&\n\
-            [ \"$3\" = '-R' ] && [ \"$4\" = 'github.com/example/repo' ] &&\n\
-            [ \"$6\" = '--json' ] &&\n\
-            [ \"$7\" = 'number,headRefOid,statusCheckRollup,mergeable' ]; then\n\
-           case \"$5\" in\n\
-             {status_cases}\
-           esac\n\
-         fi\n",
-        receipt.display(),
-    ))
+    first_page_gh(
+        &format!(
+            "printf '%s\\n' \"$*\" >> '{}'\n\
+             if [ \"$*\" = '--version' ]; then\n\
+               printf 'gh version 2.0.0 (pagination fixture)\\n'\n\
+               exit 0\n\
+             fi\n\
+             if [ \"$#\" -eq 7 ] && [ \"$1\" = 'pr' ] && [ \"$2\" = 'view' ] &&\n\
+                [ \"$3\" = '-R' ] && [ \"$4\" = 'github.com/example/repo' ] &&\n\
+                [ \"$6\" = '--json' ] &&\n\
+                [ \"$7\" = 'number,headRefOid,statusCheckRollup,mergeable' ]; then\n\
+               case \"$5\" in\n\
+                 {status_cases}\
+               esac\n\
+             fi\n",
+            receipt.display(),
+        ),
+        snapshot,
+    )
 }
 
-fn first_page_gh(prologue: &str) -> OfflineGh {
-    let nodes: Vec<_> = page(1..101, Some("sidebar-page"))
+fn first_page_gh(prologue: &str, snapshot: PrListSnapshot) -> OfflineGh {
+    let next_cursor = snapshot.next_cursor;
+    let nodes: Vec<_> = snapshot
         .prs
         .into_iter()
         .map(|pr| {
@@ -105,7 +117,7 @@ fn first_page_gh(prologue: &str) -> OfflineGh {
     let snapshot = serde_json::json!({
         "data": { "repository": { "pullRequests": {
             "nodes": nodes,
-            "pageInfo": { "hasNextPage": true, "endCursor": "sidebar-page" },
+            "pageInfo": { "hasNextPage": next_cursor.is_some(), "endCursor": next_cursor },
         } } },
     });
     OfflineGh::with_script(&format!(

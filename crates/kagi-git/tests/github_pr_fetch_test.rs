@@ -141,6 +141,18 @@ case "$*" in
   *statusCheckRollup*|*mergeable*|*body*|*changedFiles*|*additions*|*deletions*)
     echo "heavy field in L1: $*" >&2; exit 1 ;;
 esac
+case "$*" in
+  *'first: 100, after: $cursor'*) ;;
+  *) echo "missing bounded cursor page: $*" >&2; exit 1 ;;
+esac
+case "$*" in
+  *'pageInfo { hasNextPage endCursor }'*) ;;
+  *) echo "missing page continuation metadata: $*" >&2; exit 1 ;;
+esac
+case "$*" in
+  *'comments { totalCount }'*) ;;
+  *) echo "missing aggregate comment count: $*" >&2; exit 1 ;;
+esac
 cat <<'JSON'
 {"data":{"repository":{"pullRequests":{"nodes":[
   {"number":1,"title":"small","state":"OPEN","headRefName":"h","headRefOid":"sha",

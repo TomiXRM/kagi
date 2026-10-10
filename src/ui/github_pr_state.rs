@@ -58,12 +58,6 @@ impl TabUiState {
         self.github_prs_gen = self.github_prs_gen.wrapping_add(1);
         self.github_prs_loading = true;
         self.github_prs_paging.invalidate();
-        if let Some(mode) = &self.pr_mode {
-            if self.github_prs_strip.rows.is_none() {
-                mode.dashboard_scroll
-                    .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
-            }
-        }
         self.github_prs_gen
     }
 
@@ -98,6 +92,11 @@ impl TabUiState {
             self.github_prs_paging.page = 1;
             Ok(snapshot.prs)
         });
+        if result.is_err() {
+            // The explicit first-page cutover already revoked continuation.
+            // Retained stale rows must not defer automatic recovery forever.
+            self.github_prs_paging.page = 0;
+        }
         let outcome = apply_pr_fetch(&mut self.github_prs, result);
         if outcome.error.is_none()
             || outcome
@@ -167,6 +166,9 @@ impl TabUiState {
             self.github_prs_strip.paging.page = 1;
             Ok(snapshot.prs)
         });
+        if result.is_err() {
+            self.github_prs_strip.paging.page = 0;
+        }
         let rows = self.github_prs_strip.rows.as_mut()?;
         let outcome = apply_pr_fetch(rows, result);
         self.github_prs_strip.error = outcome.error.as_ref().map(super::github::fetch_error_text);

@@ -15,6 +15,7 @@ mod periodic;
 pub use periodic::{
     scenario_pr_paging_survives_periodic_tick,
     scenario_pr_periodic_pending_sidebar_and_other_collections,
+    scenario_pr_single_page_periodic_scroll_retention,
 };
 
 fn measure(
@@ -237,10 +238,10 @@ pub fn scenario_pr_pagination(cx: &mut VisualTestAppContext) {
     );
 
     // A real zero-match InputState filter must retain an explicit continuation.
-    refresh(cx, &app, page(1..101, Some("filtered-page")));
     click(cx, win, "list-filter-text");
     cx.simulate_keystrokes(win, "no matching PR");
     cx.run_until_parked();
+    refresh(cx, &app, page(1..101, Some("filtered-page")));
     measure(cx, win, "pr-filter-load-more");
     assert_eq!(
         info(cx, &app),

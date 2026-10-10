@@ -37,12 +37,11 @@ pub mod benchmark;
 pub mod blame;
 mod checklist;
 pub mod cli;
-mod conflict_abort;
 mod conflict_abort_guard;
 mod conflict_labels;
 // #704: the abort's stage sequence is contract (ADR-0196 evidence), so the
 // progress-reporting executor is observable from outside the crate.
-pub use conflict_abort::execute_conflict_abort_with_progress;
+pub use ops::conflict_abort::execute_conflict_abort_with_progress;
 pub mod conflicts;
 mod diff;
 mod diffstat;
@@ -200,7 +199,7 @@ pub use snapshot::{
 #[allow(unused_imports)]
 pub use staging::{commit_preview, staged_file_diff, unstaged_file_diff, CommitPreview};
 #[allow(unused_imports)]
-pub(crate) use staging::{stage_file, stage_files, unstage_file, unstage_files};
+pub(crate) use staging::{stage_file, stage_files};
 #[allow(unused_imports)]
 pub use status::{
     working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,

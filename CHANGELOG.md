@@ -8,6 +8,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - MCP `kagi_commit_show` は graph の 2000 件表示予算から独立して revision を解決します。古い完全 SHA・一意な短縮 SHA・tag を参照でき、曖昧な prefix は候補の完全 SHA と長い prefix の案内を返して拒否します。blob／tree は commit として返しません。(#1134, #1139)
+- Unstage は単体・一括とも選択した literal path の index entry だけを HEAD の OID／mode に戻すようにしました。`[]`・`*`・`?`・先頭 `#`・POSIX の `\` を名前として扱い、未選択ファイルの staged 内容や作業ファイルを書き換えません。対象の index 内容が plan 後に変われば拒否し、conflict stage の解除・directory から file への変更も正しく処理します。一括失敗時の cached index は再読込し、途中の変更が次の Stage に混ざらないようにしました。Editor の実ファイルメニューと backend の回帰を追加しました。(#1130)
+- 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合や HEAD が sequencer の安全基準から移動した場合は成功扱いせず EN/JA の理由で拒否します。無関係な手動 commit・未追跡ファイル・tracked file の未 stage 編集を保持し、単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)
+- Stage はリンク先ではなく symlink 自体の存在を確認し、リンク切れでも削除ではなく mode 120000 と生の target bytes を stage するようにしました。単体・一括、既存リンクの更新・新規リンク、相対・絶対・非 UTF-8 target の backend 回帰で、選択外の index と作業ファイルの保持を確認します。(#1128)
 - Discard は POSIX のファイル名に含まれるバックスラッシュを区切り文字へ変換せず、選択・確認・バックアップ・実行・検証で同じパスを保つようにしました。`a\b.txt` の破棄が隣の `a/b.txt` を上書きする問題を修正し、一括破棄でも両者を別の対象として扱います。Windows の既存 absolute / `./` 入力は解決後の component を Git の区切り文字で再結合し、`core.worktree` で分離した working tree も元の Git directory から復元します。安全に表現できないパスは書込み前に理由を表示して拒否します。(#1125)
 - Commit／fixup と staged／both Amend は、承認時の index のパス・blob OID・mode を固定して実行前に照合するようにしました。同じパスの内容差替えや mode／対象ファイルの変更は HEAD・index・作業ファイルを書き換えず拒否し、見直しを促す EN／JA の理由と操作記録を残します。未 stage の編集は commit に混ぜず、変更のない承認は従来どおり実行できます。(#1126)
 - Commit の計画中にステージ済みの内容が変わって拒否された場合も、log だけで終わらず、EN／JA の失敗 footer と error toast に見直しの理由を表示するようにしました。以前の承認は解除し、実行は開始しません。解決済み merge の確定 Commit でも、承認後の blob 差替えを拒否して HEAD・MERGE_HEAD・index・refs を保持する backend 回帰を追加しました。(#1126)

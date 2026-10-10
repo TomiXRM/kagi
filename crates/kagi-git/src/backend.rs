@@ -710,7 +710,10 @@ impl Backend {
 
     pub fn unstage_file(&self, path: &Path) -> Result<(), GitError> {
         self.require_trust()?;
-        staging::unstage_file(&self.repo, path)
+        let plan = ops::unstage::plan_unstage(&self.repo, std::iter::once(path))?;
+        ops::unstage::preflight_unstage(&self.repo, &plan)?;
+        ops::unstage::execute_unstage(&self.repo, &plan)?;
+        Ok(())
     }
 
     pub fn stage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
@@ -720,7 +723,9 @@ impl Backend {
 
     pub fn unstage_files(&self, paths: &[PathBuf]) -> Result<usize, GitError> {
         self.require_trust()?;
-        staging::unstage_files(&self.repo, paths)
+        let plan = ops::unstage::plan_unstage(&self.repo, paths.iter().map(|p| p.as_path()))?;
+        ops::unstage::preflight_unstage(&self.repo, &plan)?;
+        ops::unstage::execute_unstage(&self.repo, &plan)
     }
 
     /// Stage one unstaged hunk of `path`, named by its header (#842).

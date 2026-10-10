@@ -26,6 +26,9 @@ pub fn note_ja(note: &CommitNote) -> String {
     match note {
         CommitNote::EmptyMessage => "commit メッセージを空にはできません。".to_string(),
         CommitNote::NothingStaged => super::advice_text(Msg::AdviceCommitNothingStaged, &[]),
+        CommitNote::IdentityUnavailable => {
+            super::advice_text(Msg::AdviceCommitIdentityUnavailable, &[])
+        }
         CommitNote::StagedContentChanged => {
             super::advice_text(Msg::AdviceCommitStagedContentChanged, &[])
         }

@@ -71,6 +71,7 @@ pub fn plan_stash_push(
 
     // ── 4. Check blockers ────────────────────────────────────
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::add_git_identity_blocker(repo, &mut blockers)?;
     let mut warnings: Vec<PlanNote> = Vec::new();
 
     // Nothing to stash.
@@ -294,8 +295,7 @@ fn identify_created_stash(
 /// building the untracked tree (#622). Without `include_untracked`, new files
 /// remain in the working tree.
 ///
-/// The signature is read from the repository config (`user.name` / `user.email`);
-/// if either is absent, falls back to `"kagi <kagi@local>"`.
+/// The signature uses the Git committer identity; missing identity blocks execution.
 ///
 /// External filters are disabled by the shared [`run_git`] config hardening,
 /// matching libgit2's built-in-only filters.
@@ -316,17 +316,11 @@ pub(crate) fn execute_stash_push(
     include_untracked: bool,
 ) -> Result<String, GitError> {
     let error = |e: git2::Error| GitError::Other(format!("stash push failed: {}", e.message()));
-    let sig = build_signature(repo)?;
+    super::check_git_identity(repo)?;
     let root = repo
         .workdir()
         .ok_or_else(|| GitError::Other("stash push requires a worktree".into()))?;
-    let mut args = vec![
-        "-c".to_owned(),
-        format!("user.name={}", sig.name().unwrap_or("kagi")),
-        "-c".to_owned(),
-        format!("user.email={}", sig.email().unwrap_or("kagi@local")),
-    ];
-    args.extend(["stash".to_owned(), "push".to_owned()]);
+    let mut args = vec!["stash".to_owned(), "push".to_owned()];
     if include_untracked {
         args.push("--include-untracked".to_owned());
     }

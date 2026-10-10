@@ -214,6 +214,18 @@ pub fn plan_absorb(repo: &Repository, window: usize) -> Result<AbsorbPlan, GitEr
     };
 
     let mut blockers: Vec<AbsorbBlocker> = Vec::new();
+    match super::check_git_identity(repo) {
+        Ok(()) => {}
+        Err(GitError::Blocked(note))
+            if matches!(
+                note.as_ref(),
+                PlanNote::Common(kagi_domain::plan_note::CommonNote::GitIdentityUnavailable)
+            ) =>
+        {
+            blockers.push(AbsorbBlocker::GitIdentityUnavailable);
+        }
+        Err(error) => return Err(error),
+    }
 
     // Structural blockers.
     let (head_commit, branch) = match &head {
@@ -394,6 +406,7 @@ pub fn preflight_absorb(repo: &Repository, plan: &AbsorbPlan) -> Result<(), GitE
             "absorb plan has blockers; refusing to execute".to_string(),
         ));
     }
+    super::check_git_identity(repo)?;
     if plan.is_noop() {
         return Err(GitError::Other(
             "absorb plan has nothing to absorb".to_string(),
@@ -503,6 +516,7 @@ pub(crate) fn execute_absorb_with_progress(
     progress: &mut AbsorbProgress,
 ) -> Result<AbsorbOutcome, GitError> {
     preflight_absorb(repo, plan)?;
+    let committer = build_signature(repo)?;
 
     let head = repo
         .head()
@@ -571,7 +585,6 @@ pub(crate) fn execute_absorb_with_progress(
     // Recompute the diff (same inputs → same hunk coords as the plan).
     let diff = absorb_diff(repo, &head_tree)?;
 
-    let committer = build_signature(repo)?;
     let mut new_parent: Option<git2::Commit<'_>> = base;
 
     // Rebuild oldest → newest. commit at depth d gets its own tree plus every

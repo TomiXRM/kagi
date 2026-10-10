@@ -398,6 +398,7 @@ pub fn plan_amend(
     };
 
     let mut blockers: Vec<PlanNote> = Vec::new();
+    super::commit::add_commit_identity_blocker(repo, &mut blockers)?;
     // `warnings` stays empty in MVP; the checklist lane (ADR-0043) will push into
     let mut warnings: Vec<PlanNote> = Vec::new();
 
@@ -606,14 +607,22 @@ pub fn plan_amend(
         destructive: true,
         equivalent_command: None,
     };
-    if mode.includes_staged() {
+    if mode.includes_staged()
+        && !plan.blockers.contains(&PlanNote::Commit(
+            kagi_domain::plan_note::commit::CommitNote::IdentityUnavailable,
+        ))
+    {
         preflight_amend(repo, &plan)?;
     }
     Ok(plan)
 }
 
 pub fn preflight_amend(repo: &Repository, plan: &OperationPlan) -> Result<(), GitError> {
-    preflight_commit(repo, plan)
+    if plan.approved_index_digest.is_some() {
+        preflight_commit(repo, plan)
+    } else {
+        super::commit::check_commit_identity(repo)
+    }
 }
 
 /// Execute an amend through Git with hooks/signing (ADR-0039 amendment).

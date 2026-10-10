@@ -64,6 +64,7 @@ pub mod github_threads;
 pub mod hotspot;
 mod log;
 pub mod message_gen;
+pub mod revision;
 pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
@@ -390,6 +391,8 @@ pub enum GitError {
     /// repository settings. The underlying Git failure is retained for oplog
     /// and CLI consumers; presentation must not attribute a specific cause.
     RebaseCannotStartWithRepoSettingsDisabled(String),
+    /// Direct revision resolution failed without changing repository state.
+    Revision(revision::RevisionError),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -428,6 +431,7 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
+            GitError::Revision(error) => std::fmt::Display::fmt(error, f),
             GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),
             GitError::Other(msg)
             | GitError::StashIdentityUnverified(msg)

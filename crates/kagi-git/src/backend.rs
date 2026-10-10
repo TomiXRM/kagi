@@ -365,6 +365,12 @@ impl Backend {
         Ok(count)
     }
 
+    /// Resolve a unique revision from the object database and peel tags to commits.
+    /// This read is not limited by the snapshot's graph display budget.
+    pub fn resolve_commit(&self, revision: &str) -> Result<crate::Commit, GitError> {
+        crate::revision::resolve_commit(&self.repo, revision)
+    }
+
     pub fn snapshot(&mut self, commit_limit: usize) -> Result<RepoSnapshot, GitError> {
         snapshot::snapshot(&mut self.repo, commit_limit)
     }
@@ -1035,8 +1041,8 @@ impl Backend {
         ops::plan_push_tag(&self.repo, name)
     }
 
-    pub(crate) fn execute_push_tag(&self, remote: &str, name: &str) -> Result<(), GitError> {
-        ops::execute_push_tag(&self.path, remote, name)
+    pub(crate) fn execute_push_tag(&self, plan: &OperationPlan) -> Result<(), GitError> {
+        ops::execute_push_tag(&self.path, plan)
     }
 
     /// The remote a tag push would target, for the menu label.

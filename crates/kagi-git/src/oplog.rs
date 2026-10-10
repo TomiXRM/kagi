@@ -194,7 +194,9 @@ impl From<&crate::GitError> for FailureCode {
                 FailureCode::RebaseBlockedByRepoSettings
             }
             GitError::NotARepository(_) | GitError::PathNotFound(_) => FailureCode::NotARepository,
-            GitError::BareRepository(_) | GitError::Other(_) => FailureCode::Other,
+            GitError::BareRepository(_) | GitError::Other(_) | GitError::Revision(_) => {
+                FailureCode::Other
+            }
         }
     }
 }

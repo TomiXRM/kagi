@@ -208,6 +208,7 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
     let preview_files: Vec<FileStatus> = status.staged.clone();
 
     let mut plan = OperationPlan {
+        tag_push_identity: None,
         approved_index_digest,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Commit(CommitTitle::Commit {

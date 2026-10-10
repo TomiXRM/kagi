@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- MCP `kagi_commit_show` は graph の 2000 件表示予算から独立して revision を解決します。古い完全 SHA・一意な短縮 SHA・tag を参照でき、曖昧な prefix は候補の完全 SHA と長い prefix の案内を返して拒否します。blob／tree は commit として返しません。(#1134, #1139)
 - Unstage は単体・一括とも選択した literal path の index entry だけを HEAD の OID／mode に戻すようにしました。`[]`・`*`・`?`・先頭 `#`・POSIX の `\` を名前として扱い、未選択ファイルの staged 内容や作業ファイルを書き換えません。対象の index 内容が plan 後に変われば拒否し、conflict stage の解除・directory から file への変更も正しく処理します。一括失敗時の cached index は再読込し、途中の変更が次の Stage に混ざらないようにしました。Editor の実ファイルメニューと backend の回帰を追加しました。(#1130)
 - 複数 commit の cherry-pick を中止すると、先行する成功済み pick が残っていた問題を修正しました。sequencer が記録した開始 HEAD へ index・作業ファイルとともに復元し、開始点が不明な場合や HEAD が sequencer の安全基準から移動した場合は成功扱いせず EN/JA の理由で拒否します。無関係な手動 commit・未追跡ファイル・tracked file の未 stage 編集を保持し、単一 pick の中止と解決バッファーの退避・操作記録は維持します。(#1127)
 - Stage はリンク先ではなく symlink 自体の存在を確認し、リンク切れでも削除ではなく mode 120000 と生の target bytes を stage するようにしました。単体・一括、既存リンクの更新・新規リンク、相対・絶対・非 UTF-8 target の backend 回帰で、選択外の index と作業ファイルの保持を確認します。(#1128)

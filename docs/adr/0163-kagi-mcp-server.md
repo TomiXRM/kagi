@@ -35,11 +35,17 @@ unit-tested with in-memory requests.
 `repo_path` argument, so an agent cannot reach another repository (PM-locked §5).
 Multi-repo is a documented follow-up.
 
-**Read tools** (all `readOnlyHint: true`, side-effect-free, derived from
-`Backend::snapshot` / `read_oplog_tail`): `kagi_repo_status`, `kagi_graph`,
+**Read tools** (all `readOnlyHint: true`, side-effect-free, using direct
+`Backend` reads, bounded `Backend::snapshot`, or `read_oplog_tail`):
+`kagi_repo_status`, `kagi_graph`,
 `kagi_diff`, `kagi_commit_show`, `kagi_branches`, `kagi_worktrees`,
 `kagi_conflicts`, `kagi_stashes`, `kagi_oplog`. (`kagi_blame` is deferred — it
 depends on #350.)
+
+`kagi_commit_show` resolves revisions directly from the object database, not
+the graph snapshot budget (#1134, #1139). Tags peel to commits; ambiguous
+prefixes return a tool error listing full candidate SHAs and requesting a
+longer prefix/full SHA. Missing revisions and non-commit objects are errors.
 
 **Write tools = two stages** (PM-locked §5 — the plan→confirm split IS the
 approval; not per-op tools):

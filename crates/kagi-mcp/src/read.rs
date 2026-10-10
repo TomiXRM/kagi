@@ -181,25 +181,14 @@ fn commit_show(repo: &Path, args: &Value) -> ToolResult {
         .get("revision")
         .and_then(Value::as_str)
         .ok_or_else(|| "missing `revision`".to_string())?;
-    let mut backend = open(repo)?;
-    let snap = backend
-        .snapshot(SNAPSHOT_LIMIT)
+    let backend = open(repo)?;
+    let commit = backend
+        .resolve_commit(revision)
         .map_err(|e| e.to_string())?;
-    // Resolve by full sha or unambiguous prefix against the snapshot's commits.
-    let commit = snap
-        .commits
-        .iter()
-        .find(|c| c.id.0 == revision || c.id.0.starts_with(revision))
-        .ok_or_else(|| {
-            format!(
-                "revision '{}' not found in the last {} commits",
-                revision, SNAPSHOT_LIMIT
-            )
-        })?;
     let files = backend
         .commit_diffstat(&commit.id)
         .map_err(|e| e.to_string())?;
-    let mut out = commit_meta_json(commit);
+    let mut out = commit_meta_json(&commit);
     out["files"] = json!(files.iter().map(diffstat_json).collect::<Vec<_>>());
     Ok(out)
 }

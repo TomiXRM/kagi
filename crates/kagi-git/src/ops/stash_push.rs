@@ -9,8 +9,8 @@ use kagi_domain::plan_note::{OpPhrase, StashNote, StashRecovery, StashTitle};
 /// Analyse whether a stash push is safe and return an [`OperationPlan`].
 ///
 /// Stash push is a **Guarded-class** operation (ADR-0004): it modifies the
-/// working tree and index by saving all local modifications to a new stash
-/// entry, leaving the working tree clean.
+/// working tree and index by saving tracked modifications to a new stash
+/// entry, optionally including untracked files.
 ///
 /// # Blocker conditions
 ///
@@ -27,8 +27,8 @@ use kagi_domain::plan_note::{OpPhrase, StashNote, StashRecovery, StashTitle};
 ///
 /// # Predicted state
 ///
-/// - Working tree will be clean after the push.
-/// - Stash count will increase by 1.
+/// - Tracked changes are removed; excluded untracked files remain.
+/// - Stash count increases by 1 only when the plan is executable.
 ///
 /// # Errors
 ///
@@ -111,12 +111,16 @@ pub fn plan_stash_push(
     }
 
     // ── 5. Predicted StateSummary ─────────────────────────────
-    // After push: working tree is clean, stash count +1.
+    // Only excluded untracked files remain dirty after a successful push.
     let msg_label = message.unwrap_or("(no message)");
     let predicted = if blockers.is_empty() {
         StateSummary {
             head: head_display.clone(),
-            dirty: "clean".to_string(),
+            dirty: if !include_untracked && !status.untracked.is_empty() {
+                format!("{} untracked retained", status.untracked.len())
+            } else {
+                "clean".to_string()
+            },
         }
     } else {
         current.clone()

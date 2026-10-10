@@ -64,12 +64,20 @@ pub fn after_state_label(title: &PlanTitle) -> Option<&'static str> {
     }
 }
 
-/// Keep the complete backend prediction in the AX row and Copy all. Maintenance
-/// already has a localized explanation because its producer text is English.
-pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> &'a str {
+/// Localized complete prediction shared by the visible AFTER row, AX and Copy all.
+pub fn after_state_detail<'a>(title: &PlanTitle, predicted: &'a str) -> std::borrow::Cow<'a, str> {
+    use std::borrow::Cow;
     match title {
-        PlanTitle::Maintenance(title) => maintenance::after_state_detail(title),
-        _ => predicted,
+        PlanTitle::Maintenance(title) => Cow::Borrowed(maintenance::after_state_detail(title)),
+        PlanTitle::Stash(StashTitle::Push { .. }) if lang() == Lang::Ja => {
+            match predicted.strip_suffix(" untracked retained") {
+                Some(count) if count.parse::<usize>().is_ok() => {
+                    Cow::Owned(Msg::PlanStateUntrackedRetained.t().replace("{}", count))
+                }
+                _ => Cow::Borrowed(predicted),
+            }
+        }
+        _ => Cow::Borrowed(predicted),
     }
 }
 

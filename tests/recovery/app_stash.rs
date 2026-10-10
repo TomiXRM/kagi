@@ -132,9 +132,54 @@ pub fn scenario_stash_push_plan_accuracy(cx: &mut VisualTestAppContext) {
         assert!(!repo.join(".git/index").exists());
         assert!(!repo.join(".git/refs/stash").exists());
         unmount(cx, app, window);
+        stash_retained_preview(cx, lang);
     }
     i18n::set_lang(original_lang);
     eprintln!("[gui-e2e] PASS stash_push_plan_accuracy EN/JA");
+}
+
+fn stash_retained_preview(cx: &mut VisualTestAppContext, lang: i18n::Lang) {
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    std::fs::write(repo.join("README.md"), "stash this\n").unwrap();
+    std::fs::write(repo.join("new"), "retain this\n").unwrap();
+    let mut backend = kagi_git::Backend::open(&repo).unwrap();
+    let op = kagi_git::Operation::StashPush {
+        message: None,
+        include_untracked: false,
+    };
+    let plan = std::sync::Arc::new(backend.plan(&op).unwrap());
+    let expected = match lang {
+        i18n::Lang::En => "1 untracked retained",
+        i18n::Lang::Ja => "未追跡ファイル 1 件を保持",
+    };
+    let (app, window) = mount(cx, &repo);
+    // The toolbar currently always includes untracked. Render the public
+    // backend's real exclusion plan in the same production modal, without
+    // inventing a frontend toggle or a fake plan/executor.
+    app.update(cx, |app, cx| {
+        app.set_stash_push_modal(kagi::ui::modals::StashPushModal {
+            input: String::new(),
+            input_state: None,
+            plan: Some(plan.clone()),
+            error: None,
+        });
+        cx.notify();
+    });
+    crate::recovery_operations::paint(cx, window);
+    assert_eq!(e2e::last_plan_status_chip().as_deref(), Some(expected));
+    let (_, after) = kagi::ui::dialog_a11y::recorded_note("plan-state-after").unwrap();
+    assert!(after.contains(expected), "{lang:?} AFTER: {after}");
+    backend.run(&op, &plan).unwrap();
+    assert_eq!(git_output(&repo, &["status", "--porcelain"]), "?? new");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("new")).unwrap(),
+        "retain this\n"
+    );
+    let entries = read_oplog_tail_for_repo(&repo, 100);
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(entries[0].outcome, OpOutcome::Success { .. }));
+    unmount(cx, app, window);
 }
 pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
     for button in [false, true] {

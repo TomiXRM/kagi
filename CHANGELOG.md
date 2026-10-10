@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- 未追跡ファイルを除外する Stash Push の After は「N untracked retained」／「未追跡ファイル N 件を保持」を表示し、既存の除外 warning と一致するようにしました。tracked の staged／unstaged 両方を退避し、include-untracked 時だけ未追跡ファイルも取り除く予測を実 Git の status と照合します。ブロック中の計画は変更なしのままです。(#1140)
 - Stash Push は最初の commit がない repository を計画時に EN／JA の理由でブロックし、After は変更なしを示します。preflight でも HEAD commit を再確認し、実行時の guard と未変更の Refused 操作記録を維持します。(#1141)
 - Stage hunk / Unstage hunk は表示時の range と raw patch（context・改行を含む）の内容を承認対象にし、同じ range でも内容が変わった場合は index・HEAD・作業ファイルを書き換えず拒否します。EN／JA の理由を footer / toast に表示し、diff を再読込し、一件の Refused 操作記録を残します。(#1131)
 - Unstage hunk は逆向きの diff を再計算せず、表示・照合済みの patch を反転するため、行の入替えも変更のない承認で解除できます。操作記録の HEAD は読みやすい branch 表記に揃え、実行失敗も EN／JA の footer / toast を維持します。file↔symlink の型変更は片側 hunk のボタンを出さず、既存のファイル単位 Stage / Unstage を使います。(#1131 review)

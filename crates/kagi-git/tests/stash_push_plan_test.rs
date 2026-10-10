@@ -106,3 +106,93 @@ fn stash_push_preflight_rechecks_live_head_commit() {
     assert_eq!(files(repo), before);
     assert!(!repo.join(".git/refs/stash").exists());
 }
+
+#[test]
+fn stash_push_prediction_matches_retained_untracked() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for tracked in ["modified", "staged", "both", "none"] {
+        for untracked in [0, 2] {
+            for include_untracked in [false, true] {
+                let fixture = tempfile::tempdir().unwrap();
+                let repo = fixture.path();
+                init_repo(repo, "main");
+                std::fs::write(repo.join("tracked"), "base\n").unwrap();
+                git_fixture::commit_all(repo, "base");
+                // Neither supported push mode includes ignored files.
+                std::fs::write(repo.join(".git/info/exclude"), "ignored\n").unwrap();
+                std::fs::write(repo.join("ignored"), "ignored bytes\n").unwrap();
+                if tracked != "none" {
+                    std::fs::write(repo.join("tracked"), "change\n").unwrap();
+                    if tracked == "staged" || tracked == "both" {
+                        git(repo, &["add", "tracked"]);
+                    }
+                    if tracked == "both" {
+                        std::fs::write(repo.join("tracked"), "second change\n").unwrap();
+                    }
+                }
+                for n in 0..untracked {
+                    std::fs::write(repo.join(format!("new{n}")), "keep\n").unwrap();
+                }
+                let mut backend = Backend::open(repo).unwrap();
+                let op = Operation::StashPush {
+                    message: None,
+                    include_untracked,
+                };
+                let plan = backend.plan(&op).unwrap();
+                if tracked == "none" && (!include_untracked || untracked == 0) {
+                    assert!(!plan.blockers.is_empty());
+                    assert_eq!(plan.predicted, plan.current);
+                    assert!(backend.run(&op, &plan).is_err());
+                    assert!(!repo.join(".git/refs/stash").exists());
+                    continue;
+                }
+                assert!(plan.blockers.is_empty());
+                let retained = if include_untracked { 0 } else { untracked };
+                let expected = if retained == 0 {
+                    "clean".to_owned()
+                } else {
+                    format!("{retained} untracked retained")
+                };
+                assert_eq!(
+                    plan.predicted.dirty, expected,
+                    "{tracked}, untracked={untracked}, include={include_untracked}"
+                );
+                if retained != 0 {
+                    assert!(plan
+                        .warnings
+                        .iter()
+                        .any(|note| note.message_en().contains("will remain")));
+                }
+                backend.run(&op, &plan).unwrap();
+                let status = git_output(repo, &["status", "--porcelain"]);
+                assert_eq!(status.lines().count(), retained);
+                assert!(status.lines().all(|line| line.starts_with("?? ")));
+                let after = backend.working_tree_status().unwrap();
+                assert!(
+                    after.staged.is_empty()
+                        && after.unstaged.is_empty()
+                        && after.conflicted.is_empty()
+                );
+                assert_eq!(after.untracked.len(), retained);
+                assert_eq!(
+                    std::fs::read_to_string(repo.join("ignored")).unwrap(),
+                    "ignored bytes\n"
+                );
+                assert_eq!(
+                    git_output(repo, &["stash", "list", "--format=%H"])
+                        .lines()
+                        .count(),
+                    1
+                );
+                let entries = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100);
+                assert_eq!(entries.len(), 1);
+                assert!(matches!(
+                    entries[0].outcome,
+                    kagi_git::oplog::OpOutcome::Success { .. }
+                ));
+            }
+        }
+    }
+}

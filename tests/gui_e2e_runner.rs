@@ -267,6 +267,10 @@ mod recovery_layout;
 mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_count.rs"]
+mod toolbar_count;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_compact.rs"]
 mod recovery_modal_compact;
 
@@ -2062,6 +2066,10 @@ mod macos {
             (
                 "header_fit",
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
+            ),
+            (
+                "toolbar_count_scale",
+                Box::new(crate::toolbar_count::scenario_toolbar_count_scale),
             ),
             (
                 "file_history_wip_changes",

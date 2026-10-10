@@ -584,6 +584,12 @@ pub fn scaled_px(n: f32) -> gpui::Pixels {
     gpui::px(n * (BASE_REM_PX / 16.0) * zoom())
 }
 
+/// Dense toolbar count role, before the shared 0.9 density and UI zoom.
+/// 13px resolves to 11.7 logical points at 100%, above the 11pt minimum.
+pub const TOOLBAR_COUNT_TEXT: f32 = 13.0;
+pub const TOOLBAR_COUNT_LINE_HEIGHT: f32 = 16.0;
+pub const TOOLBAR_COUNT_HEIGHT: f32 = 18.0;
+
 /// W28: bare-`f32` sibling of [`scaled_px`] for coordinate math.
 ///
 /// The commit-graph path-builder computes lane x-centres, node radii, corner
@@ -1007,7 +1013,8 @@ fn filled_button_foreground(background: u32, theme: &Theme) -> u32 {
     }
 }
 
-fn primary_button_foreground(theme: &Theme) -> u32 {
+/// Readable label on `color_branch`, shared by primary buttons and count chips.
+pub fn primary_button_foreground(theme: &Theme) -> u32 {
     filled_button_foreground(theme.color_branch, theme)
 }
 

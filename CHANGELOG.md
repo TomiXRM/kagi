@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Toolbar の件数 badge は固定 9px をやめ、100% で 11.7pt の文字・行高・chip 寸法を UI zoom に揃えました。70%／167% でも 1・99・99+ が切れず、primary button と同じ読みやすい foreground を使います。(#1067)
 - 大きな diff の未計測行を高さ 0 として扱い、scrollbar の範囲が誤ったり末尾に届かなかったりする問題を修正しました。末尾方向への大きなホイール入力 1 回で実際の最終行に到達し、thread の開閉、同じファイルの再クリック、Editor の未変更 reload、幅変更でも読んでいる位置を保ちます。(#1122)
 - `gh` が未導入の場合は PR の共有 Open 情報と Closed / All 一覧の読み込みを開始せず、repository の切替や一覧を開くたびに不要な GitHub error を表示・記録しないようにしました。native E2E の注入済み読み込みは `gh` の有無にかかわらず維持します。(PR #1119 review)
 - PR 一覧を 1 回最大 100 件の cursor paging にし、表示中の末尾や「続きを読み込む」から次のページへ進めるようにしました。Open の共有情報と選択中の Closed / All を分離したまま、絞り込みで 0 件でも続きを取得でき、追加取得の失敗時は読み込み済みの行と cursor を保持して再試行できます。repository タブを往復しても選択 state・開いている PR・入力中の下書きを保持し、古い読み込み結果を採用しません。同じ head の実際の詳細 payload と Fresh 判定を対応させ、詳細取得は表示範囲と既存の同時実行上限を維持します。PR workspace で Open の追加ページを閲覧中・追加取得中は自動 tick による先頭ページへの置換を延期し、表示中／開いている PR の checks 等は更新します。自動更新では table のスクロール位置を動かさず、先頭ページの更新に失敗した場合は自動更新を再開して回復できるようにしました。保持する一覧は最後に受理した membership であり、新規・Closed・削除の反映には手動 Refresh が必要です。手動更新・Closed / All・workspace 離脱時の通常更新は維持し、table の layout 計測を可視行と誤認せず実際の clipped prepaint から詳細取得範囲を報告します。最終ページでは空の末尾行を残さず、狭幅・167% の画面でも最後の PR を表示し、続きを取得できる場合の loading / retry と横・縦スクロールの契約を維持します。(#1104, #1107)

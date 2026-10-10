@@ -341,6 +341,9 @@ impl KagiApp {
         });
 
         use toolbar_a11y::{button_flags, ButtonState};
+        // No allocation or contrast work when no count chip is drawn; share
+        // one foreground calculation if both Pull and Push have counts.
+        let chip_fg = std::cell::LazyCell::new(|| theme::primary_button_foreground(&theme()));
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
@@ -376,7 +379,6 @@ impl KagiApp {
                 theme().text_muted
             };
             let chip_bg = theme().color_branch;
-            let chip_fg = theme().bg_base;
 
             // Icon cell — `.relative()` so the count chip can be `.absolute()`
             // anchored to the icon's top-right corner (gpui has no negative
@@ -398,24 +400,31 @@ impl KagiApp {
                 } else {
                     count.to_string()
                 };
+                let chip_label = SharedString::from(chip_text).into_any_element();
+                #[cfg(feature = "gui-e2e")]
+                let chip_label =
+                    super::e2e::measure_control(format!("{id}-count-text"), chip_label);
                 icon_cell = icon_cell.child(
                     div()
                         .absolute()
                         .top(theme::scaled_px(-2.0))
                         .right(theme::scaled_px(-2.0))
-                        .min_w(theme::scaled_px(14.0))
-                        .h(theme::scaled_px(14.0))
+                        .min_w(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
+                        .h(theme::scaled_px(theme::TOOLBAR_COUNT_HEIGHT))
                         .px(theme::scaled_px(3.0))
                         .rounded_full()
                         .bg(rgb(chip_bg))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .text_color(rgb(chip_fg))
-                        .text_size(px(9.0))
+                        .text_color(rgb(*chip_fg))
+                        .text_size(theme::scaled_px(theme::TOOLBAR_COUNT_TEXT))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .line_height(theme::scaled_px(14.0))
-                        .child(SharedString::from(chip_text)),
+                        .line_height(theme::scaled_px(theme::TOOLBAR_COUNT_LINE_HEIGHT))
+                        .child(chip_label)
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            el.child(super::e2e::measure_inside(format!("{id}-count")))
+                        }),
                 );
             }
 
@@ -534,6 +543,7 @@ impl KagiApp {
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
+            .child(super::e2e::measure_inside("toolbar-row"))
             // ── LEFT column (flex_1, equal width to the RIGHT column so the
             // centre cluster is window-centred regardless of side widths).
             // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──

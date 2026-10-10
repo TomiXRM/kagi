@@ -317,6 +317,37 @@ with their own identifiers and an explicitly *equivalent*, not *executed*,
 AX name. Cherry-pick / Stash apply bespoke recovery and persisted Operation
 Log recovery prose remain separate follow-ups.
 
+## Toolbar count badge (#1067)
+
+UI: toolbar count — dense, non-interactive indicator on the existing button.
+Reference: macOS toolbar status badges / [Apple Typography](https://developer.apple.com/design/human-interface-guidelines/typography);
+take a legible small label and zoom-consistent geometry, not a new action or material.
+Parts: existing `render_header` icon overlay and the primary-button foreground selector.
+The count text role is nominal 13px (11.7 logical points at the 14.4px/rem
+100% base); line-height 16px and pill height/min-width 18px are Kagi theme
+tokens. Text, pill, padding and position follow the same UI zoom.
+The text's natural width plus horizontal padding accommodates `99+`.
+
+States: rest/hover/focus-visible/unavailable/loading inherit the owning toolbar
+button; the badge does not add a Tab stop or intercept a press. Zero is empty
+and hides it; 1–99 show the actual count, larger counts retain `99+`.
+Selected/error are not badge states (no selection or operation outcome).
+The existing unavailable reason, AX button name, keyboard path and Git safety
+pipeline are unchanged.
+
+Tier A: `toolbar_count_scale` measures real Pull/Push pill and text bounds,
+paint-stage font size and shaped digit width under real ZoomReset/In/Out actions
+at 100%, 167% and 70%, with 1/99/99+; it checks text/pill/toolbar/mask containment.
+The action's upper cap is 1670 permille, approximately the migrated 1667 setting.
+Observed native Before: fixed 9px fails `badge font: ratio 1 must follow zoom
+1.667`. After: this scenario plus `toolbar_keyboard_reasons` and
+`workspace_mode_toolbar` pass (3/3). Text-width comparison accounts for GPUI's
+whole-pixel outward rounding; the font and pill ratios retain the 0.06 tolerance.
+Tier B is PM-owned: compare identical repository/counts at those zooms in
+Light/Dark/custom themes and narrow EN/JA windows; inspect actual digits,
+hover/focus/unavailable appearance and before/after captures. Native state
+assertions are not screenshot, VoiceOver or real-window visual evidence.
+
 ## Open questions (to settle with evidence)
 
 - Whether to own a small `kagi-ui-core` input/button wrapper that fixes the

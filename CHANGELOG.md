@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Commit Panel は低い window／高 zoom で本文 editor を縮めて内部 scroll し、Template／Generate／co-author／Undo と Commit を表示範囲内に保つようにしました。1392×883・100% の主要領域の native bounds を保持し、940×660・167% の EN／JA で本文入力と wheel scroll を検証します。(#1167)
+- Commit Panel は低い window／高 zoom で本文 editor を縮めて内部 scroll し、Template／Generate／co-author／Undo と Commit を表示範囲内に保つようにしました。1392×883・100% の主要領域の高さと soft-wrap による本文拡張を保持し、940×660／560・167% の EN／JA で本文入力と wheel scroll を検証します。cached wrap-row accessor を fork に追加し、3／11行本文と折返し本文も native 回帰で確認します。(#1167)
 - 本文リンクの `link` token を ref／Primary の塗り色から分離しました。Apple Light の Issue composer preview／Issue・PR 本文リンクは白地で読みやすい青になり、全組み込みテーマで 4.5:1 以上の contrast を保ちます。既に読める Dark の色、ref chip・Primary palette、下線・選択・リンク操作は維持します。自作テーマでは `link` を継承または明示できます。`extends` のない旧 standalone file で `link` を省略した場合は、その file 自身の `color_branch` を使って従来の配色と読込を維持します。(#1077)
 - Conflict の Take Incoming／Keep File の背景色を全テーマの `color_remote` に合わせました。Apple Light の Incoming pane／marker と同じ緑を使い、文字・hover・押下も Kagi の theme bridge で読みやすく導出します。status／破壊的操作の色は変更しません。(#1078)
 - Conflict の Keep Current／Take Incoming は色値の一致ではなく操作 role で filled Primary／Info を選ぶようにしました。従来は13個中11個の組み込みテーマで remote=success の一致により Take Incoming／Keep File が tint になり、Color Vision でも remote=blocker／branch=success により Incoming と Keep Current が tint でした。これらを filled Info／Primary に変更し、Stage／警告／破壊的操作の tint と側選択の階層を分離します。既存の色覚対応 palette と安全フローは維持します。(#1079)

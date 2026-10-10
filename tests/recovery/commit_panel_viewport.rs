@@ -11,7 +11,7 @@ use std::{cell::RefCell, rc::Rc};
 pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
     let fixture = build_fixture();
-    for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67)] {
+    for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67), (940., 560., 1.67)] {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();
@@ -61,23 +61,34 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                     "{name} outside viewport width: {bounds:?}"
                 );
                 if zoom == 1. {
-                    let expected = match name {
-                        "cp-files" => (1068., 110.5, 324., 411.5),
-                        "cp-body" => (1080., 566., 300., 257.),
-                        "cp-smart-suggest" => (1305., 798., 21.5, 21.5),
-                        "cp-commit-action" => (1079., 831., 302., 25.),
+                    let expected_height = match name {
+                        "cp-files" => 411.5,
+                        "cp-body" => 257.,
+                        "cp-smart-suggest" => 21.5,
+                        "cp-commit-action" => 25.,
                         _ => unreachable!(),
                     };
                     assert_eq!(
-                        bounds,
-                        gpui::Bounds::new(
-                            point(px(expected.0), px(expected.1)),
-                            size(px(expected.2), px(expected.3))
-                        ),
-                        "1392×883@100% must retain its measured pre-fix bounds"
+                        bounds.size.height,
+                        px(expected_height),
+                        "desktop height must match AutoGrow-era measurement"
                     );
                 }
             }
+            let files = e2e::control_bounds(window.window_id(), "cp-files").unwrap();
+            let composer = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
+            let generate = e2e::control_bounds(window.window_id(), "cp-smart-suggest").unwrap();
+            let commit = e2e::control_bounds(window.window_id(), "cp-commit-action").unwrap();
+            assert!(files.bottom() <= composer.top());
+            crate::recovery_layout::contained(
+                composer,
+                generate,
+                "Generate remains within body action row",
+            );
+            assert!(
+                composer.bottom() <= commit.top(),
+                "body/actions must never overpaint Commit"
+            );
             let panel = cx
                 .read(|cx| app.read(cx).ui().commit_panel.clone())
                 .unwrap();
@@ -121,6 +132,39 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                 cx.read(|cx| body.read(cx).value().contains("editable tail")),
                 "the bounded editor remains editable"
             );
+            if zoom == 1. {
+                let title = cx.read(|cx| panel.read(cx).title_input.clone()).unwrap();
+                for (label, text, expected_rows) in [
+                    ("three-lines", vec!["body"; 3].join("\n"), 3),
+                    ("eleven-lines", vec!["body"; 11].join("\n"), 11),
+                    ("wrapped-lines", vec!["a".repeat(72); 3].join("\n"), 6),
+                ] {
+                    cx.update_window(window.into(), |_, window, cx| {
+                        title.update(cx, |input, cx| input.set_value("subject", window, cx));
+                        body.update(cx, |input, cx| input.set_value(text.clone(), window, cx));
+                    })
+                    .unwrap();
+                    for _ in 0..4 {
+                        cx.run_until_parked();
+                        draw(cx, window.into(), (width, height));
+                    }
+                    assert_eq!(
+                        cx.read(|cx| body.read(cx).wrap_row_count()),
+                        expected_rows,
+                        "{label} visual rows"
+                    );
+                    let bounds = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
+                    // Pre-fix AutoGrow: 18px per visual row + 16px Input padding
+                    // + 25px action row/borders, with the same pinned controls.
+                    assert_eq!(
+                        bounds.size.height,
+                        px(expected_rows as f32 * 18. + 41.),
+                        "{locale}/{label}: AutoGrow-era desktop body height"
+                    );
+                    eprintln!("commit-panel desktop snapshot {locale}/{label}: {bounds:?}");
+                }
+                drop(title);
+            }
             drop(body);
             drop(panel);
             unmount(cx, app, window.into());

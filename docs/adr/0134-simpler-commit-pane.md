@@ -173,8 +173,8 @@ The dense composer retains GitHub Desktop's subject/body/action hierarchy and
 the existing Input, KagiButton and icon controls. At 940×660 and 167% zoom,
 the non-shrinking footer plus AutoGrow's twelve-line inner minimum displaced
 both file lists and the actions below the viewport. The panel now shares
-remaining height through flex: the lists retain their section headers and a
-file row each, while the body uses a 3–12 explicit-line preferred height and
+remaining height through flex: the lists retain their section headers, while
+the body uses the cached soft-wrapped visual row count (clamped to 3–12) and
 shrinks into a plain multiline Input's internally scrolling viewport. The
 stacked action row does not shrink, following modal_shell's fixed-action-row
 pattern; no panel-wide scrolling or new control is introduced.
@@ -182,7 +182,13 @@ pattern; no panel-wide scrolling or new control is introduced.
 Rest/hover/pressed/focus/disabled/loading/error behavior and owner-bound
 generation, drafts, staging, plan confirmation and klog are unchanged. The
 native `commit_panel_viewport` scenario records the pre-fix 1392×883@100%
-bounds of the files, body, Generate and Commit, asserts exact preservation in
-EN/JA, and measures viewport containment, real wheel scrolling and text input
-at 940×660@167%. Real-window IME/AX and the JA Tier B comparison remain
-separate checks owned by the integrating agent.
+heights of the files, body, Generate and Commit and asserts their preservation
+with relative containment/ordering in EN/JA. Three- and eleven-line bodies
+retain 95px/239px heights; three 72-column lines wrap to six visual rows and
+retain 149px. It also measures containment, real wheel scrolling and text
+input at 940×660 and 940×560@167%. The fork adds only a public cached
+`InputState::wrap_row_count()` accessor, which does no shaping or allocation:
+`TomiXRM/gpui-kit` revision `f7e696f6b057b2b091d9b95b5c12cc0f7dfc4f91`.
+The body's minimum reserves action-row chrome, and the message/footer clip
+shrinking content so it cannot overpaint Commit. Real-window IME/AX and the
+JA Tier B comparison remain checks owned by the integrating agent.

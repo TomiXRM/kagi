@@ -35,6 +35,65 @@ fn draw_menu_and_bounds(
         .expect("the real Discard menu item was not laid out")
 }
 
+fn discard_row_probes(path: &str) -> [String; 4] {
+    let directory = if path == r"a\b.txt" { "a\\" } else { "a/" };
+    [
+        format!("modal-file-{path}"),
+        format!("modal-file-badge-{path}-M"),
+        format!("modal-path-dir-{path}-{directory}"),
+        format!("modal-path-name-{path}-b.txt"),
+    ]
+}
+
+/// Probe IDs are derived from the actual text passed to each painted child,
+/// not from the approval model. Assert row, directory/name and M badge paints.
+fn assert_discard_painted_rows(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    bulk: bool,
+) {
+    for path in [r"a\b.txt", "a/b.txt"] {
+        for probe in discard_row_probes(path) {
+            e2e::clear_control_bounds(window.window_id(), &probe);
+        }
+    }
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let selected = e2e::control_bounds(window.window_id(), r"modal-file-a\b.txt")
+        .expect("literal backslash row is drawn");
+    for path in if bulk {
+        &[r"a\b.txt", "a/b.txt"][..]
+    } else {
+        &[r"a\b.txt"][..]
+    } {
+        let probes = discard_row_probes(path);
+        let row = e2e::control_bounds(window.window_id(), &probes[0]).unwrap();
+        for probe in probes {
+            let paint = e2e::control_paint(window.window_id(), &probe)
+                .unwrap_or_else(|| panic!("actual row text/badge was not painted: {probe}"));
+            assert!(paint.bounds.size.width > px(0.) && paint.bounds.size.height > px(0.));
+            crate::recovery_layout::contained(paint.mask, paint.bounds, &probe);
+            crate::recovery_layout::contained(row, paint.bounds, &probe);
+        }
+    }
+    let neighbor = e2e::control_bounds(window.window_id(), "modal-file-a/b.txt");
+    if bulk {
+        let neighbor = neighbor.expect("slash path has its own painted row");
+        assert!(
+            selected.bottom() <= neighbor.top() || neighbor.bottom() <= selected.top(),
+            "literal backslash and slash filenames must be distinct drawn rows"
+        );
+    } else {
+        assert!(
+            neighbor.is_none(),
+            "single confirmation must not draw the unselected neighbor"
+        );
+    }
+}
+
 /// #1125: actual menu selection, confirmation, execution and backup agree on
 /// a literal POSIX filename; bulk keeps the two distinct identities too.
 pub fn scenario_discard_literal_backslash(cx: &mut VisualTestAppContext) {
@@ -58,16 +117,17 @@ pub fn scenario_discard_literal_backslash(cx: &mut VisualTestAppContext) {
         });
         cx.run_until_parked();
         if bulk {
-            let owner = cx.read(|cx| {
-                app.read(cx)
-                    .ui()
-                    .commit_panel
-                    .as_ref()
-                    .unwrap()
-                    .read(cx)
-                    .owner
-            });
-            app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
+            e2e::clear_control_bounds(window.window_id(), "cp-discard-all");
+            cx.update_window(window, |_, window, cx| {
+                window.refresh();
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            let bounds = e2e::control_bounds(window.window_id(), "cp-discard-all")
+                .expect("real Discard-all control was drawn");
+            cx.simulate_mouse_move(window, bounds.center(), None, Modifiers::none());
+            cx.run_until_parked();
+            cx.simulate_click(window, bounds.center(), Modifiers::none());
         } else {
             let row = cx.read(|cx| {
                 app.read(cx)
@@ -95,8 +155,7 @@ pub fn scenario_discard_literal_backslash(cx: &mut VisualTestAppContext) {
             cx.simulate_click(window, bounds.center(), Modifiers::none());
         }
         cx.run_until_parked();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
-            .unwrap();
+        assert_discard_painted_rows(cx, window, bulk);
         cx.read(|cx| {
             let modal = app.read(cx).discard_modal().unwrap();
             assert!(modal.plan.blockers.is_empty(), "{:?}", modal.plan.blockers);

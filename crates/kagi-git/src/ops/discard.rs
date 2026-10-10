@@ -40,7 +40,23 @@ fn discard_rel_path(workdir: &Path, raw: &str) -> String {
     } else {
         normalize_path(raw_path)
     };
-    rel.to_str().unwrap_or(raw).to_owned()
+    // Only these legacy normalized forms need conversion from platform path
+    // components to Git separators. Raw relative inputs returned above remain
+    // byte-identical, including literal POSIX backslashes.
+    let mut git_path = String::with_capacity(raw.len());
+    for component in rel.components() {
+        let std::path::Component::Normal(part) = component else {
+            return rel.to_str().unwrap_or(raw).to_owned();
+        };
+        let Some(part) = part.to_str() else {
+            return raw.to_owned();
+        };
+        if !git_path.is_empty() {
+            git_path.push('/');
+        }
+        git_path.push_str(part);
+    }
+    git_path
 }
 
 /// The workdir of `repo`, or an empty path for a bare repo (plan-time only —
@@ -360,7 +376,7 @@ pub(crate) fn execute_discard(
                 .map_err(|e| GitError::Other(e.message().into()))?;
         }
         let checkout_repo =
-            Repository::open(&workdir).map_err(|e| GitError::Other(e.message().into()))?;
+            Repository::open(repo.path()).map_err(|e| GitError::Other(e.message().into()))?;
         checkout_repo
             .set_index(&mut selected_index)
             .map_err(|e| GitError::Other(e.message().into()))?;
@@ -531,6 +547,7 @@ mod tests {
         assert_eq!(discard_rel_path(wd, "a.txt"), "a.txt");
         assert_eq!(discard_rel_path(wd, "./a.txt"), "a.txt");
         assert_eq!(discard_rel_path(wd, "src/a.txt"), "src/a.txt");
+        assert_eq!(discard_rel_path(wd, "./a/b.txt"), "a/b.txt");
     }
 
     // The bug's exact shape: the process CWD is INSIDE the workdir and a file of
@@ -561,12 +578,29 @@ mod tests {
             discard_rel_path(wd, wd.join("a.txt").to_str().unwrap()),
             "a.txt"
         );
+        assert_eq!(
+            discard_rel_path(wd, wd.join("a/b.txt").to_str().unwrap()),
+            "a/b.txt"
+        );
         // Absolute path to a file that no longer exists (an unstaged deletion):
         // canonicalize fails, the lexical fallback still strips the prefix.
         assert_eq!(
             discard_rel_path(wd, wd.join("src/gone.txt").to_str().unwrap()),
             "src/gone.txt"
         );
+    }
+
+    #[test]
+    fn discard_normalized_inputs_use_git_separators() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wd = tmp.path();
+        assert_eq!(discard_rel_path(wd, "./a/b.txt"), "a/b.txt");
+        assert_eq!(
+            discard_rel_path(wd, wd.join("a/b.txt").to_str().unwrap()),
+            "a/b.txt"
+        );
+        #[cfg(unix)]
+        assert_eq!(discard_rel_path(wd, r"a\b.txt"), r"a\b.txt");
     }
 
     #[test]

@@ -183,6 +183,43 @@ fn discard_unsafe_path_refuses_before_backup() {
     }
 }
 
+#[test]
+fn discard_uses_original_gitdir_with_separate_core_worktree() {
+    if !crate::test_support::run_isolated() {
+        return;
+    }
+    let tmp = TempDir::new().unwrap();
+    let d = build_repo(&tmp);
+    let workdir = tempfile::tempdir().unwrap();
+    std::fs::rename(d.join("tracked.txt"), workdir.path().join("tracked.txt")).unwrap();
+    git(
+        &d,
+        &["config", "core.worktree", workdir.path().to_str().unwrap()],
+    );
+    write_file(workdir.path(), "tracked.txt", "separate dirty\n");
+    let index_before = std::fs::read(d.join(".git/index")).unwrap();
+    let mut backend = kagi_git::Backend::open_with_policy(
+        &d.join(".git"),
+        kagi_git::backend::ExecutionPolicy::human(false),
+    )
+    .unwrap();
+    let op = kagi_git::Operation::Discard {
+        paths: vec!["tracked.txt".into()],
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let kagi_git::OperationOutcome::Discard(outcome) = backend.run(&op, &plan).unwrap() else {
+        panic!("unexpected outcome");
+    };
+    assert!(!outcome.is_partial(), "{outcome:?}");
+    assert_eq!(read_file(workdir.path(), "tracked.txt"), "committed\n");
+    assert_eq!(
+        backend.read_backup(&outcome.backups[0].reference).unwrap(),
+        b"separate dirty\n"
+    );
+    assert_eq!(std::fs::read(d.join(".git/index")).unwrap(), index_before);
+}
+
 // ════════════════════════════════════════════════════════════
 // #303 PRIORITY 1 — over-discard sentinel (also the #282 P0 gate).
 //

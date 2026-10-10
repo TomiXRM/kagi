@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Discard は POSIX のファイル名に含まれるバックスラッシュを区切り文字へ変換せず、選択・確認・バックアップ・実行・検証で同じパスを保つようにしました。`a\b.txt` の破棄が隣の `a/b.txt` を上書きする問題を修正し、一括破棄でも両者を別の対象として扱います。安全に表現できないパスは書込み前に理由を表示して拒否します。(#1125)
+- Discard は POSIX のファイル名に含まれるバックスラッシュを区切り文字へ変換せず、選択・確認・バックアップ・実行・検証で同じパスを保つようにしました。`a\b.txt` の破棄が隣の `a/b.txt` を上書きする問題を修正し、一括破棄でも両者を別の対象として扱います。Windows の既存 absolute / `./` 入力は解決後の component を Git の区切り文字で再結合し、`core.worktree` で分離した working tree も元の Git directory から復元します。安全に表現できないパスは書込み前に理由を表示して拒否します。(#1125)
 - Toolbar の件数 badge は固定 9px をやめ、100% で 11.7pt の文字・行高・chip 寸法を UI zoom に揃えました。70%／167% でも 1・99・99+ が切れず、primary button と同じ読みやすい foreground を使います。拡大した chip は矢印を覆わないよう外側へ伸ばし、操作できない button では件数も淡く表示します。(#1067)
 - 大きな diff の未計測行を高さ 0 として扱い、scrollbar の範囲が誤ったり末尾に届かなかったりする問題を修正しました。末尾方向への大きなホイール入力 1 回で実際の最終行に到達し、thread の開閉、同じファイルの再クリック、Editor の未変更 reload、幅変更でも読んでいる位置を保ちます。(#1122)
 - `gh` が未導入の場合は PR の共有 Open 情報と Closed / All 一覧の読み込みを開始せず、repository の切替や一覧を開くたびに不要な GitHub error を表示・記録しないようにしました。native E2E の注入済み読み込みは `gh` の有無にかかわらず維持します。(PR #1119 review)

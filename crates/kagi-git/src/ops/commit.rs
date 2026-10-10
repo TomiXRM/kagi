@@ -253,13 +253,13 @@ pub(crate) fn execute_commit(
     let tree_oid = index
         .write_tree_to(repo)
         .map_err(|e| GitError::Other(format!("index.write_tree() failed: {}", e.message())))?;
-    let parents = match resolve_head(repo)? {
-        Head::Unborn { .. } => Vec::new(),
+    let parent = match resolve_head(repo)? {
+        Head::Unborn { .. } => None,
         Head::Attached { target, .. } | Head::Detached { target } => {
-            vec![git2::Oid::from_str(&target).map_err(|e| GitError::Other(e.to_string()))?]
+            Some(git2::Oid::from_str(&target).map_err(|e| GitError::Other(e.to_string()))?)
         }
     };
-    execute_git_commit(repo, tree_oid, &parents, message, false)
+    execute_git_commit(repo, tree_oid, parent.as_slice(), message, false)
         .map(|oid| CommitId(oid.to_string()))
 }
 
@@ -277,6 +277,18 @@ pub(crate) fn execute_git_commit(
         .workdir()
         .ok_or_else(|| GitError::Other("commit requires a worktree".into()))?;
     let before = resolve_head(repo)?;
+    let signing_required = match repo
+        .config()
+        .and_then(|config| config.get_bool("commit.gpgsign"))
+    {
+        Ok(required) => required,
+        Err(error) if error.code() == git2::ErrorCode::NotFound => false,
+        Err(error) => {
+            return Err(GitError::Other(format!(
+                "cannot read commit signing policy: {error}"
+            )))
+        }
+    };
     let scratch = tempfile::Builder::new()
         .prefix("kagi-commit-")
         .tempdir_in(repo.path())
@@ -290,11 +302,9 @@ pub(crate) fn execute_git_commit(
         .read_tree(&tree)
         .map_err(|e| GitError::Other(e.to_string()))?;
     index.write().map_err(|e| GitError::Other(e.to_string()))?;
-    let mut args = vec!["commit", "-m", message];
-    if amend {
-        args.push("--amend");
-    }
-    let output = crate::cli::run_git_commit(workdir, &index_path, &args)?;
+    let args = ["commit", "-m", message, "--amend"];
+    let args = if amend { &args[..] } else { &args[..3] };
+    let output = crate::cli::run_git_commit(workdir, &index_path, args)?;
     if output.status != 0 {
         let detail = format!(
             "git commit failed (exit {}): {}{}",
@@ -307,7 +317,7 @@ pub(crate) fn execute_git_commit(
         }
         return Err(GitError::Other(detail));
     }
-    verify_git_commit(repo, &before, tree_oid, parents)
+    verify_git_commit(repo, &before, tree_oid, parents, signing_required)
 }
 
 fn verify_git_commit(
@@ -315,6 +325,7 @@ fn verify_git_commit(
     before: &Head,
     tree: git2::Oid,
     parents: &[git2::Oid],
+    signing_required: bool,
 ) -> Result<git2::Oid, GitError> {
     let verification = (|| {
         let head = repo
@@ -326,6 +337,10 @@ fn verify_git_commit(
             || !head.parent_ids().eq(parents.iter().copied())
         {
             return Err("HEAD tree or parents differ from the approved commit; inspect hooks and repository before continuing".into());
+        }
+        if signing_required {
+            repo.extract_signature(&head.id(), None)
+                .map_err(|error| format!("cannot verify the required commit signature in HEAD: {error}; inspect signing settings and hooks before continuing"))?;
         }
         Ok(head.id())
     })();

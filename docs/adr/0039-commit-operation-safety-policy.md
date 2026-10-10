@@ -77,3 +77,16 @@ way. Process timeout/incomplete output retains the existing Unknown/termination
 contract and is not retried. Amend's guards, pre-execution savepoint and author/
 parent preservation remain; Git performs the final ref update. Resolved merge
 state is cleaned up by Git only after commit succeeds.
+
+### Signing read-back (#1133)
+
+The executor captures `commit.gpgsign` immediately before invoking Git and, if
+true, also requires a signature header in the resulting HEAD. A post-commit
+hook replacing the new signed commit with an unsigned commit of the same tree
+and parents therefore cannot produce a success receipt. Signature extraction
+errors remain in Unknown detail. This is presence verification, not a claim of
+cryptographic validity: Git creates the signature, and the regression suite
+uses a generated, unencrypted throwaway SSH key plus allowed-signers and
+`git verify-commit` for Commit, every Amend mode and resolved MergeCommit.
+Real OpenPGP/X.509 keys and interactive signer agents are not exercised here;
+their configured format/program is passed through to the user's Git.

@@ -163,8 +163,7 @@ description and the conversation are a single scroll, and only the files are a
 destination of their own. kagi's 概要/レビュー split had no counterpart there.
 
 kagi's 概要 and レビュー tabs now draw **one feed**
-(`pr_conversation::render_feed`). Both tabs draw the same list; pressing one
-reveals its section through the tab's `ListState::scroll_to_reveal_item`.
+(`pr_conversation::render_feed`). Both tabs draw the same list; pressing one scrolls the tab's `ListState` so its section sits at the top (`ListState::scroll_to` with a one-shot `feed_anchor`, not `scroll_to_reveal_item`, whose minimal scroll left the reviews off-screen).
 The lit chip is therefore "where you jumped", not "which body is mounted".
 
 The feed is a **virtualized list** (`gpui::list`, the same element the diff

@@ -13,6 +13,7 @@ pub const ONE_LIGHT: Theme = Theme {
     bg_row_alt: 0xf0f0f1,
     surface: 0xeaeaeb,
     selected: 0xd4e2fb,
+    inactive_selected: 0xeaeaeb,
     panel: 0xf0f0f0,
     sidebar: 0xeaeaeb,
     modal: 0xffffff,

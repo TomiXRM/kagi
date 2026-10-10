@@ -13,9 +13,10 @@ pub const CATPPUCCIN_LATTE: Theme = Theme {
     bg_row_alt: 0xe6e9ef, // mantle
     surface: 0xccd0da,    // surface0
     selected: 0xbcc0cc,   // surface1
-    panel: 0xe6e9ef,      // mantle
-    sidebar: 0xdce0e8,    // crust
-    modal: 0xccd0da,      // surface0
+    inactive_selected: 0xccd0da,
+    panel: 0xe6e9ef,   // mantle
+    sidebar: 0xdce0e8, // crust
+    modal: 0xccd0da,   // surface0
     modal_overlay: 0x4c4f69,
 
     text_main: 0x4c4f69,  // text

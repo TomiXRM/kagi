@@ -13,6 +13,7 @@ pub const TOKYO_NIGHT: Theme = Theme {
     bg_row_alt: 0x16161e,
     surface: 0x292e42,
     selected: 0x283457,
+    inactive_selected: 0x292e42,
     panel: 0x16161e,
     sidebar: 0x13131a,
     modal: 0x24283b,

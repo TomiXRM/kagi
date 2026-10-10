@@ -203,6 +203,11 @@ impl Render for KagiApp {
                 viewport_h
             );
         }
+        self.window_active = self.window_active_for_render(window);
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
 
         // W11-AVATAR: kick off GitHub avatar resolution once per repo (no-op
         // for non-GitHub repos / offline / already-started).
@@ -745,7 +750,7 @@ impl Render for KagiApp {
             .children(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
             // ── Operation strip (#704) — while a merge / rebase / cherry-pick
             //    / revert is in progress AND the conflict editor is not up.
             //    Owner ruling over #707: the editor's dashboard already carries

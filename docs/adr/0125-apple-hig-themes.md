@@ -95,3 +95,16 @@ foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
 gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
+
+## Amendment — 2026-10-11: non-key selection (#1176)
+
+Selection presentation reads GPUI window activation, with an observer requesting
+repaint on activation changes. `inactive_selected` is independent of the active
+accent: Apple Light `#dcdcdc`, Apple Dark's existing neutral `#3a3a3c`, other
+presets their surface. Primary labels must meet 4.5:1 on this fill. Conflict
+file rows, repository/Home tabs, workspace mode chrome and PR/Issue sidebar rows
+retain selected IDs and geometry. Git status, ref and lane colours remain semantic.
+The native regression overrides only the activation input under `gui-e2e`,
+measuring rendered Metal pixels without taking the user's foreground.
+Pane-focus attenuation is not conflated with window activation in this change.
+

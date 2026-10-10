@@ -56,10 +56,10 @@ A theme file is one JSON object.
   theme cannot extend another custom theme.
 - Every other key is a token from the [token reference](#token-reference) below,
   spelled exactly as listed.
-- **Without `extends`, every token except `link` is required** (including
+- **Without `extends`, every token except `link` and `inactive_selected` is required** (including
   `dark`, all ten `syntax` keys, `lane_hsl` and `term_selection`). An omitted
-  `link` defaults to that file's own `color_branch`, preserving standalone
-  themes written before the independent link token.
+  `link` defaults to that file's own `color_branch`; an omitted
+  `inactive_selected` defaults to its `surface`, preserving older standalone themes.
 - With `extends`, any subset of tokens may be given. `syntax` may list only the
   code colours you want to change; the rest come from the parent.
 
@@ -107,6 +107,7 @@ theme from scratch:
   "bg_row_alt": "#1a1a2a",
   "surface": "#313244",
   "selected": "#45475a",
+  "inactive_selected": "#313244",
   "panel": "#181825",
   "sidebar": "#11111b",
   "modal": "#313244",
@@ -283,6 +284,7 @@ selection wash is `selection_tint` at 30 % opacity.
 | `bg_row_alt` | `#1a1a2a` | Zebra stripe of odd commit/file rows, hover on conflict file rows, code-editor active-line highlight. |
 | `surface` | `#313244` | Hover background of rows, dividers/borders between panes, neutral buttons and chips (gpui-component `muted`, `secondary`, `button`, list hover, title-bar border). |
 | `selected` | `#45475a` | Selected row (commit list, conflict files, tabs), hover of toolbar buttons, border of popovers (command palette, menus). |
+| `inactive_selected` | `#313244` | Non-key conflict file, repository/Home tab, workspace-mode and PR/Issue sidebar selection; labels stay `text_main`. Inherited or explicit; legacy standalone files default to `surface`. |
 | `panel` | `#181825` | Even commit rows, detail/inspector panel, commit panel, command palette, menus and modal cards, PR pages, title bar. |
 | `sidebar` | `#11111b` | Sidebars: PR and issue navigation, conflict dashboard (gpui-component `sidebar`). |
 | `modal` | `#313244` | Context-menu background, gpui-component popovers (e.g. tooltips), ecosystem viewer modal card. |

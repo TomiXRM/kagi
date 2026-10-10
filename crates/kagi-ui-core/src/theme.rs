@@ -65,6 +65,8 @@ pub struct Theme {
     pub surface: u32,
     /// Selected-row highlight.
     pub selected: u32,
+    /// Unemphasized selection when the window is not key.
+    pub inactive_selected: u32,
     /// Detail panel / tab strip background (mantle).
     pub panel: u32,
     /// Sidebar background (crust).
@@ -196,6 +198,20 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
+    /// Active selection, overridden by the native accent bridge on Apple Light.
+    pub fn ui_selected(&self) -> Hsla {
+        rgb(self.selected).into()
+    }
+
+    /// Selection presentation never changes the selected identity.
+    pub fn selected_for_window(&self, active: bool) -> Hsla {
+        if active {
+            self.ui_selected()
+        } else {
+            rgb(self.inactive_selected).into()
+        }
+    }
+
     /// Name for menus and Settings. Brand names stay as they are; the
     /// descriptive accessibility theme is localized (#354).
     pub fn display_name(&self) -> &str {
@@ -2204,5 +2220,40 @@ mod registry_tests {
         );
         assert!(take_theme_load_errors().is_empty(), "errors are taken once");
         std::env::remove_var("KAGI_LOG_DIR");
+    }
+}
+
+#[cfg(test)]
+mod inactive_selection_tests {
+    use super::*;
+
+    #[test]
+    fn inactive_selection_primary_label_is_readable_in_every_preset() {
+        for theme in THEMES {
+            assert!(
+                contrast_ratio(theme.text_main, theme.inactive_selected) >= 4.5,
+                "{}: primary label must read on inactive selection",
+                theme.slug
+            );
+            assert_eq!(
+                theme.selected_for_window(false),
+                rgb(theme.inactive_selected).into()
+            );
+            assert_eq!(theme.selected_for_window(true), theme.ui_selected());
+        }
+    }
+
+    #[test]
+    fn apple_light_non_key_selection_is_neutral_and_restores_accent() {
+        let theme = THEMES.iter().find(|t| t.slug == "apple-light").unwrap();
+        assert_eq!(
+            u32::from(theme.selected_for_window(false).to_rgb()) >> 8,
+            0xdcdcdc
+        );
+        assert_ne!(
+            theme.selected_for_window(false),
+            theme.selected_for_window(true)
+        );
+        assert_eq!(theme.selected_for_window(true), theme.ui_selected());
     }
 }

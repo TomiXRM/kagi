@@ -13,6 +13,7 @@ pub const ONE_DARK: Theme = Theme {
     bg_row_alt: 0x24272e,
     surface: 0x3a3f4b,
     selected: 0x4b5263,
+    inactive_selected: 0x3a3f4b,
     panel: 0x21252b,
     sidebar: 0x1c1f24,
     modal: 0x3a3f4b,

@@ -122,6 +122,9 @@ pub struct EditorChrome {
 /// Session-owned but outside this entity: `conflict_merge_pending` and the
 /// per-owner conflict-detection guard.
 pub struct ConflictView {
+    window_activation_subscription: Option<gpui::Subscription>,
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) window_active_override: Option<bool>,
     /// `Some(_)` while a conflict/merge is in progress (set by
     /// `detect_conflict_mode` via `apply_conflict_detect`). The repository is
     /// untouched until Continue / Abort execute through the existing plan
@@ -199,6 +202,9 @@ impl ConflictView {
     ) -> Self {
         static NEXT_INTENT_TOKEN: AtomicU64 = AtomicU64::new(1);
         Self {
+            window_activation_subscription: None,
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             mode: None,
             editing: None,
             editing_before_text: HashMap::new(),
@@ -534,7 +540,14 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 // ────────────────────────────────────────────────────────────
 
 impl Render for ConflictView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
+        let window_active = window.is_window_active();
+        #[cfg(feature = "gui-e2e")]
+        let window_active = self.window_active_override.unwrap_or(window_active);
         // entity-exists ⟺ mode-is-some in practice (the parent drops the entity on
         // clear), but guard defensively so a transient empty entity paints nothing.
         // `as_ref`, not `clone`: `ConflictMode` owns the whole `ResolutionBuffer`
@@ -547,7 +560,7 @@ impl Render for ConflictView {
         match self.mode.as_ref() {
             Some(mode) => {
                 let chrome = self.editor_chrome();
-                render_body(mode, &chrome, cx)
+                render_body(mode, &chrome, window_active, cx)
             }
             None => div().into_any_element(),
         }
@@ -1036,6 +1049,7 @@ impl ConflictView {
 pub fn render_body(
     mode: &ConflictMode,
     chrome: &EditorChrome,
+    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // GitKraken-style layout: the CENTER is the main 3-pane Conflict Editor
@@ -1061,7 +1075,7 @@ pub fn render_body(
         .min_h(px(0.))
         .bg(rgb(theme().bg_base))
         .child(center)
-        .child(render_dashboard(mode, cx))
+        .child(render_dashboard(mode, window_active, cx))
         .into_any_element()
 }
 
@@ -1069,7 +1083,11 @@ pub fn render_body(
 // Right panel: Conflict Dashboard (ADR-0063)
 // ────────────────────────────────────────────────────────────
 
-fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
+fn render_dashboard(
+    mode: &ConflictMode,
+    window_active: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     // T-CONFLICT-DASH-021/022: information hierarchy is state → next action →
     // files. The right sidebar shows what's left and the next steps (Continue
     // and Abort side by side); each file card carries its own actions (open
@@ -1091,7 +1109,7 @@ fn render_dashboard(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui
         // ── Next action (Continue + Abort side by side) ──
         .child(dash_primary(mode, cx))
         // ── Files (per-card actions: icons + "…" overflow menu) ──
-        .child(dash_sections(mode, cx))
+        .child(dash_sections(mode, window_active, cx))
         .into_any_element()
 }
 
@@ -1554,7 +1572,11 @@ where
 }
 
 /// Two sections: Conflicted Files and Resolved Files, each row with a kind badge.
-fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyElement {
+fn dash_sections(
+    mode: &ConflictMode,
+    window_active: bool,
+    cx: &mut Context<ConflictView>,
+) -> gpui::AnyElement {
     let conflicted: Vec<usize> = mode
         .session
         .files
@@ -1581,6 +1603,7 @@ fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             &conflicted,
             Msg::ConflictNoConflictedFiles.t(),
             true,
+            window_active,
             cx,
         ))
         .child(section(
@@ -1589,6 +1612,7 @@ fn dash_sections(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::A
             &resolved,
             Msg::ConflictNoResolvedFiles.t(),
             false,
+            window_active,
             cx,
         ))
         .into_any_element()
@@ -1602,6 +1626,7 @@ fn section(
     indices: &[usize],
     empty_msg: &str,
     _is_conflicted: bool,
+    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let mut col = div().flex().flex_col().child(
@@ -1669,7 +1694,10 @@ fn section(
             .py(theme::scaled_px(6.))
             .rounded_md()
             .cursor_pointer()
-            .when(selected, |s| s.bg(rgb(theme().selected)))
+            .when(selected, |s| {
+                s.bg(theme().selected_for_window(window_active))
+                    .text_color(rgb(theme().text_main))
+            })
             .hover(|s| s.bg(rgb(theme().bg_row_alt)))
             .on_click(row_click)
             // Left: file name + status/kind (flex-shrinks; name truncates).
@@ -1719,6 +1747,10 @@ fn section(
                         more,
                     )),
             );
+        #[cfg(feature = "gui-e2e")]
+        let row_el = row_el
+            .relative()
+            .child(super::e2e::measure_inside(format!("conflict-row-{idx}")));
 
         col = col.child(row_el);
     }

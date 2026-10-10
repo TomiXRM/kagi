@@ -124,6 +124,7 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -228,7 +229,13 @@ impl KagiApp {
         // primary (apple-dark yellow, catppuccin blue, dracula purple …) and
         // is already what the toolbar's count chips use — `accent` is the
         // cherry-pick mauve, purple in most themes regardless of the theme.
+        let window_active = self.window_active_for_render(window);
         let mode_on = |el: gpui::Stateful<gpui::Div>| {
+            if !window_active {
+                return el
+                    .bg(rgb(theme().inactive_selected))
+                    .text_color(rgb(theme().text_main));
+            }
             let mut c: gpui::Hsla = rgb(theme().color_branch).into();
             c.a = if theme().dark { 0.26 } else { 0.18 };
             el.bg(c)

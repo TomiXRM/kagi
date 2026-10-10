@@ -95,3 +95,33 @@ foreground. A separate `link = #0066cc` maps to TextView's `colors.link` and
 gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
+
+## Amendment — 2026-10-11: neutral structural separators (#1175)
+
+Toolbar group hairlines, timeline/PR-table row boundaries and the command-palette
+frame/search divider use `surface` at 1 logical px. `selected` remains a row
+state, and `text_muted` remains readable secondary text. The shared gpui-kit
+`colors.border` bridge is not changed: markdown tables depend on its stronger
+muted tint. No new control, focus behavior or selection palette is introduced.
+
+## Amendment — 2026-10-11: identifying input boundaries (#1183)
+
+Apple Light's resting input/unchecked-checkbox boundary is `#8e8e8e`, owned by
+the Apple Light palette and mapped only to `colors.input` in the theme bridge.
+Its calculated sRGB contrast is 3.276:1 on white and 3.058:1 against the adjacent
+`#f7f7f7` panel. `surface` is suitable for decorative separators, not an identifying
+control boundary. Labels, placeholder/body colours, focused accent ring, 1px
+outline, radius 6 and field sizes are unchanged. Apple Dark and custom themes
+retain their current input-boundary mapping to preserve existing contrast.
+The shared boundary also applies to Default-outline buttons (including modal
+Secondary, inspector/oplog/conflict actions), Radio, Select, Combobox, NumberInput
+and DatePicker. Keep one `colors.input` role rather than special-casing buttons.
+
+## Amendment — 2026-10-11: system scrollbar visibility (#1182)
+
+The PR table keeps its single horizontal viewport and independent virtualized Y
+list from #1095. `Scrolling` preserves auto-hide and overlays the full viewport.
+gpui-kit maps non-auto-hide macOS settings to `Hover`; both `Hover` and `Always`
+therefore reserve a 16px lane and pin this table's scrollbar to `Always`, so its
+track hitbox cannot steal bottom-row clicks. Global scrollbar colours and
+keyboard/wheel routing are unchanged.

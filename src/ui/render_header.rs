@@ -533,7 +533,7 @@ impl KagiApp {
                 // only the visible height tracks zoom.
                 .w(px(1.0))
                 .h(theme::scaled_px(16.0))
-                .bg(rgb(theme().text_muted))
+                .bg(rgb(theme().surface))
                 .mx_1()
                 .flex_shrink_0()
         };

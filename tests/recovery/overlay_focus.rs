@@ -158,6 +158,13 @@ pub fn scenario_palette_viewport(cx: &mut VisualTestAppContext) {
             let card = e2e::control_bounds(window.window_id(), "palette-card").unwrap();
             eprintln!("[gui-e2e] palette {locale}/{width}x{height}@{zoom}: card={card:?} window={viewport:?}");
             contained(viewport, card, "palette card");
+            for name in ["palette-frame", "palette-divider"] {
+                assert_eq!(
+                    e2e::chrome_border(name),
+                    Some(gpui::rgb(theme::theme().surface).into()),
+                    "{name}: unselected palette boundaries must be neutral"
+                );
+            }
             let input = e2e::control_bounds(window.window_id(), "palette-input").unwrap();
             contained(card, input, "palette input");
             let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());

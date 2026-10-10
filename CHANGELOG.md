@@ -7,6 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR-table horizontal scrollbars preserve macOS auto-hide: `Scrolling` overlays without a lane; non-auto-hide settings (gpui-kit `Hover` or `Always`) reserve 16px and use a persistent table scrollbar so its hitbox cannot steal last-row clicks. Header/row X alignment, independent Y scrolling and narrow JA high-zoom reachability are preserved. (#1182)
+- Apple Light's shared `colors.input` boundary uses quieter neutral `#8e8e8e` (3.276:1 on white; 3.058:1 on panel grey): Input, unchecked Checkbox, Default-outline buttons (modal Secondary and inspector/oplog/conflict buttons), Radio, Select, Combobox, NumberInput and DatePicker. Existing outline geometry, focus rings, labels and Apple Dark remain unchanged. (#1183)
+- Toolbar group hairlines, PR feed/table dividers and the command-palette frame now use neutral `surface`, not selection blue or label grey. Selection, focus rings and readable markdown-table borders remain unchanged. (#1175)
+- Pinky Boo and One Light `surface` colours retain at least a 1.15:1 luminance step against panel/content backgrounds, keeping structural separators visible; Apple and Catppuccin palettes remain unchanged. (#1175 review)
 - PR dashboard→detail→native resize／zoom→Escape／Home で、次 frame の focus cleanup が一覧の InputState を強参照して session の破棄後も保持する問題を修正しました。公開 gpui-kit fork の callback を弱参照にし、既存の session-owned input・draft・thread・scroll と wrapped row count API を維持します。combined lifecycle の native 回帰と leak assertion を復元しました。(#1172)
 - Commit Panel の幅を viewport と graph の最小表示幅に合わせて cap し、狭幅・高 zoom でも List／Tree、Stage／Unstage、Undo を window 内に保ちます。file path は省略表示し、完全な path を tooltip／AX に残します。1392×883・100% の幅と既存の composer 高さは維持します。(#1171)
 - Commit Panel は低い window／高 zoom で本文 editor を縮めて内部 scroll し、Template／Generate／co-author／Undo と Commit を表示範囲内に保つようにしました。1392×883・100% の主要領域の高さと soft-wrap による本文拡張を保持し、940×660／560・167% の EN／JA で本文入力と wheel scroll を検証します。cached wrap-row accessor を fork に追加し、3／11行本文と折返し本文も native 回帰で確認します。(#1167)

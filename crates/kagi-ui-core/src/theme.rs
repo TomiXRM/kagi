@@ -1164,7 +1164,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.secondary_active = to_hsla(k.surface);
 
     // ── Input border (Input, Checkbox unchecked) ────────────────
-    gc.colors.input = to_hsla(k.text_muted);
+    // Apple Light separates identifying control boundaries from readable labels.
+    // Dark and custom palettes retain their established boundary/focus contrast.
+    gc.colors.input = to_hsla(if k.slug == "apple-light" {
+        crate::theme_apple_light::INPUT_BORDER
+    } else {
+        k.text_muted
+    });
     gc.colors.caret = to_hsla(k.text_main);
 
     // ── Buttons (0.5.2 reads `button_*`, not primary/secondary) ─
@@ -1439,6 +1445,43 @@ pub(crate) const LANE_PALETTE_LIGHT: [(f32, f32, f32); 8] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            let expected = if t.slug == "apple-light" {
+                0x8e8e8e
+            } else {
+                t.text_muted
+            };
+            assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
+            assert_eq!(gc.colors.ring, to_hsla(t.color_branch));
+            assert_eq!(gc.colors.border, to_hsla(t.text_muted).alpha(0.85));
+            if t.slug == "apple-light" {
+                assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
+                assert!(contrast_ratio(expected, t.panel) >= 3.0);
+                assert!(
+                    contrast_ratio(expected, t.bg_base) < contrast_ratio(t.text_muted, t.bg_base)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn structural_surfaces_have_a_visible_luminance_step() {
+        for t in THEMES {
+            for background in [t.panel, t.bg_base] {
+                let contrast = contrast_ratio(t.surface, background);
+                assert!(
+                    contrast >= 1.15,
+                    "{} surface contrast {contrast:.3}:1 on {background:#08x}",
+                    t.slug
+                );
+            }
+        }
+    }
 
     #[test]
     fn body_links_meet_wcag_aa_in_every_theme() {

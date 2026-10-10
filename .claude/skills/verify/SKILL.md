@@ -79,6 +79,17 @@ KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='modal_compact,moda
   cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
 ```
 
+For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport'`.
+The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
+100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
+non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
+X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
+records explicit rendered border styles for table
+rows/header and palette frame/divider; it is not a screenshot-pixel sample.
+Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
+and toolbar scenarios. Real fading, macOS preference changes and JA IME are
+Tier B comparisons, not TestDispatcher assertions.
+
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three
 scenarios draw the Editor name form (including invalid names, valid action,

@@ -117,6 +117,24 @@ pub(crate) fn init() {
     refresh_system_accent();
 }
 
+/// Interpret an owned native preference value; `None` represents a null result.
+#[cfg(target_os = "macos")]
+fn from_cf_value(value: Option<core_foundation::base::CFType>) -> SystemAccent {
+    use core_foundation::{base::TCFType, number::CFNumber, string::CFString};
+    let value = value.and_then(|value| {
+        if value.instance_of::<CFNumber>() {
+            value.downcast_into::<CFNumber>()?.to_i32()
+        } else {
+            let string = value.downcast_into::<CFString>()?;
+            // Borrow native UTF-8 storage when available; otherwise CFString's
+            // conversion owns it. No conversion happens in the render path.
+            let text: std::borrow::Cow<'_, str> = (&string).into();
+            text.trim().parse::<i32>().ok()
+        }
+    });
+    SystemAccent::from_default(value)
+}
+
 /// Read-only, in-process global preference query, only at startup/activation.
 /// Multicolour (missing or unsupported value) follows the application's blue.
 pub fn refresh_system_accent() -> bool {
@@ -127,7 +145,6 @@ pub fn refresh_system_accent() -> bool {
     #[cfg(target_os = "macos")]
     {
         use core_foundation::base::{CFType, TCFType};
-        use core_foundation::number::CFNumber;
         use core_foundation::string::CFString;
         use core_foundation_sys::preferences::{
             kCFPreferencesAnyApplication, CFPreferencesCopyAppValue,
@@ -139,17 +156,17 @@ pub fn refresh_system_accent() -> bool {
             // SAFETY: key and the global domain constant are valid CFStrings.
             // CopyAppValue returns an owned CF property list or null. The owned
             // CFType releases it on every path; downcast checks its type before
-            // interpreting it as a number. This API never writes preferences.
+            // interpreting it as a number or string. This API never writes preferences.
             let raw = unsafe {
                 CFPreferencesCopyAppValue(key.as_concrete_TypeRef(), kCFPreferencesAnyApplication)
             };
-            if raw.is_null() {
-                return None;
-            }
-            let value = unsafe { CFType::wrap_under_create_rule(raw) };
-            value.downcast_into::<CFNumber>()?.to_i32()
+            from_cf_value(if raw.is_null() {
+                None
+            } else {
+                Some(unsafe { CFType::wrap_under_create_rule(raw) })
+            })
         });
-        let next = SystemAccent::from_default(value) as u8;
+        let next = value as u8;
         return DETECTED.swap(next, Ordering::Relaxed) != next;
     }
     #[cfg(not(target_os = "macos"))]
@@ -190,6 +207,43 @@ impl Drop for AccentInjection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_preference_numbers_strings_null_and_other_types() {
+        use core_foundation::{
+            base::TCFType, boolean::CFBoolean, number::CFNumber, string::CFString,
+        };
+        for value in -1..=6 {
+            assert_eq!(
+                from_cf_value(Some(CFNumber::from(value).into_CFType())),
+                SystemAccent::from_default(Some(value)),
+            );
+        }
+        assert_eq!(
+            from_cf_value(Some(CFString::from_static_string("1").into_CFType())),
+            SystemAccent::Orange,
+            "AppKit accepts a string-stored AppleAccentColor",
+        );
+        for value in -1..=6 {
+            let text = format!(" \t{value}\n ");
+            assert_eq!(
+                from_cf_value(Some(CFString::new(&text).into_CFType())),
+                SystemAccent::from_default(Some(value)),
+            );
+        }
+        assert_eq!(from_cf_value(None), SystemAccent::Default);
+        assert_eq!(
+            from_cf_value(Some(CFBoolean::true_value().into_CFType())),
+            SystemAccent::Default,
+        );
+        for text in ["", "not-a-number", "99999999999999999999", "7"] {
+            assert_eq!(
+                from_cf_value(Some(CFString::from_static_string(text).into_CFType())),
+                SystemAccent::Default,
+            );
+        }
+    }
 
     #[test]
     fn all_defaults_map_to_standard_light_and_dark_accents() {

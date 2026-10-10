@@ -113,6 +113,9 @@ detected enum and derived fill tokens; no native lookup or allocation occurs in
 a row/render. Refresh on activation is deliberately used rather than installing
 an AppKit notification observer or adding an Objective-C dependency. Changing
 Appearance and returning to Kagi updates the existing bridge and redraws.
+Both numeric and string-stored values are accepted; strings are trimmed and
+parsed as `i32`, matching AppKit's handling of e.g. the string `"1"` as Orange.
+Null, other property-list types, invalid or unsupported values use Default (Blue).
 
 The standard macOS accent palette ([HIG Color](https://developer.apple.com/design/human-interface-guidelines/color))
 is kept separately from the graph's increased-contrast/2025 system colours:
@@ -133,12 +136,15 @@ Default (Blue), rather than falsely identifying an explicit Blue preference. Set
 Appearance has an Apple-only System/Blue radio choice persisted as the string
 `accent: system|blue`, with the detected Mac colour name in EN/JA even while Blue
 is selected. Other presets, custom themes including Apple-derived themes, and
-non-macOS platforms retain their explicit colour values.
+non-macOS platforms retain their fixed accent hue and do not follow macOS.
 
 Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
-derivation (4.5:1 minimum), including the update pill. Accent-coloured chrome
-labels use `accent_text_on` for their actual background instead of the raw fill
-RGB, so Yellow, Orange and Graphite remain readable. Text selection retains the
+derivation (4.5:1 minimum), including the update pill and filled thread badges.
+Accent-as-text now routes through `accent_text_on` on every theme for its actual
+background instead of the raw fill RGB, including busy footer text and conflict
+mode labels. Fixed-accent themes keep their accent hue but small text may become
+darker or lighter to achieve at least 4.5:1. This is a shared readability policy,
+not system-follow for other themes. Text selection retains the
 shared 30% alpha; Apple Light row selection derives a 15% accent wash on white,
 while Apple Dark keeps its neutral row selection. `selected_for_window(true)`
 uses this resolved wash; inactive selection keeps its independent neutral token.

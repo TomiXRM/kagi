@@ -53,7 +53,7 @@ impl KagiApp {
             // The spinner is an element, not a glyph: the ⟳ in the text never
             // turned, so a running operation looked like a stuck one (user
             // report). See `render_overlay::sync_spinner`.
-            FooterStatus::Busy(msg) => (theme().ui_accent(), msg.clone()),
+            FooterStatus::Busy(msg) => (theme().accent_text_on(theme().panel), msg.clone()),
         };
 
         // ── Status chips (view-model — ADR-0076 / issue #13 P5) ──

@@ -1512,12 +1512,8 @@ where
         let accent = if active {
             if !window_active {
                 theme().text_main
-            } else if cfg!(target_os = "macos")
-                && matches!(&*theme().slug, "apple-light" | "apple-dark")
-            {
-                theme().accent_text_on(theme().ui_selected())
             } else {
-                theme().color_branch
+                theme().accent_text_on(theme().ui_selected())
             }
         } else {
             theme().text_sub

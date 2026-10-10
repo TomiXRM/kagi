@@ -11,7 +11,10 @@ default, or `"blue"` in `settings.json`). Return to Kagi after changing the Mac
 accent to refresh it. Multicolour uses blue and is labelled Default (Blue).
 Git ref/lane/status colours and body
 links remain unchanged. Custom themes (even ones extending Apple themes), other
-built-in presets and non-macOS platforms keep their own colour tokens.
+built-in presets and non-macOS platforms keep their fixed accent hue rather than
+following the Mac accent. Across every theme, small accent-as-text uses
+`accent_text_on` on its actual background; it may become darker or lighter for
+at least 4.5:1 contrast. Filled labels use the contrast-aware primary helper.
 
 ## Where theme files live
 

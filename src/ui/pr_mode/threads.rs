@@ -24,6 +24,9 @@ use crate::ui::theme::{self, theme};
 
 type Placement = Rc<BTreeMap<usize, Vec<usize>>>;
 
+/// Cached placement stays tied to its file and immutable row allocation.
+type PlacedThreads = (String, std::sync::Weak<Vec<DiffRow>>, Placement);
+
 /// A PR tab's review threads and which of their rows are open.
 #[derive(Default)]
 pub struct PrThreads {
@@ -33,7 +36,7 @@ pub struct PrThreads {
     open: BTreeSet<usize>,
     open_path: String,
     /// Placement belongs to the immutable row allocation, not its count.
-    placed: RefCell<Option<(String, std::sync::Weak<Vec<DiffRow>>, Placement)>>,
+    placed: RefCell<Option<PlacedThreads>>,
 }
 
 impl PrThreads {

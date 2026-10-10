@@ -109,6 +109,7 @@ mod checkout;
 mod cherry_revert;
 mod clone;
 mod commit;
+pub(crate) mod conflict_abort;
 mod dir_file_conflict;
 mod discard;
 mod fetch;

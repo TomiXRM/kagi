@@ -77,6 +77,26 @@ fn is_sparse_excluded(index: &git2::Index, path: &Path) -> bool {
     })
 }
 
+/// Test the directory entry itself, not a symlink's destination. Only a
+/// genuinely missing entry may be staged as a deletion; other I/O errors abort.
+fn worktree_entry_present(path: &Path) -> Result<bool, GitError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(GitError::Other(format!(
+            "cannot inspect working tree entry '{}': {error}",
+            path.display()
+        ))),
+    }
+}
+
 pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError> {
     let workdir = repo
         .workdir()
@@ -87,8 +107,9 @@ pub(crate) fn stage_file(repo: &Repository, path: &Path) -> Result<(), GitError>
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
-    if abs_path.exists() {
-        // File exists in working tree — stage it.
+    if worktree_entry_present(&abs_path)? {
+        // libgit2 stages symlinks as mode 120000 with raw read_link bytes,
+        // without following the target (even when it is missing).
         index
             .add_path(path)
             .map_err(|e| GitError::Other(format!("index.add_path failed: {}", e.message())))?;
@@ -412,41 +433,55 @@ pub(crate) fn stage_files(
         .index()
         .map_err(|e| GitError::Other(format!("repo.index() failed: {}", e.message())))?;
 
-    for path in paths {
-        // Same rule as `stage_file`: absent from the working tree is not the
-        // same as deleted. This is the path "stage everything" takes, so it is
-        // the one a user in a sparse-checkout repository actually reaches
-        // (#675). Refuse the whole batch rather than skipping the offending
-        // paths — a partially applied stage is harder to reason about than one
-        // that did not happen.
-        if !workdir.join(path).exists() && is_sparse_excluded(&index, path) {
-            return Err(GitError::Blocked(Box::new(PlanNote::Common(
-                CommonNote::SparseExcludedPath {
-                    path: path.display().to_string(),
-                },
-            ))));
+    let result = (|| {
+        for path in paths {
+            // Same rule as `stage_file`: absent from the working tree is not the
+            // same as deleted. This is the path "stage everything" takes, so it is
+            // the one a user in a sparse-checkout repository actually reaches
+            // (#675). Refuse the whole batch rather than skipping the offending
+            // paths — a partially applied stage is harder to reason about than one
+            // that did not happen.
+            let present = worktree_entry_present(&workdir.join(path))?;
+            if !present && is_sparse_excluded(&index, path) {
+                return Err(GitError::Blocked(Box::new(PlanNote::Common(
+                    CommonNote::SparseExcludedPath {
+                        path: path.display().to_string(),
+                    },
+                ))));
+            }
+            if present {
+                index.add_path(path).map_err(|e| {
+                    GitError::Other(format!(
+                        "index.add_path({}) failed: {}",
+                        path.display(),
+                        e.message()
+                    ))
+                })?;
+            } else {
+                index.remove_path(path).map_err(|e| {
+                    GitError::Other(format!(
+                        "index.remove_path({}) failed: {}",
+                        path.display(),
+                        e.message()
+                    ))
+                })?;
+            }
         }
-        if workdir.join(path).exists() {
-            index.add_path(path).map_err(|e| {
-                GitError::Other(format!(
-                    "index.add_path({}) failed: {}",
-                    path.display(),
-                    e.message()
-                ))
-            })?;
-        } else {
-            index.remove_path(path).map_err(|e| {
-                GitError::Other(format!(
-                    "index.remove_path({}) failed: {}",
-                    path.display(),
-                    e.message()
-                ))
-            })?;
-        }
-    }
 
-    index
-        .write()
-        .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
-    Ok(paths.len())
+        index
+            .write()
+            .map_err(|e| GitError::Other(format!("index.write() failed: {}", e.message())))?;
+        Ok(paths.len())
+    })();
+    if result.is_err() {
+        // Repository::index shares libgit2's cached index. Discard every
+        // uncommitted batch edit so a later stage cannot accidentally write it.
+        index.read(true).map_err(|error| {
+            GitError::Other(format!(
+                "cannot reload index after aborted stage: {}",
+                error.message()
+            ))
+        })?;
+    }
+    result
 }

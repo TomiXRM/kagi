@@ -243,65 +243,179 @@ pub fn plan_commit(repo: &Repository, message: &str) -> Result<OperationPlan, Gi
 // execute_commit
 // ────────────────────────────────────────────────────────────
 
-/// Create a commit from the current index state.
-///
-/// # Behaviour
-///
-/// 1. Reads the current index and writes it as a tree object in the ODB.
-/// 2. Resolves the committer/author signature from repo config (falls back to
-///    `"kagi <kagi@local>"`).
-/// 3. Creates the commit:
-///    - **Normal repo** (HEAD exists): one parent — the current HEAD commit.
-///    - **Unborn HEAD** (initial commit): no parents.
-/// 4. The working tree is **not** modified; unstaged changes remain intact.
-///
-/// Returns the new commit's [`CommitId`].
-///
-/// # Errors
-///
-/// Returns [`GitError::Other`] on any libgit2 failure.
+/// Commit the rechecked approved tree through Git, preserving project hooks
+/// and the user's signing configuration. The real index is not passed to Git.
 pub(crate) fn execute_commit(
     repo: &Repository,
     plan: &OperationPlan,
     message: &str,
 ) -> Result<CommitId, GitError> {
-    // ── 1. Write the current index as a tree ─────────────────
     let mut index = approved_commit_index(repo, plan)?;
     let tree_oid = index
-        .write_tree()
+        .write_tree_to(repo)
         .map_err(|e| GitError::Other(format!("index.write_tree() failed: {}", e.message())))?;
-    let tree = repo
-        .find_tree(tree_oid)
-        .map_err(|e| GitError::Other(format!("find_tree failed: {}", e.message())))?;
-
-    // ── 2. Build signature ────────────────────────────────────
-    let sig = build_signature(repo)?;
-
-    // ── 3. Resolve parents ────────────────────────────────────
-    let head = resolve_head(repo)?;
-
-    let new_oid = match head {
-        Head::Unborn { .. } => {
-            // Initial commit — no parents.
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
-                .map_err(|e| GitError::Other(format!("commit (initial) failed: {}", e.message())))?
-        }
-        _ => {
-            // Normal commit — one parent (HEAD).
-            let head_ref = repo
-                .head()
-                .map_err(|e| GitError::Other(format!("repo.head() failed: {}", e.message())))?;
-            let head_oid = head_ref
-                .target()
-                .ok_or_else(|| GitError::Other("HEAD has no target OID".to_string()))?;
-            let head_commit = repo.find_commit(head_oid).map_err(|e| {
-                GitError::Other(format!("find_commit(HEAD) failed: {}", e.message()))
-            })?;
-
-            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&head_commit])
-                .map_err(|e| GitError::Other(format!("commit failed: {}", e.message())))?
+    let parent = match resolve_head(repo)? {
+        Head::Unborn { .. } => None,
+        Head::Attached { target, .. } | Head::Detached { target } => {
+            Some(git2::Oid::from_str(&target).map_err(|e| GitError::Other(e.to_string()))?)
         }
     };
+    execute_git_commit(repo, &index, tree_oid, parent.as_slice(), message, None)
+        .map(|oid| CommitId(oid.to_string()))
+}
 
-    Ok(CommitId(new_oid.to_string()))
+/// All interactive commit variants share one CLI policy and read-back check.
+/// A private index prevents external changes of the real index from replacing
+/// the approved snapshot, and preserves the real index on hook/signing failure.
+pub(crate) fn execute_git_commit(
+    repo: &Repository,
+    approved_index: &git2::Index,
+    tree_oid: git2::Oid,
+    parents: &[git2::Oid],
+    message: &str,
+    amend: Option<AmendMode>,
+) -> Result<git2::Oid, GitError> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("commit requires a worktree".into()))?;
+    let before = resolve_head(repo)?;
+    let signing_policy = crate::cli::run_git(
+        workdir,
+        &[
+            "config",
+            "--type=bool",
+            "--default=false",
+            "--get",
+            "commit.gpgsign",
+        ],
+    )
+    .map_err(|error| crate::cli::context("cannot read commit signing policy", error))?;
+    if signing_policy.status != 0 {
+        return Err(GitError::Other(format!(
+            "cannot read commit signing policy: {}",
+            signing_policy.stderr
+        )));
+    }
+    let signing_required = match signing_policy.stdout.trim() {
+        "true" => true,
+        "false" => false,
+        other => {
+            return Err(GitError::Other(format!(
+                "invalid commit signing policy: {other}"
+            )))
+        }
+    };
+    let scratch = tempfile::Builder::new()
+        .prefix("kagi-commit-")
+        .tempdir_in(repo.path())
+        .map_err(|e| GitError::Other(format!("cannot create approved commit index: {e}")))?;
+    let index_path = scratch.path().join("index");
+    write_private_commit_index(
+        repo,
+        &index_path,
+        approved_index,
+        (amend == Some(AmendMode::MessageOnly)).then_some(tree_oid),
+    )?;
+    let args = ["commit", "-m", message, "--amend", "--allow-empty"];
+    let args = if amend.is_some() {
+        &args[..]
+    } else {
+        &args[..3]
+    };
+    let output = crate::cli::run_git_commit(workdir, &index_path, args)?;
+    if output.status != 0 {
+        let detail = format!(
+            "git commit failed (exit {}): {}{}",
+            output.status, output.stderr, output.stdout
+        );
+        if resolve_head(repo).as_ref() != Ok(&before) {
+            return Err(GitError::TerminationUnknown(crate::Termination::stopped(
+                detail,
+            )));
+        }
+        return Err(GitError::Other(detail));
+    }
+    verify_git_commit(repo, &before, tree_oid, parents, signing_required)
+}
+
+/// Preserve the approved stat cache and extended flags in the private index.
+/// Rewording replaces content with HEAD's tree, retaining metadata only where
+/// the raw path, OID and mode still match. No disk-index reread is needed.
+fn write_private_commit_index(
+    repo: &Repository,
+    path: &std::path::Path,
+    source: &git2::Index,
+    reword_tree: Option<git2::Oid>,
+) -> Result<(), GitError> {
+    let mut index = git2::Index::open(path).map_err(|e| GitError::Other(e.to_string()))?;
+    index
+        .set_version(source.version())
+        .map_err(|e| GitError::Other(e.to_string()))?;
+    for entry in source.iter() {
+        index
+            .add(&entry)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+    }
+    if let Some(tree_oid) = reword_tree {
+        let tree = repo
+            .find_tree(tree_oid)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        index
+            .read_tree(&tree)
+            .map_err(|e| GitError::Other(e.to_string()))?;
+        // read_tree drops extended flags even on unchanged entries. Merge the
+        // two raw-path-sorted entry streams to restore the matching metadata.
+        let mut originals = source.iter().peekable();
+        for position in 0..index.len() {
+            let current = index
+                .get(position)
+                .ok_or_else(|| GitError::Other("private commit index entry disappeared".into()))?;
+            while originals
+                .peek()
+                .is_some_and(|entry| entry.path < current.path)
+            {
+                originals.next();
+            }
+            if let Some(entry) = originals.peek() {
+                if entry.path == current.path
+                    && entry.id == current.id
+                    && entry.mode == current.mode
+                    && entry.flags & 0x3000 == 0
+                {
+                    index
+                        .add(entry)
+                        .map_err(|e| GitError::Other(e.to_string()))?;
+                }
+            }
+        }
+    }
+    index.write().map_err(|e| GitError::Other(e.to_string()))
+}
+
+fn verify_git_commit(
+    repo: &Repository,
+    before: &Head,
+    tree: git2::Oid,
+    parents: &[git2::Oid],
+    signing_required: bool,
+) -> Result<git2::Oid, GitError> {
+    let verification = (|| {
+        let head = repo
+            .head()
+            .and_then(|head| head.peel_to_commit())
+            .map_err(|e| format!("cannot read committed HEAD: {e}"))?;
+        if resolve_head(repo).as_ref() == Ok(before)
+            || head.tree_id() != tree
+            || !head.parent_ids().eq(parents.iter().copied())
+        {
+            return Err("HEAD tree or parents differ from the approved commit; inspect hooks and repository before continuing".into());
+        }
+        if signing_required {
+            repo.extract_signature(&head.id(), None)
+                .map_err(|error| format!("cannot verify the required commit signature in HEAD: {error}; inspect signing settings and hooks before continuing"))?;
+        }
+        Ok(head.id())
+    })();
+    verification
+        .map_err(|reason: String| GitError::TerminationUnknown(crate::Termination::stopped(reason)))
 }

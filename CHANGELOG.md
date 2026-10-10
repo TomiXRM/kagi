@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit／Amend の private index は stat-cache と skip-worktree flag を保持し、sparse なファイルを hook に削除として見せたり、全 tracked file を再 hash したりしないようにしました。empty commit の message-only Amend と HEAD の差分をなくす staged／both Amend を維持し、署名設定は Git の conditional include を含む実際の CLI policy に揃えます。(#1132／#1133 review)
+- `commit.gpgsign=true` の Commit／fixup・全 Amend mode・解決済み MergeCommit は、system Git の `gpg.format`／署名鍵設定を使って署名します。鍵が無い場合は HEAD と元 index を進めず、Git の理由を操作記録と EN／JA の失敗表示に残します。成功後も要求された署名 header を確認し、hook による unsigned HEAD への置換を成功として扱いません。使い捨て SSH 鍵による署名と `git verify-commit` の backend 回帰を追加しました。(#1133)
+- Commit／fixup・Amend・解決済み merge の Commit は user の Git hook を実行し、`core.hooksPath` を尊重するようにしました。拒否 hook の stderr は操作記録と EN／JA の失敗 footer／toast に残し、HEAD と元 index を保持します。承認時の staged identity を再照合した private index で実行し、完了後に HEAD の tree と parents を検証します。(#1132)
 - PushTag は承認した remote 名・すべての push URL・tag object OID と peeled target を固定し、確認後の送信先や tag の差替えを送信前に EN／JA の理由付きで拒否します。annotated tag も承認した object を明示 refspec で送り、複数 push URL と remote 固有の Git 設定を維持します。remote の既存 tag は force せず、各試行を一件だけ記録し、reconcile も remote 名を保持します。(#1135)
 - MCP `kagi_commit_show` は graph の 2000 件表示予算から独立して revision を解決します。古い完全 SHA・一意な短縮 SHA・tag を参照でき、曖昧な prefix は候補の完全 SHA と長い prefix の案内を返して拒否します。blob／tree は commit として返しません。(#1134, #1139)
 - Unstage は単体・一括とも選択した literal path の index entry だけを HEAD の OID／mode に戻すようにしました。`[]`・`*`・`?`・先頭 `#`・POSIX の `\` を名前として扱い、未選択ファイルの staged 内容や作業ファイルを書き換えません。対象の index 内容が plan 後に変われば拒否し、conflict stage の解除・directory から file への変更も正しく処理します。一括失敗時の cached index は再読込し、途中の変更が次の Stage に混ざらないようにしました。Editor の実ファイルメニューと backend の回帰を追加しました。(#1130)

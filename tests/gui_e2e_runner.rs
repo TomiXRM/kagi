@@ -1547,6 +1547,10 @@ mod macos {
                 Box::new(crate::op_queue::scenario_commit_index_identity_refusal),
             ),
             (
+                "commit_hook_failure",
+                Box::new(crate::op_queue::scenario_commit_hook_failure),
+            ),
+            (
                 "queue_commit_confirms_changed_draft",
                 Box::new(crate::op_queue::scenario_queue_commit_confirms_changed_draft),
             ),

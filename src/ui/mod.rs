@@ -53,6 +53,7 @@ mod github_issue_state;
 mod github_issues;
 mod github_pr_detail;
 mod github_pr_strip;
+mod issue_conversation;
 mod issue_fields;
 mod issues_composer;
 #[cfg(feature = "gui-e2e")]

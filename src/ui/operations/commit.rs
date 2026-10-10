@@ -845,6 +845,7 @@ impl KagiApp {
                     plan.warnings.len()
                 );
                 if let Some(entity) = self.ui().commit_panel.clone() {
+                    self.with_ui(|ui| ui.retire_issue_conversation_scope());
                     entity.update(cx, |v, _| {
                         v.state.plan_modal = Some(CommitPlanModal {
                             plan: std::sync::Arc::new(plan),

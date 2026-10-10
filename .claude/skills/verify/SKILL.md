@@ -1325,10 +1325,11 @@ The current suite covers:
   app exited normally through ⌘Q (exit 0, process gone).
   Zero observations in this one After sample are not proof of zero calls.
   Raw sample observations/input delivery do not establish CPU%, FPS, latency,
-  speedup or actual scroll distance. Cold huge-post preparation/layout, PR clones,
-  the Issues all-post column, full conversation reachability/virtualization with
-  one outer scrollbar, offscreen selection/copy, accepted session generations
-  and theme/width/zoom/semantic-refresh anchors remain #1091 work.
+  speedup or actual scroll distance. At that preparation-only checkpoint, cold
+  huge-post preparation/layout, PR clones and Issue conversation ownership/
+  virtualization/offscreen Copy still required separate implementation and proof.
+  The subsequent Issue Thread cutover is documented immediately below and in
+  ADR-0198; do not reuse the preparation-only gate as its latest-source acceptance.
   The later final required gate passed build, native, workspace tests, Clippy,
   format check, invariants and default build, all exit 0. Its single native
   run passed the four consumers above plus `markdown_preparation_edges`,
@@ -1336,6 +1337,213 @@ The current suite covers:
   351.394085 s, including compilation/process overhead, not isolated test-body
   timing or speedup. This does not complete the full issue or imply hosted
   CI, exact-head review or dev merge. Publish as `Refs #1091`, not `Closes`.
+- Issue Thread managed virtual conversation (#1091, ADR-0198 amendment):
+  `KAGI_GUI_E2E_ONLY=issue_conversation_` selects all **eleven registered** native
+  scenarios in `issue_conversation_selection.rs`, `issue_conversation_lifecycle.rs`,
+  `issue_enabled_input_copy.rs` and `issue_offscreen_select_all.rs`.
+  Keep the runner's offscreen AppKit windows,
+  `VisualTestPlatform` private clipboard, per-scenario unmount and fixture
+  isolation; never use the OS clipboard, suppress a native hook panic, change
+  original assertions/coordinates/producers, or substitute a mock selection.
+  With source frozen and execution reserved to PM, the bounded native recipe is:
+
+  ```bash
+  KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 \
+    KAGI_GUI_E2E_ONLY=issue_conversation_ KAGI_GUI_E2E_KEEP_GOING=1 \
+    KAGI_GUI_E2E_TIMEOUT_SECS=90 CARGO_TARGET_DIR="$PWD/target" \
+    cargo test -p kagi --features gui-e2e --test gui_e2e_runner -- --nocapture
+  ```
+
+  The consumer oracles are:
+  - `offscreen_copy`: exact forward/reverse A→Z including unpainted middle,
+    with mousemove→Copy in the same update before paint.
+  - `giant_copy`: all 180 rendered paragraphs through the actual last
+    continuation and visible end Reply composer, not a truncated preview.
+  - `accepted_identity`: actual opaque-ID true B survives equal-author/time
+    reorder and prepend; same-length source mutation/deletion poison old Copy,
+    while a fresh physical drag copies the new/surviving post.
+  - `refresh_anchor`: unchanged refresh, prepend and earlier removal retain
+    the true post/intra-post pixel anchor; a real producer failure preserves
+    accepted selection/anchor and draws error chrome.
+  - `geometry`/`edge_drag`: width/zoom/theme reflow preserves unchanged source
+    endpoints, fresh drags use current geometry, stationary edge ticks reach
+    never-painted posts, and mouse-up/departure cancels scrolling.
+  - `delayed_rejected`/`two_owners`/`copy_priority`: held refresh keeps accepted
+    content; superseded generations, repository retarget, session switch/drop,
+    modal displacement, mode departure and home return cannot leak Copy before
+    paint or revive an old range on reentry.
+  - `enabled_input_copy`: actual production **enabled** Reply SelectAll/Copy
+    returns exact `draft🙂`; physical Backspace empties it, empty Copy leaves
+    poison, and physical Tab then Copy returns the **original** conversation
+    selection without reselect/refocus/reload/activation. This recovery oracle
+    rules out “empty Copy passed because conversation was already retired.”
+    Departure stops Copy; draft, HEAD, staged paths/OIDs/modes, working bytes,
+    refs, stash and oplog invariants are checked.
+  - `offscreen_select_all`: physical first-paragraph drag copies `PARTIAL`;
+    bounded wheel events remove that focused post's control witness with another
+    post still visible, and offscreen Copy still returns `PARTIAL`. Physical
+    Cmd-A/C must expand to exactly `PARTIAL\n日本語🙂 café code🧭`, the full
+    focused post, not raw GFM or the conversation. No direct SelectAll dispatch,
+    focus/reselection after unmount or model injection. Complete draft/repository
+    invariants and normal cleanup precede the final byte oracle. Strong/emphasis
+    fixture avoids incidental existing code-span padding, without changing it.
+
+  The managed ancestor now delegates SelectAll to the actual focused member's
+  existing state handler. Mounted/Input consumers retain priority; current
+  focus/lease/scope/weak-member/source checks fail closed. No focus steal,
+  whole-conversation SelectAll, new global binding/cache/scan or retired geometry
+  revival. SDK disabled Input coverage is not enabled native proof.
+
+  SDK coverage is separate. From the matching SDK checkout with its own target,
+  PM runs `cargo test -p gpui-component --lib text::` for logical, canonical
+  parser and legacy `window_selection`/`text_view` paths, then
+  `cargo test -p gpui-component --lib` for the complete lib suite. Its manifest
+  has `doctest = false`; a lib/package pass is not documentation-test evidence.
+  **No `--skip`, ignored case, caught panic or fake native handle.** The SDK's
+  `disabled_input_copy_does_not_fall_back_to_conversation` honestly uses
+  `Input::disabled(true)` and retains exact draft/empty clipboard assertions.
+  It is disabled/read-only boundary coverage, not enabled Input proof:
+  GPUI TestWindow lacks the native input-handler hooks. Enabled editing/focus
+  belongs to the real AppKit scenario above, not a headless workaround.
+  The focused `stable_selected_post_moves_without_transferring_native_authority_or_old_lease`
+  specifies same-group stable interval preservation, fresh lease, retired
+  geometry/viewport/edge task, old-lease isolation and selected-source failure.
+  `RenderedDocument` is the single rendered UTF-8 extraction path; obsolete
+  `ParsedDocument::text`/`BlockNode::text` wrappers are removed without removing
+  real paragraph/parser consumers or canonical plugin-text assertions.
+
+  Actual PM checkpoint: `bg_600` (raw artifact 2153) was **9 PASS / 1 FAIL of
+  10**, including the complete enabled Input recovery oracle. Only true-B
+  equal-metadata reorder failed. After the stable-interval SDK setter fix,
+  `bg_605` ran `accepted_identity` alone: **1 PASS / 1**, 37.67 s process wall
+  including build/runner overhead, with original native assertions/coordinates/
+  producers unchanged. Do not combine those separate runs into an all-ten PASS.
+  The subsequent frozen-source `bg_607` (raw artifact 2173) ran the complete
+  SDK lib suite: **334 PASS / 0 FAIL, 0 ignored, 0 filtered**, without skips;
+  test bodies 0.06 s, process 12.75 s. It included logical/legacy/parser/custom
+  plugin consumers after extraction cleanup and disabled fixture migration.
+  PM inspected the compile output: both obsolete text warnings were absent,
+  with existing dependency future-compatibility warnings remaining.
+  `bg_608` (raw artifact 2175) then ran **all ten together: 10 PASS / 0 FAIL,
+  exit 0**, process 64.80 s including 28.35 s compilation. Original nine
+  assertions/coordinates/producers and the full enabled counterpart remained.
+  These passes precede the authorized formatting-only phase, not an execution
+  of a subsequently published SDK revision. They supersede the older skipped
+  SDK run's incomplete coverage, not unrelated gates.
+  SDK workspace fmt check `bg_609` (raw artifact 2177) failed, exit 1/2.63 s,
+  with untouched assets/macros/stories baseline and changed-code diffs.
+  Config explicitly selects Rust/style edition 2024. Format only changed Rust
+  scope with `skip_children=true`; do not hide the baseline failure by
+  blanket formatting or a 2021 override, or claim full-repository format green.
+  The authorized 13-target scoped rustfmt and same-target `--check` then both
+  exited 0 (0.15/0.16 s) using the unchanged config and `skip_children=true`:
+  `root.rs`; text's `document.rs`, `format/markdown.rs`, `inline.rs`,
+  `inline_flow.rs`, `mod.rs`, `node.rs`, `state.rs`, `window_selection.rs`,
+  `logical_selection.rs`, its two test files and `rendered.rs`.
+  `text_view.rs`'s changed Copy line already matched formatting; its unchanged
+  line-463 trailing whitespace was deliberately preserved. No semantic split
+  or Root refactor was introduced. Scope success is not workspace fmt success.
+  PM's later post-format `bg_615` (raw artifact 2195) reran full SDK lib:
+  **334 PASS / 0 FAIL**, bodies 0.07 s, followed by UI-lib Clippy exit 0;
+  combined process wall 42.52 s. Both obsolete text warnings remained absent.
+  One new Clippy `too_many_arguments` diagnostic at the private nine-field
+  `register_logical_inline` paint boundary was resolved afterward by a
+  localized documented allowance: source identity/range and native
+  layout/lines/hitbox stay independent; Geometry's owner/scope/weak presence
+  is constructed only after registration guards. No API/geometry/allocation
+  change or extra argument-bundling payload was introduced.
+  Exact-annotation UI-lib Clippy then passed in PM `bg_619`, exit 0,
+  process4.19 s including check/compile3.99 s, against logical-selection SHA-256
+  `f1b028c23b42d14cafced1e8ca75d1819a6d47dca5ea80fdf24a9ef829a2b8ab`.
+  No new argument-count/dead-code warning remained; only pre-existing
+  dependency future-compatibility notices (`block`, `proc-macro-error2`).
+  PM `bg_620` (raw artifact 2207) then passed the exact-source complete SDK lib
+  suite, **334 PASS / 0 FAIL, 0 ignored, 0 filtered**, bodies 0.07 s, and the same
+  13-target configured-2024 `rustfmt --check` with `skip_children=true`, exit 0;
+  combined process wall7.33 s.
+  That SDK-run checkpoint alone did not establish a public revision or
+  post-format native rerun, and scoped fmt is not whole-workspace fmt green.
+
+  PM subsequently published the original-b004-compatible fix on the existing
+  [TomiXRM/gpui-kit fork](https://github.com/TomiXRM/gpui-kit), normal branch
+  `fix/kagi-logical-selection-b004-20261010`, commit
+  [`941f20e6c374ea80d2bab9cd08fc96021280db13`](https://github.com/TomiXRM/gpui-kit/commit/941f20e6c374ea80d2bab9cd08fc96021280db13).
+  `bg_627` push exited0; PM's exact-head `ls-remote` matched. At that first
+  cutover both temporary UI/assets paths were replaced with the same Git/full
+  `941f20e6` revision, without latest-family upgrade, macros patch, alias or
+  path shim. This is historical, not the final public revision below.
+  SDK code at publication retains exact-source lib334/Clippy/scoped13 evidence.
+
+  PM then resolved the actual consumer lockfile: targeted `cargo update`
+  `bg_632` first failed to match the path-to-Git package specification
+  (0.09 s, no compile); `cargo metadata --format-version 1` subsequently
+  succeeded, 6.523 s (artifact 2230). Only UI0.5.2/assets0.5.1/macros0.5.1
+  were added at the exact public commit, each name selected once in metadata.
+  GPUI0.2.2/platform0.1.0 retained Zed
+  `90b3aa0b3bd3b453775b11a386907c7ac9acd997`; no duplicate macros source,
+  latest-family upgrade, lock hand edit or path shim. Those initial resolution
+  receipts are not final-ae37 gate acceptance.
+
+  A review-discovered offscreen focused-member SelectAll regression has fresh
+  paired evidence on the same corrected GFM/emphasis/Unicode fixture:
+  public941 `bg_650` **0 PASS/1 FAIL**, left `PARTIAL`, right unchanged full
+  rendered literal, process17.40 s/compile8.97 s; local integration `bg_651`
+  **all11 together 11 PASS/0 FAIL**, process52.63 s/compile8.48 s (artifact2322).
+  Original-ten oracles/events/coordinates/producers remain unchanged. Earlier
+  inline-code fixtures `bg_647`/`bg_648` remain separate historical failures.
+  Do not strip U+2009, repin an observed After string or combine changed oracles.
+
+  Native651 preceded the final SDK three-file formatting pass. PM configured
+  edition/style edition2024 + `skip_children=true` format/check exited0/0.27 s.
+  Post-format SDK `bg_653`: lib334 PASS/0 failed/ignored/filtered, body0.06 s/
+  process11.19 s; UI-lib Clippy0/process4.11 s, combined15.40 s, no new warnings,
+  only existing `block`/`proc-macro-error2` future-compatibility notices.
+  Whole SDK baseline fmt FAIL was not rerun/declared green; doctests disabled.
+
+  Final public SDK is
+  [`ae37bfd433781abe44e15edd40867fac1b7b3b2c`](https://github.com/TomiXRM/gpui-kit/commit/ae37bfd433781abe44e15edd40867fac1b7b3b2c):
+  PM `bg_657` explicitly pushed GitHub normally/FF941→ae37 and exact public
+  head matched. `bg_656` first mistakenly pushed clone-origin/local Cargo-cache
+  branch;657 conditionally deleted only that mistaken new ref at the exact
+  expected revision, without deleting checkout/files/objects. Do not claim the
+  cache was entirely untouched or internal review equals external approval.
+  Both final UI/assets patches are the same Git/full ae37 rev, no TEMP paths/
+  comments. Actual metadata exited0/1.526879 s: UI0.5.2/assets0.5.1/macros0.5.1
+  each once on publicae37; original GPUI0.2.2/platform0.1.0/Zed90b3aa0 unchanged.
+
+  Final Root `bg_658` after PM format passed **all7**, total557.496848 s:
+  build25.170750/native52.765071/workspace458.066894/Clippy15.626914/
+  fmt2.794284/UV2.494605/default-build0.575039. Receipts:
+  `issue-select-all-public-ae37-final-gates/manifest.json` and stage raw logs.
+  Public native argv was `cargo test --timings -p kagi --features gui-e2e
+  --test gui_e2e_runner -- --nocapture`, under `/usr/bin/time -l`, overrides
+  `KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY=issue_conversation_`.
+  It reports **PASS filtered scenarios**, not an explicit KEEP_GOING11 count;
+  local651's explicit11/11 remains separate. Workspace uses the real target
+  runner on the same monotonic epoch. These are process walls, not UI latency
+  or causal performance comparisons.
+
+  Final public default Tier B:
+  `issue-select-all-public-ae37-tierb/observed-public-ae37.json`, original owned
+  Popen42755/exactexe/largest layer0 WID6126. Explicit `USER`,
+  `KAGI_NO_ACTIVATE=1`, `KAGI_NO_RESTORE=1`, `KAGI_LOG_DIR` isolation;
+  capture2784×1766/logical1392×883 gives ratio2, not a queried NS backing scale.
+  Real Issue281 has two80-paragraph GFM/Japanese/emoji/café posts. Mounted
+  physical Cmd-A selected body, ten−120 wheel events reached distinct comment
+  071–080 and Reply with body outside, offscreen Cmd-A did not select the other
+  post, ten+120 events returned original body selection without re-click.
+  It began fully selected: partial→full exact bytes are native-private-clipboard
+  proof, not default screenshots. Actual unmount is the native control witness.
+  No default Copy/Paste/host clipboard. Zoom100→110→100 and AppleLight→
+  CatppuccinMocha form/content observed; Settings changes focus and prior text
+  selection was not shown on return, not modal selection-retention proof.
+  No new width/perf/FPS/CPU/matched timing. Historical941 photos/8s samples
+  remain historical. Cmd-Q0/Popen-wait0/proc_pidpath0/persistent owned0 cleanup.
+
+  No private SDK absolute patch path is a final install recipe. Native event
+  simulation is not hardware/IME proof. Broader#1091 performance/width/
+  comparison and PR-conversation scope, hosted CI, independent exact-head review,
+  Kagi PR publication/merge remain pending. Keep `Refs #1091`, not `Closes`.
 - Issues cursor pagination (`KAGI_GUI_E2E_ONLY=issues_pagination`,
   `tests/recovery/issues_pagination.rs`): the production virtual viewport loads
   100 → 200 → final-page rows without resetting the scroll anchor; an offline

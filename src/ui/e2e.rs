@@ -1053,3 +1053,58 @@ pub(crate) fn mark_fetch_completion_returned() {
 pub fn fetch_completions_returned() -> u64 {
     FETCH_COMPLETIONS_RETURNED.with(std::cell::Cell::get)
 }
+
+/// Transport-only hold for the real Issue detail loader. The loader still
+/// freezes session/base repository/generation and owns acceptance/rejection.
+#[cfg(feature = "gui-e2e")]
+pub type IssueDetailResult = Result<kagi_domain::github::Issue, kagi_git::github::PrFetchError>;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static ISSUE_DETAIL_READ: RefCell<Option<(u64, gpui::Task<IssueDetailResult>)>> =
+        const { RefCell::new(None) };
+    static ISSUE_DETAIL_READ_SERIAL: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Clears an unconsumed task on unwind without disturbing a later request.
+#[cfg(feature = "gui-e2e")]
+pub struct IssueDetailReadGuard(u64);
+
+#[cfg(feature = "gui-e2e")]
+impl Drop for IssueDetailReadGuard {
+    fn drop(&mut self) {
+        ISSUE_DETAIL_READ.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.as_ref().is_some_and(|(serial, _)| *serial == self.0) {
+                slot.take();
+            }
+        });
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn queue_github_issue_detail(task: gpui::Task<IssueDetailResult>) -> IssueDetailReadGuard {
+    let serial = ISSUE_DETAIL_READ_SERIAL.with(|serial| {
+        let next = serial.get().wrapping_add(1);
+        serial.set(next);
+        next
+    });
+    ISSUE_DETAIL_READ.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        assert!(slot.is_none(), "unconsumed Issue detail task");
+        *slot = Some((serial, task));
+    });
+    IssueDetailReadGuard(serial)
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn take_github_issue_detail() -> Option<gpui::Task<IssueDetailResult>> {
+    ISSUE_DETAIL_READ.with(|slot| slot.borrow_mut().take().map(|(_, task)| task))
+}
+
+/// Enter the existing accepted repository-address transition, not a test owner.
+#[cfg(feature = "gui-e2e")]
+pub fn retarget_github_issues(app: &mut KagiApp, identity: &str, cx: &mut gpui::Context<KagiApp>) {
+    app.address_issues_to(identity, cx);
+}

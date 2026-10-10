@@ -176,10 +176,13 @@ preparation still run synchronously. Reuse does not eliminate layout or renderin
   CPU percentages, FPS, render latency, speedup, or measured scroll distance.
   Zero observations in this one After sample do not prove zero calls.
 
-This bounded preparation fix does **not** complete #1091. Cold huge-post parse
-and layout limits, PR data cloning, the Issues all-post column, full conversation
-virtualization with one outer scrollbar, and selection/copy across unpainted
-content remain. Full body/comments/composer/end reachability, session-owned
-accepted generations, and theme/width/zoom/semantic-refresh anchors still need
-their own end-to-end proof. Public CI, exact-head review and dev merge for this
-preparation slice are separate gates, not implied by the local passes.
+At the preparation-only checkpoint, this bounded fix did **not** complete #1091:
+cold huge-post parse/layout, PR data cloning, the Issues all-post column and
+unpainted selection/copy still required their own work and proof. The subsequent
+Issue Thread ownership/virtualization and SDK logical-selection design, its
+actual native results and remaining gates are recorded in
+[ADR-0198's #1091 amendment](0198-read-only-issues-workspace.md#1091-2026-10-09-accepted-issue-conversation-and-managed-selection).
+That cutover preserves this preparation/privacy policy; it does not extend
+Issue-only evidence to PR conversation virtualization. The earlier all-green
+preparation gates above are not latest-source full SDK/native/default-app
+acceptance, a public SDK pin, hosted CI, exact-head review or dev merge.

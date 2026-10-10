@@ -239,6 +239,7 @@ impl KagiApp {
             // bottom terminal panel would eat a third of it. Collapse it on
             // entry — Cmd-J still brings it back (user request).
             self.bottom_panel_open = false;
+            self.with_ui(|ui| ui.retire_issue_conversation_scope());
             if let Some(mode) = self.pr_mode_mut() {
                 mode.visible = true;
             } else {

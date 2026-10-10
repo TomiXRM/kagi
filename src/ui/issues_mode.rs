@@ -752,14 +752,7 @@ fn render_center(
                     cx,
                 ));
             } else {
-                center = center
-                    .child(super::issues_thread::render_thread(app, window, cx))
-                    .child(super::issues_composer::render_composer(
-                        app,
-                        Some(number),
-                        window,
-                        cx,
-                    ));
+                center = center.child(super::issues_thread::render_thread(app, window, cx));
             }
         }
         None => {
@@ -772,7 +765,13 @@ fn render_center(
             }
         }
     }
-    if selected.is_some() || home_focused {
+    if home_focused
+        || selected.is_some_and(|number| {
+            editors
+                .get(&Some(number))
+                .is_some_and(|editor| editor.focused)
+        })
+    {
         center.overflow_y_scrollbar().into_any_element()
     } else {
         center.into_any_element()

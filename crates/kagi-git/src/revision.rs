@@ -20,9 +20,32 @@ pub enum RevisionError {
 impl std::fmt::Display for RevisionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ambiguous { revision, candidates } => write!(f, "revision '{revision}' is ambiguous; use a longer prefix or full SHA. Candidates: {}", candidates.join(", ")),
-            Self::NotFound { revision } => write!(f, "revision '{revision}' not found"),
-            Self::NotACommit { revision, oid } => write!(f, "revision '{revision}' ({oid}) is not a commit"),
+            Self::Ambiguous {
+                revision,
+                candidates,
+            } => {
+                write!(
+                    f,
+                    "revision '{revision}' is ambiguous; use a longer prefix or full SHA"
+                )?;
+                if !candidates.is_empty() {
+                    write!(f, ". Candidates: {}", candidates.join(", "))?;
+                }
+                Ok(())
+            }
+            Self::NotFound { revision } => {
+                write!(f, "revision '{revision}' not found")?;
+                if !revision.is_empty()
+                    && revision.len() < 4
+                    && revision.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    write!(f, "; use 4+ hex characters for a SHA prefix")?;
+                }
+                Ok(())
+            }
+            Self::NotACommit { revision, oid } => {
+                write!(f, "revision '{revision}' ({oid}) is not a commit")
+            }
         }
     }
 }
@@ -51,19 +74,47 @@ fn resolution_error(
     error: git2::Error,
 ) -> Result<GitError, GitError> {
     let typed = match error.code() {
+        ErrorCode::Ambiguous
+            if revision.len() < 4 && revision.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            RevisionError::NotFound {
+                revision: revision.to_string(),
+            }
+        }
         ErrorCode::Ambiguous => {
             let mut candidates = Vec::new();
             // Enumerate only on failure. libgit2 determines uniqueness across
             // every object type, including objects outside reachable history.
-            if revision.len() >= 4 && revision.bytes().all(|b| b.is_ascii_hexdigit()) {
-                let prefix = revision.to_ascii_lowercase();
+            if (4..=40).contains(&revision.len()) && revision.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                let mut prefix = [0_u8; 40];
+                for (index, byte) in revision.bytes().enumerate() {
+                    prefix[index] = match byte {
+                        b'0'..=b'9' => byte - b'0',
+                        b'a'..=b'f' => byte - b'a' + 10,
+                        b'A'..=b'F' => byte - b'A' + 10,
+                        _ => unreachable!("validated hexadecimal prefix"),
+                    };
+                }
                 let odb = repo
                     .odb()
                     .map_err(|e| GitError::Other(e.message().to_string()))?;
                 odb.foreach(|oid| {
-                    let sha = oid.to_string();
-                    if sha.starts_with(&prefix) {
-                        candidates.push(sha);
+                    let bytes = oid.as_bytes();
+                    if prefix[..revision.len()]
+                        .iter()
+                        .enumerate()
+                        .all(|(index, nibble)| {
+                            let byte = bytes[index / 2];
+                            *nibble
+                                == if index % 2 == 0 {
+                                    byte >> 4
+                                } else {
+                                    byte & 0x0f
+                                }
+                        })
+                    {
+                        candidates.push(oid.to_string());
                     }
                     true
                 })

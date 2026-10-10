@@ -1,17 +1,13 @@
 use std::io::{BufWriter, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+#[path = "git_fixture.rs"]
+mod git_fixture;
 
 pub fn history() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    assert!(Command::new("git")
-        .args(["init", "-q", "-b", "main"])
-        .current_dir(dir.path())
-        .status()
-        .unwrap()
-        .success());
-    let mut child = Command::new("git")
+    git_fixture::init_repo(dir.path(), "main");
+    let mut child = git_fixture::git_command(dir.path())
         .args(["fast-import", "--quiet"])
-        .current_dir(dir.path())
         .stdin(Stdio::piped())
         .spawn()
         .unwrap();
@@ -31,17 +27,7 @@ pub fn history() -> tempfile::TempDir {
 }
 
 pub fn git(path: &std::path::Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(path)
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
+    git_fixture::git_output(path, args)
 }
 
 pub fn collision(commits: &[&str]) -> (String, Vec<String>) {

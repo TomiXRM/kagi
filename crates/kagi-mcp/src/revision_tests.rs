@@ -65,6 +65,14 @@ fn commit_show_direct_revision_lookup() {
             json!({"revision": revision}),
         );
         assert_eq!(result["isError"], true, "{result}");
+        if revision == "a" {
+            let error = result["structuredContent"]["error"].as_str().unwrap();
+            assert!(
+                error.contains("not found") && error.contains("4+ hex characters"),
+                "{error}"
+            );
+            assert!(!error.contains("Candidates:"), "{error}");
+        }
         if revision == blob {
             assert!(result["structuredContent"]["error"]
                 .as_str()

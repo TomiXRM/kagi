@@ -20,6 +20,7 @@ pub(crate) const ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED: &str =
 pub fn note_ja(note: &DiscardNote) -> String {
     match note {
         DiscardNote::NothingSelected => "破棄する対象が選択されていません。".to_string(),
+        DiscardNote::UnsafePath { path } => Msg::DiscardUnsafePath.t().replace("{}", path),
         DiscardNote::TargetConflicted { path } => {
             super::advice_text(Msg::AdviceDiscardTargetConflicted, &[path])
         }

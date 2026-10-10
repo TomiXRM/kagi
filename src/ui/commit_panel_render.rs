@@ -1133,6 +1133,10 @@ impl CommitPanelView {
                 } else {
                     btn = btn.text_color(rgb(theme().text_muted));
                 }
+                #[cfg(feature = "gui-e2e")]
+                let btn = btn
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-discard-all"));
                 el.child(btn)
             })
             .child(toggle_btn);

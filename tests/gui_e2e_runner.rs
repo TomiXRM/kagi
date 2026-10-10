@@ -1807,6 +1807,10 @@ mod macos {
                 Box::new(crate::conflict_abort_slot::scenario_conflict_abort_superseded_reload),
             ),
             (
+                "cherry_pick_abort_sequence",
+                Box::new(crate::conflict_abort_slot::scenario_cherry_pick_abort_sequence),
+            ),
+            (
                 "remote_browse_escape_focus",
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),
@@ -2341,12 +2345,24 @@ mod macos {
                 Box::new(crate::file_menu_owner::scenario_file_menu_freezes_path),
             ),
             (
+                "discard_literal_backslash",
+                Box::new(crate::file_menu_owner::scenario_discard_literal_backslash),
+            ),
+            (
+                "discard_unsafe_selection",
+                Box::new(crate::file_menu_owner::scenario_discard_unsafe_selection),
+            ),
+            (
                 "file_menu_rejects_stale_owner",
                 Box::new(crate::file_menu_owner::scenario_file_menu_rejects_stale_owner),
             ),
             (
                 "file_menu_focus_after_open_repository",
                 Box::new(crate::file_menu_owner::scenario_file_menu_focus_after_open_repository),
+            ),
+            (
+                "file_menu_unstage_literal",
+                Box::new(crate::file_menu_owner::scenario_file_menu_unstage_literal),
             ),
             (
                 "pr_peek_visible_table",

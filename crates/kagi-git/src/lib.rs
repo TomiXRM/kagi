@@ -37,12 +37,11 @@ pub mod benchmark;
 pub mod blame;
 mod checklist;
 pub mod cli;
-mod conflict_abort;
 mod conflict_abort_guard;
 mod conflict_labels;
 // #704: the abort's stage sequence is contract (ADR-0196 evidence), so the
 // progress-reporting executor is observable from outside the crate.
-pub use conflict_abort::execute_conflict_abort_with_progress;
+pub use ops::conflict_abort::execute_conflict_abort_with_progress;
 pub mod conflicts;
 mod diff;
 mod diffstat;
@@ -65,6 +64,7 @@ pub mod github_threads;
 pub mod hotspot;
 mod log;
 pub mod message_gen;
+pub mod revision;
 pub use kagi_domain::message_template; // ADR-0121: was a shim file
 pub mod oplog;
 pub mod ops;
@@ -198,7 +198,7 @@ pub use snapshot::{
 #[allow(unused_imports)]
 pub use staging::{commit_preview, staged_file_diff, unstaged_file_diff, CommitPreview};
 #[allow(unused_imports)]
-pub(crate) use staging::{stage_file, stage_files, unstage_file, unstage_files};
+pub(crate) use staging::{stage_file, stage_files};
 #[allow(unused_imports)]
 pub use status::{
     working_tree_status, working_tree_status_repairing_stat_cache, ChangeKind, FileStatus,
@@ -390,6 +390,8 @@ pub enum GitError {
     /// repository settings. The underlying Git failure is retained for oplog
     /// and CLI consumers; presentation must not attribute a specific cause.
     RebaseCannotStartWithRepoSettingsDisabled(String),
+    /// Direct revision resolution failed without changing repository state.
+    Revision(revision::RevisionError),
     /// Any other libgit2 error.
     Other(String),
 }
@@ -428,6 +430,7 @@ impl std::fmt::Display for GitError {
             ),
             GitError::Preflight(error) => std::fmt::Display::fmt(error, f),
             GitError::Blocked(note) => f.write_str(&note.message_en()),
+            GitError::Revision(error) => std::fmt::Display::fmt(error, f),
             GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),
             GitError::Other(msg)
             | GitError::StashIdentityUnverified(msg)

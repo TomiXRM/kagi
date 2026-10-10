@@ -162,11 +162,8 @@ Reading a PR on github.com is one motion: the properties, the checks, the
 description and the conversation are a single scroll, and only the files are a
 destination of their own. kagi's 概要/レビュー split had no counterpart there.
 
-kagi's 概要 and レビュー tabs drew two separate scroll panes, so reading a
-review meant losing the description. They are now **one feed**
-(`pr_conversation::render_feed`) with exactly two children: the merge card plus
-description, and the conversation. Both tabs draw the same feed; pressing one
-scrolls the feed to its section through `ScrollHandle::scroll_to_top_of_item`.
+kagi's 概要 and レビュー tabs now draw **one feed**
+(`pr_conversation::render_feed`). Both tabs draw the same list; pressing one scrolls the tab's `ListState` so its section sits at the top (`ListState::scroll_to` with a one-shot `feed_anchor`, not `scroll_to_reveal_item`, whose minimal scroll left the reviews off-screen).
 The lit chip is therefore "where you jumped", not "which body is mounted".
 
 The feed is a **virtualized list** (`gpui::list`, the same element the diff
@@ -190,6 +187,53 @@ Three consequences worth stating:
 - The animated loading row stays **above** the feed: `with_animation` does not
   tick inside a scroll pane. The description is readable while the
   conversation is still in flight, which is the point of merging them.
+
+#### Parent render ownership (#1108)
+
+Virtualizing the feed does not justify copying its backing conversation to
+draw a header. `render_center` borrows the active tab's PR facts and commit
+source; the Review badge counts raw reviews + issue comments + line comments
+(including empty-body reviews, excluding the description). It does not copy
+those collections or the complete PR before choosing the view. Commits builds
+its own elements only when selected; Files and Conflicts take only their own
+diff snapshots and scroll handles, with conflict files borrowed from the tab.
+
+The headline, properties, checks and description cards also borrow that PR.
+The description passes the original body slice to the existing Markdown path;
+only the empty-description fallback needs a new string. This is not Markdown
+preparation reuse, truncation, a new owning DTO, or another renderer cache.
+The flattened `Rc` entries, per-tab `ListState`, one-shot section anchors,
+selection/Copy and pinned composer's parked drafts keep their existing owners.
+
+Header GitHub/merge listeners retain the session owner and full `PrKey`
+(base repository + number), refuse a different active session, and look up
+that owner's matching tab on click. Only then do they acquire the owned PR
+needed by the existing browser/merge action; render does not freeze its body
+into every listener. Refresh can therefore supply the current matching facts
+without retargeting another repository's same-number PR. The existing merge
+planning/admission pipeline and klog contract are unchanged.
+
+Acceptance evidence is scoped: the filtered native lane
+`pr_same_number,workspace_mode_toolbar,pr_threads_via_gh` passed, including the
+toolbar's explicit PR-section-exercised marker. An isolated default app in
+EN / Apple Light / 100% displayed actual PR12 description section 0001 through
+0140, Review 66, review threads and large comment paragraphs, whole-PR files
+and a selected-commit file, then PR280's empty conversation and exactly
+restored unsent ASCII draft. These are content/ownership witnesses, not a
+before/after speedup measurement. Final Review tail, terminal large-diff row,
+split mode, JA / 167% and same-key two-session default smoke were not accepted
+by that run. A -50000 wheel returned to the diff's top, not its tail; neither
+a tail-reachability nor a product-cause claim follows from it.
+
+The subsequent PM-owned final gate lane passed all seven stages (exit 0):
+timed build, the same filtered native lane, workspace tests, workspace Clippy,
+format check, CI invariant checks and the final default build. Its recorded
+wall time was 429.369851 s; this is verification duration, not runtime
+performance. Production remained unchanged. Formatting alone changed the
+native test file's hash without changing its consumer assertions. These local
+gates do not establish public CI status or remove the default-smoke and
+matched-performance limits above.
+
 
 ### 8. The PR's properties are the first rows of its page
 

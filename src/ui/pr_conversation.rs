@@ -390,30 +390,27 @@ pub(super) fn render_feed_item(
         (item, tab.pr.number, tab.pr.review)
     };
     let block = |el: gpui::AnyElement| div().w_full().pb_3().child(el).into_any_element();
-    // The page-level cards are one item each and need the PR; cloning it once
-    // for those few items is fine. Entries do not go through this path.
-    let pr_for_card = |app: &KagiApp| {
-        app.pr_mode()
-            .and_then(|m| m.tabs.get(tab_ix))
-            .map(|t| t.pr.clone())
-    };
+    let pr_for_card = app
+        .pr_mode()
+        .and_then(|mode| mode.tabs.get(tab_ix))
+        .map(|tab| &tab.pr);
     match item {
-        FeedItem::Headline => match pr_for_card(app) {
+        FeedItem::Headline => match pr_for_card {
             Some(pr) => block(super::e2e::measure_control(
                 "pr-mode-headline",
-                super::pr_page::render_pr_headline(app, &pr),
+                super::pr_page::render_pr_headline(app, pr),
             )),
             None => div().into_any_element(),
         },
-        FeedItem::Properties => match pr_for_card(app) {
+        FeedItem::Properties => match pr_for_card {
             Some(pr) => block(super::e2e::measure_control(
                 "pr-mode-properties",
-                super::pr_page::render_pr_properties(app, &pr, cx),
+                super::pr_page::render_pr_properties(app, pr, cx),
             )),
             None => div().into_any_element(),
         },
-        FeedItem::Checks => match pr_for_card(app) {
-            Some(pr) => super::pr_page::render_checks_card(app, &pr, cx)
+        FeedItem::Checks => match pr_for_card {
+            Some(pr) => super::pr_page::render_checks_card(app, pr, cx)
                 .map(block)
                 .unwrap_or_else(|| div().into_any_element()),
             None => div().into_any_element(),
@@ -422,9 +419,8 @@ pub(super) fn render_feed_item(
             let status = app
                 .pr_mode()
                 .and_then(|m| m.tabs.get(tab_ix))
-                .and_then(|t| t.merge_status.clone());
+                .and_then(|tab| tab.merge_status.as_ref());
             status
-                .as_ref()
                 .and_then(|status| {
                     super::pr_merge_status::render(
                         &super::pr_merge_status::view_from(status, review_state),
@@ -434,9 +430,8 @@ pub(super) fn render_feed_item(
                 .map(block)
                 .unwrap_or_else(|| div().into_any_element())
         }
-        FeedItem::Description => match pr_for_card(app) {
-            // Borrowed: the avatar map is not copied per frame (#750 review).
-            Some(pr) => block(description_card(&pr, &app.avatars.images, window, cx)),
+        FeedItem::Description => match pr_for_card {
+            Some(pr) => block(description_card(pr, &app.avatars.images, window, cx)),
             None => div().into_any_element(),
         },
         FeedItem::Conversation => {

@@ -109,6 +109,7 @@ pub fn plan_create_tag(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::CreateTag {
@@ -159,7 +160,7 @@ pub(crate) fn execute_create_tag(
 }
 
 // ────────────────────────────────────────────────────────────
-// plan_push_tag / execute_push_tag
+// plan_push_tag / preflight_push_tag / execute_push_tag
 // ────────────────────────────────────────────────────────────
 
 /// Analyse publishing the local tag `name` to a remote.
@@ -168,8 +169,8 @@ pub(crate) fn execute_create_tag(
 /// but it is the one tag action with an effect outside this machine, so the
 /// plan says so and the UI confirms it like any other write.
 ///
-/// Not destructive, and deliberately not force: `git push <remote> <tag>`
-/// without `--force` is refused by the remote when the tag already exists
+/// Not destructive, and deliberately not force: an explicit approved-OID
+/// refspec is refused by the remote when the tag already exists
 /// there pointing elsewhere. That refusal is the safety property — kagi has no
 /// way to know what a moved tag would break for everyone who already fetched
 /// it, so the answer is to let the remote say no.
@@ -210,6 +211,11 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
         blockers.push(PlanNote::Tag(TagNote::NoRemote));
     }
     let remote_name = remote.clone().unwrap_or_default();
+    let tag_push_identity = if blockers.is_empty() {
+        Some(resolve_push_tag_identity(repo, &remote_name, name)?)
+    } else {
+        None
+    };
 
     if blockers.is_empty() {
         warnings.push(PlanNote::Tag(TagNote::PushRemoteSideEffect {
@@ -234,6 +240,7 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     });
 
     Ok(OperationPlan {
+        tag_push_identity,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Tag(TagTitle::PushTag {
@@ -257,18 +264,69 @@ pub fn plan_push_tag(repo: &Repository, name: &str) -> Result<OperationPlan, Git
     })
 }
 
-/// Publish the local tag `name` to `remote` via `git push <remote> refs/tags/<name>`.
-///
-/// Shelled out through `run_git` like every other remote write, so the user's
-/// credential helper and SSH agent apply. The refspec is fully qualified so a
-/// branch of the same name can never be pushed by accident, and **no force
-/// flag is ever passed** — see `plan_push_tag`.
-pub(crate) fn execute_push_tag(repo_path: &Path, remote: &str, name: &str) -> Result<(), GitError> {
+fn resolve_push_tag_identity(
+    repo: &Repository,
+    remote: &str,
+    name: &str,
+) -> Result<kagi_domain::plan::TagPushIdentity, GitError> {
+    let error = |e: git2::Error| GitError::Other(e.to_string());
     check_operand("remote", remote)?;
-    check_operand("tag", name)?;
+    let transport = run_git(
+        repo.workdir().unwrap_or(repo.path()),
+        &["remote", "get-url", "--push", "--", remote],
+    )
+    .map_err(|e| crate::cli::context("resolve tag push destination", e))?;
+    if transport.status != 0 {
+        return Err(GitError::Other(transport.stderr.trim().to_string()));
+    }
+    let push_url = transport.stdout.trim_end_matches('\n');
+    let reference = repo
+        .find_reference(&format!("refs/tags/{name}"))
+        .map_err(error)?
+        .resolve()
+        .map_err(error)?;
+    let object_oid = reference
+        .target()
+        .ok_or_else(|| GitError::Other("tag has no object OID".into()))?;
+    let peeled_oid = reference.peel(git2::ObjectType::Any).map_err(error)?.id();
+    Ok(kagi_domain::plan::TagPushIdentity {
+        name: name.into(),
+        remote: remote.into(),
+        push_url: push_url.into(),
+        object_oid: object_oid.to_string(),
+        peeled_oid: peeled_oid.to_string(),
+    })
+}
 
-    let refspec = format!("refs/tags/{}", name);
-    let out = run_git(repo_path, &["push", "--", remote, &refspec])
+pub fn preflight_push_tag(
+    repo: &Repository,
+    plan: &OperationPlan,
+    remote: &str,
+    name: &str,
+) -> Result<(), GitError> {
+    let valid = plan.tag_push_identity.as_ref().is_some_and(|approved| {
+        approved.remote == remote
+            && approved.name == name
+            && resolve_push_tag_identity(repo, remote, name).ok().as_ref() == Some(approved)
+    });
+    if !valid {
+        return Err(GitError::Blocked(Box::new(PlanNote::Tag(
+            TagNote::PushIdentityChanged,
+        ))));
+    }
+    Ok(())
+}
+
+/// Send only the approved object, without force or re-reading a mutable ref.
+pub(crate) fn execute_push_tag(repo_path: &Path, plan: &OperationPlan) -> Result<(), GitError> {
+    let approved = plan
+        .tag_push_identity
+        .as_ref()
+        .ok_or_else(|| GitError::Blocked(Box::new(PlanNote::Tag(TagNote::PushIdentityChanged))))?;
+    check_operand("remote", &approved.push_url)?;
+    check_operand("tag", &approved.name)?;
+    let refspec = format!("{}:refs/tags/{}", approved.object_oid, approved.name);
+    let out = run_git(repo_path, &["push", "--", &approved.push_url, &refspec])
         .map_err(|e| crate::cli::context("push tag failed", e))?;
     if out.status != 0 {
         return Err(GitError::Other(format!(

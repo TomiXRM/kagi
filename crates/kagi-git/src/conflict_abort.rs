@@ -108,6 +108,7 @@ pub fn plan_conflict_abort(
     };
 
     Ok(OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::Ready,
         title: PlanTitle::Conflicts(ConflictsTitle::Abort { op }),

@@ -404,6 +404,16 @@ pub struct PullIdentity {
     pub upstream_ref: String,
 }
 
+/// Frozen transport and object identity approved for publishing one tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagPushIdentity {
+    pub name: String,
+    pub remote: String,
+    pub push_url: String,
+    pub object_oid: String,
+    pub peeled_oid: String,
+}
+
 /// A complete plan describing an operation, its blockers and warnings.
 /// If blockers are non-empty the UI must not offer Execute.
 /// ADR-0129: the display layer localizes structured title/notes/recovery;
@@ -440,6 +450,7 @@ pub struct OperationPlan {
     /// Frozen local Pull operand, checked before and after execution's fetch.
     /// `None` for non-Pull and remote-snapshot plans.
     pub pull_identity: Option<PullIdentity>,
+    pub tag_push_identity: Option<TagPushIdentity>,
     /// Read-only digest of approved index paths, OIDs, modes and conflict stages.
     /// Required for commit and staged/both amend; never includes stat-cache data.
     pub approved_index_digest: Option<String>,

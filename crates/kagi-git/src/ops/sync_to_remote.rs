@@ -192,6 +192,7 @@ fn finish(
         }
     });
     OperationPlan {
+        tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
         title: PlanTitle::Sync(SyncTitle::SyncToRemote {

@@ -433,7 +433,7 @@ impl Backend {
     fn one_remote_expectation(&self, op: &str, plan: &OperationPlan) -> Option<RemoteExpectation> {
         use kagi_domain::plan_note::{
             force_lease::ForceLeaseRecovery, push::PushTitle, remote_branch::RemoteBranchRecovery,
-            tag::TagRecovery, PlanTitle, RecoveryKind,
+            PlanTitle, RecoveryKind,
         };
         let kind = plan.recovery.as_ref().map(|recovery| &recovery.kind);
         // The branch and remote come from the plan's own typed title, and the
@@ -489,17 +489,12 @@ impl Backend {
                 refname: format!("refs/heads/{branch}"),
                 expect: RemoteExpect::Absent,
             }),
-            ("push-tag", Some(RecoveryKind::Tag(TagRecovery::PushTag { name, remote }))) => {
-                let oid = self
-                    .repo
-                    .revparse_single(&format!("refs/tags/{name}"))
-                    .ok()?
-                    .id()
-                    .to_string();
+            ("push-tag", _) => {
+                let approved = plan.tag_push_identity.as_ref()?;
                 Some(RemoteExpectation::Ref {
-                    remote: remote.clone(),
-                    refname: format!("refs/tags/{name}"),
-                    expect: RemoteExpect::Oid(oid),
+                    remote: approved.push_url.clone(),
+                    refname: format!("refs/tags/{}", approved.name),
+                    expect: RemoteExpect::Oid(approved.object_oid.clone()),
                 })
             }
             _ => None,

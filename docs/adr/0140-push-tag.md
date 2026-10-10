@@ -29,8 +29,13 @@ two-stage that delete-remote-branch and force-with-lease use. What it *does*
 get is a warning saying out loud that this leaves the machine — every other
 tag action in kagi is purely local, and that asymmetry is worth stating.
 
-**Never forced.** `execute_push_tag` runs `git push <remote> refs/tags/<name>`
-with no force flag, ever. If the tag already exists on the remote pointing at
+**Never forced.** `execute_push_tag` runs `git push <approved-push-url> <approved-object-oid>:refs/tags/<name>`
+with no force flag, ever. The plan binds the remote name, resolved push URL,
+raw tag object OID and peeled target; preflight refuses request, transport or
+local tag drift with a localized typed blocker before sending anything.
+Execution and verification use that frozen transport and raw object (including
+an annotated tag object), not a tag ref re-read after approval.
+If the tag already exists on the remote pointing at
 a different commit, the remote refuses the push. That refusal *is* the safety
 property: kagi cannot know what a moved tag would break for everyone who
 already fetched it, so the right answer is to let the remote say no and

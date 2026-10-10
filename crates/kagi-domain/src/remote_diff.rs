@@ -124,6 +124,7 @@ pub fn parse_file_diff(text: &str) -> FileDiff {
                     old_range: (os, _oc),
                     new_range: (ns, _nc),
                     lines: Vec::new(),
+                    content_identity: None,
                 });
             }
             continue;

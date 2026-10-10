@@ -12,7 +12,7 @@ use std::path::Path;
 mod git_fixture;
 use git_fixture::{commit_all, git_command, git_output, init_repo};
 
-use kagi_domain::diff::HunkRange;
+use kagi_domain::diff::HunkApproval;
 use kagi_domain::plan_note::{CommonNote, PlanNote};
 use kagi_git::{Backend, GitError};
 use tempfile::TempDir;
@@ -60,13 +60,13 @@ impl Repo {
     fn backend(&self) -> Backend {
         Backend::open(self.path()).expect("open")
     }
-    fn unstaged(&self) -> Vec<HunkRange> {
+    fn unstaged(&self) -> Vec<HunkApproval> {
         let diff = self.backend().unstaged_file_diff(Path::new(FILE)).unwrap();
-        diff.hunks.iter().map(|h| h.range()).collect()
+        diff.hunks.iter().map(|h| h.approval().unwrap()).collect()
     }
-    fn staged(&self) -> Vec<HunkRange> {
+    fn staged(&self) -> Vec<HunkApproval> {
         let diff = self.backend().staged_file_diff(Path::new(FILE)).unwrap();
-        diff.hunks.iter().map(|h| h.range()).collect()
+        diff.hunks.iter().map(|h| h.approval().unwrap()).collect()
     }
     /// The staged content of the file, byte for byte.
     fn index_text(&self) -> String {
@@ -189,10 +189,8 @@ fn an_unstage_of_a_hunk_no_longer_staged_is_refused() {
     repo.backend()
         .stage_hunk(Path::new(FILE), hunks[0])
         .unwrap();
-    let stale = HunkRange {
-        old: (drawn[0].old.0 + 1, drawn[0].old.1),
-        new: drawn[0].new,
-    };
+    let mut stale = drawn[0];
+    stale.range.old.0 += 1;
     let before = repo.index_text();
     let err = repo
         .backend()
@@ -211,14 +209,201 @@ fn an_untracked_file_is_its_one_hunk() {
     assert_eq!(diff.hunks.len(), 1);
 
     backend
-        .stage_hunk(Path::new("new.txt"), diff.hunks[0].range())
+        .stage_hunk(Path::new("new.txt"), diff.hunks[0].approval().unwrap())
         .expect("stage the whole new file");
     assert_eq!(show_index(repo.path(), "new.txt"), "a\nb\n");
 
     let staged = backend.staged_file_diff(Path::new("new.txt")).unwrap();
     backend
-        .unstage_hunk(Path::new("new.txt"), staged.hunks[0].range())
+        .unstage_hunk(Path::new("new.txt"), staged.hunks[0].approval().unwrap())
         .expect("unstage the whole new file");
     let listed = git_output(repo.path(), &["ls-files", "--", "new.txt"]);
     assert!(listed.is_empty(), "new.txt is untracked again");
+}
+
+#[test]
+fn same_range_different_content_is_refused_for_stage() {
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+    commit_all(repo.path(), "three-line base");
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED\nthree\n").unwrap();
+    let drawn = repo.unstaged()[0];
+    std::fs::write(repo.path().join(FILE), "one\nNOT_APPROVED\nthree\n").unwrap();
+    assert_eq!(
+        repo.unstaged()[0].range,
+        drawn.range,
+        "the range did not move"
+    );
+    let snapshot = unchanged_snapshot(&repo);
+    let before = repo.index_text();
+    let result = repo.backend().stage_hunk(Path::new(FILE), drawn);
+    assert_eq!(
+        repo.index_text(),
+        before,
+        "refusal must not stage NOT_APPROVED content; result={result:?}"
+    );
+    assert!(is_hunk_changed(&result.unwrap_err()));
+    assert_refusal_unchanged(&repo, snapshot, "stage");
+}
+
+fn unchanged_snapshot(repo: &Repo) -> (String, Vec<u8>, Vec<u8>, usize) {
+    (
+        git_output(repo.path(), &["rev-parse", "HEAD"]),
+        std::fs::read(repo.path().join(".git/index")).unwrap(),
+        std::fs::read(repo.path().join(FILE)).unwrap(),
+        kagi_git::read_oplog_tail_for_repo(repo.path(), 100).len(),
+    )
+}
+
+fn assert_refusal_unchanged(repo: &Repo, before: (String, Vec<u8>, Vec<u8>, usize), op: &str) {
+    let after = unchanged_snapshot(repo);
+    assert_eq!(after.0, before.0, "HEAD unchanged");
+    assert_eq!(after.1, before.1, "index bytes unchanged");
+    assert_eq!(after.2, before.2, "worktree bytes unchanged");
+    assert_eq!(after.3, before.3 + 1, "exactly one receipt");
+    let entries = kagi_git::read_oplog_tail_for_repo(repo.path(), 1);
+    assert_eq!(entries[0].op, op);
+    assert!(
+        matches!(&entries[0].outcome, kagi_git::OpOutcome::Refused { blockers }
+        if blockers.len() == 1 && blockers[0].contains("has changed since the diff was drawn"))
+    );
+}
+
+#[test]
+fn same_range_different_content_is_refused_for_unstage() {
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+    commit_all(repo.path(), "three-line base");
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED\nthree\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    let drawn = repo.staged()[0];
+    std::fs::write(repo.path().join(FILE), "one\nNOT_APPROVED\nthree\n").unwrap();
+    git_output(repo.path(), &["add", "--", FILE]);
+    assert_eq!(
+        repo.staged()[0].range,
+        drawn.range,
+        "the range did not move"
+    );
+    let before = unchanged_snapshot(&repo);
+    let err = repo
+        .backend()
+        .unstage_hunk(Path::new(FILE), drawn)
+        .unwrap_err();
+    assert!(is_hunk_changed(&err), "{err:?}");
+    assert_refusal_unchanged(&repo, before, "unstage");
+}
+
+#[test]
+fn context_only_changes_are_refused_for_stage_and_unstage() {
+    for staged in [false, true] {
+        let repo = Repo::new();
+        if staged {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        let drawn = if staged {
+            repo.staged()[0]
+        } else {
+            repo.unstaged()[0]
+        };
+        // Preserve TWO/EIGHTEEN and their ranges; change only context present
+        // identically on both patch sides.
+        let base = original().replace("line 1\n", "changed context\n");
+        std::fs::write(repo.path().join(FILE), base).unwrap();
+        if staged {
+            commit_all(repo.path(), "new context in HEAD");
+        } else {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        std::fs::write(
+            repo.path().join(FILE),
+            edited().replace("line 1\n", "changed context\n"),
+        )
+        .unwrap();
+        if staged {
+            git_output(repo.path(), &["add", "--", FILE]);
+        }
+        let current = if staged {
+            repo.staged()[0]
+        } else {
+            repo.unstaged()[0]
+        };
+        assert_eq!(drawn.range, current.range, "context change preserves range");
+        let before = unchanged_snapshot(&repo);
+        let result = if staged {
+            repo.backend().unstage_hunk(Path::new(FILE), drawn)
+        } else {
+            repo.backend().stage_hunk(Path::new(FILE), drawn)
+        };
+        assert!(is_hunk_changed(&result.unwrap_err()));
+        assert_refusal_unchanged(&repo, before, if staged { "unstage" } else { "stage" });
+    }
+}
+
+#[test]
+fn missing_final_newline_approvals_apply_in_both_directions() {
+    let repo = Repo::new();
+    std::fs::write(repo.path().join(FILE), "one\nAPPROVED").unwrap();
+    let approved = repo.unstaged()[0];
+    repo.backend()
+        .stage_hunk(Path::new(FILE), approved)
+        .unwrap();
+    assert_eq!(repo.index_text(), "one\nAPPROVED");
+    let approved = repo.staged()[0];
+    repo.backend()
+        .unstage_hunk(Path::new(FILE), approved)
+        .unwrap();
+    assert_eq!(repo.index_text(), original());
+    assert_eq!(repo.worktree_text(), "one\nAPPROVED");
+}
+
+#[test]
+fn raw_byte_and_final_newline_drift_are_refused_in_both_directions() {
+    for (approved, changed) in [
+        (
+            b"one\nAPPROVED\nthree\n".as_slice(),
+            b"one\nAPPROVED\nthree".as_slice(),
+        ),
+        (
+            b"one\n\xff\nthree\n".as_slice(),
+            b"one\n\xfe\nthree\n".as_slice(),
+        ),
+    ] {
+        for staged in [false, true] {
+            let repo = Repo::new();
+            std::fs::write(repo.path().join(FILE), "one\ntwo\nthree\n").unwrap();
+            commit_all(repo.path(), "three-line base");
+            std::fs::write(repo.path().join(FILE), approved).unwrap();
+            if staged {
+                git_output(repo.path(), &["add", "--", FILE]);
+            }
+            // Keep the actual long-lived backend open across the external edit.
+            let backend = repo.backend();
+            let drawn = if staged {
+                backend.staged_file_diff(Path::new(FILE)).unwrap()
+            } else {
+                backend.unstaged_file_diff(Path::new(FILE)).unwrap()
+            }
+            .hunks[0]
+                .approval()
+                .unwrap();
+            std::fs::write(repo.path().join(FILE), changed).unwrap();
+            if staged {
+                git_output(repo.path(), &["add", "--", FILE]);
+            }
+            let current = if staged {
+                repo.staged()[0]
+            } else {
+                repo.unstaged()[0]
+            };
+            assert_eq!(current.range, drawn.range, "range is unchanged");
+            let before = unchanged_snapshot(&repo);
+            let result = if staged {
+                backend.unstage_hunk(Path::new(FILE), drawn)
+            } else {
+                backend.stage_hunk(Path::new(FILE), drawn)
+            };
+            assert!(is_hunk_changed(&result.unwrap_err()));
+            assert_refusal_unchanged(&repo, before, if staged { "unstage" } else { "stage" });
+        }
+    }
 }

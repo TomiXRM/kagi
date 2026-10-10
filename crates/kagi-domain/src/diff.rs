@@ -41,22 +41,31 @@ pub struct Hunk {
     pub new_range: (u32, u32),
     /// The lines belonging to this hunk (context + added + removed).
     pub lines: Vec<DiffLine>,
+    /// Exact raw patch-side digests, absent for synthetic/remote display diffs.
+    pub content_identity: Option<([u8; 32], [u8; 32])>,
 }
 
 impl Hunk {
-    /// The header numbers that identify this hunk.
+    /// The header numbers used to locate this hunk, not to approve its content.
     pub fn range(&self) -> HunkRange {
         HunkRange {
             old: self.old_range,
             new: self.new_range,
         }
     }
+
+    /// Freeze the displayed range and content for an index mutation.
+    pub fn approval(&self) -> Option<HunkApproval> {
+        let (old_digest, new_digest) = self.content_identity?;
+        Some(HunkApproval {
+            range: self.range(),
+            old_digest,
+            new_digest,
+        })
+    }
 }
 
-/// A hunk's identity for hunk staging (#842): the four numbers of its
-/// `@@ -old_start,old_lines +new_start,new_lines @@` header. Staging re-reads
-/// the diff and acts only on the hunk with exactly these numbers, so a hunk
-/// shown before the index moved is refused rather than guessed at.
+/// The four numbers of a unified-diff hunk header, not a content identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HunkRange {
     /// `(start, count)` in the old file.
@@ -89,6 +98,25 @@ impl HunkRange {
         Self {
             old: self.new,
             new: self.old,
+        }
+    }
+}
+
+/// A displayed hunk's range plus SHA-256 identities of its raw patch sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HunkApproval {
+    pub range: HunkRange,
+    pub old_digest: [u8; 32],
+    pub new_digest: [u8; 32],
+}
+
+impl HunkApproval {
+    /// The same approved patch applied in reverse (unstaging).
+    pub fn reversed(self) -> Self {
+        Self {
+            range: self.range.reversed(),
+            old_digest: self.new_digest,
+            new_digest: self.old_digest,
         }
     }
 }

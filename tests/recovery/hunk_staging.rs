@@ -182,6 +182,133 @@ pub fn scenario_hunk_staging(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS hunk_staging");
 }
 
+/// #1131: a real click consumes the content shown before an external edit,
+/// not the new content now occupying the same header range.
+pub fn scenario_hunk_staging_content_identity(cx: &mut VisualTestAppContext) {
+    use kagi::ui::i18n::{self, Lang};
+    use kagi_domain::plan_note::{CommonNote, PlanNote};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "diff_split"]);
+    let language = i18n::lang();
+    let split = theme::diff_split();
+    theme::set_diff_split(false);
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        for staged in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let repo = temp.path().canonicalize().unwrap();
+            git(&repo, &["init", "-q", "-b", "main"]);
+            std::fs::write(repo.join("f.txt"), "one\ntwo\nthree\n").unwrap();
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-qm", "base"]);
+            std::fs::write(repo.join("f.txt"), "one\nAPPROVED\nthree\n").unwrap();
+            if staged {
+                git(&repo, &["add", "--", "f.txt"]);
+            }
+            let (app, window) = mount(cx, &repo);
+            app.update(cx, |app, cx| {
+                e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+            });
+            cx.run_until_parked();
+            open(
+                cx,
+                &app,
+                if staged {
+                    CommitPanelFileRef::Staged { index: 0 }
+                } else {
+                    CommitPanelFileRef::Unstaged { index: 0 }
+                },
+            );
+            let shown = headers(cx, &app);
+            assert_eq!(shown.len(), 1);
+            draw(cx, window);
+            let id = format!("main-diff-hunk-stage-{}", shown[0]);
+            let bounds = e2e::control_bounds(window.window_id(), &id).expect("hunk button");
+            let head = git_value(&repo, &["rev-parse", "HEAD"]);
+            // The UI is already drawn. Edit externally, then click its existing
+            // measured button without refreshing or planning a replacement.
+            std::fs::write(repo.join("f.txt"), "one\nNOT_APPROVED\nthree\n").unwrap();
+            if staged {
+                git(&repo, &["add", "--", "f.txt"]);
+            }
+            let index = std::fs::read(repo.join(".git/index")).unwrap();
+            let blob = git_value(&repo, &["rev-parse", ":f.txt"]);
+            assert!(
+                diff_has_text(cx, &app, "APPROVED"),
+                "old diff still displayed"
+            );
+            cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            wait_idle(cx, &app);
+            let op = if staged { "unstage" } else { "stage" };
+            let note = PlanNote::Common(CommonNote::HunkChanged {
+                path: "f.txt".into(),
+            });
+            let expected = i18n::op_refused(op, i18n::plan_note_text(&note), 0);
+            cx.read(|cx| {
+                let state = app.read(cx);
+                assert!(matches!(&state.status_footer, FooterStatus::Failed(m) if m.as_ref() == expected),
+                    "{lang:?} {op}: {:?}", state.status_footer);
+                let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+                assert!(matches!(toast.kind, kagi::ui::ToastKind::Error));
+                assert!(toast.message.ends_with(&expected), "{:?}", toast.message);
+                assert!(e2e::app_notice_message(state).is_none());
+            });
+            assert_eq!(git_value(&repo, &["rev-parse", "HEAD"]), head);
+            assert_eq!(
+                git_value(&repo, &["rev-parse", ":f.txt"]),
+                blob,
+                "index blob unchanged"
+            );
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            assert_eq!(
+                std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+                "one\nNOT_APPROVED\nthree\n"
+            );
+            let entries = kagi_git::read_oplog_tail_for_repo(&repo, 100);
+            assert_eq!(entries.len(), 1, "exactly one refusal receipt");
+            assert_eq!(entries[0].op, op);
+            assert!(
+                matches!(&entries[0].outcome, kagi_git::OpOutcome::Refused { blockers }
+                if blockers == &vec![note.message_en()])
+            );
+            assert!(
+                diff_has_text(cx, &app, "NOT_APPROVED"),
+                "refusal refreshes diff"
+            );
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(language);
+    theme::set_diff_split(split);
+    eprintln!("[gui-e2e] PASS hunk_staging_content_identity EN/JA stage/unstage");
+}
+
+fn git_value(repo: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn diff_has_text(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, text: &str) -> bool {
+    cx.read(|cx| {
+        let pane = app
+            .read(cx)
+            .ui()
+            .main_diff
+            .as_ref()
+            .expect("diff pane")
+            .read(cx);
+        pane.view
+            .rows
+            .iter()
+            .any(|row| matches!(row, DiffRow::Line { text: line, .. } if line.strip_prefix('+') == Some(text)))
+    })
+}
+
 /// A completed but held first diffstat read must not overwrite the badge from
 /// a second stage in the same cache epoch. The panel and index update while
 /// the first read is still held: staging never waits for the badge's two diffs.

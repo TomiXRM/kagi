@@ -3,25 +3,25 @@
 //! Rides the same write path as the per-file buttons (`do_stage_file`): the
 //! pane-mutation gate, the stage write lease, and #490's failure delivery
 //! (oplog + footer + notice) with the same `stage` / `unstage` op names. The
-//! backend re-reads the diff and refuses a hunk whose header no longer exists
+//! backend refuses changes to the displayed range or raw patch content
 //! (`HunkChanged`). Either way the open diff is re-read afterwards, so what
 //! the pane shows is what the index now holds.
 
 use super::staging_failure::StageAction;
 use crate::ui::main_diff_pane::MainDiffRead;
 use crate::ui::*;
-use kagi_domain::diff::HunkRange;
+use kagi_domain::diff::HunkApproval;
 use std::path::PathBuf;
 
 impl KagiApp {
     /// Stage (`staged == false`, from the unstaged diff) or unstage
     /// (`staged == true`, from the staged diff) the hunk of `path` whose
-    /// header is `range`.
+    /// range and raw patch content were captured in `approved` at display time.
     pub fn stage_hunk_from_diff(
         &mut self,
         owner: crate::app::SessionId,
         path: PathBuf,
-        range: HunkRange,
+        approved: HunkApproval,
         staged: bool,
         cx: &mut Context<Self>,
     ) {
@@ -43,25 +43,38 @@ impl KagiApp {
         };
         let result = lease.run(|| {
             self.with_staging_repo(&repo_path, |repo| {
-                if staged {
-                    repo.unstage_hunk(&path, range)
-                } else {
-                    repo.stage_hunk(&path, range)
-                }
+                repo.stage_hunk_recorded(&path, approved, staged)
             })
         });
         self.refresh_write_busy();
+        let range = approved.range;
         let header = format!(
             "@@ -{},{} +{},{} @@",
             range.old.0, range.old.1, range.new.0, range.new.1
         );
-        match result.and_then(|r| r) {
-            Ok(()) => klog!(
-                "{} hunk: {} {}",
-                if staged { "unstaged" } else { "staged" },
-                path.display(),
-                header
-            ),
+        match result {
+            Ok(report) => {
+                match &report.result {
+                    Ok(()) => klog!(
+                        "{} hunk: {} {}",
+                        if staged { "unstaged" } else { "staged" },
+                        path.display(),
+                        header
+                    ),
+                    Err(e) => klog!("hunk staging error: {}", e),
+                }
+                let op = if staged { "unstage" } else { "stage" };
+                self.notice_recording_failure(op, &report.recording, &repo_path);
+                let display = match &report.result {
+                    Err(kagi_git::GitError::Blocked(note)) => {
+                        super::record::typed_refusal(op, std::slice::from_ref(note.as_ref()))
+                    }
+                    _ => None,
+                };
+                let entry =
+                    crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&report.recording);
+                self.record_op_impl(entry, cx, false, display);
+            }
             Err(e) => {
                 klog!("hunk staging error: {}", e);
                 self.stage_failure(action, &repo_path, &paths, &e, cx);

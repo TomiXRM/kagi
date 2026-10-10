@@ -58,10 +58,10 @@ impl KagiApp {
         };
         ui.smart_commit_generating = true;
         ui.smart_commit_status = Some(match provider {
-            smart_commit::SmartProvider::Ollama => "Generating with local LLM…".to_string(),
-            smart_commit::SmartProvider::Cli(p) => {
-                format!("Generating with {}…", p.display_name())
-            }
+            smart_commit::SmartProvider::Ollama => Msg::SmartGeneratingLocal.t().to_string(),
+            smart_commit::SmartProvider::Cli(p) => Msg::SmartGeneratingProvider
+                .t()
+                .replace("{}", p.display_name()),
         });
         cx.notify();
 
@@ -134,15 +134,14 @@ impl KagiApp {
                                 v.pending_smart_msg = Some(msg.clone());
                             });
                             ui.smart_commit_status = Some(if used_llm {
-                                "Generated with local LLM".to_string()
+                                Msg::SmartGeneratedLocal.t().to_string()
                             } else {
-                                "LLM unavailable — used rule-based".to_string()
+                                Msg::SmartGenerationFallback.t().to_string()
                             });
                         }
                     }
                     _ => {
-                        ui.smart_commit_status =
-                            Some("Generation failed — edit manually".to_string());
+                        ui.smart_commit_status = Some(Msg::SmartGenerationFailed.t().to_string());
                     }
                 }
                 if app.active_session() == Some(owner) {

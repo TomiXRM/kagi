@@ -1363,7 +1363,7 @@ fn render_center(
         .child(super::pr_dashboard::refresh_button(cx))
         .child(
             div()
-                .text_color(rgb(theme().ui_accent()))
+                .text_color(rgb(theme().accent_text_on(theme().bg_base)))
                 .text_sm()
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
@@ -1381,11 +1381,11 @@ fn render_center(
                 .text_sm()
                 .cursor_pointer()
                 .text_color(rgb(if show_description {
-                    theme().ui_accent()
+                    theme().accent_text_on(theme().bg_base)
                 } else {
                     theme().text_main
                 }))
-                .hover(|s| s.text_color(rgb(theme().ui_accent())))
+                .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().bg_base))))
                 .tooltip(|w, cx| {
                     gpui_component::tooltip::Tooltip::new(Msg::PrModeShowDescription.t())
                         .build(w, cx)
@@ -1533,7 +1533,9 @@ fn render_center(
                 .px_3()
                 .py_1()
                 .cursor_pointer()
-                .when(selected_commit.is_none(), |el| el.bg(rgb(theme().selected)))
+                .when(selected_commit.is_none(), |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(all_click)
                 .map(|el| {
@@ -1575,7 +1577,9 @@ fn render_center(
                     .px_3()
                     .text_sm()
                     .cursor_pointer()
-                    .when(sel, |el| el.bg(rgb(theme().selected)))
+                    .when(sel, |el| {
+                        el.bg(theme().selected_for_window(app.window_active))
+                    })
                     .hover(|s| s.bg(rgb(theme().surface)))
                     .on_click(click)
                     // Straight-line "graph": a dot per commit, no lanes — the
@@ -1583,7 +1587,7 @@ fn render_center(
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(rgb(theme().ui_accent()))
+                            .text_color(rgb(theme().accent_text_on(theme().bg_base)))
                             .child(SharedString::from("\u{25CF}")),
                     )
                     .child(
@@ -1670,7 +1674,7 @@ fn render_center(
                     .w(theme::scaled_px(13.))
                     .h(theme::scaled_px(13.))
                     .text_color(rgb(if on {
-                        theme().ui_accent()
+                        theme().accent_text_on(theme().panel)
                     } else {
                         theme().text_sub
                     })),
@@ -1968,7 +1972,9 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .px_3()
                 .text_sm()
                 .cursor_pointer()
-                .when(sel, |el| el.bg(rgb(theme().selected)))
+                .when(sel, |el| {
+                    el.bg(theme().selected_for_window(app.window_active))
+                })
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
                 .map(|el| {

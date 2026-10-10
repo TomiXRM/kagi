@@ -124,6 +124,7 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -227,7 +228,13 @@ impl KagiApp {
         // so "hovered" never reads as "current mode". `ui_accent()` is the same
         // chrome role as the toolbar's count chips, following the Mac accent for
         // Apple themes without recolouring Git ref chips or lanes.
+        let window_active = self.window_active_for_render(window);
         let mode_on = |el: gpui::Stateful<gpui::Div>| {
+            if !window_active {
+                return el
+                    .bg(rgb(theme().inactive_selected))
+                    .text_color(rgb(theme().text_main));
+            }
             let mut c: gpui::Hsla = rgb(theme().ui_accent()).into();
             c.a = if theme().dark { 0.26 } else { 0.18 };
             el.bg(c)
@@ -464,7 +471,13 @@ impl KagiApp {
                 // place while the extra fraction belongs to the ring.
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
-                .hover(|style| style.bg(rgb(theme().selected)))
+                .hover(|style| {
+                    style.bg(rgb(if window_active {
+                        theme().selected
+                    } else {
+                        theme().surface
+                    }))
+                })
                 .cursor(if enabled {
                     gpui::CursorStyle::PointingHand
                 } else {
@@ -608,7 +621,14 @@ impl KagiApp {
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
                             .rounded_md()
-                            .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                            .hover(|st| {
+                                st.bg(rgb(if window_active {
+                                    theme().selected
+                                } else {
+                                    theme().surface
+                                }))
+                                .cursor_pointer()
+                            })
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
                         let refresh = refresh.on_key_down(|event, _, _| {
@@ -816,6 +836,8 @@ impl KagiApp {
                                 cx.notify();
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
+                            let hover_fill =
+                                gpui_component::ActiveTheme::theme(&**cx).button_primary_hover;
                             el.child(
                                 keyboard_nav::focusable(
                                     div()
@@ -830,10 +852,12 @@ impl KagiApp {
                                         .rounded_md()
                                         .bg(rgb(theme().ui_accent()))
                                         .cursor(gpui::CursorStyle::PointingHand)
-                                        .hover(|s| s.bg(rgb(theme().color_remote)))
+                                        .hover(move |s| s.bg(hover_fill))
                                         .child(
                                             div()
-                                                .text_color(rgb(theme().bg_base))
+                                                .text_color(rgb(theme::primary_button_foreground(
+                                                    &theme(),
+                                                )))
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .child(chip_text),

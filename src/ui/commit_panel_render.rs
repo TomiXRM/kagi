@@ -161,6 +161,7 @@ fn render_cp_file_row(
     is_conflicted: bool,
     is_sel: bool,
     wip_hit: bool,
+    window_active: bool,
     indent: f32,
     stat: Option<&kagi_git::FileDiffStat>,
     convention: bool,
@@ -188,11 +189,11 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let row_bg = if is_conflicted {
-        theme().diff_removed_bg
-    } else if is_sel {
-        theme().ui_selected()
+        rgb(theme().diff_removed_bg).into()
+    } else if is_sel || wip_hit {
+        theme().selected_for_window(window_active)
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     };
     let mut file_row = div()
         .id((row_id, fi))
@@ -205,7 +206,6 @@ fn render_cp_file_row(
                 Some(is_sel),
             )
         })
-        .when(wip_hit, |el| el.bg(rgb(theme().ui_selected())))
         .w_full()
         .flex()
         .flex_row()
@@ -219,7 +219,7 @@ fn render_cp_file_row(
             }
         })
         .py_px()
-        .bg(rgb(row_bg))
+        .bg(row_bg)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(file_click)
         .child(
@@ -479,6 +479,7 @@ fn cp_unstaged_file_element(
             panel.is_conflicted(&f.path),
             panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.unstaged_stat(&f.path),
             is_convention(&f.path),
@@ -517,6 +518,7 @@ fn cp_staged_file_element(
             false,
             panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
             wip_hit,
+            view.window_active,
             0.0,
             panel.staged_stat(&f.path),
             is_convention(&f.path),
@@ -645,6 +647,7 @@ pub(crate) fn render_unstaged_tree_row(
                     path.map(|p| panel.is_conflicted(p)).unwrap_or(false),
                     panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.unstaged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -713,6 +716,7 @@ pub(crate) fn render_staged_tree_row(
                     false,
                     panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
                     wip_hit,
+                    view.window_active,
                     (*depth as f32) * 12.0,
                     path.and_then(|p| panel.staged_stat(p)),
                     path.map(|p| is_convention(p)).unwrap_or(false),
@@ -938,6 +942,15 @@ impl CommitPanelView {
 
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
+        self.window_active = window.is_window_active();
+        #[cfg(feature = "gui-e2e")]
+        {
+            self.window_active = self.window_active_override.unwrap_or(self.window_active);
+        }
         // Correction #1/#2: input sync + draft autosave run on the entity's own
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
@@ -1040,11 +1053,11 @@ impl CommitPanelView {
                 .px_1p5()
                 .py_px()
                 .text_xs()
-                .bg(rgb(if active {
-                    theme().ui_selected()
+                .bg(if active {
+                    theme().selected_for_window(self.window_active)
                 } else {
-                    theme().surface
-                }))
+                    rgb(theme().surface).into()
+                })
                 .text_color(rgb(if active {
                     theme().text_main
                 } else {
@@ -1218,6 +1231,11 @@ impl CommitPanelView {
             .disabled(!can_commit)
             .when(can_commit, |b| b.on_click(commit_click))
             .into_any_element();
+        let commit_btn = div()
+            .relative()
+            .flex_shrink_0()
+            .child(commit_btn)
+            .child(super::e2e::measure_inside("cp-commit-action"));
 
         // ── Footer icon row (ADR-0134) ────────────────────────────
         // Three icon actions replace the old pill toolbar + full-width Amend
@@ -1234,6 +1252,8 @@ impl CommitPanelView {
                         .flex()
                         .items_center()
                         .justify_center()
+                        .relative()
+                        .child(super::e2e::measure_inside(id))
                         .tooltip(move |_w, cx| {
                             gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx)
                         })
@@ -1257,7 +1277,7 @@ impl CommitPanelView {
             let suggest_color = if llm_on {
                 theme().color_success
             } else {
-                theme().ui_accent()
+                theme().accent_text_on(theme().panel)
             };
             let suggest_btn: gpui::AnyElement = if smart_ui.0 {
                 // Spin the same icon rather than swapping in a text spinner, so
@@ -1375,11 +1395,18 @@ impl CommitPanelView {
                 .rounded_sm()
                 .text_xs()
                 .text_color(rgb(if on {
-                    theme().ui_accent()
+                    theme().accent_text_on(theme().panel)
                 } else {
                     theme().text_muted
                 }))
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .hover(|s| {
+                    let s = s.bg(rgb(theme().selected)).cursor_pointer();
+                    if on {
+                        s.text_color(rgb(theme().accent_text_on(theme().selected)))
+                    } else {
+                        s
+                    }
+                })
                 .tooltip(|w, cx| {
                     gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
                         .build(w, cx)
@@ -1404,29 +1431,52 @@ impl CommitPanelView {
         // wearing the Input's own border/background, with an unstyled `Input`
         // and the icons stacked in it. Drawn as a real row rather than absolutely
         // positioned so it can never overlap a long body.
+        // AutoGrow's inner minimum prevents flex shrinking at high zoom. Keep
+        // its cached visual-row measurement, without imposing that minimum.
+        let body_rows = body_input
+            .as_ref()
+            .map_or(3, |body| body.read(cx).wrap_row_count().clamp(3, 12));
+        let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
+            + gpui_component::Size::Medium.input_py() * 2.;
         let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
             (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
+                .min_h(px(0.))
+                .flex_shrink(1.)
+                .overflow_hidden()
                 .gap_2()
                 .child(Input::new(title).appearance(true).bordered(true))
                 .child(
                     div()
                         .flex()
                         .flex_col()
+                        // Icon, its p_1, row pb_1, and the body's two borders.
+                        .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
+                        .flex_shrink(1.)
                         // Same radius the `Input` gives itself, so the two boxes
                         // do not have visibly different corners.
                         .rounded(input_radius)
                         .border_1()
                         .border_color(rgb(theme().text_muted))
                         .bg(rgb(theme().bg_base))
-                        .child(Input::new(body).appearance(false).bordered(false))
+                        .child(
+                            div()
+                                .h(body_height)
+                                .min_h(px(0.))
+                                .flex_shrink(1.)
+                                .overflow_hidden()
+                                .child(Input::new(body).h_full().appearance(false).bordered(false)),
+                        )
+                        .relative()
+                        .child(super::e2e::measure_inside("cp-body"))
                         .child(
                             div()
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .justify_between()
+                                .flex_shrink_0()
                                 .px_1()
                                 .pb_1()
                                 .child(template_toggle)
@@ -1489,14 +1539,17 @@ impl CommitPanelView {
                         )
                     }),
             )
-            // T-UI-003: ファイル領域コンテナ (flex_1 + min_h(0)) — diff 廃止でフル高さ
+            // File lists share the remaining height with the shrinking composer.
             .child(
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    .min_h(px(0.))
+                    // Keep both section headers while sharing space with editing.
+                    .min_h(theme::scaled_px(80.))
                     .flex()
                     .flex_col()
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-files"))
                     // Unstaged ヘッダ (固定)
                     .child(unstaged_header)
                     // Unstaged スクロールボックス — PERF: virtualized uniform_list.
@@ -1636,7 +1689,9 @@ impl CommitPanelView {
             // it writes into that worktree.
             .child(
                 div()
-                    .flex_shrink_0()
+                    .flex_shrink(1.)
+                    .min_h(px(0.))
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .px_3()

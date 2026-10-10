@@ -268,8 +268,12 @@ impl KagiApp {
                                     .py_0p5()
                                     .rounded_md()
                                     .bg(rgb(theme().surface))
-                                    .text_color(rgb(theme().ui_accent()))
-                                    .hover(|st| st.bg(rgb(theme().selected)))
+                                    .text_color(rgb(theme().accent_text_on(theme().surface)))
+                                    .hover(|st| {
+                                        st.bg(rgb(theme().selected)).text_color(rgb(
+                                            theme().accent_text_on(theme().selected)
+                                        ))
+                                    })
                                     .cursor_pointer()
                                     .child(SharedString::from(format!("← Solo: {name}")))
                                     .on_mouse_down(
@@ -350,11 +354,11 @@ impl KagiApp {
                             .text_xs()
                             .cursor_pointer()
                             .text_color(rgb(if is_compact {
-                                theme().ui_accent()
+                                theme().accent_text_on(theme().panel)
                             } else {
                                 theme().text_muted
                             }))
-                            .hover(|s| s.text_color(rgb(theme().ui_accent())))
+                            .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().panel))))
                             .on_click(compact_click)
                             .child(SharedString::from(if is_compact { "▥" } else { "▤" })),
                     )
@@ -498,6 +502,7 @@ impl KagiApp {
                                             &this.avatars.images,
                                             commit_range,
                                             selected,
+                                            this.window_active,
                                             this.badge_col_w,
                                             this.graph_col_w,
                                             compact,

@@ -411,6 +411,10 @@ impl WorkspaceItem for CommitPanelItem {
             v.smart_snapshot = smart;
             v.smart_generating = smart_ui.smart_commit_generating;
             v.smart_status = smart_ui.smart_commit_status.clone();
+            #[cfg(feature = "gui-e2e")]
+            {
+                v.window_active_override = app.window_active_override;
+            }
         });
         Some(entity.into_any_element())
     }
@@ -490,6 +494,7 @@ pub(super) fn render_inspector_body(
             generated_expanded,
             compare_title,
             active_commit_file,
+            app.window_active,
             app.inspector_tree_view,
             app.inspector_split,
             app.inspector_geom.clone(),

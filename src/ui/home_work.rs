@@ -443,6 +443,7 @@ impl KagiApp {
                 count,
                 loading,
                 pane == active,
+                self.window_active,
             ));
         }
         row.into_any_element()
@@ -462,6 +463,7 @@ fn pane_cell(
     count: Option<usize>,
     loading: bool,
     active: bool,
+    window_active: bool,
 ) -> AnyElement {
     let id = match pane {
         HomePane::Repos => "home-pane-repos",
@@ -472,8 +474,10 @@ fn pane_cell(
         Some(count) => format!("{label} {count}"),
         None => label.to_string(),
     };
-    let fg = if active {
+    let fg = if active && window_active {
         theme().accent_text_on(theme().surface)
+    } else if active {
+        theme().text_main
     } else {
         theme().text_muted
     };
@@ -483,12 +487,16 @@ fn pane_cell(
                 .text_xs()
                 .px(theme::scaled_px(6.))
                 .rounded_md()
-                .bg(rgb(if active {
-                    theme().selected
+                .bg(if active {
+                    theme().selected_for_window(window_active)
                 } else {
-                    theme().surface
+                    rgb(theme().surface).into()
+                })
+                .text_color(rgb(if active && !window_active {
+                    theme().text_main
+                } else {
+                    theme().text_sub
                 }))
-                .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(count.to_string()))
                 .into_any_element(),
         ),
@@ -515,7 +523,7 @@ fn pane_cell(
         .text_sm()
         .text_color(rgb(fg))
         .when(active, |el| {
-            el.bg(rgb(theme().surface))
+            el.bg(theme().selected_for_window(window_active))
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))

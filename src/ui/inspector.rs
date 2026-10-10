@@ -80,6 +80,7 @@ pub(super) fn render_inspector(
     // Compare mode (ADR-0026): the banner title; `None` for a plain commit.
     compare_title: Option<SharedString>,
     active_file: Option<usize>,
+    window_active: bool,
     tree_view: bool,
     inspector_split: f32,
     // Measured (top, bottom) of the message+files region, written at paint
@@ -152,7 +153,8 @@ pub(super) fn render_inspector(
                         .mb_px()
                         .flex_shrink_0()
                         .when(active_file == Some(fi), |el| {
-                            el.bg(rgb(theme().selected)).rounded_sm()
+                            el.bg(theme().selected_for_window(window_active))
+                                .rounded_sm()
                         })
                         .on_click(click)
                         .child(
@@ -183,7 +185,7 @@ pub(super) fn render_inspector(
             .iter()
             .enumerate()
             .filter(|(_, file)| !file.generated)
-            .map(|(fi, file)| flat_file_row(fi, file, active_file, cx))
+            .map(|(fi, file)| flat_file_row(fi, file, active_file, window_active, cx))
             .collect(),
     };
 
@@ -227,7 +229,7 @@ pub(super) fn render_inspector(
         if expanded {
             for (fi, file) in files.files.iter().enumerate() {
                 if file.generated {
-                    tree_element_rows.push(flat_file_row(fi, file, active_file, cx));
+                    tree_element_rows.push(flat_file_row(fi, file, active_file, window_active, cx));
                 }
             }
         }
@@ -247,14 +249,14 @@ pub(super) fn render_inspector(
     let path_active = !tree_view;
     let tree_active = tree_view;
     let path_bg = if path_active {
-        theme().selected
+        theme().selected_for_window(window_active)
     } else {
-        theme().surface
+        rgb(theme().surface).into()
     };
     let tree_bg = if tree_active {
-        theme().selected
+        theme().selected_for_window(window_active)
     } else {
-        theme().surface
+        rgb(theme().surface).into()
     };
     let path_col = if path_active {
         theme().text_main
@@ -279,7 +281,7 @@ pub(super) fn render_inspector(
                 .px_2()
                 .py_px()
                 .rounded_sm()
-                .bg(rgb(path_bg))
+                .bg(path_bg)
                 .text_xs()
                 .text_color(rgb(path_col))
                 .on_click(toggle_click_a)
@@ -291,7 +293,7 @@ pub(super) fn render_inspector(
                 .px_2()
                 .py_px()
                 .rounded_sm()
-                .bg(rgb(tree_bg))
+                .bg(tree_bg)
                 .text_xs()
                 .text_color(rgb(tree_col))
                 .on_click(toggle_click_b)
@@ -1086,6 +1088,7 @@ fn flat_file_row(
     fi: usize,
     file: &InspectorFile,
     active_file: Option<usize>,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let (badge_char, badge_color, _) = status_badge(Some(&file.change), false);
@@ -1108,7 +1111,8 @@ fn flat_file_row(
         .mb_px()
         .flex_shrink_0()
         .when(active_file == Some(fi), |el| {
-            el.bg(rgb(theme().selected)).rounded_sm()
+            el.bg(theme().selected_for_window(window_active))
+                .rounded_sm()
         })
         .on_click(click)
         .child(

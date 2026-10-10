@@ -781,7 +781,7 @@ fn build_cleanup_row(
         .text_sm()
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
-        .hover(|s| s.text_color(rgb(theme().ui_accent())))
+        .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
         .tooltip({
             let full = full_name.clone();
             move |window, cx| Tooltip::new(full.clone()).build(window, cx)
@@ -810,7 +810,7 @@ fn build_cleanup_row(
                 .text_xs()
                 .text_color(rgb(theme().text_main))
                 .cursor_pointer()
-                .hover(|s| s.text_color(rgb(theme().ui_accent())))
+                .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
                 .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .on_click(
                     cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {

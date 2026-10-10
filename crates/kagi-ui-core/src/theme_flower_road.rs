@@ -41,6 +41,7 @@ pub const FLOWER_ROAD: Theme = Theme {
     // token of its own.
     surface: 0xeaddd8,
     selected: 0xc5ddd1, // #95c0aa at L=0.82
+    inactive_selected: 0xcdcdcd,
     // Chrome is BG1 exactly: the sidebar and tab strip are meant to read as
     // one sheet with the commit list, not as darker panels. The edges that
     // need to show are drawn as `selected`-coloured borders.

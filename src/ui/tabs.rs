@@ -961,9 +961,9 @@ impl KagiApp {
             // Match the tab colour to the worktree's WIP-row lane colour.
             let wt_color = is_wt.then(|| theme().lane_color(tab.wt_color_idx.unwrap_or(0)));
             let bg = if is_active {
-                theme().selected
+                theme().selected_for_window(self.window_active_for_render(window))
             } else {
-                theme().surface
+                rgb(theme().surface).into()
             };
             let fg = if is_active {
                 theme().text_main
@@ -999,7 +999,16 @@ impl KagiApp {
 
             // Accent bar colour: worktree lane colour (every worktree tab), else
             // the blue accent on the active main-repo tab; `None` → no bar.
-            let accent = wt_color.or_else(|| is_active.then(|| rgb(theme().ui_accent()).into()));
+            let accent = wt_color.or_else(|| {
+                is_active.then(|| {
+                    rgb(if self.window_active_for_render(window) {
+                        theme().ui_accent()
+                    } else {
+                        theme().text_muted
+                    })
+                    .into()
+                })
+            });
             let tab_el = strip_tabs
                 .cell(i, &name, div().id(("repo-tab", i)))
                 .relative()
@@ -1013,7 +1022,7 @@ impl KagiApp {
                 .gap_1()
                 // Worktree tabs are tinted with the SAME lane colour as that
                 // worktree's WIP row (user request), washed when inactive.
-                .when(!is_wt || is_active, |el| el.bg(rgb(bg)))
+                .when(!is_wt || is_active, |el| el.bg(bg))
                 .when_some(wt_color.filter(|_| is_wt && !is_active), |el, c| {
                     el.bg(gpui::hsla(c.h, c.s, c.l, 0.20))
                 })
@@ -1050,7 +1059,13 @@ impl KagiApp {
 
         // The Home tab (ADR-0219), after the repositories.
         if let (Some(home), Some(slot)) = (self.home, home_slot) {
-            strip = strip.child(render_home_tab(&strip_tabs, slot, home.front, cx));
+            strip = strip.child(render_home_tab(
+                &strip_tabs,
+                slot,
+                home.front,
+                self.window_active_for_render(window),
+                cx,
+            ));
         }
 
         // [+] new-tab button at the right end → the Home tab (#923).
@@ -1078,6 +1093,7 @@ fn render_home_tab(
     tabs: &super::keyboard_nav::TabList,
     slot: usize,
     front: bool,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let close = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
@@ -1091,9 +1107,12 @@ fn render_home_tab(
         .tab_stop(false)
         .on_click(close);
     let (bg, fg) = if front {
-        (theme().selected, theme().text_main)
+        (
+            theme().selected_for_window(window_active),
+            theme().text_main,
+        )
     } else {
-        (theme().surface, theme().text_sub)
+        (rgb(theme().surface).into(), theme().text_sub)
     };
     let ring = super::keyboard_nav::RING;
     tabs.cell(slot, Msg::HomeTabTitle.t(), div().id("home-tab"))
@@ -1106,7 +1125,7 @@ fn render_home_tab(
         .max_w(theme::scaled_px(TAB_MAX_W))
         .px(super::keyboard_nav::inset(8.))
         .gap_1()
-        .bg(rgb(bg))
+        .bg(bg)
         .text_sm()
         .text_color(rgb(fg))
         .mr(px(1.))
@@ -1119,7 +1138,11 @@ fn render_home_tab(
                     .left(px(-ring))
                     .right(px(-ring))
                     .h(px(2.))
-                    .bg(rgb(theme().ui_accent())),
+                    .bg(rgb(if window_active {
+                        theme().ui_accent()
+                    } else {
+                        theme().text_muted
+                    })),
             )
         })
         .cursor(gpui::CursorStyle::PointingHand)

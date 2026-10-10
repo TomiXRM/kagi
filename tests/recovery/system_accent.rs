@@ -38,11 +38,19 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
     let before = theme::theme().slug.to_string();
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        if app.ui().selected != Some(0) {
+            app.select_headless(0);
+        }
+        app.set_window_active_for_e2e(true, cx);
+    });
     for slug in ["apple-light", "apple-dark"] {
         for accent in [
             theme::SystemAccent::Blue,
             theme::SystemAccent::Purple,
             theme::SystemAccent::Graphite,
+            theme::SystemAccent::Red,
+            theme::SystemAccent::Yellow,
         ] {
             let injected = theme::AccentInjection::new(accent);
             app.update(cx, |app, cx| app.set_theme(slug, cx));
@@ -87,6 +95,53 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(bounds.top()) - 1.,
                 ),
                 expected,
+            );
+
+            let row = e2e::control_bounds(window.window_id(), "graph-commit-row")
+                .expect("selected first graph row drawn");
+            let bar = e2e::control_bounds(window.window_id(), "graph-selection-bar")
+                .expect("selected graph accent bar drawn");
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(bar.center().x),
+                    f32::from(bar.center().y),
+                ),
+                expected,
+            );
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(row.right()) - 2.,
+                    f32::from(row.top()) + 1.,
+                ),
+                theme::theme().ui_selected(),
+            );
+            let selected = cx.read(|cx| app.read(cx).ui().selected);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+            draw(cx, window);
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(row.right()) - 2.,
+                    f32::from(row.top()) + 1.,
+                ),
+                theme::theme().inactive_selected,
+            );
+            assert_eq!(cx.read(|cx| app.read(cx).ui().selected), selected);
+            app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+            draw(cx, window);
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(row.right()) - 2.,
+                    f32::from(row.top()) + 1.,
+                ),
+                theme::theme().ui_selected(),
             );
 
             let output = std::process::Command::new("git")
@@ -184,5 +239,5 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
     }
     app.update(cx, |app, cx| app.set_theme(&before, cx));
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS system_accent_chrome: blue/purple/graphite x Apple Light/Dark native primary/ring pixels, fixed geometry");
+    eprintln!("[gui-e2e] PASS system_accent_chrome: blue/purple/graphite/red/yellow x Apple Light/Dark native primary/ring/graph-bar/selection pixels, fixed geometry and retained inactive selection");
 }

@@ -331,10 +331,11 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                                         .child(SharedString::from(format!("#{}", issue.number))),
                                 ),
                         );
-                    let row = super::workspace_mode::sidebar_list_row(active_row)
-                        .id(("issue-mode-card", number as usize))
-                        .on_click(select)
-                        .child(content);
+                    let row =
+                        super::workspace_mode::sidebar_list_row(active_row, app.window_active)
+                            .id(("issue-mode-card", number as usize))
+                            .on_click(select)
+                            .child(content);
                     body = body.child(super::e2e::measure_control(
                         format!("issue-mode-card-{number}"),
                         row,

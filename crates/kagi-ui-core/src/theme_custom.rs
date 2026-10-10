@@ -3,8 +3,9 @@
 //! A file is one JSON object. `slug` and `name` are required; every other key
 //! is a [`Theme`] field name. `"extends": "<built-in slug>"` inherits the
 //! remaining fields from that built-in theme (`syntax` merges per key);
-//! without it every field except `link` is required (`link` defaults to the
-//! file's own `color_branch`). Colours are `"#rrggbb"` strings, the
+//! without it every field except `link` and `inactive_selected` is required
+//! (defaulting to the file's `color_branch` and `surface`, respectively).
+//! Colours are `"#rrggbb"` strings, the
 //! one RGBA value is `term_selection: {"color": "#rrggbb", "alpha": 0..255}`,
 //! `lane_hsl` is eight `[h, s, l]` triples and `avatar_*` are scalars, all in
 //! `0..=1`. Anything else — unknown keys, wrong types, malformed colours,
@@ -377,6 +378,9 @@ macro_rules! theme_fields {
                 if base.is_none() && self.link.is_none() {
                     self.link = self.color_branch;
                 }
+                if base.is_none() && self.inactive_selected.is_none() {
+                    self.inactive_selected = self.surface;
+                }
                 let mut missing: Vec<&'static str> = Vec::new();
                 let syntax = match self.syntax {
                     Some(s) => SyntaxPalette {
@@ -439,7 +443,7 @@ macro_rules! theme_fields {
 
 theme_fields! {
     rgb: [
-        bg_base, bg_row_alt, surface, selected, panel, sidebar, modal, modal_overlay,
+        bg_base, bg_row_alt, surface, selected, inactive_selected, panel, sidebar, modal, modal_overlay,
         text_main, text_sub, text_muted, text_label, link,
         color_head, color_branch, color_remote, color_tag, selection_tint,
         color_success, color_warning, color_blocker, color_blocker_muted,
@@ -533,6 +537,19 @@ mod tests {
         let theme = parse_theme(&file.to_string()).expect("pre-link standalone theme still loads");
         assert_eq!(theme.link, 0x773399);
         assert_eq!(theme.color_branch, 0x773399);
+    }
+
+    #[test]
+    fn inactive_selection_inherits_overrides_and_defaults_for_legacy_files() {
+        let inherited =
+            parse_theme(r#"{"slug":"mine","name":"Mine","extends":"apple-light"}"#).unwrap();
+        assert_eq!(inherited.inactive_selected, 0xd3d3d3);
+        let explicit = parse_theme(r##"{"slug":"mine","name":"Mine","extends":"apple-light","inactive_selected":"#dddddd"}"##).unwrap();
+        assert_eq!(explicit.inactive_selected, 0xdddddd);
+        let mut file = file_json(&THEMES[0], "legacy", "Legacy");
+        file.as_object_mut().unwrap().remove("inactive_selected");
+        let legacy = parse_theme(&file.to_string()).unwrap();
+        assert_eq!(legacy.inactive_selected, legacy.surface);
     }
 
     #[test]

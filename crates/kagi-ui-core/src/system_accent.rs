@@ -117,7 +117,7 @@ pub(crate) fn init() {
     refresh_system_accent();
 }
 
-/// Read-only global defaults query. No process/native work happens in render.
+/// Read-only, in-process global preference query, only at startup/activation.
 /// Multicolour (missing or unsupported value) follows the application's blue.
 pub fn refresh_system_accent() -> bool {
     #[cfg(any(test, feature = "gui-e2e"))]
@@ -126,18 +126,29 @@ pub fn refresh_system_accent() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        let value = std::process::Command::new("/usr/bin/defaults")
-            .args(["read", "-g", "AppleAccentColor"])
-            .output()
-            .ok()
-            .filter(|result| result.status.success())
-            .and_then(|result| {
-                std::str::from_utf8(&result.stdout)
-                    .ok()?
-                    .trim()
-                    .parse()
-                    .ok()
-            });
+        use core_foundation::base::{CFType, TCFType};
+        use core_foundation::number::CFNumber;
+        use core_foundation::string::CFString;
+        use core_foundation_sys::preferences::{
+            kCFPreferencesAnyApplication, CFPreferencesCopyAppValue,
+        };
+        thread_local! {
+            static ACCENT_KEY: CFString = CFString::from_static_string("AppleAccentColor");
+        }
+        let value = ACCENT_KEY.with(|key| {
+            // SAFETY: key and the global domain constant are valid CFStrings.
+            // CopyAppValue returns an owned CF property list or null. The owned
+            // CFType releases it on every path; downcast checks its type before
+            // interpreting it as a number. This API never writes preferences.
+            let raw = unsafe {
+                CFPreferencesCopyAppValue(key.as_concrete_TypeRef(), kCFPreferencesAnyApplication)
+            };
+            if raw.is_null() {
+                return None;
+            }
+            let value = unsafe { CFType::wrap_under_create_rule(raw) };
+            value.downcast_into::<CFNumber>()?.to_i32()
+        });
         let next = SystemAccent::from_default(value) as u8;
         return DETECTED.swap(next, Ordering::Relaxed) != next;
     }

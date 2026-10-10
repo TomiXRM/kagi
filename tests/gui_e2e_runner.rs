@@ -71,6 +71,10 @@ mod system_accent;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inactive_selection.rs"]
+mod inactive_selection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -280,6 +284,10 @@ mod recovery_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/header_fit.rs"]
 mod recovery_header_fit;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_viewport.rs"]
+mod recovery_commit_panel_viewport;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
@@ -1111,6 +1119,10 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "inactive_selection",
+                Box::new(crate::inactive_selection::scenario_inactive_selection),
             ),
             (
                 "dialog_a11y_roles",
@@ -2133,6 +2145,10 @@ mod macos {
             (
                 "header_fit",
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
+            ),
+            (
+                "commit_panel_viewport",
+                Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             (
                 "toolbar_count_scale",

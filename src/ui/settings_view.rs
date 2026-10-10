@@ -253,7 +253,7 @@ fn section_header(title: SharedString) -> impl IntoElement {
     div()
         .text_sm()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme().ui_accent()))
+        .text_color(rgb(theme().accent_text_on(theme().panel)))
         .pb_1()
         .border_b_1()
         .border_color(rgb(theme().selected))

@@ -98,18 +98,21 @@ altered.
 
 ## Amendment — 2026-10-11: system chrome accent (#1181)
 
+Closes #1181.
+
 On macOS, built-in Apple Light and Apple Dark follow the person's accent for
 primary chrome, focus rings and text selection. `Theme::ui_accent()` is distinct
 from the Git `color_branch` role: ref chips, graph lanes, status colours, terminal
 and body links keep their existing palette. This supersedes ADR-0126's decision
 not to separate chrome from branch colour, not its yellow Git palette.
 
-The startup and window-activation seams read `/usr/bin/defaults read -g
-AppleAccentColor` without writing defaults. Cache the detected enum and derived
-colour tokens; no native lookup, subprocess, allocation or colour derivation
-occurs in a row/render. Refresh on activation is deliberately used rather than
-installing an AppKit notification observer or adding an Objective-C dependency.
-Changing Appearance and returning to Kagi updates the existing bridge and redraws.
+The startup and window-activation seams read `AppleAccentColor` with the
+in-process, read-only `CFPreferencesCopyAppValue` global-domain API. The key is
+retained per UI thread; there is no activation-time subprocess. Cache the
+detected enum and derived fill tokens; no native lookup or allocation occurs in
+a row/render. Refresh on activation is deliberately used rather than installing
+an AppKit notification observer or adding an Objective-C dependency. Changing
+Appearance and returning to Kagi updates the existing bridge and redraws.
 
 The standard macOS accent palette ([HIG Color](https://developer.apple.com/design/human-interface-guidelines/color))
 is kept separately from the graph's increased-contrast/2025 system colours:
@@ -133,9 +136,32 @@ is selected. Other presets, custom themes including Apple-derived themes, and
 non-macOS platforms retain their explicit colour values.
 
 Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
-derivation (4.5:1 minimum). Text selection retains the shared 30% alpha; Apple
-Light row selection derives a 15% accent wash on white, while Apple Dark keeps
-its neutral row selection. Ring geometry stays at the existing fixed 2 logical
-px. Unit coverage includes all seven chromatic accents **and** graphite in both
-appearances; Tier A `system_accent_chrome` injects blue/purple/graphite in memory
-and checks native primary/ring pixels and stable control/label bounds.
+derivation (4.5:1 minimum), including the update pill. Accent-coloured chrome
+labels use `accent_text_on` for their actual background instead of the raw fill
+RGB, so Yellow, Orange and Graphite remain readable. Text selection retains the
+shared 30% alpha; Apple Light row selection derives a 15% accent wash on white,
+while Apple Dark keeps its neutral row selection. `selected_for_window(true)`
+uses this resolved wash; inactive selection keeps its independent neutral token.
+Ring geometry stays at the existing fixed 2 logical px. Unit coverage includes
+all seven chromatic accents **and** graphite in both appearances and readable
+text on base/surface/selection backgrounds. Tier A `system_accent_chrome` injects
+blue/purple/graphite/red/yellow in memory and checks native primary/ring/graph-bar
+and active/inactive selection pixels, retained selection, and stable
+control/label bounds.
+
+## Amendment — 2026-10-11: non-key selection (#1176)
+
+Selection presentation reads GPUI window activation, with an observer requesting
+repaint on activation changes. `inactive_selected` is independent of the active
+accent: Apple Light `#d3d3d3`, Apple Dark's existing neutral `#3a3a3c`, other
+presets distinct neutral steps. Primary labels must meet 4.5:1 on this fill.
+Graph commit/WIP rows (including accent-bar dimming), conflict/CommitPanel/
+Inspector/PR file rows, repository/Home/bottom tabs, toolbar workspace-mode
+buttons, sidebar, Home/filter/mode selectors and component list selections
+retain selected IDs and geometry. Git status, ref and lane colours remain semantic.
+Selection differs from every surrounding base/sidebar/alternate/hover role by
+at least 1.15:1, except Latte hover (1.14 floor to preserve its primary-label
+contrast); measured ratios and the exception are recorded in `docs/decisions.md`.
+The native regression overrides only the activation input under `gui-e2e`,
+measuring rendered Metal pixels without taking the user's foreground.
+Pane-focus attenuation is not conflated with window activation in this change.

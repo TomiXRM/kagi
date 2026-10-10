@@ -13,6 +13,7 @@ pub const PINKY_BOO: Theme = Theme {
     bg_row_alt: 0xf3f3f3,
     surface: 0xf6eef5,
     selected: 0xffafeb,
+    inactive_selected: 0xe2dae1,
     panel: 0xf3f3f3,
     sidebar: 0xefefef,
     modal: 0xffffff,

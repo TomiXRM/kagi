@@ -1979,6 +1979,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),
             (
+                "stash_push_plan_accuracy",
+                Box::new(crate::app_stash::scenario_stash_push_plan_accuracy),
+            ),
+            (
                 "stash_remote_drop",
                 Box::new(crate::app_stash::scenario_remote_stash_drop),
             ),

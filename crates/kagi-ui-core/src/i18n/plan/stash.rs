@@ -11,6 +11,8 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_UNTRACKED_EXCLUDED: &str =
     "未追跡ファイル {} 件は stash に含めません。作業ツリーに残ります。";
 
+pub(crate) const ADVICE_STASH_HEAD_REQUIRED: &str =
+    "stash push には HEAD commit が必要です。最初の commit を作成してから stash してください。";
 pub(crate) const ADVICE_STASH_UNTRACKED_INCLUDED: &str =
     "未追跡ファイル {} 件も stash に含めます(git stash push -u 相当)。";
 pub(crate) const ADVICE_STASH_DIRTY_BLOCKS_APPLY: &str =
@@ -48,6 +50,7 @@ fn parts_ja(parts: &DirtyParts) -> String {
 /// Japanese rendering of one stash note.
 pub fn note_ja(note: &StashNote) -> String {
     match note {
+        StashNote::HeadRequired => super::advice_text(Msg::AdviceStashHeadRequired, &[]),
         StashNote::NothingToStash => {
             "作業ツリーはすでにクリーンです。stash する対象がありません。".to_string()
         }

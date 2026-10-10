@@ -226,6 +226,9 @@ impl Backend {
             Operation::PushTag { name, remote } => {
                 ops::preflight_push_tag(&self.repo, plan, remote, name)
             }
+            Operation::RenameBranch { old_name, new_name } => {
+                ops::preflight_rename_branch(&self.repo, plan, old_name, new_name)
+            }
             Operation::Commit { .. } | Operation::MergeCommit { .. } => {
                 ops::preflight_commit(&self.repo, plan)
             }
@@ -311,7 +314,11 @@ impl Backend {
             evidence.conflict_identity_before = self.stash_conflict_identity()?;
         }
         if matches!(op, Operation::StashPush { .. }) {
-            evidence.untracked_before = self.working_tree_status()?.untracked;
+            let mut status = self.working_tree_status()?;
+            status
+                .untracked
+                .retain(|path| ops::stash_push_retains_untracked(&status.staged, path));
+            evidence.untracked_before = status.untracked;
         }
         if matches!(fault, Some(stash::StashFaultPoint::BeforeMutation)) {
             panic!("stash fault before mutation");
@@ -467,7 +474,7 @@ impl Backend {
                 .execute_set_upstream(plan, branch_name, upstream)
                 .map(|()| OperationOutcome::Unit),
             Operation::RenameBranch { old_name, new_name } => self
-                .execute_rename_branch(plan, old_name, new_name)
+                .execute_rename_branch(plan, old_name, new_name, partial_after)
                 .map(|()| OperationOutcome::Unit),
             Operation::UndoCommit => self.execute_undo_commit().map(OperationOutcome::Undo),
             Operation::Amend { mode, message } => self

@@ -69,6 +69,7 @@ pub mod pr_conversation;
 pub mod pr_dashboard;
 pub mod pr_fields;
 pub mod pr_lane;
+mod pr_layout;
 pub mod pr_merge_status;
 pub mod pr_mode;
 pub mod pr_nav;

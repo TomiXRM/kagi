@@ -246,6 +246,10 @@ mod pr_viewed;
 mod pr_diff_extent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_detail_adaptive.rs"]
+mod pr_detail_adaptive;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_diff_extent_invalidation.rs"]
 mod pr_diff_extent_invalidation;
 
@@ -1923,6 +1927,10 @@ mod macos {
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            (
+                "pr_detail_adaptive",
+                Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),
+            ),
             (
                 "pr_diff_extent_unified",
                 Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),

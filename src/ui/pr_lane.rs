@@ -222,6 +222,10 @@ fn lane_window(first: usize, last: usize, rows: usize) -> Option<(usize, usize)>
 
 /// Width of the subject column beside the rail.
 const SUBJECT_W: f32 = 240.0;
+/// Conservative bound from the existing graph rail, without rebuilding lanes
+/// just to decide whether the companion fits beside the reader.
+pub(super) const MAX_PANE_WIDTH: f32 =
+    graph_view::LANE_W * (MAX_RAIL_LANES as f32 + 0.5) + SUBJECT_W;
 
 /// The pane always has an active PR (see [`render_pr_lane`]), so the header
 /// names it rather than asking whether there is one. The count is the PR's own

@@ -17,6 +17,7 @@ fn request_log(log: &Mutex<Vec<String>>) -> MutexGuard<'_, Vec<String>> {
 struct Ollama {
     host: String,
     generated: Arc<Mutex<Vec<String>>>,
+    fail_generation: Arc<std::sync::atomic::AtomicBool>,
     stop: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     previous_host: Option<String>,
@@ -29,6 +30,8 @@ impl Ollama {
         let tags = serde_json::json!({"models": models.iter().map(|name| serde_json::json!({"name": name})).collect::<Vec<_>>()}).to_string();
         let generated = Arc::new(Mutex::new(Vec::new()));
         let requests = generated.clone();
+        let fail_generation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let failing = fail_generation.clone();
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let done = stop.clone();
         let thread = std::thread::spawn(move || {
@@ -75,7 +78,12 @@ impl Ollama {
                 } else {
                     tags.clone()
                 };
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+                let status = if generating && failing.load(std::sync::atomic::Ordering::Relaxed) {
+                    "500 Internal Server Error"
+                } else {
+                    "200 OK"
+                };
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
             }
         });
         let previous_host = std::env::var("KAGI_OLLAMA_HOST").ok();
@@ -83,6 +91,7 @@ impl Ollama {
         Self {
             host,
             generated,
+            fail_generation,
             stop,
             thread: Some(thread),
             previous_host,
@@ -112,13 +121,27 @@ fn press(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle, key: &str
     cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
 }
 pub fn keyboard(cx: &mut VisualTestAppContext) {
-    let _saved =
-        crate::gui_isolation::SavedKeys::keep(&["smart_commit_model", "smart_commit_llm_enabled"]);
-    for count in [1, 40] {
+    use kagi_ui_core::i18n::{self, Lang};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "smart_commit_model",
+        "smart_commit_llm_enabled",
+        "lang",
+    ]);
+    let language = i18n::lang();
+    for (count, lang, failure) in [
+        (1, Lang::En, false),
+        (40, Lang::Ja, false),
+        (1, Lang::En, true),
+        (1, Lang::Ja, true),
+    ] {
+        i18n::set_lang(lang);
         let models: Vec<_> = (0..count)
             .map(|i| format!("fixture-model-{i:02}-long-local-model-name"))
             .collect();
         let server = Ollama::new(&models);
+        server
+            .fail_generation
+            .store(failure, std::sync::atomic::Ordering::Relaxed);
         let fixture = build_fixture();
         std::fs::write(fixture.path().join("smart.txt"), "staged fixture\n").unwrap();
         git(fixture.path(), &["add", "smart.txt"]);
@@ -206,12 +229,26 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
             models.last().cloned(),
             "keyboard must persist focused model"
         );
+        // ADR-0090 retries a quick provider rejection once without `think`.
+        let expected_requests = if failure { 2 } else { 1 };
         assert_eq!(
             *request_log(&server.generated),
-            vec![models.last().unwrap().clone()],
-            "saved model must match exactly one actual generation"
+            vec![models.last().unwrap().clone(); expected_requests],
+            "one generation must use the saved model, including the existing rejection retry"
         );
         assert!(cx.read(|cx| app.read(cx).smart_commit_modal().is_none()));
+        let expected_status = match (lang, failure) {
+            (Lang::En, false) => "Generated with local LLM",
+            (Lang::Ja, false) => "ローカルLLMで生成しました",
+            (Lang::En, true) => "LLM unavailable — used rule-based",
+            (Lang::Ja, true) => "LLMを利用できません — ルールベースで生成しました",
+        };
+        assert_eq!(
+            cx.read(|cx| app.read(cx).ui().smart_commit_status.clone())
+                .as_deref(),
+            Some(expected_status),
+            "post-generation status must follow the UI language, including HTTP failure fallback"
+        );
         // A second opening cancelled by Escape must not generate or save.
         app.update(cx, |app, _| app.smart_commit.model = None);
         cx.update_window(window, |_, window, cx| {
@@ -223,11 +260,12 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
         paint(cx, window);
         paint(cx, window);
         press(cx, window, "escape");
-        assert_eq!(request_log(&server.generated).len(), 1);
+        assert_eq!(request_log(&server.generated).len(), expected_requests);
         assert!(cx.read(|cx| app.read(cx).smart_commit.model.is_none()
             && app.read(cx).smart_commit_modal().is_none()));
         unmount(cx, app, window);
     }
+    i18n::set_lang(language);
 }
 
 pub fn empty(cx: &mut VisualTestAppContext) {

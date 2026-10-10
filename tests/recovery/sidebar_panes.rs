@@ -364,10 +364,40 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
                         paint.text_color,
                         gpui::Hsla::from(gpui::rgb(theme::theme().text_sub))
                     );
+                    let chevron_name = format!("sidebar-{header}-heading-chevron");
+                    let chevron = e2e::control_paint(window.window_id(), &chevron_name)
+                        .expect("heading chevron painted");
+                    assert!(near(tall(chevron.bounds), 10. * scale), "{chevron:?}");
+                    assert!(
+                        near(f32::from(chevron.bounds.size.width), 10. * scale),
+                        "{chevron:?}"
+                    );
+                    assert_eq!(
+                        chevron.text_color,
+                        gpui::Hsla::from(gpui::rgb(theme::theme().text_sub))
+                    );
+                    assert!(
+                        near(
+                            f32::from(chevron.bounds.origin.x - paint.bounds.origin.x),
+                            12. * scale
+                        ),
+                        "no probe-induced leading gap: {paint:?} {chevron:?}"
+                    );
                     let label_name = format!("sidebar-{header}-heading-label");
                     let label = e2e::control_paint(window.window_id(), &label_name)
                         .expect("heading label painted");
                     assert!(near(tall(label.bounds), 12. * scale), "{label:?}");
+                    assert!(
+                        near(
+                            f32::from(
+                                label.bounds.origin.x
+                                    - chevron.bounds.origin.x
+                                    - chevron.bounds.size.width
+                            ),
+                            6. * scale
+                        ),
+                        "chevron-label spacing: {chevron:?} {label:?}"
+                    );
                     assert!(
                         near(top(label.bounds) - top(paint.bounds), 8. * scale),
                         "top padding: {paint:?} {label:?}"

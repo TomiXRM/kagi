@@ -100,7 +100,7 @@ altered.
 
 The five pinned section headers use localized title-style labels (English
 Title Case, existing Japanese terminology), `text_sub`, 12 reference-px
-semibold text, a separate small chevron and a neutral `surface` count pill
+semibold text, a separate small chevron and a neutral `bg_base` count pill
 retaining `(N)`. Their 28 reference-px height is a 12px line with 8px padding
 above and below. This changes only top-level header geometry: virtualized
 body slots remain 20px (ordinary/group rows) and 24px (worktrees).
@@ -113,3 +113,7 @@ Token-derived sRGB contrast for the heading is 5.870:1 on Apple Light's
 sidebar and 4.992:1 on hover; Apple Dark is 6.631:1 and 4.863:1 respectively.
 Native `sidebar_panes` records inherited size/weight/colour at paint, plus
 header/label bounds to assert the vertical inset at 100%/167% in EN/JA.
+Review correction: the SVG sets its own `text_sub` colour (GPUI SVG painting
+does not inherit the parent's colour), label/pill spacing uses margins rather
+than a flex gap so the non-E2E empty probe cannot add spacing, and the pill's
+`bg_base` fill remains distinct from the header's `surface` hover.

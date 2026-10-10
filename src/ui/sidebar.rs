@@ -365,7 +365,6 @@ fn build_section_header(
         .flex()
         .flex_row()
         .items_center()
-        .gap(theme::scaled_px(6.))
         .text_size(theme::scaled_px(12.))
         .line_height(theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -373,28 +372,41 @@ fn build_section_header(
         .on_click(toggle)
         .hover(|s| s.bg(rgb(theme().surface)))
         .child(
-            gpui::svg()
-                .path("icons/chevron-right.svg")
+            div()
+                .relative()
                 .size(theme::scaled_px(10.))
                 .flex_shrink_0()
-                .with_transformation(gpui::Transformation::rotate(gpui::radians(if collapsed {
-                    0.
-                } else {
-                    std::f32::consts::FRAC_PI_2
-                }))),
+                .child(super::e2e::measure_inside(section_header_chevron_id(
+                    section,
+                )))
+                .child(
+                    gpui::svg()
+                        .path("icons/chevron-right.svg")
+                        .size(theme::scaled_px(10.))
+                        .text_color(rgb(theme().text_sub))
+                        .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                            if collapsed {
+                                0.
+                            } else {
+                                std::f32::consts::FRAC_PI_2
+                            },
+                        ))),
+                ),
         )
         .child(
             div()
                 .relative()
+                .ml(theme::scaled_px(6.))
                 .h(theme::scaled_px(12.))
                 .child(super::e2e::measure_inside(section_header_label_id(section)))
                 .child(title.t()),
         )
         .child(
             div()
+                .ml(theme::scaled_px(6.))
                 .rounded_full()
                 .px(theme::scaled_px(4.))
-                .bg(rgb(theme().surface))
+                .bg(rgb(theme().bg_base))
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_size(theme::scaled_px(11.))
                 .child(label),
@@ -409,6 +421,17 @@ fn section_header_label_id(section: &str) -> &'static str {
         SECTION_WORKTREES => "sidebar-worktrees-heading-label",
         SECTION_TAGS => "sidebar-tags-heading-label",
         SECTION_STASHES => "sidebar-stashes-heading-label",
+        _ => unreachable!("known sidebar section"),
+    }
+}
+
+fn section_header_chevron_id(section: &str) -> &'static str {
+    match section {
+        SECTION_LOCAL => "sidebar-local-heading-chevron",
+        SECTION_REMOTE => "sidebar-remote-heading-chevron",
+        SECTION_WORKTREES => "sidebar-worktrees-heading-chevron",
+        SECTION_TAGS => "sidebar-tags-heading-chevron",
+        SECTION_STASHES => "sidebar-stashes-heading-chevron",
         _ => unreachable!("known sidebar section"),
     }
 }

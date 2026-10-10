@@ -33,6 +33,93 @@ fn retarget(
     })
 }
 
+fn return_to_issues(cx: &mut VisualTestAppContext, app: &NativeApp) {
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(
+        kagi_domain::github::IssueListSnapshot {
+            issues: Vec::new(),
+            mentioned_numbers: Vec::new(),
+            base_repo: BASE.to_string(),
+            next_cursor: None,
+        },
+    )));
+    app.update(cx, |app, cx| app.show_issues_mode(cx));
+    cx.run_until_parked();
+}
+
+pub fn scenario_issue_conversation_return_pending(cx: &mut VisualTestAppContext) {
+    let _restore = Restore::capture();
+    let producer = Producer::install();
+    producer.publish("a", "**DEPARTED_DETAIL**", &[]);
+    let (fixture, app, win, before) = fixture(cx, BASE);
+    let departed = kagi_git::github::issue_detail(fixture.path(), Some(BASE), 4);
+    let (task, release_departed) = deferred(cx);
+    let _departed_hold = e2e::queue_github_issue_detail(task);
+    request(cx, &app, win);
+    assert!(visible(cx, win, "issue-mode-detail-loading").is_some());
+    assert!(measure(cx, win, BODY).is_none());
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    cx.run_until_parked();
+
+    producer.publish("a", "**RETURNED_DETAIL**", &[]);
+    let returned = kagi_git::github::issue_detail(fixture.path(), Some(BASE), 4);
+    let (task, release_returned) = deferred(cx);
+    let _returned_hold = e2e::queue_github_issue_detail(task);
+    return_to_issues(cx, &app);
+    assert!(
+        visible(cx, win, "issue-mode-detail-loading").is_some() || visible(cx, win, BODY).is_some(),
+        "return before acceptance must paint Loading or accepted body, never only the composer"
+    );
+    assert!(visible(cx, win, "issue-reply-composer").is_some());
+    release_departed.send(departed);
+    cx.run_until_parked();
+    assert!(
+        visible(cx, win, "issue-mode-detail-loading").is_some(),
+        "the departed generation must not settle the resumed read"
+    );
+    assert!(measure(cx, win, BODY).is_none());
+    release_returned.send(returned);
+    cx.run_until_parked();
+    assert_eq!(select(cx, win, BODY), "RETURNED_DETAIL");
+    assert!(measure(cx, win, "issue-mode-detail-loading").is_none());
+    assert_eq!(producer.requests(), vec!["a", "a"]);
+    finish(cx, fixture, app, win, before);
+}
+
+pub fn scenario_issue_conversation_return_failed(cx: &mut VisualTestAppContext) {
+    let _restore = Restore::capture();
+    let producer = Producer::install();
+    producer.fail("a");
+    let (fixture, app, win, before) = fixture(cx, BASE);
+    request(cx, &app, win);
+    assert!(visible(cx, win, "issue-mode-detail-error").is_some());
+    assert!(!cx.read(|cx| app.read(cx).ui().github_issue_details.contains_key(&4)));
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    cx.run_until_parked();
+
+    let failed = kagi_git::github::issue_detail(fixture.path(), Some(BASE), 4);
+    assert!(
+        failed.is_err(),
+        "the offline producer delivers a real gh failure"
+    );
+    let (task, release_failed) = deferred(cx);
+    let _failed_hold = e2e::queue_github_issue_detail(task);
+    return_to_issues(cx, &app);
+    assert!(
+        visible(cx, win, "issue-mode-detail-loading").is_some(),
+        "return after an unaccepted failure must paint the re-read's Loading chrome"
+    );
+    release_failed.send(failed);
+    cx.run_until_parked();
+    assert!(
+        visible(cx, win, "issue-mode-detail-error").is_some(),
+        "a failed resumed detail must paint error chrome, never only the composer"
+    );
+    assert!(visible(cx, win, "issue-reply-composer").is_some());
+    assert!(measure(cx, win, BODY).is_none());
+    assert_eq!(producer.requests(), vec!["a", "a"]);
+    finish(cx, fixture, app, win, before);
+}
+
 pub fn scenario_issue_conversation_delayed_rejected(cx: &mut VisualTestAppContext) {
     let _restore = Restore::capture();
     let producer = Producer::install();

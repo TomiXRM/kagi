@@ -493,4 +493,27 @@ mod tests {
         assert!(parse_issue_detail("[]").is_err());
         assert!(parse_issue_detail(r#"{"title":"missing number"}"#).is_err());
     }
+
+    /// GitHub rejects a query that declares a variable it never uses, so a
+    /// half-edited query fails *every* list read at runtime. Fixtures cannot
+    /// catch it: they answer canned JSON whatever the query says. The
+    /// `mentions:@me` alias is the half that is easy to lose.
+    #[test]
+    fn every_declared_variable_is_used_by_the_issue_query() {
+        let (declaration, body) = ISSUE_LIST_QUERY
+            .split_once(") {")
+            .expect("a variable declaration");
+        let declared: Vec<&str> = declaration
+            .split('$')
+            .skip(1)
+            .map(|variable| variable.split(':').next().unwrap_or_default().trim())
+            .collect();
+        assert_eq!(declared, ["owner", "name", "mentions", "states", "cursor"]);
+        for name in declared {
+            assert!(
+                body.contains(&format!("${name}")),
+                "${name} is declared but never used"
+            );
+        }
+    }
 }

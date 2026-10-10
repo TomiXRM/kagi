@@ -2449,6 +2449,14 @@ mod macos {
                 Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_delayed_rejected),
             ),
             (
+                "issue_conversation_return_pending",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_return_pending),
+            ),
+            (
+                "issue_conversation_return_failed",
+                Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_return_failed),
+            ),
+            (
                 "issue_conversation_two_owners",
                 Box::new(crate::issue_conversation_lifecycle::scenario_issue_conversation_two_owners),
             ),

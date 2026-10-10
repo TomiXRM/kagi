@@ -642,6 +642,19 @@ impl KagiApp {
         self.leave_takeovers(WorkspaceMode::Issues);
         if !self.issues_mode_open() {
             self.refresh_github_issues(cx);
+            // Departure invalidates pending detail reads but retains selection.
+            // A cache miss must resume through the owner/generation boundary,
+            // rather than expose an empty conversation with only its composer.
+            let ui = self.ui();
+            let unaccepted = ui.selected_github_issue.filter(|number| {
+                !ui.github_issue_details.contains_key(number)
+                    && ui.github_issue_detail_loading != Some(*number)
+            });
+            if let Some(number) = unaccepted {
+                if let (Some(owner), Some(repo)) = (self.active_session(), self.repo_path.clone()) {
+                    self.load_github_issue_detail_for(owner, repo, number, cx);
+                }
+            }
         }
         self.activate_issue_conversation(cx);
         klog!("mode: issues");

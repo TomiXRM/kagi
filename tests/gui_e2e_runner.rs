@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/surface_scrollbars.rs"]
+mod surface_scrollbars;
+#[cfg(target_os = "macos")]
 fn main() {
     std::process::exit(macos::run());
 }
@@ -160,6 +163,9 @@ mod app_writer_admission;
 #[path = "recovery/app_conflict.rs"]
 mod app_conflict;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_heading.rs"]
+mod home_heading;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_tab.rs"]
 mod home_tab;
@@ -1189,6 +1195,10 @@ mod macos {
                 Box::new(crate::home_tab::scenario_home_tab),
             ),
             (
+                "home_heading",
+                Box::new(crate::home_heading::scenario_home_heading),
+            ),
+            (
                 "home_github",
                 Box::new(crate::home_github::scenario_home_github),
             ),
@@ -1925,6 +1935,10 @@ mod macos {
             (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
+            ),
+            (
+                "settings_scrollbar_drag",
+                Box::new(crate::surface_scrollbars::scenario_settings_scrollbar_drag),
             ),
             (
                 "settings_zoom_bound",

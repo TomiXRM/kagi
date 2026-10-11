@@ -517,6 +517,8 @@ pub(super) fn render_inspector_body(
             // W11-AVATAR: resolved avatar images so the inspector can swap
             // the initial circle for a real image.
             &app.avatars.images,
+            &app.ui().inspector_files_scroll,
+            &app.ui().inspector_message_scroll,
             cx,
         )
         .into_any_element(),

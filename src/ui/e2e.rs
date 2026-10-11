@@ -157,6 +157,7 @@ pub struct ControlPaint {
     pub font_size: gpui::Pixels,
     pub font_weight: gpui::FontWeight,
     pub text_color: gpui::Hsla,
+    pub ellipsis: bool,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -178,6 +179,10 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         font_size: window.text_style().font_size.to_pixels(window.rem_size()),
         font_weight: window.text_style().font_weight,
         text_color: window.text_style().color,
+        ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::Truncate(affix)) if affix.as_ref() == "…"
+        ),
     };
     CONTROL_PAINTS.with(|map| {
         map.borrow_mut()

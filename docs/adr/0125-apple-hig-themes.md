@@ -258,6 +258,26 @@ therefore reserve a 16px lane and pin this table's scrollbar to `Always`, so its
 track hitbox cannot steal bottom-row clicks. Global scrollbar colours and
 keyboard/wheel routing are unchanged.
 
+## Amendment — 2026-10-11: configurable compact toolbar (#1178)
+
+Finder's default icon-only presentation is the default for Apple Light and
+Apple Dark; other active themes retain Icon and Text. The flat string preference
+`toolbar_display` accepts `icon_only` and `icon_and_text`; an explicit value
+overrides theme changes, while an absent/invalid value follows the active theme.
+Settings → Appearance and the View menu share the settings persistence owner.
+The existing action row is 36 reference px in icon-only mode with 20px glyphs;
+Icon and Text retains its 52px row and existing caption geometry.
+No captions are retained exceptionally: distinct action glyphs, localized
+tooltips and AX names identify every action (rationale in the decision log).
+Unavailable reasons, count overlays, group hairlines, mode highlighting and
+keyboard focus rings keep their existing owners. This reuses the existing SVG
+pipeline, not SF Symbols, native material or a replacement action dispatcher.
+
+Review correction: caption mode uses the same localized short label as its
+AX name and default tooltip (history tooltips retain a localized label prefix).
+View → Toolbar is declared in `MENU_BAR` as `DynSubmenu::ToolbarDisplay`;
+native menus and the Linux/FreeBSD inline dropdown share localized entries,
+selection markers and the `SetToolbarDisplay` action, per ADR-0085.
 ## Amendment — 2026-10-11: neutral document tabs (#1180)
 
 The repository and Home strip takes Finder/Safari's neutral document-tab

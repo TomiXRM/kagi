@@ -9,6 +9,19 @@ use kagi::ui::i18n::Msg;
 use kagi::ui::{e2e, FooterStatus};
 
 pub fn scenario_toolbar_keyboard_reasons(cx: &mut VisualTestAppContext) {
+    let saved = crate::gui_isolation::SavedKeys::keep(&["toolbar_display"]);
+    for mode in [
+        kagi_ui_core::settings::ToolbarDisplay::IconOnly,
+        kagi_ui_core::settings::ToolbarDisplay::IconAndText,
+    ] {
+        kagi_ui_core::settings::set_toolbar_display(mode);
+        toolbar_keyboard_reasons(cx);
+    }
+    drop(saved);
+    kagi_ui_core::settings::init_toolbar_display();
+}
+
+fn toolbar_keyboard_reasons(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);

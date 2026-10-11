@@ -232,6 +232,19 @@ fn drag_and_copy(
 }
 
 pub fn scenario_workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
+    let saved = crate::gui_isolation::SavedKeys::keep(&["toolbar_display"]);
+    for mode in [
+        kagi_ui_core::settings::ToolbarDisplay::IconOnly,
+        kagi_ui_core::settings::ToolbarDisplay::IconAndText,
+    ] {
+        kagi_ui_core::settings::set_toolbar_display(mode);
+        workspace_mode_toolbar(cx);
+    }
+    drop(saved);
+    kagi_ui_core::settings::init_toolbar_display();
+}
+
+fn workspace_mode_toolbar(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();

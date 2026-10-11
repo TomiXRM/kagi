@@ -99,7 +99,8 @@ pub(crate) fn probe_pr_menu_copy(control: gpui::Stateful<gpui::Div>) -> gpui::St
 /// #354: the toolbar's AccessKit-disabled inputs, for the GUI E2E oracle.
 #[cfg(feature = "gui-e2e")]
 pub use super::render_header::toolbar_a11y::{
-    clear_toolbar_unavailable, take_focus_probe, toolbar_description, toolbar_unavailable,
+    clear_toolbar_unavailable, take_focus_probe, toolbar_caption_and_tooltip, toolbar_description,
+    toolbar_label, toolbar_unavailable,
 };
 #[cfg(feature = "gui-e2e")]
 pub fn last_plan_status_chip() -> Option<String> {

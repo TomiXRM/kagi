@@ -896,6 +896,16 @@ pub enum Msg {
     SettingsGraphCopy,
     /// Appearance → Graph Cmd+C copy-target row description.
     SettingsGraphCopyDesc,
+    SettingsToolbarDisplay,
+    SettingsToolbarDisplayDesc,
+    ToolbarIconOnly,
+    ToolbarIconAndText,
+    ToolbarBranch,
+    ToolbarStash,
+    ToolbarPop,
+    ToolbarEditor,
+    ToolbarAnalyze,
+    ToolbarTerminal,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -3240,6 +3250,26 @@ impl Msg {
             (Ja, SettingsGraphCopyDesc) => {
                 "選択中の commit 行を ⌘C でコピーする対象。branch は local branch が無い行では hash を代わりにコピーします。"
             }
+            (En, SettingsToolbarDisplay) => "Toolbar",
+            (Ja, SettingsToolbarDisplay) => "ツールバー",
+            (En, SettingsToolbarDisplayDesc) => "Show icons alone or icons with captions.",
+            (Ja, SettingsToolbarDisplayDesc) => "アイコンのみ、またはアイコンと文字を表示します。",
+            (En, ToolbarIconOnly) => "Icon Only",
+            (Ja, ToolbarIconOnly) => "アイコンのみ",
+            (En, ToolbarIconAndText) => "Icon and Text",
+            (Ja, ToolbarIconAndText) => "アイコンと文字",
+            (En, ToolbarBranch) => "Branch",
+            (Ja, ToolbarBranch) => "ブランチ",
+            (En, ToolbarStash) => "Stash",
+            (Ja, ToolbarStash) => "退避",
+            (En, ToolbarPop) => "Pop",
+            (Ja, ToolbarPop) => "退避を適用",
+            (En, ToolbarEditor) => "Editor",
+            (Ja, ToolbarEditor) => "エディター",
+            (En, ToolbarAnalyze) => "Analyze",
+            (Ja, ToolbarAnalyze) => "分析",
+            (En, ToolbarTerminal) => "Terminal",
+            (Ja, ToolbarTerminal) => "ターミナル",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {

@@ -471,6 +471,29 @@ fn appearance_section(
         )
         .into_any_element();
 
+    let app_toolbar = app.clone();
+    let toolbar_ctl = RadioGroup::horizontal("settings-toolbar-display")
+        .children(
+            [Msg::ToolbarIconAndText, Msg::ToolbarIconOnly].map(|msg| SharedString::from(msg.t())),
+        )
+        .selected_index(Some(
+            if settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly {
+                1
+            } else {
+                0
+            },
+        ))
+        .on_click(move |index: &usize, _, cx| {
+            settings::set_toolbar_display(if *index == 1 {
+                settings::ToolbarDisplay::IconOnly
+            } else {
+                settings::ToolbarDisplay::IconAndText
+            });
+            cx.set_menus(super::commands::build_menus());
+            app_toolbar.update(cx, |_, cx| cx.notify());
+        })
+        .into_any_element();
+
     div()
         .flex()
         .flex_col()
@@ -507,6 +530,11 @@ fn appearance_section(
             },
         )
         .child(super::settings_theme_folder::section(app))
+        .child(setting_row(
+            SharedString::from(Msg::SettingsToolbarDisplay.t()),
+            SharedString::from(Msg::SettingsToolbarDisplayDesc.t()),
+            toolbar_ctl,
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsZoom.t()),
             SharedString::from(Msg::SettingsZoomDesc.t()),

@@ -95,6 +95,8 @@ struct Inner {
     /// The currently open child, tied to its launching row's stable slot.
     submenu: RefCell<Option<(usize, MenuKeys)>>,
     bounds: RefCell<Vec<Option<Bounds<Pixels>>>>,
+    /// Pointer changes wait briefly so diagonal travel can reach a child panel.
+    hover_task: RefCell<Option<gpui::Task<()>>>,
 }
 
 impl MenuKeys {
@@ -134,6 +136,7 @@ impl MenuKeys {
 
     /// Move among every visible item, including unavailable commands.
     pub(crate) fn step(&self, step: Step, window: &mut Window, cx: &mut App) {
+        self.cancel_hover();
         let to = {
             let visible = self.0.visible.borrow();
             let Some((&first, &last)) = visible.first().zip(visible.last()) else {
@@ -186,13 +189,56 @@ impl MenuKeys {
     }
 
     pub(crate) fn close_submenu(&self, window: &mut Window, cx: &mut App) {
+        self.cancel_hover();
+        self.restore_submenu_focus(window, cx);
+    }
+
+    fn restore_submenu_focus(&self, window: &mut Window, cx: &mut App) {
         if let Some((slot, _)) = self.0.submenu.borrow_mut().take() {
             self.item(slot, cx).focus(window, cx);
         }
     }
 
-    pub(crate) fn hover_leaf(&self) {
-        self.0.submenu.borrow_mut().take();
+    pub(crate) fn cancel_hover(&self) {
+        self.0.hover_task.borrow_mut().take();
+    }
+
+    pub(crate) fn hover_submenu(
+        &self,
+        slot: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<KagiApp>,
+    ) {
+        self.cancel_hover();
+        if self.submenu().map(|(at, _)| at) == slot {
+            return;
+        }
+        let keys = Rc::downgrade(&self.0);
+        *self.0.hover_task.borrow_mut() = Some(cx.spawn_in(window, async move |app, acx| {
+            acx.background_executor()
+                .timer(std::time::Duration::from_millis(200))
+                .await;
+            let _ = app.update_in(acx, |_, window, cx| {
+                let Some(keys) = keys.upgrade().map(Self) else {
+                    return;
+                };
+                if slot.is_some_and(|slot| !keys.0.visible.borrow().contains(&slot)) {
+                    return;
+                }
+                if keys
+                    .submenu()
+                    .is_some_and(|(_, child)| child.holds_focus(window))
+                {
+                    keys.restore_submenu_focus(window, cx);
+                } else {
+                    keys.0.submenu.borrow_mut().take();
+                }
+                if let Some(slot) = slot {
+                    keys.open_submenu(slot, false);
+                }
+                cx.notify();
+            });
+        }));
     }
 
     fn holds_focus(&self, window: &Window) -> bool {
@@ -273,6 +319,7 @@ impl KagiApp {
     /// nowhere (#991 review).
     pub(crate) fn reset_context_menus(&mut self) {
         self.close_context_menus();
+        self.menu_keys.cancel_hover();
         let keys = &self.menu_keys.0;
         keys.open.set(false);
         keys.focus_first.set(false);
@@ -285,6 +332,7 @@ impl KagiApp {
     /// the focus back as any close does: where the menu was opened from, or
     /// to the window when a modal is up (#991 review).
     pub(crate) fn close_context_menus(&mut self) {
+        self.menu_keys.cancel_hover();
         self.commit_menu = None;
         self.branch_menu = None;
         self.stash_menu = None;
@@ -307,11 +355,13 @@ impl KagiApp {
         let open = self.any_context_menu_open();
         let keys = &self.menu_keys.0;
         if open && !keys.open.get() {
+            keys.hover_task.borrow_mut().take();
             keys.open.set(true);
             keys.focus_first.set(true);
             keys.submenu.borrow_mut().take();
             *keys.return_to.borrow_mut() = window.focused(cx).or_else(|| self.root_focus.clone());
         } else if !open && keys.open.get() {
+            keys.hover_task.borrow_mut().take();
             keys.open.set(false);
             let back = keys.return_to.borrow_mut().take();
             // Only a focus the menu held (or lost with it) moves: an item may

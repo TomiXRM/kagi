@@ -267,9 +267,27 @@ where
             cx,
         );
     }
+    menu = cancel_parent_hover(menu, panel.parent, cx);
     #[cfg(feature = "gui-e2e")]
     let menu = menu.child(super::e2e::measure_inside(panel.id.to_string()));
     menu.into_any_element()
+}
+
+fn cancel_parent_hover(
+    menu: gpui::Stateful<gpui::Div>,
+    parent: Option<&MenuKeys>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    if let Some(parent) = parent {
+        let parent = parent.clone();
+        menu.on_hover(cx.listener(move |_, hovered: &bool, _, _| {
+            if *hovered {
+                parent.cancel_hover();
+            }
+        }))
+    } else {
+        menu
+    }
 }
 
 fn render_items<A, S>(
@@ -452,10 +470,9 @@ where
     }
     if let Some(keys) = keys.filter(|_| matches!(item.kind, MenuItemKind::Command(_))) {
         let keys = keys.clone();
-        row = row.on_hover(cx.listener(move |_, hovered: &bool, _, cx| {
+        row = row.on_hover(cx.listener(move |_, hovered: &bool, window, cx| {
             if *hovered {
-                keys.hover_leaf();
-                cx.notify();
+                keys.hover_submenu(None, window, cx);
             }
         }));
     }
@@ -530,17 +547,18 @@ fn submenu_row(
     let hover = keys.clone();
     row = row
         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+            click.cancel_hover();
             click.open_submenu(slot, true);
             cx.notify();
         }))
         .on_action(cx.listener(move |_, _: &MenuOpen, _, cx| {
+            right.cancel_hover();
             right.open_submenu(slot, true);
             cx.notify();
         }))
-        .on_hover(cx.listener(move |_, hovered: &bool, _, cx| {
+        .on_hover(cx.listener(move |_, hovered: &bool, window, cx| {
             if *hovered {
-                hover.open_submenu(slot, false);
-                cx.notify();
+                hover.hover_submenu(Some(slot), window, cx);
             }
         }));
     row

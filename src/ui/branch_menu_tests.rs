@@ -422,3 +422,43 @@ fn compact_menu_retains_every_previous_command() {
         }
     }
 }
+
+#[test]
+fn checkout_retains_dirty_and_conflict_warnings() {
+    let mut c = ctx();
+    c.dirty = true;
+    let groups = branch_context_menu_items(&c);
+    assert_enabled(&groups, BranchAction::Checkout);
+    assert!(item_for(&groups, BranchAction::Checkout)
+        .label
+        .contains("(dirty working tree)"));
+    c.dirty = false;
+    c.conflict_mode = BranchConflictMode::Conflicted;
+    let groups = branch_context_menu_items(&c);
+    assert_disabled_contains(&groups, BranchAction::Checkout, "conflicts");
+    assert!(item_for(&groups, BranchAction::Checkout)
+        .label
+        .contains("(conflicts)"));
+}
+
+#[test]
+fn reset_retains_protected_branch_warning() {
+    let mut c = ctx();
+    c.protected = true;
+    let groups = branch_context_menu_items(&c);
+    assert_enabled(&groups, BranchAction::ResetCurrentToHead);
+    assert!(item_for(&groups, BranchAction::ResetCurrentToHead).dangerous);
+    assert_eq!(
+        item_for(&groups, BranchAction::ResetCurrentToHead)
+            .label
+            .as_ref(),
+        "Reset current to this HEAD… (protected)"
+    );
+    let groups = branch_context_menu_items(&ctx());
+    assert_eq!(
+        item_for(&groups, BranchAction::ResetCurrentToHead)
+            .label
+            .as_ref(),
+        "Reset current to this HEAD…"
+    );
+}

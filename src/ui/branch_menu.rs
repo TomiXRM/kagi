@@ -105,10 +105,16 @@ pub struct BranchMenuContext {
 }
 
 pub fn branch_context_menu_items(ctx: &BranchMenuContext) -> Vec<MenuGroup<BranchAction>> {
-    let checkout_label = match ctx.kind {
+    let mut checkout_label = match ctx.kind {
         BranchKind::Local => format!("Checkout {}", ctx.name),
         BranchKind::Remote => format!("Checkout {} as local branch", ctx.name),
     };
+    if ctx.dirty {
+        checkout_label.push_str(" (dirty working tree)");
+    }
+    if ctx.conflict_mode == BranchConflictMode::Conflicted {
+        checkout_label.push_str(" (conflicts)");
+    }
     vec![
         group(vec![item(
             BranchAction::Checkout,
@@ -352,7 +358,11 @@ fn danger_items(ctx: &BranchMenuContext) -> Vec<MenuItem<BranchAction>> {
         ),
         item(
             BranchAction::ResetCurrentToHead,
-            "Reset current to this HEAD…",
+            if ctx.protected {
+                "Reset current to this HEAD… (protected)"
+            } else {
+                "Reset current to this HEAD…"
+            },
             reset_current_state(ctx),
             true,
         ),

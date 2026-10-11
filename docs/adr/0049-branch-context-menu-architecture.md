@@ -62,6 +62,10 @@ and the existing focus-return and overlay-dismissal ownership.
 - Right or Enter on a submenu launcher opens its child level. Left or
   Escape in a child closes **one level** and returns focus to its launcher;
   Escape at the root dismisses the menu. Tab / Shift+Tab dismiss the menu.
+- Pointer-driven submenu open, replacement and close wait 200 ms. Entering
+  the child panel cancels the pending parent change, allowing diagonal
+  travel across adjacent launchers. Closing or replacing a keyboard-focused
+  child returns focus to its launcher before removing that child.
 - Enabled leaf activation reuses the existing dispatch and confirmation
   paths. Disabled leaves remain keyboard-focusable but **inert**: pointer
   clicks and keyboard activation never dispatch them or dismiss the menu.
@@ -77,8 +81,14 @@ and the existing focus-return and overlay-dismissal ownership.
 
 ### Availability, safety and localization
 
-Preserve [ADR-0050](0050-branch-operation-availability.md): impossible actions
-stay hidden; temporarily unavailable actions stay disabled with reasons.
+Preserve [ADR-0050](0050-branch-operation-availability.md)'s availability policy:
+impossible actions stay hidden; temporarily unavailable actions stay disabled
+with reasons. Its count/no-op label rule is amended: retain nonzero count
+suffixes (`Pull ↓3`, `Push ↑2`), but put disabled no-op/unavailable reasons
+in the tooltip and accessibility description rather than the command label.
+Zero cached behind counts do not make Pull a no-op; fresh planning remains
+authoritative. Enabled-action warnings such as protected Reset and dirty
+Checkout remain concise label suffixes.
 This is an explicit safety/discoverability exception to the Context menus
 HIG recommendation to hide unavailable commands. The general Menus HIG
 also supports dimmed, unresponsive unavailable items; keyboard focus here

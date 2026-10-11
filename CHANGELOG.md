@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Branch context menus keep at most ten top-level command/submenu rows, with frequent actions first and less common commands in Integrate, Advanced and Worktree submenus. All prior commands and safety guards remain; disabled rows stay keyboard-focusable but inert, with EN/JA reasons in tooltips and accessibility descriptions instead of inline paragraphs. Right/Enter opens a submenu; Left/Escape closes one level. (#1238)
+  - Review: pointer cascades wait 200 ms and cancel pending parent changes when entering a child; closing or replacing a keyboard-focused child restores launcher focus. Protected Reset and dirty/conflicted Checkout warnings remain visible, and ADR-0050's no-op label rule is explicitly amended.
 - Diff headers show Unified and Split as explicit selected segments, retaining icon-only collapse in narrow panes. (#1235)
 - Binary diffs explain the absence of a text diff and the external-editor comparison action in EN/JA; image diffs name added, modified and deleted states instead of leaving a missing side unexplained. Binary conflicts reuse the same explanation. (#1236)
   - Review: image state follows blob existence rather than preview support. Modified files with only one supported image encoding retain both Before/After sides and explicitly mark the unavailable preview; native EN/JA coverage includes deleted images and binary conflicts.

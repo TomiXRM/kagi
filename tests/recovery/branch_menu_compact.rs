@@ -63,6 +63,7 @@ pub fn scenario_branch_menu_compact(cx: &mut VisualTestAppContext) {
                 draw(cx, window, (1392., 883.));
                 assert_geometry(window, &controls, locale, branch);
                 assert_submenu_keys(cx, &app, window, locale, branch);
+                assert_submenu_hover(cx, &app, window);
                 if branch == "main" {
                     assert_disabled_checkout(cx, &app, window, fixture.path());
                 }
@@ -177,4 +178,124 @@ fn assert_disabled_checkout(
         Some(reason),
         "the actual tooltip text equals the disabled AX reason"
     );
+}
+
+fn hover(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+    elapsed_ms: u64,
+) {
+    cx.simulate_mouse_move(window, position, None, gpui::Modifiers::none());
+    draw(cx, window, (1392., 883.));
+    cx.advance_clock(std::time::Duration::from_millis(elapsed_ms));
+    cx.run_until_parked();
+    draw(cx, window, (1392., 883.));
+}
+
+fn active_slots(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    window: AnyWindowHandle,
+) -> (Option<usize>, Vec<usize>) {
+    cx.update_window(window, |_, window, cx| {
+        app.read(cx).menu_keys_for_e2e(window)
+    })
+    .unwrap()
+}
+
+fn assert_submenu_hover(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let launcher = e2e::control_bounds(window.window_id(), "branch-menu-item-3-0").unwrap();
+    for crossed in [
+        "branch-menu-item-3-1",
+        "branch-menu-item-3-2",
+        "branch-menu-item-2-2",
+    ] {
+        crate::context_menu_keys::focus_menu_control(cx, app, window, "branch-menu-item-3-0");
+        crate::keyboard_nav::keys(cx, window, "right");
+        let child =
+            e2e::control_bounds(window.window_id(), "branch-menu-item-3-0-submenu-0-1").unwrap();
+        hover(cx, window, launcher.center(), 0);
+        let row = e2e::control_bounds(window.window_id(), crossed).unwrap();
+        hover(cx, window, point(row.right() - px(2.), row.center().y), 100);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).submenu_depth_for_e2e()),
+            1,
+            "crossing a parent leaf must not immediately close a child"
+        );
+        assert_eq!(
+            active_slots(cx, app, window).1.len(),
+            3,
+            "crossing an adjacent launcher must not immediately replace Integrate"
+        );
+        hover(cx, window, child.center(), 300);
+        assert_eq!(
+            active_slots(cx, app, window).1.len(),
+            3,
+            "entering the child panel cancels the pending parent hover"
+        );
+        crate::keyboard_nav::keys(cx, window, "left");
+    }
+    assert_hover_focus_return(cx, app, window);
+}
+
+fn assert_hover_focus_return(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    crate::context_menu_keys::focus_menu_control(cx, app, window, "branch-menu-item-3-0");
+    crate::keyboard_nav::keys(cx, window, "right");
+    assert!(
+        active_slots(cx, app, window).0.is_some(),
+        "child has keyboard focus"
+    );
+    let leaf = e2e::control_bounds(window.window_id(), "branch-menu-item-2-0").unwrap();
+    hover(cx, window, leaf.center(), 300);
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 0);
+    let parent = active_slots(cx, app, window)
+        .0
+        .expect("focus returns to parent launcher");
+    assert_eq!(
+        kagi::ui::menu_overlay::recorded_slot_control(parent).as_deref(),
+        Some("branch-menu-item-3-0")
+    );
+    crate::keyboard_nav::keys(cx, window, "down");
+    assert_eq!(
+        active_slots(cx, app, window).0,
+        Some(parent + 1),
+        "Down remains scoped to the menu after a hovered child closes"
+    );
+    crate::keyboard_nav::keys(cx, window, "up");
+    assert_eq!(active_slots(cx, app, window).0, Some(parent));
+    crate::keyboard_nav::keys(cx, window, "right");
+    let adjacent = e2e::control_bounds(window.window_id(), "branch-menu-item-3-1").unwrap();
+    hover(cx, window, adjacent.center(), 300);
+    assert_eq!(
+        active_slots(cx, app, window).1.len(),
+        2,
+        "hover can replace Integrate with Worktree"
+    );
+    crate::keyboard_nav::keys(cx, window, "down");
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 0);
+    assert_eq!(
+        active_slots(cx, app, window).0,
+        Some(parent + 1),
+        "replacement also returns keyboard focus to the original launcher"
+    );
+    let launcher = e2e::control_bounds(window.window_id(), "branch-menu-item-3-0").unwrap();
+    hover(cx, window, launcher.center(), 100);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).submenu_depth_for_e2e()),
+        0,
+        "pointer-only submenu opening also waits for the hover delay"
+    );
+    hover(cx, window, launcher.center(), 150);
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 1);
+    crate::keyboard_nav::keys(cx, window, "right");
+    crate::keyboard_nav::keys(cx, window, "left");
 }

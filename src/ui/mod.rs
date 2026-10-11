@@ -5,6 +5,7 @@
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
 pub mod activity_view;
+mod analyze_help;
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
@@ -3016,6 +3017,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
@@ -3103,6 +3105,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),

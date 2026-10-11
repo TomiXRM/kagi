@@ -413,6 +413,20 @@ The current suite covers:
   Tier B: open Analyze → Health on a repository without a commit-graph and
   with `core.fsmonitor` unset, check the EN/JA texts, open each fix, read
   the plan card (equivalent command, recovery) and Cancel, then confirm one.
+- Analyze accessibility (`KAGI_GUI_E2E_ONLY=analyze_a11y`, KEEP_GOING recommended,
+  `tests/recovery/analyze_a11y.rs`): #1265–#1268 uses synthetic FileMetric data
+  with the production bounded renderer, not a real Git mine. EN/JA, 100/167%,
+  Apple Light/Dark, 940×660 and 1392×883 assert named selected Tab controls,
+  actual arrow/Enter/Space dispatch, coupling expanded state, inert disabled Copy,
+  model-matching risk text/AX descriptions, exact 150/300 render caps and a
+  localized Status notice only above the cap. Help uses the single ActiveModal
+  slot, named dialog, Tab/Shift+Tab trap, Escape and exact opener focus return.
+  Attribute probes record where renderer semantics are installed; these are
+  not native VoiceOver assertions. Keep `repo_health_proposal` and
+  `ecosystem_evidence_` alongside it. The behavior-preserving shared TabList
+  extraction additionally runs `commit_panel_segment_keys,editor_toggle_keys,home_,tabs_,workspace_mode`.
+  Tier B: compare toolbar focus/disabled Copy, List/Map numeric risk and capped
+  notices, coupling disclosure, and Help scroll/Escape/opener focus in EN/JA.
 - text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
   `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
   diffs are read off the UI thread and first appear as unhighlighted text

@@ -7,6 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Analyze mode, period, view and export selectors expose selected keyboard tabs; Copy, Help and Close are named buttons, and coupling disclosures report expanded state and support Enter/Space. (#1265)
+- Hotspots shows numeric risk alongside relative bars and explains the 0–1 scale; Map tooltips and accessibility text include path, risk, LOC and commit count. (#1266)
+- Analyze explicitly announces truncated Map/List coverage in EN/JA while retaining the 150-tile/300-row rendering bounds. (#1267)
+- Analyze Help uses the application's single named modal slot, traps keyboard focus, closes on Escape and restores its opener. (#1268)
 - Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
 - macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)

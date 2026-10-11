@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::settings::{read_setting, write_setting};
 
 // Lang + active-language atomic
+pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
@@ -1439,6 +1440,10 @@ pub enum Msg {
     EcoResetView,
     /// Help overlay title.
     EcoHelpTitle,
+    EcoMode,
+    EcoPeriod,
+    EcoView,
+    EcoExportFormat,
 
     // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────────
     /// Left/center/right placeholder while the working-tree file list (or a
@@ -3799,6 +3804,14 @@ impl Msg {
             (Ja, EcoResetView) => "reset",
             (En, EcoHelpTitle) => "How to read Analyze",
             (Ja, EcoHelpTitle) => "Analyze の見方",
+            (En, EcoMode) => "Analyze mode",
+            (Ja, EcoMode) => "Analyze の評価軸",
+            (En, EcoPeriod) => "Analysis period",
+            (Ja, EcoPeriod) => "解析期間",
+            (En, EcoView) => "Analysis view",
+            (Ja, EcoView) => "解析の表示方法",
+            (En, EcoExportFormat) => "Diagnostic export format",
+            (Ja, EcoExportFormat) => "診断の出力形式",
 
             // ── Editor Workspace (T-WS-EDITOR-001) ──────────────────
             (En, EditorWorkspaceLoading) => "Loading…",
@@ -4183,11 +4196,11 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Hotspots",
-                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). The top of the list is where bugs are most likely — busy AND complex code. List shows the ranking with a risk bar; Map shows a treemap (tile size = LOC, colour = risk, green → red). It is a hint to look, not a verdict.",
+                "Files ranked by risk = how often a file changes (commits) × how big it is (LOC). Risk is shown numerically on a 0.0–1.0 scale. List bars are relative to the highest risk; Map colour shows absolute risk (green → red), with tile size = LOC (commits when LOC is zero). Busy AND complex code is worth examining — this is a hint to look, not a verdict.",
             ),
             (
                 "Coupling",
-                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row to expand one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
+                "Pairs of files that tend to change in the same commit — hidden dependencies. 'N×' = times they changed together; '%' = how strongly they overlap. Click a row, or focus it and press Enter/Space, to expand or collapse one file's full set of partners (1:many). 'Graph' draws it as a network: drag to pan, scroll to zoom toward the pointer, 'Reset' to refit. 'Mermaid' shows the same graph as Mermaid source with one-click open in mermaid.live.",
             ),
             (
                 "Ownership",
@@ -4205,11 +4218,11 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
             ),
             (
                 "Hotspots(ホットスポット)",
-                "リスク = 変更頻度(commit 数)× 規模(行数 LOC)でファイルを順位付け。上位ほどバグが出やすい＝「よく触られて、かつ複雑」な場所です。List はリスクバー付きランキング、Map はツリーマップ(面積=LOC、色=リスク、緑→赤)。断定ではなく「注目の目安」です。",
+                "リスク = 変更頻度(commit 数)× 規模(行数 LOC)でファイルを順位付け。risk は 0.0–1.0 の数値で表示します。List のバーは最大 risk に対する相対値、Map の色は絶対 risk(緑→赤)、面積は LOC(0 LOC の場合は commit 数)です。「よく触られて、かつ複雑」な場所を調べるための目安で、断定ではありません。",
             ),
             (
                 "Coupling(結合)",
-                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックすると、そのファイルの全パートナー(1:多)が展開されます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
+                "同じ commit で一緒に変わりがちなファイルの組＝隠れた依存。『N×』= 一緒に変わった回数、『%』= 結びつきの強さ。行をクリックするか、focus して Enter/Space を押すと、全パートナー(1:多)の展開・折りたたみができます。『グラフ』はネットワーク表示：ドラッグで移動、スクロールでカーソル位置を中心に拡大、『reset』で初期表示。『Mermaid』は同じグラフを Mermaid ソースで表示し、ワンクリックで mermaid.live を開けます。",
             ),
             (
                 "Ownership(所有)",

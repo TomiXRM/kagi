@@ -748,6 +748,7 @@ pub fn scenario_home_repository_affordances(cx: &mut VisualTestAppContext) {
             i18n::set_lang(lang);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
+                e2e::clear_home_repository_probes();
                 let (app, window) = mount(cx, fixture.path());
                 cx.update_window(window, |_, w, cx| {
                     app.update(cx, |app, cx| app.open_home_tab(w, cx))
@@ -772,11 +773,19 @@ pub fn scenario_home_repository_affordances(cx: &mut VisualTestAppContext) {
                         i18n::Msg::HomeGithubClone.t().to_owned()
                     ))
                 );
-                let probe =
-                    cx.read(|cx| app.read(cx).home_repository_description_for_e2e("acme/r00"));
+                let probe = cx.read(|cx| {
+                    app.read(cx)
+                        .take_home_repository_description_for_e2e("acme/r00")
+                });
                 assert_eq!(probe.as_deref(), Some(DESCRIPTION));
                 let desc = e2e::control_bounds(window.window_id(), "home-gh-description-acme/r00")
                     .expect("description drawn");
+                // Discard any tooltip built during earlier drawing: this hover
+                // must invoke the builder in every matrix cell.
+                cx.read(|cx| {
+                    app.read(cx)
+                        .take_home_repository_description_for_e2e("tooltip:acme/r00")
+                });
                 cx.simulate_mouse_move(window, desc.center(), None, gpui::Modifiers::none());
                 for _ in 0..3 {
                     cx.advance_clock(std::time::Duration::from_millis(400));
@@ -787,7 +796,7 @@ pub fn scenario_home_repository_affordances(cx: &mut VisualTestAppContext) {
                 assert_eq!(
                     cx.read(|cx| app
                         .read(cx)
-                        .home_repository_description_for_e2e("tooltip:acme/r00"))
+                        .take_home_repository_description_for_e2e("tooltip:acme/r00"))
                         .as_deref(),
                     Some(DESCRIPTION),
                     "hover builds full tooltip"

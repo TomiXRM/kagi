@@ -1284,8 +1284,8 @@ pub(crate) fn record_home_repository_description(name: &str, description: &str) 
 }
 
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn home_repository_description(name: &str) -> Option<String> {
-    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow().get(name).cloned())
+pub(crate) fn take_home_repository_description(name: &str) -> Option<String> {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().remove(name))
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -1307,4 +1307,10 @@ pub(crate) fn record_home_repository_action(name: &str, label: &str) {
 #[cfg(feature = "gui-e2e")]
 pub fn home_repository_action(name: &str) -> Option<(gpui::Role, String)> {
     HOME_REPOSITORY_ACTIONS.with(|values| values.borrow().get(name).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clear_home_repository_probes() {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().clear());
+    HOME_REPOSITORY_ACTIONS.with(|values| values.borrow_mut().clear());
 }

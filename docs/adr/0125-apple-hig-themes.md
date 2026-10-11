@@ -577,10 +577,14 @@ material parity. Native renderer/recorder coverage and Tier B are distinct.
 Native `home_repository_affordances` restores in-memory presentation via the
 shared Drop guard and `GlobalSettings::capture()`. Restoring the old action chip
 failed its measured height (17.5px versus 22px at 100%); removing the description
-reveal/AX assignment failed with no recorded description. The fixed matrix checks
-full EN/JA/braces text supplied on native hover, AX attributes supplied by the
-constructors, scaled height, rendered border distinct from fill and metadata,
-and focused-row Space opening the existing clone card. Attribute recorders do
+reveal and its observation failed with no recorded description. The description helper
+sets `aria_description` and records that same argument on one call path; this is
+an assignment-path assertion, not readback of GPUI's accessibility tree. Each
+matrix cell clears old observations and consumes freshly built tooltip text.
+The fixed matrix checks full EN/JA/braces text supplied on native hover,
+constructor-supplied Button role/name, scaled height, rendered border distinct
+from fill and metadata, and focused-row Space opening the existing clone card.
+Attribute recorders do
 not establish live VoiceOver delivery. Tier B: Home Repositories, Apple Light EN,
 hover a truncated description and inspect the trailing action.
 

@@ -573,13 +573,11 @@ fn github_row(
     let name = listing.name().to_string();
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
-    #[cfg(feature = "gui-e2e")]
-    super::e2e::record_home_repository_description(&listing.name_with_owner, &full_description);
     rows.row(
         at,
         super::list_a11y::list_item(HOME_LIST, div().id(id), at, rows.len(), label),
     )
-    .aria_description(full_description)
+    .map(|row| repository_row_description(row, &listing.name_with_owner, full_description))
     .w_full()
     .flex()
     .flex_row()
@@ -645,9 +643,22 @@ impl KagiApp {
     }
 }
 
+/// Keep the description assignment and Tier A observation on one call path.
+fn repository_row_description(
+    row: gpui::Stateful<gpui::Div>,
+    name: &str,
+    description: SharedString,
+) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_home_repository_description(name, &description);
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = name;
+    row.aria_description(description)
+}
+
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
-    pub fn home_repository_description_for_e2e(&self, name: &str) -> Option<String> {
-        super::e2e::home_repository_description(name)
+    pub fn take_home_repository_description_for_e2e(&self, name: &str) -> Option<String> {
+        super::e2e::take_home_repository_description(name)
     }
 }

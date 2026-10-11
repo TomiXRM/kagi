@@ -559,7 +559,7 @@ pub(super) fn render_inspector(
     };
 
     let author_display = SharedString::from(author_name.clone());
-    let author_identity = SharedString::from(format!("{author_name} <{author_email}>"));
+    let author_identity = super::inspector_metadata::identity(&author_name, &author_email);
     let hash_name = SharedString::from(i18n::inspector_copy_hash(&short_sha));
     #[cfg(feature = "gui-e2e")]
     super::e2e::inspector_metadata::record(super::e2e::inspector_metadata::Metadata {
@@ -583,7 +583,7 @@ pub(super) fn render_inspector(
     };
     let hash_chip = Button::new("inspector-hash-chip")
         .ghost()
-        .small()
+        .xsmall()
         .compact()
         .h(theme::scaled_px(18.))
         .px_1()
@@ -591,7 +591,11 @@ pub(super) fn render_inspector(
         .text_color(rgb(theme().text_sub))
         .tooltip(tooltip_text.clone())
         .on_click(copy_sha_click1)
-        .child(short_sha);
+        .child(
+            div()
+                .child(short_sha)
+                .child(super::e2e::measure_inside("inspector-hash-label")),
+        );
     let hash_chip =
         super::inspector_metadata::named_hash_button(hash_chip, hash_name, tooltip_text);
 
@@ -687,7 +691,7 @@ pub(super) fn render_inspector(
                 }
             };
 
-            let identity = SharedString::from(format!("{display_name} <{}>", ca.email));
+            let identity = super::inspector_metadata::identity(&ca.name, &ca.email);
 
             let row = div()
                 .id(("inspector-coauthor", i))

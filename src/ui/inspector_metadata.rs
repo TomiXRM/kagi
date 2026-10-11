@@ -40,3 +40,29 @@ pub(super) fn named_hash_button(
         .aria_label(name)
         .aria_description(description)
 }
+
+pub(super) fn identity(name: &str, email: &str) -> SharedString {
+    match (name.is_empty(), email.is_empty()) {
+        (false, false) => format!("{name} <{email}>").into(),
+        (true, _) => email.to_owned().into(),
+        (_, true) => name.to_owned().into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::identity;
+
+    #[test]
+    fn incomplete_trailer_identities_do_not_add_empty_or_duplicate_email() {
+        let trailers = kagi_git::parse_coauthors(
+            "Co-authored-by: Alice\nCo-authored-by: <a@b>\nCo-authored-by: Bob <b@c>",
+        );
+        let identities: Vec<_> = trailers
+            .iter()
+            .map(|author| identity(&author.name, &author.email))
+            .collect();
+        assert_eq!(identities, vec!["Alice", "a@b", "Bob <b@c>"]);
+        assert_eq!(identity("", ""), "");
+    }
+}

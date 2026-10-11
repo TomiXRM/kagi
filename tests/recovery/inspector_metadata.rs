@@ -54,6 +54,14 @@ fn metadata(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hash: &str, 
         (chip.size.height - theme::scaled_px(18.)).abs() <= gpui::px(1.),
         "dense hash height: {chip:?}"
     );
+    let label = e2e::control_bounds(window.window_id(), "inspector-hash-label").unwrap();
+    assert!(
+        label.top() >= chip.top() - gpui::px(1.)
+            && label.bottom() <= chip.bottom() + gpui::px(1.)
+            && label.left() >= chip.left() - gpui::px(1.)
+            && label.right() <= chip.right() + gpui::px(1.),
+        "SHA label stays within hover/focus frame: {label:?} vs {chip:?}"
+    );
     let author = e2e::control_bounds(window.window_id(), "inspector-author").unwrap();
     assert!(
         (author.size.height - gpui::px(20.5 * zoom)).abs() <= gpui::px(1.),
@@ -62,6 +70,12 @@ fn metadata(cx: &mut VisualTestAppContext, window: AnyWindowHandle, hash: &str, 
     assert!(
         author.size.width < theme::scaled_px(300.),
         "long name is constrained for layout ellipsis"
+    );
+    assert!(
+        e2e::control_paint(window.window_id(), "inspector-author")
+            .unwrap()
+            .ellipsis,
+        "author paint uses actual layout ellipsis"
     );
     cx.simulate_mouse_move(window, author.center(), None, gpui::Modifiers::none());
     for _ in 0..3 {

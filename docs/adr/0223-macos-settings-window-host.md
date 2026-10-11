@@ -23,8 +23,13 @@ initial resize moving the saved frame on each reopen. The selected pane
 determines content height through real layout, clamped to 500 logical points and
 85% of the current display; oversized pages remain reachable through one
 persistent system-scrollbar owner. Width does not scale with UI zoom.
-Both position and height are saved on bounds changes, not just Settings close,
-so the normal application-quit flush also preserves an open Settings frame.
+Both position and height are saved on bounds changes as one flat-string
+settings_window_frame value ("x,y,content-height"), not alternating preference
+keys. The sole store can coalesce a continuous bounds burst, and the normal
+application-quit flush also preserves an open Settings frame. The settings module
+reads the former settings_window_position/settings_window_height pair once,
+converts it to the frame key and removes the obsolete pair; unrelated settings
+remain intact.
 
 Closing or Cmd-W removes only the Settings window and flushes the existing
 store. It never dispatches repository Close Tab, changes sessions, or exits the
@@ -61,6 +66,9 @@ Quit interception seam runs normal action dispatch and the quit-time preference
 flush without exiting the test controller; teardown bypasses Settings close so
 its close handler cannot hide missing geometry persistence.
 settings_window_host_isolation also exercises guard cleanup during unwinding.
+Isolated real-store unit coverage drives 100 calls through the same production
+frame writer and requires at most two successful atomic commits after flush;
+it also verifies one-time legacy migration and preservation of unknown keys.
 
 Tier A's hidden windows do not prove real OS activation, dragging, traffic-light
 presentation or text-field IME. Tier B must exercise these on the launched PID,

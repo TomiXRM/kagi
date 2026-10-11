@@ -89,6 +89,14 @@ pub(super) struct Store {
 /// Every live settings document, most recently used first.
 static STORES: Mutex<Vec<Store>> = Mutex::new(Vec::new());
 
+#[cfg(test)]
+static COMMITTED_FLUSHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(super) fn committed_flushes() -> usize {
+    COMMITTED_FLUSHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn lock_stores() -> MutexGuard<'static, Vec<Store>> {
     STORES.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -337,6 +345,8 @@ fn flush_store(s: &mut Store) -> bool {
     let text = format!("{json}\n");
     match write_atomic(&s.path, text.as_bytes()) {
         Ok(()) => {
+            #[cfg(test)]
+            COMMITTED_FLUSHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             s.dirty = false;
             s.corrupt = false;
             s.pending.clear();

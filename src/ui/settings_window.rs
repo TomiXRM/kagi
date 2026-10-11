@@ -51,21 +51,13 @@ fn window_options(cx: &App) -> WindowOptions {
     });
     // Cocoa's setContentSize anchors the bottom edge. Restoring the last
     // content height avoids a fresh 720 → page-height resize on every reopen.
-    let height = settings::read_setting("settings_window_height")
-        .and_then(|value| value.parse::<f32>().ok())
-        .filter(|height| height.is_finite())
-        .unwrap_or(720.)
+    let saved = settings::settings_window_frame();
+    let height = saved
+        .map_or(720., |frame| frame.height)
         .clamp(500_f32.min(max_height), max_height);
     let mut bounds = Bounds::centered(None, size(px(715.), px(height)), cx);
-    if let Some((x, y)) = settings::read_setting("settings_window_position")
-        .and_then(|value| {
-            value
-                .split_once(',')
-                .and_then(|(x, y)| Some((x.parse::<f32>().ok()?, y.parse::<f32>().ok()?)))
-        })
-        .filter(|(x, y)| x.is_finite() && y.is_finite())
-    {
-        let restored = point(px(x), px(y));
+    if let Some(frame) = saved {
+        let restored = point(px(frame.x), px(frame.y));
         if cx
             .displays()
             .iter()
@@ -298,19 +290,12 @@ impl Render for SettingsWindow {
 }
 
 fn remember_geometry(window: &Window) {
-    remember_position(window);
-    settings::write_setting(
-        "settings_window_height",
-        Some(&f32::from(window.viewport_size().height).to_string()),
-    );
-}
-
-fn remember_position(window: &Window) {
     let origin = window.bounds().origin;
-    settings::write_setting(
-        "settings_window_position",
-        Some(&format!("{},{}", f32::from(origin.x), f32::from(origin.y))),
-    );
+    settings::write_settings_window_frame(settings::SettingsWindowFrame {
+        x: f32::from(origin.x),
+        y: f32::from(origin.y),
+        height: f32::from(window.viewport_size().height),
+    });
 }
 
 fn raise(window: &mut Window) {

@@ -84,6 +84,7 @@ fn configurations(cx: &mut VisualTestAppContext, mut run: impl FnMut(&mut Visual
         "settings_pane",
         "settings_window_position",
         "settings_window_height",
+        "settings_window_frame",
         "auto_fetch",
     ]);
     let _host = SettingsHostGuard::native(cx);
@@ -362,7 +363,15 @@ pub fn scenario_settings_window_position_restore(cx: &mut VisualTestAppContext) 
 fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     // Start at a different saved height, then let the actual page resize.
-    kagi::ui::settings::write_setting("settings_window_height", Some("500"));
+    let mut frame = kagi::ui::settings::settings_window_frame().unwrap_or(
+        kagi::ui::settings::SettingsWindowFrame {
+            x: 100.,
+            y: 100.,
+            height: 500.,
+        },
+    );
+    frame.height = 500.;
+    kagi::ui::settings::write_settings_window_frame(frame);
     let (app, repo) = mount(cx, fixture.path());
     draw(cx, repo);
     cx.simulate_keystrokes(repo, "cmd-,");
@@ -387,9 +396,9 @@ fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
         cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested),
         "repository Cmd-Q dispatched Quit"
     );
-    let saved_height = kagi::ui::settings::read_setting("settings_window_height")
-        .and_then(|height| height.parse::<f32>().ok())
-        .expect("height persisted at app quit");
+    let saved_height = kagi::ui::settings::settings_window_frame()
+        .expect("frame persisted at app quit")
+        .height;
     assert!(
         (saved_height - before.1).abs() <= 1.,
         "app quit persists Settings height without closing it"

@@ -81,6 +81,10 @@ Existing `settings_*`, `platform_menu_*` and
 `filter_menu_then_settings` scenarios deliberately select the portable overlay
 host; none of their assertions are removed. An RAII host guard restores the
 selection even on panic; ordinary launches always use the native macOS host.
+Pair native geometry coverage with `cargo test -p kagi-ui-core settings_window_`.
+The existing isolated-child store harness checks 100 production frame writes
+cost at most two successful commits, preserve the final "x,y,height" value, and
+migrate/remove the obsolete position/height pair exactly once.
 Tier B must list **both** CGWindow IDs for the PID it launched and capture the
 Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
 repository rather than Settings. Check Cmd-comma raise, Cmd-W independent

@@ -379,6 +379,25 @@ Dialog/AlertDialog task boundary rather than receiving a nested outer Dialog.
 Localized EN/JA titles and the single modal slot remain authoritative.
 The existing InputState marked-text and Escape handling is not replaced.
 
+### Safe Return default amendment — 2026-10-12 (#1270)
+
+For a destructive alert, Cancel is the default action: root Return and Escape
+cancel without arming or executing. Danger styling does not imply a Return
+default. This applies to Discard (including all), Amend, Stash Drop, local and
+remote branch deletion, Reset, Force-with-lease Push, Rebase, Branch Cleanup,
+Remove/Prune Worktrees, Conflict Abort, Editor Discard/Delete, and any shared
+plan card marked destructive (including Sync to Remote and History restoration).
+There is currently no delete-tag ActiveModal variant.
+
+Confirm remains explicitly reachable by Tab followed by Space/Enter, pointer
+activation or its named accessibility action. Focused buttons consume activation
+keys before the root router, including Cancel on non-destructive dialogs.
+Existing command-Return shortcuts are unchanged; none is introduced for a dialog
+that did not already expose one. Non-destructive dialogs retain Return = Confirm.
+Two-stage arming, unavailable controls, plan/preflight checks, marked-text input
+protection and the single `active_modal` routing boundary remain unchanged.
+
+
 Native `dialog_a11y_roles` failed against the pre-fix sources because Create
 Branch had no recorded dialog boundary. Restoring only Ghost Cancel against the
 fixed frame failed its native border pixel: `247` rather than required `142`

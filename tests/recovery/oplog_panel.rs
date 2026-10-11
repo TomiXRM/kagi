@@ -548,14 +548,14 @@ fn confirm_twice(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: A
     let before = restore_card(cx, app);
     assert!(!before.confirm_armed);
     let ref_count = before.restores.len();
-    press_key(cx, app, window, "enter");
+    crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     cx.run_until_parked();
     let armed = restore_card(cx, app);
-    assert!(armed.confirm_armed, "the first Enter only arms");
+    assert!(armed.confirm_armed, "the first focused Enter only arms");
     assert_eq!(armed.restores.len(), ref_count);
     assert!(armed.confirm_label().contains(&ref_count.to_string()));
     assert_ne!(before.confirm_label(), armed.confirm_label());
-    press_key(cx, app, window, "enter");
+    crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     wait_idle(cx, app);
     assert!(cx.read(|cx| app.read(cx).oplog_restore_modal().is_none()));
 }
@@ -957,11 +957,13 @@ fn check_blocked_restore(cx: &mut VisualTestAppContext) {
         .unwrap();
     assert!(copied.contains("refs/heads/checked-out"), "{copied}");
     assert!(!copied.contains("git update-ref --stdin"), "{copied}");
-    press_key(cx, &app, window, "enter");
+    // Root Return now cancels a destructive dialog; exercise the blocked
+    // approval boundary explicitly to retain the durable-refusal oracle.
+    app.update(cx, |app, cx| app.start_oplog_restore(cx));
     assert_eq!(
         repo_fingerprint(&blocked_repo),
         before.0,
-        "blocked Enter does not move refs"
+        "blocked approval does not move refs"
     );
     assert_eq!(read_oplog_tail(500).len(), before.1 + 1);
     assert!(
@@ -969,7 +971,7 @@ fn check_blocked_restore(cx: &mut VisualTestAppContext) {
             read_oplog_tail(1).pop().unwrap().outcome,
             OpOutcome::Refused { .. }
         ),
-        "blocked Enter records a refusal rather than executing the restore"
+        "blocked approval records a refusal rather than executing the restore"
     );
     unmount(cx, app, window);
 }

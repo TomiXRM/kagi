@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Branch context menus keep at most ten top-level command/submenu rows, with frequent actions first and less common commands in Integrate, Advanced and Worktree submenus. All prior commands and safety guards remain; disabled rows stay keyboard-focusable but inert, with EN/JA reasons in tooltips and accessibility descriptions instead of inline paragraphs. Right/Enter opens a submenu; Left/Escape closes one level. (#1238)
   - Review: pointer cascades wait 200 ms and cancel pending parent changes when entering a child; closing or replacing a keyboard-focused child restores launcher focus. Protected Reset and dirty/conflicted Checkout warnings remain visible, and ADR-0050's no-op label rule is explicitly amended.
 - Commit Panel List/Tree is now one named keyboard tab group: arrows and Home/End move the selection, and Enter/Space activate without losing the selected file, draft or scroll state. Pointer selection preserves the window's diff-file arrow navigation. (#1229)

@@ -2966,11 +2966,11 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Enter while a modal is open: confirm/approve the active modal. Returns
-    /// `true` if a modal was open — the caller consumes Enter and does NOT fall
-    /// through to commit checkout. Each confirm method self-guards on blockers
-    /// and on its own two-stage arming, so Enter can neither execute a blocked
-    /// plan nor skip a stage. View-only/multi-choice overlays (update,
+    /// Explicit approval of the active modal. The root keyboard router selects
+    /// Cancel instead for destructive defaults. Returns `true` if a modal was
+    /// open, preventing fall-through to commit checkout. Each confirm method
+    /// self-guards on blockers and its own two-stage arming; approval can
+    /// neither execute a blocked plan nor skip a stage. View-only/multi-choice overlays (update,
     /// menu/settings) are consumed but not actioned.
     ///
     /// #492: the `match` over [`ActiveModal`] is **exhaustive** — a new variant

@@ -167,6 +167,7 @@ pub struct ModalButtonA11y {
 thread_local! {
     static MODAL_BUTTONS: std::cell::RefCell<std::collections::HashMap<&'static str, ModalButtonA11y>> =
         std::cell::RefCell::new(Default::default());
+    static MODAL_FOCUS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -177,6 +178,11 @@ pub fn clear_recorded_modal_buttons() {
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_modal_button(id: &str) -> Option<ModalButtonA11y> {
     MODAL_BUTTONS.with(|buttons| buttons.borrow().get(id).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn modal_focus_probe() -> Option<&'static str> {
+    MODAL_FOCUS.with(|focus| focus.take())
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -289,6 +295,11 @@ fn modal_button_with_tab_stop(
     button
         .small()
         .tab_stop(tab_stop)
+        .on_key_down(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            MODAL_FOCUS.with(|focus| focus.set(Some(id)));
+            super::keyboard_nav::stop_activation_keys(event, window, cx);
+        })
         .on_click(on_click)
         .into_any_element()
 }

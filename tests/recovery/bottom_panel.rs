@@ -145,6 +145,14 @@ pub fn scenario_bottom_panel_nested(cx: &mut VisualTestAppContext) {
 pub fn scenario_bottom_panel_tab_hover(cx: &mut VisualTestAppContext) {
     use kagi::ui::{i18n::Lang, BottomTab};
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
+    let restore_globals = crate::recovery_layout::GlobalSettings::capture();
+    struct RestoreTheme(String);
+    impl Drop for RestoreTheme {
+        fn drop(&mut self) {
+            theme::set_active(&self.0);
+        }
+    }
+    let restore_theme = RestoreTheme(theme::theme().slug.to_string());
     let _ports = crate::gui_isolation::PortStore::keep();
     let _shell = crate::gui_isolation::StandInShell::install();
     let fixture = build_fixture();
@@ -376,9 +384,22 @@ pub fn scenario_bottom_panel_tab_hover(cx: &mut VisualTestAppContext) {
                     cx.notify();
                 });
                 cx.run_until_parked();
+                draw(cx, window);
+                crate::app_conflict::click_control(cx, window, "tab-terminal");
+                assert!(
+                    cx.update_window(window, |_, window, cx| {
+                        app.read(cx).terminal_focused_for_e2e(window, cx)
+                    })
+                    .unwrap(),
+                    "pointer activation hands text input to the PTY"
+                );
             }
         }
     }
     assert_eq!(before, repo_fingerprint(fixture.path()));
+    app.update(cx, |app, cx| app.set_theme(&restore_theme.0, cx));
+    drop(restore_theme);
+    drop(restore_globals);
+    cx.update(theme::sync_gpui_component_theme);
     unmount(cx, app, window);
 }

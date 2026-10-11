@@ -336,8 +336,9 @@ Tier B evidence.
 Operation Log / Terminal / Activity reuse `keyboard_nav::TabList`: one Tab
 stop, Left / Right / Home / End move focus, Enter / Space activate, Tab leaves.
 Activation is manual because Terminal may start a process. Rounded, compact
-cells take the sidebar mode-selector geometry, with a coherent neutral panel
-boundary and localized visible/AX names in EN/JA. The existing fixed focus ring
+cells are similar to the sidebar mode selector, not a shared styling helper:
+the bottom selector keeps its own 28px height and window-aware selection fill.
+Visible/AX names are localized in EN/JA. The existing fixed focus ring
 is independent of selection. Selected cells keep `selected_for_window` under
 hover; only unselected cells receive the `surface` wash. Closing the panel
 returns focus to the app root rather than leaving focus on an absent cell.
@@ -354,3 +355,9 @@ startup's focus transfer is restored to the keyboard cell; otherwise the next
 Right/Space goes to Terminal rather than the selector. `bottom_panel_nested`
 and `bottom_panel_motion` also pass. These are native renderer and attribute
 recorder assertions; live VoiceOver / real-window comparison remain Tier B.
+
+Review correction: `TabList` selection callbacks receive keyboard versus
+pointer activation. Keyboard Terminal activation restores selector focus;
+pointer activation retains Terminal's PTY focus instead of returning to the
+root. The native matrix asserts this pointer route explicitly. The scenario
+restores in-memory theme/language/zoom before unmount as well as saved keys.

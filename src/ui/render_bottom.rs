@@ -99,10 +99,14 @@ impl KagiApp {
             vec![0, 1, 2],
             TABS.iter().position(|&tab| tab == active_tab),
             keyboard_nav::Activation::Manual,
-            self.root_focus.clone(),
-            move |slot, window, cx| {
+            // This selector routes pointer focus itself: Terminal receives
+            // text input, while the other panes return to the app root.
+            None,
+            move |slot, is_keyboard, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
-                    let kept = this.bottom_tab_focus.focused_cell(window);
+                    let kept = is_keyboard
+                        .then(|| this.bottom_tab_focus.focused_cell(window))
+                        .flatten();
                     this.bottom_tab = TABS[slot];
                     if this.bottom_tab == BottomTab::Terminal {
                         this.ensure_terminal(window, cx);
@@ -111,6 +115,11 @@ impl KagiApp {
                     // must keep the selector's focus until Tab leaves it.
                     if let Some(cell) = kept {
                         window.focus(&cell, cx);
+                    }
+                    if !is_keyboard && this.bottom_tab != BottomTab::Terminal {
+                        if let Some(root) = &this.root_focus {
+                            root.focus(window, cx);
+                        }
                     }
                     cx.notify();
                 });

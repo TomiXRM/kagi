@@ -335,7 +335,7 @@ pub(crate) fn slot_keys(n: usize) -> Vec<u64> {
     (0..n as u64).collect()
 }
 
-type Select = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type Select = Rc<dyn Fn(usize, bool, &mut Window, &mut App)>;
 
 /// One tab list being drawn: the slots on screen in order, the selected one
 /// (none while something no cell names is on screen), and what selecting a
@@ -371,7 +371,7 @@ impl TabList {
         selected: Option<usize>,
         activation: Activation,
         pointer_focus: Option<FocusHandle>,
-        select: impl Fn(usize, &mut Window, &mut App) + 'static,
+        select: impl Fn(usize, bool, &mut Window, &mut App) + 'static,
         cx: &App,
     ) -> Self {
         let handles = focus.sync(&keys, cx);
@@ -436,7 +436,7 @@ impl TabList {
                 handles[next].focus(window, cx);
                 roving.set(Some(keys[next]));
                 if automatic {
-                    select(next, window, cx);
+                    select(next, true, window, cx);
                 }
             }
         };
@@ -461,7 +461,7 @@ impl TabList {
                 .track_focus(&handle),
         )
         .on_click(move |event: &ClickEvent, window, cx| {
-            select(slot, window, cx);
+            select(slot, event.is_keyboard(), window, cx);
             if !event.is_keyboard() {
                 roving.set(None);
                 if let Some(focus) = &pointer_focus {

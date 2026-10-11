@@ -202,3 +202,9 @@ tooltips and AX names identify every action (rationale in the decision log).
 Unavailable reasons, count overlays, group hairlines, mode highlighting and
 keyboard focus rings keep their existing owners. This reuses the existing SVG
 pipeline, not SF Symbols, native material or a replacement action dispatcher.
+
+Review correction: caption mode uses the same localized short label as its
+AX name and default tooltip (history tooltips retain a localized label prefix).
+View → Toolbar is declared in `MENU_BAR` as `DynSubmenu::ToolbarDisplay`;
+native menus and the Linux/FreeBSD inline dropdown share localized entries,
+selection markers and the `SetToolbarDisplay` action, per ADR-0085.

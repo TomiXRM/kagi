@@ -510,16 +510,20 @@ impl KagiApp {
                 })
                 .child(icon_cell)
                 .when(!icon_only, |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    toolbar_a11y::record_caption(id, accessible_label);
                     el.child(
                         div()
                             .text_xs()
                             .text_color(rgb(text_color))
-                            .child(SharedString::from(label)),
+                            .child(SharedString::from(accessible_label)),
                     )
                 })
                 .when(
                     !(id == "tb-undo" && undo_has_summary || id == "tb-redo" && redo_has_summary),
                     |el| {
+                        #[cfg(feature = "gui-e2e")]
+                        toolbar_a11y::record_tooltip(id, accessible_label);
                         el.tooltip(move |window, cx| {
                             Tooltip::new(accessible_label).build(window, cx)
                         })

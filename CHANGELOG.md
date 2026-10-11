@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Toolbar display can be changed in Appearance or View → Icon Only / Icon and Text. Apple Light and Apple Dark default to the compact 36-reference-px icon-only row; other presets retain the 52px caption row. Names, tooltips, counts, unavailable reasons, keyboard rings and workspace feedback remain. (#1178)
+- Toolbar display can be changed in Appearance or View → Toolbar → Icon Only / Icon and Text. Apple Light and Apple Dark follow Finder's default with a compact 36-reference-px icon-only row; other presets retain the 52px caption row. Names, tooltips, counts, unavailable reasons, keyboard rings and workspace feedback remain. (#1178)
 - Graph navigator の五つの section heading を EN の Title Case／JA の既存訳、secondary label の12px semibold、小さい chevron と無彩色の `(N)` pill に揃えました。28px の pinned header は上下8px、virtualized body の20／24px slot は維持し、collapse・keyboard focus・AX expanded state・保存先は変更しません。(#1177)
 - Graph navigator header の chevron は SVG 自身に secondary 色を設定し、通常 build の空の計測 probe で余分な gap が入らない margin spacing にしました。count pill は header hover と別の neutral fill を使い、hover 中も輪郭を保ちます。(#1177 review)
 - Pane resize targets keep their existing scaled 4px geometry, but resting boundaries paint centered 1 logical-pixel `surface` hairlines over the adjacent theme background: Graph sidebar sections, sidebar/content, commit-panel/inspector boundary, bottom panel, inspector message/files split, PR navigator and swimlane, Conflict A/B and Result, Editor tree and hunks, and File History detail and rows/diff. Hover/drag paints a solid accent across the target and line; Apple Dark keeps its own palette. (#1174)

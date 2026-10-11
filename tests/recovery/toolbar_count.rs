@@ -110,6 +110,38 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
             app.view_mut().toolbar_state.behind = 100;
             cx.notify();
         });
+        if display == kagi_ui_core::settings::ToolbarDisplay::IconAndText {
+            std::env::set_var("KAGI_LANG", "ja");
+            kagi_ui_core::i18n::init_lang();
+            e2e::clear_toolbar_unavailable();
+            frame(cx, window);
+            for button in [
+                "tb-pull",
+                "tb-push",
+                "tb-branch",
+                "tb-stash",
+                "tb-pop",
+                "tb-undo",
+                "tb-redo",
+                "tb-terminal",
+                "tb-graph-mode",
+                "tb-editor-ws",
+                "tb-ecosystem",
+            ] {
+                let name = e2e::toolbar_label(button).expect("JA AX name");
+                let (caption, tooltip) = e2e::toolbar_caption_and_tooltip(button);
+                assert_eq!(
+                    caption,
+                    Some(name),
+                    "{button}: JA caption must match AX name"
+                );
+                assert_eq!(
+                    tooltip,
+                    Some(name),
+                    "{button}: JA tooltip must match AX name"
+                );
+            }
+        }
         frame(cx, window);
         assert_eq!(
             kagi_ui_core::settings::Settings::load().toolbar_display(),
@@ -233,6 +265,34 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
                 shaped_width_scale(measured.2, baseline[index].2, 0.7);
             }
         }
+    }
+    for mode in [
+        kagi_ui_core::settings::ToolbarDisplay::IconOnly,
+        kagi_ui_core::settings::ToolbarDisplay::IconAndText,
+    ] {
+        app.update(cx, |app, cx| {
+            assert!(app.open_platform_menu_for_e2e("View", cx))
+        });
+        frame(cx, window);
+        let row = bounds(window, &format!("platform-menu-toolbar-{}", mode.as_str()));
+        contained(
+            bounds(window, "platform-menu-panel"),
+            row,
+            "toolbar menu row",
+        );
+        cx.simulate_click(window, row.center(), gpui::Modifiers::none());
+        frame(cx, window);
+        assert_eq!(
+            kagi_ui_core::settings::Settings::load().toolbar_display(),
+            Some(mode)
+        );
+        let entries = kagi::ui::commands::toolbar_display_menu_entries();
+        assert!(entries
+            .iter()
+            .find(|(entry, _)| *entry == mode)
+            .unwrap()
+            .1
+            .starts_with("✓ "));
     }
     assert!(theme::set_active(&original_theme.slug));
     drop(_toolbar_restore);

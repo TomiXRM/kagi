@@ -236,10 +236,11 @@ pub enum MenuNode {
     Services,
 }
 
-/// The two dynamic submenus under View (ADR-0036 theme, ADR-0048 language).
+/// Dynamic View submenus, shared by native and in-app menus (ADR-0085).
 pub enum DynSubmenu {
     Theme,
     Language,
+    ToolbarDisplay,
 }
 
 /// The OS-standard Edit items (macOS responder chain — ADR-0029).
@@ -345,6 +346,8 @@ pub const MENU_BAR: &[MenuSection] = &[
             // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
             MenuNode::Submenu(DynSubmenu::Theme),
             MenuNode::Submenu(DynSubmenu::Language),
+            MenuNode::Separator,
+            MenuNode::Submenu(DynSubmenu::ToolbarDisplay),
         ],
     },
     // ── Repository ───────────────────────────────────────────────────
@@ -1119,6 +1122,16 @@ pub fn build_menus() -> Vec<Menu> {
                     MenuNode::Separator => MenuItem::separator(),
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
+                    MenuNode::Submenu(DynSubmenu::ToolbarDisplay) => MenuItem::submenu(Menu {
+                        name: Msg::SettingsToolbarDisplay.t().into(),
+                        items: toolbar_display_menu_entries()
+                            .into_iter()
+                            .map(|(mode, label)| {
+                                MenuItem::action(label, SetToolbarDisplay { mode })
+                            })
+                            .collect(),
+                        disabled: false,
+                    }),
                     MenuNode::OsEdit(kind) => os_edit_menu_item(kind),
                     #[cfg(target_os = "macos")]
                     MenuNode::Services => {
@@ -1126,24 +1139,6 @@ pub fn build_menus() -> Vec<Menu> {
                     }
                 })
                 .collect();
-            let mut items: Vec<MenuItem> = items;
-            if section.label == "View" {
-                items.push(MenuItem::separator());
-                let selected = settings::toolbar_display(&theme().slug);
-                for (mode, label) in [
-                    (
-                        settings::ToolbarDisplay::IconAndText,
-                        Msg::ToolbarIconAndText,
-                    ),
-                    (settings::ToolbarDisplay::IconOnly, Msg::ToolbarIconOnly),
-                ] {
-                    let marker = if selected == mode { "✓ " } else { "   " };
-                    items.push(MenuItem::action(
-                        SharedString::from(format!("{marker}{}", label.t())),
-                        SetToolbarDisplay { mode },
-                    ));
-                }
-            }
             Menu {
                 name: section.label.into(),
                 items,
@@ -1151,6 +1146,22 @@ pub fn build_menus() -> Vec<Menu> {
             }
         })
         .collect()
+}
+
+/// Shared localized rows and selection markers for both platform menu renderers.
+pub fn toolbar_display_menu_entries() -> [(settings::ToolbarDisplay, SharedString); 2] {
+    let selected = settings::toolbar_display(&theme().slug);
+    [
+        (
+            settings::ToolbarDisplay::IconAndText,
+            Msg::ToolbarIconAndText,
+        ),
+        (settings::ToolbarDisplay::IconOnly, Msg::ToolbarIconOnly),
+    ]
+    .map(|(mode, label)| {
+        let marker = if selected == mode { "✓ " } else { "   " };
+        (mode, SharedString::from(format!("{marker}{}", label.t())))
+    })
 }
 
 /// Build the View → Theme submenu (W9-THEME / ADR-0036, #922).

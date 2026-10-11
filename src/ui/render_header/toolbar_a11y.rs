@@ -41,8 +41,12 @@ thread_local! {
     /// The exact string passed to `aria_description` for each drawn button.
     static DESCRIPTION: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
         std::cell::RefCell::new(Default::default());
-    /// Same localized label passed to both AX name and Tooltip.
+    /// Localized AX names from the current button renderer.
     static LABEL: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
+        std::cell::RefCell::new(Default::default());
+    static CAPTION: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
+        std::cell::RefCell::new(Default::default());
+    static TOOLTIP: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
         std::cell::RefCell::new(Default::default());
     /// A harmless F19 key identifies the toolbar button that actually owns focus.
     static FOCUS_PROBE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
@@ -70,6 +74,24 @@ pub(crate) fn record_label(id: &'static str, label: &'static str) {
 #[cfg(feature = "gui-e2e")]
 pub fn toolbar_label(id: &str) -> Option<&'static str> {
     LABEL.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_caption(id: &'static str, label: &'static str) {
+    CAPTION.with(|map| map.borrow_mut().insert(id, label));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_tooltip(id: &'static str, label: &'static str) {
+    TOOLTIP.with(|map| map.borrow_mut().insert(id, label));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn toolbar_caption_and_tooltip(id: &str) -> (Option<&'static str>, Option<&'static str>) {
+    (
+        CAPTION.with(|map| map.borrow().get(id).copied()),
+        TOOLTIP.with(|map| map.borrow().get(id).copied()),
+    )
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -104,6 +126,8 @@ pub fn clear_toolbar_unavailable() {
     UNAVAILABLE.with(|map| map.borrow_mut().clear());
     DESCRIPTION.with(|map| map.borrow_mut().clear());
     LABEL.with(|map| map.borrow_mut().clear());
+    CAPTION.with(|map| map.borrow_mut().clear());
+    TOOLTIP.with(|map| map.borrow_mut().clear());
 }
 
 #[cfg(test)]

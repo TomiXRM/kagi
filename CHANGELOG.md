@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit Panel selected file rows retain their window-aware selection fill while hovered; conflicted rows retain their diagnostic tint. (#1228)
+- The commit body composer uses the Summary input's theme focus border around the complete body/footer frame without changing its auto-grow layout. (#1232)
+- Non-link Commit Panel actions and file menus, shared menus, hunk actions, Home Recent/GitHub/Work rows and toolbar controls request the native arrow cursor; real URL-link controls retain their hand cursor. (#1241)
 - Settings groups related preferences into Appearance, Graph, Network, Behaviour / Terminal, Language, Smart Commit and Analyze cards on the panel background. Rows share a base-colour surface and neutral hairlines; concise EN/JA descriptions retain extended avatar, theme and locking guidance through help. The existing window host, switch wrappers and single page scroll owner are unchanged. (#1200)
   - Review: hairlines separate rows from the top without tracing the rounded card bottoms; custom-theme rows follow the same rule. Analyze retains internal vertical padding/gaps and CLI warnings retain breathing room. Native coverage hovers avatar/theme/Analyze help and compares the full EN/JA explanations; prose keeps lowercase commit/local branch vocabulary. (#1200 review)
 - Window chrome now unifies native macOS traffic lights, repository/branch identity, toolbar actions, overflow and workspace controls in one frame across every theme. Repository/Home document tabs appear below it only with multiple documents; the trailing +, Cmd+T/Cmd+W and File menu remain available with the strip hidden. Icon Only uses a 52-reference-px frame (46.8 logical px at 100%); Icon and Text remains available in a taller 60px frame (54 logical px). (#1179)

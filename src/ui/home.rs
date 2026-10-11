@@ -452,7 +452,7 @@ fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoEl
         .px_2()
         .py_1()
         .rounded_md()
-        .cursor(gpui::CursorStyle::PointingHand)
+        .cursor(gpui::CursorStyle::Arrow)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(open)
         .child(

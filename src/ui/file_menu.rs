@@ -144,7 +144,7 @@ pub(crate) fn render_file_menu_overlay(
                         .py(theme::scaled_px(3.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
                         .on_click(wip_ext_click)
                         .child(SharedString::from(Msg::OpenInExternalEditor.t())),
                 ))
@@ -156,7 +156,7 @@ pub(crate) fn render_file_menu_overlay(
                         .py(theme::scaled_px(3.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
                         .on_click(history_click)
                         .child(SharedString::from("Show File History")),
                 ))
@@ -168,7 +168,7 @@ pub(crate) fn render_file_menu_overlay(
                         .py(theme::scaled_px(3.))
                         .text_sm()
                         .text_color(rgb(theme().color_blocker))
-                        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
                         .on_click(discard_click)
                         .child(SharedString::from("Discard changes…")),
                 )),
@@ -290,7 +290,7 @@ where
         .py(theme::scaled_px(3.))
         .text_sm()
         .text_color(rgb(theme().text_main))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
         .on_click(handler)
         .child(label)
 }

@@ -535,7 +535,6 @@ pub(crate) fn render_main_diff_row(
     match row {
         DiffRow::HunkHeader(header) => div()
             .id(("main-diff-hunk", i))
-            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .w_full()
             .flex()
             .items_center()
@@ -547,6 +546,7 @@ pub(crate) fn render_main_diff_row(
             } else {
                 rgb(theme::theme().surface).into()
             })
+            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .text_sm()
             .text_color(rgb(theme::theme().diff_hunk))
             // Hunk headers stay single-line (never wrap): overflow_hidden +

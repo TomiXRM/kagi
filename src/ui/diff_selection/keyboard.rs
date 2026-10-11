@@ -43,6 +43,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub element: Stateful<Div>,
     pub key: u64,
+    pub focus_key: u64,
     pub rows: Arc<Vec<DiffRow>>,
     pub scroll: ListState,
     pub item_index: F,
@@ -51,14 +52,31 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
 impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let focus = window
-            .use_keyed_state(("diff-selection-focus", self.key), cx, |_, cx| {
+            .use_keyed_state(("diff-selection-focus", self.focus_key), cx, |_, cx| {
                 cx.focus_handle()
             })
             .read(cx)
-            .clone();
+            .clone()
+            .tab_index(0)
+            .tab_stop(true);
         let key_focus = focus.clone();
+        let is_focused = focus.is_focused(window);
+        #[cfg(feature = "gui-e2e")]
+        super::super::e2e::diff_controls::note_body_focus(self.key, is_focused);
         self.element
             .track_focus(&focus)
+            .relative()
+            // An inset overlay uses the existing accent/2px ring without
+            // changing the list viewport or dense hunk-row geometry.
+            .when(is_focused, |pane| {
+                pane.child(
+                    gpui::div()
+                        .absolute()
+                        .inset_0()
+                        .border_2()
+                        .border_color(gpui::rgb(super::super::theme::theme().ui_accent())),
+                )
+            })
             .key_context(CONTEXT)
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx);

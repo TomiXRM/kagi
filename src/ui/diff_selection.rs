@@ -13,7 +13,7 @@
 //! highlights, and it stores the extracted TEXT eagerly at mouse-up, so ⌘C
 //! needs no access to any pane's rows.
 
-use parking_lot::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use super::diff_view::DiffRow;
 
@@ -31,6 +31,10 @@ struct Selection {
 
 static SELECTION: Mutex<Option<Selection>> = Mutex::new(None);
 
+fn selection() -> MutexGuard<'static, Option<Selection>> {
+    SELECTION.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Identity for one diff surface. Title + row count is stable across frames
 /// and distinct enough between the visible panes; a collision only paints a
 /// spurious highlight, never copies the wrong text (text is stored, not read).
@@ -43,7 +47,7 @@ pub(crate) fn surface_key(title: &str, row_count: usize) -> u64 {
 
 /// Mouse-down on row `ix`: start a new selection (single row until dragged).
 pub(crate) fn begin(key: u64, ix: usize) {
-    *SELECTION.lock() = Some(Selection {
+    *selection() = Some(Selection {
         key,
         anchor: ix,
         cursor: ix,
@@ -54,7 +58,7 @@ pub(crate) fn begin(key: u64, ix: usize) {
 
 /// Drag over row `ix`: extend. Returns true when the range changed (repaint).
 pub(crate) fn drag_to(key: u64, ix: usize) -> bool {
-    let mut sel = SELECTION.lock();
+    let mut sel = selection();
     match sel.as_mut() {
         Some(s) if s.key == key && s.cursor != ix => {
             s.cursor = ix;
@@ -66,7 +70,7 @@ pub(crate) fn drag_to(key: u64, ix: usize) -> bool {
 
 /// The inclusive selected range for surface `key`, if the selection is on it.
 pub(crate) fn range(key: u64) -> Option<(usize, usize)> {
-    let sel = SELECTION.lock();
+    let sel = selection();
     sel.as_ref()
         .filter(|s| s.key == key)
         .map(|s| (s.anchor.min(s.cursor), s.anchor.max(s.cursor)))
@@ -78,15 +82,14 @@ pub(crate) fn contains(key: u64, ix: usize) -> bool {
 }
 
 pub(crate) fn is_keyboard_caret(key: u64, ix: usize) -> bool {
-    SELECTION
-        .lock()
+    selection()
         .as_ref()
         .is_some_and(|s| s.key == key && s.keyboard_caret && s.cursor == ix)
 }
 
 /// Store the copyable text (called at mouse-up with the freshly built text).
 pub(crate) fn set_text(key: u64, text: String) {
-    let mut sel = SELECTION.lock();
+    let mut sel = selection();
     if let Some(s) = sel.as_mut() {
         if s.key == key {
             s.text = text;
@@ -96,7 +99,7 @@ pub(crate) fn set_text(key: u64, text: String) {
 
 /// The stored text, if any selection exists (⌘C reads this).
 pub(crate) fn selected_text() -> Option<String> {
-    let sel = SELECTION.lock();
+    let sel = selection();
     sel.as_ref()
         .map(|s| s.text.clone())
         .filter(|t| !t.is_empty())
@@ -104,7 +107,7 @@ pub(crate) fn selected_text() -> Option<String> {
 
 /// Clear the selection. Returns whether one existed (Esc-chain short-circuit).
 pub(crate) fn clear() -> bool {
-    SELECTION.lock().take().is_some()
+    selection().take().is_some()
 }
 
 /// Move the shared inclusive caret/range and eagerly refresh code-only copy text.
@@ -117,7 +120,7 @@ fn move_rows(
     all: bool,
 ) -> Option<usize> {
     let last = rows.len().checked_sub(1)?;
-    let mut selection = SELECTION.lock();
+    let mut selection = selection();
     let current = selection.as_ref().filter(|s| s.key == key);
     let cursor = current.map_or(0, |s| s.cursor.min(last));
     let target = if all || (boundary && step > 0) {

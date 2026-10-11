@@ -18,6 +18,9 @@
   extension, Shift+Cmd+Up/Down extension to the first/last diff row and Cmd+A.
   Child controls retain their own keyboard behavior. Escape remains in the
   workspace cancellation chain: selection clears before notification dismissal.
+  Its FocusHandle and element identity use only the title, independently of the
+  row-count-dependent selection token, so same-file reloads retain focus.
+  A 2px accent overlay makes focus visible without resizing the list or rows.
 - Keyboard selection reuses `diff_selection`'s single title/count surface token,
   inclusive anchor/cursor range and `selection_overlay` paint. Moving a caret
   without Shift collapses the range to that row; Shift preserves the anchor.
@@ -27,6 +30,8 @@
   text; mouse drag and mouse-up extraction retain their existing semantics.
   Header tint identifies only a keyboard caret; mouse-selected headers retain
   their original surface fill.
+  Header paint probes run after the background is applied. The process-global
+  model retains std Mutex with poison recovery, without a new dependency (#1080).
 - The existing native ListState reveals the caret. Unified row indices are
   mapped through the cached split projection and optional expansion-item
   layout before scrolling; no independent scroll state is introduced.

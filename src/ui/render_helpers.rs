@@ -544,6 +544,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     // R1: selection-surface semantics stay title+count based, independently of
     // the derived-layout cache's immutable row identity.
     let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
+    // Focus follows the title, not the row-count-dependent selection token.
+    let focus_key = super::diff_selection::surface_key(view.title.as_ref(), 0);
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
     let layout = overlay
@@ -676,7 +678,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             // gpui-component's `mono_font_family` — i.e. `MONO_FONT`. Matching
             // the neighbour matters more than the Nerd Font preference here.
             div()
-                .id(("diff-selection-body", sel_key))
+                .id(("diff-selection-body", focus_key))
                 .flex_1()
                 .min_h(px(0.))
                 .flex()
@@ -735,6 +737,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .map(|element| super::diff_selection::keyboard::Pane {
                     element,
                     key: sel_key,
+                    focus_key,
                     rows,
                     scroll: selection_scroll,
                     item_index: move |row| {

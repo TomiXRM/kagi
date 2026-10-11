@@ -49,7 +49,7 @@ fn selected_rows(key: u64) -> usize {
     let selection: gpui::Fill = theme::selection_overlay().into();
     e2e::diff_controls::painted_rows(key)
         .iter()
-        .filter(|(_, fill)| fill.as_ref() == Some(&selection))
+        .filter(|(ix, fill)| *ix != 0 && fill.as_ref() == Some(&selection))
         .count()
 }
 
@@ -74,12 +74,14 @@ fn selection_cell(cx: &mut VisualTestAppContext) {
     });
     open(cx, &app);
     draw(cx, window);
-    let button = e2e::control_bounds(window.window_id(), "main-diff-hunk-stage-0").unwrap();
-    cx.simulate_click(
-        window,
-        gpui::point(button.left() - gpui::px(100.), button.center().y),
-        gpui::Modifiers::none(),
-    );
+    let (key, _) = surface(cx, &app);
+    tab_to_body(cx, window, key);
+    keys(cx, window, "down");
+    draw(cx, window);
+    assert_eq!(selected_rows(key), 1, "Tab enters body; Down moves caret");
+    keys(cx, window, "up");
+    draw(cx, window);
+    assert_header_caret(key, true);
     range_keys(cx, &app, window);
     assert!(
         cx.read(|cx| app.read(cx).ui().main_diff.is_some()),
@@ -87,6 +89,30 @@ fn selection_cell(cx: &mut VisualTestAppContext) {
     );
     caret_scroll(cx, &app, window, &repo);
     unmount(cx, app, window);
+}
+
+fn tab_to_body(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: u64) {
+    for _ in 0..128 {
+        keys(cx, window, "tab");
+        draw(cx, window);
+        if e2e::diff_controls::body_focused(key) {
+            return;
+        }
+    }
+    panic!("diff body must be reachable by Tab without a pointer click");
+}
+
+fn assert_header_caret(key: u64, selected: bool) {
+    let fill = e2e::diff_controls::painted_rows(key)
+        .into_iter()
+        .find(|(ix, _)| *ix == 0)
+        .expect("header paint measured after its background is configured")
+        .1;
+    assert_eq!(
+        fill == Some(theme::selection_overlay().into()),
+        selected,
+        "header tint follows the keyboard caret"
+    );
 }
 
 fn range_keys(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
@@ -145,6 +171,7 @@ fn range_keys(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyW
         0,
         "Escape clears selection before copy toast"
     );
+    assert_header_caret(key, false);
     assert_eq!(
         cx.read(|cx| app
             .read(cx)
@@ -166,15 +193,23 @@ fn caret_scroll(
     repo: &std::path::Path,
 ) {
     let long: String = (0..100).map(|i| format!("changed {i}\n")).collect();
+    let (old_key, old_total) = surface(cx, app);
+    assert!(e2e::diff_controls::body_focused(old_key));
     std::fs::write(repo.join("f.txt"), long).unwrap();
     open(cx, app);
     draw(cx, window);
-    let row = e2e::control_bounds(window.window_id(), "main-diff-hunk-row-0").unwrap();
-    cx.simulate_click(
-        window,
-        gpui::point(row.left() + gpui::px(100.), row.center().y),
-        gpui::Modifiers::none(),
+    let (key, total) = surface(cx, app);
+    assert_ne!(total, old_total, "real reload changes the row count");
+    assert_ne!(key, old_key, "selection token still follows the content");
+    assert!(
+        e2e::diff_controls::body_focused(key),
+        "row-count reload retains body focus without another Tab or click"
     );
+    keys(cx, window, "down cmd-c");
+    draw(cx, window);
+    assert_eq!(selected_rows(key), 1);
+    assert_eq!(clipboard(cx), "line 0\n");
+    assert!(cx.read(|cx| app.read(cx).ui().main_diff.is_some()));
     keys(cx, window, "escape shift-cmd-down");
     draw(cx, window);
     let (_, total) = surface(cx, app);

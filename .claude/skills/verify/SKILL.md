@@ -2884,10 +2884,12 @@ For #1233 / #1234 use
 `KAGI_GUI_E2E_KEEP_GOING=1`. The first checks the pinned named ghost Button's
 role/name inputs, Tab/F19 routing, Enter Stage / Space Unstage in EN/JA and
 unchanged header bounds (original and new: 893×22.5 logical px at the fixture
-viewport). The second compares actual row selection-fill styles after
+viewport). The second enters the body by Tab before moving a caret, checks
+header fill after final styling, and compares content-row selection fills after
 Shift+Down ×3, retraction, collapsed caret, boundary extension, Cmd+A and
-code-only Cmd+C; EN/JA unified/split use real backend rows, with both ends of
-a 201-row diff fully inside the measured native viewport after keyboard
+code-only Cmd+C. EN/JA unified/split use real backend rows; changing the row
+count must preserve body focus without another Tab or click. Both ends of a
+201-row diff remain inside the measured native viewport after keyboard
 movement. Neither recorder is native VoiceOver evidence.
 Neighbor filter: `KAGI_GUI_E2E_ONLY='diff_,hunk_,peek_,copy_'`.
 Tier B: Tab into the body and hunk actions; inspect focus, Enter/Space, tooltip

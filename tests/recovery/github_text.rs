@@ -42,22 +42,30 @@ fn wheel(
 }
 fn hunk_access(cx: &mut VisualTestAppContext, window: AnyWindowHandle, source: &str) {
     let disclosure = bounds(cx, window, "pr-convo-hunk-disclosure-7000");
-    let first = bounds(cx, window, "pr-convo-hunk-line-7000-0");
+    let tail = bounds(cx, window, "pr-convo-hunk-line-7000-39");
     let viewport = bounds(cx, window, "pr-convo-hunk-scroll-7000");
-    assert!(
-        first.size.width > viewport.size.width,
-        "long line must overflow its bounded viewport"
-    );
     assert_eq!(
         hunk::attributes(7000),
-        Some((gpui::Role::Button, "Show 28 more lines".into(), 12))
+        Some((gpui::Role::Button, "Show 28 previous lines".into(), 12))
     );
+    assert_eq!(i18n::pr_threads::show_more_lines(1), "Show 1 previous line");
     click(cx, window, "pr-convo-hunk-copy-7000");
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text())
             .as_deref(),
         Some(source)
+    );
+    cx.simulate_click(window, disclosure.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    let first = bounds(cx, window, "pr-convo-hunk-line-7000-0");
+    assert!(
+        first.size.width > viewport.size.width,
+        "long line must overflow its bounded viewport"
+    );
+    assert!(
+        tail.size.height > gpui::px(0.),
+        "collapsed context retains the commented-on tail line"
     );
     wheel(cx, window, viewport, -400., 0.);
     let shifted = bounds(cx, window, "pr-convo-hunk-line-7000-0");
@@ -69,8 +77,6 @@ fn hunk_access(cx: &mut VisualTestAppContext, window: AnyWindowHandle, source: &
         shifted.origin.y, first.origin.y,
         "horizontal wheel must not move the feed"
     );
-    cx.simulate_click(window, disclosure.center(), gpui::Modifiers::none());
-    cx.run_until_parked();
     let last = bounds(cx, window, "pr-convo-hunk-line-7000-39");
     assert!(
         last.origin.y > first.origin.y,
@@ -82,6 +88,14 @@ fn hunk_access(cx: &mut VisualTestAppContext, window: AnyWindowHandle, source: &
         expanded.size.width,
         bounds(cx, window, "pr-convo-hunk-scroll-7000").size.width + gpui::px(2.)
     );
+    hunk_scroll_and_collapse(cx, window, shifted.origin.x);
+}
+
+fn hunk_scroll_and_collapse(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    horizontal_origin: Pixels,
+) {
     let builds = hunk::projection_builds();
     for _ in 0..5 {
         paint(cx, window);
@@ -99,16 +113,22 @@ fn hunk_access(cx: &mut VisualTestAppContext, window: AnyWindowHandle, source: &
     );
     let viewport = bounds(cx, window, "pr-mode-center-pane");
     wheel(cx, window, viewport, 0., -10000.);
+    let vertically_scrolled = bounds(cx, window, "pr-convo-hunk-line-7000-0");
+    assert_eq!(
+        vertically_scrolled.origin.x, horizontal_origin,
+        "vertical wheel must not also scroll the code horizontally"
+    );
     let last = bounds(cx, window, "pr-convo-hunk-line-7000-39");
     assert!(
         last.bottom() <= viewport.bottom() + gpui::px(1.),
         "last line must be scroll-reachable inside the pane"
     );
+    wheel(cx, window, viewport, 0., 10000.);
     click(cx, window, "pr-convo-hunk-disclosure-7000");
     paint(cx, window);
     assert_eq!(
         hunk::attributes(7000),
-        Some((gpui::Role::Button, "残り 28 行を表示".into(), 12))
+        Some((gpui::Role::Button, "前の 28 行を表示".into(), 12))
     );
 }
 
@@ -186,7 +206,54 @@ pub fn scenario_issue_body_zoom(cx: &mut VisualTestAppContext) {
         (counts[0] - counts[1]).abs() < 0.05,
         "visible body lines must stay equal across zoom: {counts:?}"
     );
+    focused_issue_body(cx, &app, window);
     theme::set_zoom(before_zoom);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS issue_body_zoom");
+}
+
+fn focused_issue_body(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+) {
+    crate::pr_detail_adaptive::resize(cx, window, (940., 660.));
+    theme::set_zoom(1.67);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "secondary-shift-enter");
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
+    let pane = bounds(cx, window, "issue-mode-center-pane");
+    let long = "line\n".repeat(50);
+    for source in [
+        "",
+        "one",
+        "one\ntwo\nthree\nfour",
+        long.as_str(),
+        "```rust\nlet x = 1;\n```",
+    ] {
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                app.replace_issue_body_for_e2e(source, window, cx)
+            });
+        })
+        .unwrap();
+        let body = bounds(cx, window, "issue-composer-body");
+        assert!(
+            body.size.height >= theme::scaled_px(25.5 * 2.) - gpui::px(1.),
+            "focused body retains at least two lines"
+        );
+        assert!(
+            body.bottom() <= pane.bottom() + gpui::px(1.),
+            "focused Input must be bounded by the remaining pane"
+        );
+        let submit = bounds(cx, window, "issue-composer-submit");
+        assert!(
+            submit.top() >= pane.top() && submit.bottom() <= pane.bottom() + gpui::px(1.),
+            "focused submit remains inside the compact zoomed pane: {submit:?}, {pane:?}"
+        );
+    }
 }

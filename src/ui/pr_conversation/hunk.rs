@@ -56,7 +56,7 @@ pub fn attributes(id: usize) -> Option<(gpui::Role, SharedString, usize)> {
     ATTRIBUTES.with(|records| records.borrow().get(&id).cloned())
 }
 
-fn rows(hunk: &Hunk, id: usize, shown: usize) -> gpui::Div {
+fn rows(hunk: &Hunk, id: usize, start: usize) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -67,8 +67,8 @@ fn rows(hunk: &Hunk, id: usize, shown: usize) -> gpui::Div {
         .children(
             hunk.lines
                 .iter()
-                .take(shown)
                 .enumerate()
+                .skip(start)
                 .map(|(index, line)| {
                     let (bg, fg) = match line.as_bytes().first() {
                         Some(b'+') => (Some(theme().diff_added_bg), theme().change_added),
@@ -102,7 +102,7 @@ pub(super) fn render(
     } else {
         hunk.lines.len().min(PREVIEW_LINES)
     };
-    let rows = rows(hunk, id, shown);
+    let rows = rows(hunk, id, hunk.lines.len() - shown);
     let full = hunk.full.clone();
     let copy = cx.listener(move |app: &mut KagiApp, _: &gpui::ClickEvent, _, cx| {
         cx.stop_propagation();
@@ -122,6 +122,26 @@ pub(super) fn render(
         .bg(rgb(theme().bg_base))
         .child(
             div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .when(hunk.lines.len() > PREVIEW_LINES, |el| {
+                    el.child(disclosure(hunk, id, shown, item, cx))
+                })
+                .child(div().flex_1())
+                .child(e2e::measure_control(
+                    format!("pr-convo-hunk-copy-{id}"),
+                    Button::new(("pr-convo-hunk-copy", id))
+                        .ghost()
+                        .xsmall()
+                        .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
+                        .label(Msg::PrHunkCopy.t())
+                        .tooltip(Msg::PrHunkCopy.t())
+                        .on_click(copy),
+                )),
+        )
+        .child(
+            div()
                 .relative()
                 .w_full()
                 .min_w(px(0.))
@@ -133,28 +153,14 @@ pub(super) fn render(
                         .flex()
                         .overflow_x_scroll()
                         .track_scroll(&hunk.scroll)
+                        .map(|mut area| {
+                            // Vertical wheel deltas belong only to the outer feed.
+                            area.style().restrict_scroll_to_axis = Some(true);
+                            area
+                        })
                         .child(rows),
                 ))
                 .child(Scrollbar::horizontal(&hunk.scroll)),
-        )
-        .when(hunk.lines.len() > PREVIEW_LINES, |el| {
-            el.child(disclosure(hunk, id, shown, item, cx))
-        })
-        .child(
-            div()
-                .absolute()
-                .top_1()
-                .right_1()
-                .child(e2e::measure_control(
-                    format!("pr-convo-hunk-copy-{id}"),
-                    Button::new(("pr-convo-hunk-copy", id))
-                        .ghost()
-                        .xsmall()
-                        .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
-                        .label(Msg::PrHunkCopy.t())
-                        .tooltip(Msg::PrHunkCopy.t())
-                        .on_click(copy),
-                )),
         )
         .into_any_element()
 }

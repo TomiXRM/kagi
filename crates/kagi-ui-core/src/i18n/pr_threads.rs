@@ -21,8 +21,11 @@ pub fn resolved() -> &'static str {
 /// Reveal context omitted by the compact review-hunk preview.
 pub fn show_more_lines(count: usize) -> String {
     match lang() {
-        Lang::En => format!("Show {count} more lines"),
-        Lang::Ja => format!("残り {count} 行を表示"),
+        Lang::En => format!(
+            "Show {count} previous line{}",
+            if count == 1 { "" } else { "s" }
+        ),
+        Lang::Ja => format!("前の {count} 行を表示"),
     }
 }
 

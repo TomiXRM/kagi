@@ -96,6 +96,76 @@ gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
 
+## Amendment — 2026-10-11: system chrome accent (#1181)
+
+Closes #1181.
+
+On macOS, built-in Apple Light defaults to the person's system accent for
+primary chrome, focus rings and text selection. Apple Dark defaults to its
+theme accent (`#ffd600` yellow), preserving ADR-0126's identity; System is an
+explicit opt-in on Dark. `Theme::ui_accent()` is distinct from the Git
+`color_branch` role: ref chips, graph lanes, status colours, terminal and body
+links keep their existing palette. This supersedes ADR-0126's non-goal of
+separating chrome from branch colour, not its yellow default.
+
+The startup and window-activation seams read `AppleAccentColor` with the
+in-process, read-only `CFPreferencesCopyAppValue` global-domain API. The key is
+retained per UI thread; there is no activation-time subprocess. Cache the
+detected enum and derived fill tokens; no native lookup or allocation occurs in
+a row/render. Refresh on activation is deliberately used rather than installing
+an AppKit notification observer or adding an Objective-C dependency. Changing
+Appearance and returning to Kagi updates the existing bridge and redraws.
+Both numeric and string-stored values are accepted; strings are trimmed and
+parsed as `i32`, matching AppKit's handling of e.g. the string `"1"` as Orange.
+Null, other property-list types, invalid or unsupported values use Default (Blue).
+
+The standard macOS accent palette ([HIG Color](https://developer.apple.com/design/human-interface-guidelines/color))
+is kept separately from the graph's increased-contrast/2025 system colours:
+
+| Default | Name | Light | Dark |
+|---|---|---|---|
+| -1 | Graphite | `#8e8e93` | `#98989d` |
+| 0 | Red | `#ff3b30` | `#ff453a` |
+| 1 | Orange | `#ff9500` | `#ff9f0a` |
+| 2 | Yellow | `#ffcc00` | `#ffd60a` |
+| 3 | Green | `#34c759` | `#30d158` |
+| 4 | Blue | `#007aff` | `#0a84ff` |
+| 5 | Purple | `#af52de` | `#bf5af2` |
+| 6 | Pink | `#ff2d55` | `#ff375f` |
+
+In System mode, missing/unsupported Mac values (including Multicolour) use blue
+and are labelled Default (Blue), rather than falsely identifying an explicit
+Blue preference. Settings → Appearance has an Apple-only **System / Theme accent**
+choice (JA: 「システム」/「テーマのアクセント」), persisted as
+`accent_source: system|theme`. An absent source uses System for Apple Light and
+Theme for Apple Dark; an explicit value applies to either Apple preset.
+Theme restores the preset's fixed chrome (`#0088ff` Light, `#ffd600` Dark) and
+selection tint. The detected Mac name remains visible in EN/JA in either mode.
+Reading migrates legacy `accent: blue` to `accent_source: theme` and legacy
+`accent: system` to `accent_source: system`, then removes the old key. A `blue`
+value under the new key is canonicalized to `theme`; the new key takes precedence.
+Other presets, custom themes including Apple-derived themes, and non-macOS
+platforms retain their fixed accent hue and do not follow macOS.
+
+Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
+derivation (4.5:1 minimum), including the update pill and filled thread badges.
+Accent-as-text now routes through `accent_text_on` on every theme for its actual
+background instead of the raw fill RGB, including busy footer text and conflict
+mode labels. Fixed-accent themes keep their accent hue but small text may become
+darker or lighter to achieve at least 4.5:1. This is a shared readability policy,
+not system-follow for other themes. Text selection retains the
+shared 30% alpha; Apple Light row selection derives a 15% accent wash on white,
+while Apple Dark keeps its neutral row selection. `selected_for_window(true)`
+uses this resolved wash; inactive selection keeps its independent neutral token.
+Pane divider hover/drag uses this same chrome accent, on both the centered
+hairline and its larger hit target; Git colour tokens are not used for either.
+Ring geometry stays at the existing fixed 2 logical px. Unit coverage includes
+all seven chromatic accents **and** graphite in both appearances and readable
+text on base/surface/selection backgrounds. Tier A `system_accent_chrome` injects
+blue/purple/graphite/red/yellow in memory and checks native primary/ring/graph-bar
+and active/inactive selection pixels, retained selection, and stable
+control/label bounds.
+
 ## Amendment — 2026-10-11: quiet Graph navigator group headers (#1177)
 
 The five pinned section headers use localized title-style labels (English

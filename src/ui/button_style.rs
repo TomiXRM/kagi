@@ -48,7 +48,8 @@ pub enum ButtonRole {
 impl ButtonRole {
     fn accent(self, t: &super::theme::Theme) -> u32 {
         match self {
-            Self::Primary | Self::SideCurrent => t.color_branch,
+            Self::Primary => t.ui_accent(),
+            Self::SideCurrent => t.color_branch,
             Self::SideIncoming => t.color_remote,
             Self::Success => t.color_success,
             Self::Warning => t.color_warning,
@@ -241,7 +242,7 @@ fn modal_button_with_tab_stop(
     if let Some(reason) = reason {
         let accent = match kind {
             ModalButtonKind::Destructive => theme().color_blocker,
-            ModalButtonKind::Primary => theme().color_branch,
+            ModalButtonKind::Primary => theme().ui_accent(),
             ModalButtonKind::Cancel | ModalButtonKind::Secondary => theme().text_sub,
         };
         return div()

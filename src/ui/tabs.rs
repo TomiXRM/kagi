@@ -1002,7 +1002,7 @@ impl KagiApp {
             let accent = wt_color.or_else(|| {
                 is_active.then(|| {
                     rgb(if self.window_active_for_render(window) {
-                        theme().color_branch
+                        theme().ui_accent()
                     } else {
                         theme().text_muted
                     })
@@ -1139,7 +1139,7 @@ fn render_home_tab(
                     .right(px(-ring))
                     .h(px(2.))
                     .bg(rgb(if window_active {
-                        theme().color_branch
+                        theme().ui_accent()
                     } else {
                         theme().text_muted
                     })),

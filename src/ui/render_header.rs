@@ -225,10 +225,9 @@ impl KagiApp {
 
         // Active-mode highlight for the Graph/PRs/Editor group: a wash in the
         // theme's primary colour, distinct from the neutral `selected` hover
-        // so "hovered" never reads as "current mode". `color_branch` is that
-        // primary (apple-dark yellow, catppuccin blue, dracula purple …) and
-        // is already what the toolbar's count chips use — `accent` is the
-        // cherry-pick mauve, purple in most themes regardless of the theme.
+        // so "hovered" never reads as "current mode". `ui_accent()` is the same
+        // chrome role as the toolbar's count chips, following the Mac accent for
+        // Apple themes without recolouring Git ref chips or lanes.
         let window_active = self.window_active_for_render(window);
         let mode_on = |el: gpui::Stateful<gpui::Div>| {
             if !window_active {
@@ -236,7 +235,7 @@ impl KagiApp {
                     .bg(rgb(theme().inactive_selected))
                     .text_color(rgb(theme().text_main));
             }
-            let mut c: gpui::Hsla = rgb(theme().color_branch).into();
+            let mut c: gpui::Hsla = rgb(theme().ui_accent()).into();
             c.a = if theme().dark { 0.26 } else { 0.18 };
             el.bg(c)
         };
@@ -386,7 +385,7 @@ impl KagiApp {
             } else {
                 theme().text_muted
             };
-            let chip_bg = theme().color_branch;
+            let chip_bg = theme().ui_accent();
 
             // The count is an overlay on the icon cell. Native probes stay
             // inside that cell so they do not change the toolbar's layout.
@@ -837,6 +836,8 @@ impl KagiApp {
                                 cx.notify();
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
+                            let hover_fill =
+                                gpui_component::ActiveTheme::theme(&**cx).button_primary_hover;
                             el.child(
                                 keyboard_nav::focusable(
                                     div()
@@ -849,12 +850,14 @@ impl KagiApp {
                                         .py(keyboard_nav::inset(4.0))
                                         .mr(theme::scaled_px(8.0))
                                         .rounded_md()
-                                        .bg(rgb(theme().color_branch))
+                                        .bg(rgb(theme().ui_accent()))
                                         .cursor(gpui::CursorStyle::PointingHand)
-                                        .hover(|s| s.bg(rgb(theme().color_remote)))
+                                        .hover(move |s| s.bg(hover_fill))
                                         .child(
                                             div()
-                                                .text_color(rgb(theme().bg_base))
+                                                .text_color(rgb(theme::primary_button_foreground(
+                                                    &theme(),
+                                                )))
                                                 .text_xs()
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .child(chip_text),

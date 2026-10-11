@@ -1516,10 +1516,10 @@ where
 {
     let seg = |label: &str, active: bool| {
         let accent = if active {
-            if window_active {
-                theme().color_branch
-            } else {
+            if !window_active {
                 theme().text_main
+            } else {
+                theme().accent_text_on(theme().ui_selected())
             }
         } else {
             theme().text_sub
@@ -1566,16 +1566,16 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
                 .h_full()
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover("conflict-divider-ab", |s| s.bg(rgb(theme().color_branch)))
+                .group_hover("conflict-divider-ab", |s| s.bg(rgb(theme().ui_accent())))
                 .group_drag_over::<DividerDrag>("conflict-divider-ab", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
         .cursor_col_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::ConflictAB {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }
@@ -1607,17 +1607,17 @@ fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
                 .group_hover("conflict-divider-result", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 })
                 .group_drag_over::<DividerDrag>("conflict-divider-result", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
         .cursor_row_resize()
-        .hover(|s| s.bg(rgb(theme().color_branch)))
+        .hover(|s| s.bg(rgb(theme().ui_accent())))
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::ConflictResult {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }

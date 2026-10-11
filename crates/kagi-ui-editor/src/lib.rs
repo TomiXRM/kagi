@@ -2349,15 +2349,15 @@ fn render_editor_workspace(
                 .h_full()
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover("ews-divider-tree", |s| s.bg(rgb(theme().color_branch)))
+                .group_hover("ews-divider-tree", |s| s.bg(rgb(theme().ui_accent())))
                 .group_drag_over::<DividerDrag>("ews-divider-tree", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::EditorTree {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }
@@ -2384,15 +2384,15 @@ fn render_editor_workspace(
                 .h_full()
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover("ews-divider-hunks", |s| s.bg(rgb(theme().color_branch)))
+                .group_hover("ews-divider-hunks", |s| s.bg(rgb(theme().ui_accent())))
                 .group_drag_over::<DividerDrag>("ews-divider-hunks", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::EditorHunks {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }

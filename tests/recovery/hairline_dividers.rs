@@ -147,18 +147,12 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                 );
                 cx.simulate_mouse_move(window, hit.center(), None, Modifiers::none());
                 paint(cx, window);
-                assert_pixel(
-                    cx,
-                    window,
-                    edge,
-                    theme::theme().color_branch,
-                    "hover accent",
-                );
+                assert_pixel(cx, window, edge, theme::theme().ui_accent(), "hover accent");
                 assert_pixel(
                     cx,
                     window,
                     line.center(),
-                    theme::theme().color_branch,
+                    theme::theme().ui_accent(),
                     "hover line accent",
                 );
                 cx.simulate_mouse_down(window, hit.center(), MouseButton::Left, Modifiers::none());
@@ -171,12 +165,12 @@ pub fn scenario_hairline_dividers(cx: &mut VisualTestAppContext) {
                 };
                 cx.simulate_mouse_move(window, along, Some(MouseButton::Left), Modifiers::none());
                 paint(cx, window);
-                assert_pixel(cx, window, edge, theme::theme().color_branch, "drag accent");
+                assert_pixel(cx, window, edge, theme::theme().ui_accent(), "drag accent");
                 assert_pixel(
                     cx,
                     window,
                     line.center(),
-                    theme::theme().color_branch,
+                    theme::theme().ui_accent(),
                     "drag line accent",
                 );
                 cx.simulate_mouse_up(window, along, MouseButton::Left, Modifiers::none());

@@ -21,11 +21,12 @@ use crate::recovery_layout::{contained, draw, GlobalSettings};
 
 const LONG_PATH: &str =
     "src/some/deeply/nested/directory/with_a_rather_long_file_name_for_truncation.rs";
-const DIFF_CONTROLS: [&str; 5] = [
+const DIFF_CONTROLS: [&str; 6] = [
     "main-diff-back",
     "main-diff-ext-editor",
     "main-diff-history",
-    "diff-mode-toggle",
+    "diff-mode-unified",
+    "diff-mode-split",
     "main-diff-stats",
 ];
 const FH_CONTROLS: [&str; 5] = [
@@ -35,7 +36,7 @@ const FH_CONTROLS: [&str; 5] = [
     "fh-open-file",
     "fh-follow",
 ];
-const FH_DIFF_CONTROLS: [&str; 2] = ["diff-mode-toggle", "main-diff-stats"];
+const FH_DIFF_CONTROLS: [&str; 3] = ["diff-mode-unified", "diff-mode-split", "main-diff-stats"];
 
 /// Draw until the header settles: a changed fit asks for one more frame.
 fn settle(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {

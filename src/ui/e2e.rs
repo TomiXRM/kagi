@@ -15,6 +15,9 @@ use std::path::Path;
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]
+pub mod diff_presentation;
+
+#[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
     super::modal_command::recorded_disclosure(id)
 }

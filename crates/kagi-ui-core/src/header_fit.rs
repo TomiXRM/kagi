@@ -179,10 +179,26 @@ pub fn header_button(
     let label = label.into();
     // `outline`, not `ghost`: a ghost button paints no background of its own,
     // so it took the header bar's colour exactly and read as plain text.
-    let button = Button::new(id).outline().small();
+    let button = NamedHeaderButton(Button::new(id).outline().small())
+        .role(gpui::Role::Button)
+        .aria_label(label.clone())
+        .0;
     if compact {
         button.icon(Icon::empty().path(icon)).tooltip(label)
     } else {
         button.label(label)
     }
 }
+
+// The pinned Button exposes its interactivity, but not GPUI's stateful AX
+// setters. Adapt only those setters; the actual Button still owns rendering,
+// focus, selected paint and click handling (including in icon-only mode).
+struct NamedHeaderButton(Button);
+
+impl gpui::InteractiveElement for NamedHeaderButton {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+
+impl gpui::StatefulInteractiveElement for NamedHeaderButton {}

@@ -367,7 +367,7 @@ fn side_column(header: &str, data: &SideData) -> gpui::AnyElement {
                     size_text(data.size),
                     data.oid_short
                 )))
-                .child(muted(Msg::ConflictBinaryCompareHint.t()))
+                .child(muted(Msg::DiffBinaryNoText.t()))
                 .into_any_element(),
         }
     };

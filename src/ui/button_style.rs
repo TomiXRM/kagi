@@ -233,20 +233,8 @@ pub(crate) fn modal_button(
     modal_button_with_tab_stop(id, label, kind, reason, on_click, true, cx)
 }
 
-/// AppNotice keeps window/root focus for its Enter/Escape confirmation
-/// sequence; unlike other dialog actions its button is not a Tab stop.
-pub(crate) fn modal_button_without_tab_stop(
-    id: &'static str,
-    label: impl Into<SharedString>,
-    kind: ModalButtonKind,
-    reason: Option<SharedString>,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    cx: &gpui::App,
-) -> gpui::AnyElement {
-    modal_button_with_tab_stop(id, label, kind, reason, on_click, false, cx)
-}
-
-fn modal_button_with_tab_stop(
+/// AppNotice opts into Tab activation only for its armed danger action.
+pub(crate) fn modal_button_with_tab_stop(
     id: &'static str,
     label: impl Into<SharedString>,
     kind: ModalButtonKind,

@@ -114,13 +114,14 @@ impl KagiApp {
             Some(M::CherryPick(m)) => danger_plan(&m.plan),
             Some(M::Revert(m)) => danger_plan(&m.plan),
             Some(M::Pop(m)) => m.plan.as_deref().is_some_and(danger_plan),
+            Some(M::ApplySuggestion(m)) => danger_plan(&m.plan),
+            Some(M::AppNotice(notice)) => notice.release_armed,
             None
             | Some(
                 M::RemoteBrowse(_)
                 | M::Clone(_)
                 | M::Update(_)
                 | M::SmartCommit(_)
-                | M::AppNotice(_)
                 | M::PrFields(_)
                 | M::SetUpstream(_)
                 | M::RenameBranch(_)
@@ -132,7 +133,6 @@ impl KagiApp {
                 | M::LockWorktree(_)
                 | M::RepairWorktrees(_)
                 | M::RepoHealth(_)
-                | M::ApplySuggestion(_)
                 | M::StashPush(_)
                 | M::StashApply(_)
                 | M::ConflictContinue(_)
@@ -187,7 +187,9 @@ impl KagiApp {
                     cx.stop_propagation();
                     return;
                 }
-                if this.active_modal_defaults_to_cancel() {
+                if this.front_layer(cx) == front_layer::FrontLayer::Modal
+                    && this.active_modal_defaults_to_cancel()
+                {
                     this.cancel_active_modal(cx);
                     cx.stop_propagation();
                     return;

@@ -1297,6 +1297,17 @@ pub enum Msg {
     A11yFileTree,
     A11yUnstagedTree,
     A11yStagedTree,
+    CommitPanelTitle,
+    CommitPanelUnstaged,
+    CommitPanelStaged,
+    CommitPanelList,
+    CommitPanelTree,
+    CommitPanelStageAll,
+    CommitPanelUnstageAll,
+    CommitPanelDiscardAll,
+    CommitPanelConflict,
+    CommitPanelStage,
+    CommitPanelUnstage,
     A11yFileTreeDir,
     A11yFileTreeFile,
     A11yFileTreeUnsaved,
@@ -3563,6 +3574,26 @@ impl Msg {
             (Ja, A11yUnstagedTree) => "未 stage のファイル",
             (En, A11yStagedTree) => "Staged files",
             (Ja, A11yStagedTree) => "stage 済みのファイル",
+            (En, CommitPanelTitle) => "Commit Panel",
+            (Ja, CommitPanelTitle) => "Commit Panel",
+            (En, CommitPanelUnstaged) => "Unstaged",
+            (Ja, CommitPanelUnstaged) => "未 stage",
+            (En, CommitPanelStaged) => "Staged",
+            (Ja, CommitPanelStaged) => "stage 済み",
+            (En, CommitPanelList) => "List",
+            (Ja, CommitPanelList) => "一覧",
+            (En, CommitPanelTree) => "Tree",
+            (Ja, CommitPanelTree) => "ツリー",
+            (En, CommitPanelStageAll) => "Stage all",
+            (Ja, CommitPanelStageAll) => "Stage all",
+            (En, CommitPanelUnstageAll) => "Unstage all",
+            (Ja, CommitPanelUnstageAll) => "Unstage all",
+            (En, CommitPanelDiscardAll) => "Discard all",
+            (Ja, CommitPanelDiscardAll) => "Discard all",
+            (En, CommitPanelConflict) => "Conflict",
+            (Ja, CommitPanelConflict) => "競合",
+            (En, CommitPanelStage) | (Ja, CommitPanelStage) => "Stage",
+            (En, CommitPanelUnstage) | (Ja, CommitPanelUnstage) => "Unstage",
             (En, A11yFileTreeDir) => "Folder {}",
             (Ja, A11yFileTreeDir) => "フォルダー {}",
             (En, A11yFileTreeFile) => "File {}, {}",
@@ -4088,6 +4119,16 @@ pub fn editor_delete_file_count_note(count: usize, truncated: bool) -> String {
     }
 }
 
+/// Commit Panel section count; file names and diffstats remain user/Git data.
+pub fn commit_panel_section(staged: bool, count: usize) -> String {
+    let label = if staged {
+        Msg::CommitPanelStaged
+    } else {
+        Msg::CommitPanelUnstaged
+    };
+    format!("{} ({count})", label.t())
+}
+
 /// Read-only Issues detail comment heading.
 pub fn issue_comments(count: usize) -> String {
     match lang() {
@@ -4160,7 +4201,7 @@ pub fn wip_row_note(n: usize) -> String {
             "// WIP — {} change{} (click to open commit panel)",
             n, plural
         ),
-        Lang::Ja => format!("// WIP — {} change{}(クリックで commit panel)", n, plural),
+        Lang::Ja => format!("// WIP — {} change{}(クリックで Commit Panel)", n, plural),
     }
 }
 

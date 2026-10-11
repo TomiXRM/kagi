@@ -319,6 +319,8 @@ mod recovery_header_fit;
 mod recovery_commit_panel_viewport;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_i18n.rs"]
+mod recovery_commit_panel_i18n;
 #[path = "recovery/commit_panel_polish.rs"]
 mod recovery_commit_panel_polish;
 
@@ -2236,6 +2238,10 @@ mod macos {
             (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
+            ),
+            (
+                "commit_panel_i18n",
+                Box::new(crate::recovery_commit_panel_i18n::scenario_commit_panel_i18n),
             ),
             (
                 "commit_panel_selection_hover",

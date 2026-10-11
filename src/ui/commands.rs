@@ -1372,22 +1372,29 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     super::menu_keys::bind_keys(cx);
     super::commit_panel_coauthor::bind_keys(cx);
     // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
-    // No context predicate — gpui-component 0.5.1's "Input" context binds
-    // no `secondary-s` (verified: no cmd-s/ctrl-s/secondary-s binding in
-    // its src/input/state.rs), so this fires even while the code editor
-    // has focus. `save_editor_file` no-ops when there is nothing to save.
-    cx.bind_keys([KeyBinding::new("secondary-s", SaveEditorFile, None)]);
-    // ADR-0084: app-level Undo/Redo. Scoped `!Input && !Terminal` so a
-    // focused text field (gpui-component Input, key_context "Input") keeps
+    // Input has no Save binding, so this reaches the live editor too; the
+    // historical text context excludes it rather than saving a hidden buffer.
+    cx.bind_keys([KeyBinding::new(
+        "secondary-s",
+        SaveEditorFile,
+        Some("!EditorSnapshot"),
+    )]);
+    // ADR-0084: app-level Undo/Redo. Historical text is selectable, not an
+    // input, but must never route text undo to repository operation history.
+    // A focused text field (Input) keeps
     // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
     // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
     // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
     cx.bind_keys([
-        KeyBinding::new("secondary-z", HistoryUndo, Some("!Input && !Terminal")),
+        KeyBinding::new(
+            "secondary-z",
+            HistoryUndo,
+            Some("!Input && !Terminal && !EditorSnapshot"),
+        ),
         KeyBinding::new(
             "secondary-shift-z",
             HistoryRedo,
-            Some("!Input && !Terminal"),
+            Some("!Input && !Terminal && !EditorSnapshot"),
         ),
     ]);
     // Ctrl+A = Select All in text inputs. gpui-component binds ctrl-a to

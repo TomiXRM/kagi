@@ -9,14 +9,13 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context};
-use gpui_component::input::Input;
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
 use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::i18n::Msg;
-use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::theme::theme;
 
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
@@ -187,18 +186,10 @@ fn render_history_row(
     )
 }
 
-/// Center pane's Snapshot tab body: the selected commit's full file text via
-/// `view.snapshot_editor` (`sync_snapshot_editor`, `lib.rs`) — the same
-/// `code_editor` `InputState` widget the WIP buffer uses, so Snapshot gets
-/// the same monospace font, line numbers, and text selection/copy for free
-/// (bug report: an earlier hand-rolled `uniform_list` of styled divs had
-/// none of the three). Deliberately a SEPARATE `InputState` from `editor`
-/// (the live, saveable WIP buffer) — typing here is inert, never read back
-/// or persisted (see `snapshot_editor`'s doc comment for why: gpui-component
-/// has no read-only-but-selectable input mode in this version).
+/// Immutable selectable historical text, distinct from the live buffer.
 pub(crate) fn render_snapshot_pane(
     view: &EditorWorkspaceView,
-    _cx: &mut Context<EditorWorkspaceView>,
+    cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     if view.snapshot_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
@@ -216,22 +207,35 @@ pub(crate) fn render_snapshot_pane(
     if snapshot.content.is_none() {
         return placeholder_text(Msg::EditorWorkspaceDeleted.t()).into_any_element();
     }
-    let Some(editor) = view.snapshot_editor.clone() else {
-        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
-    };
     div()
         .id("ews-snapshot")
+        .key_context("EditorSnapshot")
         .flex_1()
         .min_h(px(0.))
         .w_full()
-        // Same reason as the WIP editor's container in `lib.rs`: `code_editor()`
-        // inherits its font, and the root sets the proportional `UI_FONT`.
-        .font_family(theme::MONO_FONT)
-        .child(
-            Input::new(&editor)
-                .appearance(false)
-                .bordered(false)
-                .h_full(),
-        )
+        .flex()
+        .flex_col()
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            {
+                let view = cx.entity().downgrade();
+                return el.child(
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            _ = view.update(cx, |view, _| view.snapshot_bounds = Some(bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
+            }
+            #[cfg(not(feature = "gui-e2e"))]
+            el
+        })
+        .child(crate::snapshot::text(view, cx))
         .into_any_element()
 }

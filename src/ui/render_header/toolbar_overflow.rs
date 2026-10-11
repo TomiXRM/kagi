@@ -39,6 +39,20 @@ impl Layout {
     pub(super) fn identity_width(&self, key: StyleKey) -> f32 {
         (self.widths[14] + self.widths[15] + 24.) * f32::from_bits(key.2)
     }
+    pub(super) fn workspace_width(&self, visible: u16, hidden: u16, key: StyleKey) -> f32 {
+        let scale = f32::from_bits(key.2);
+        self.widths[8..IDS.len()].iter().enumerate().fold(
+            spacing(visible, scale).1 + if hidden != 0 { 36. * scale } else { 0. },
+            |width, (index, natural)| {
+                width
+                    + if visible & (1 << (index + 8)) != 0 {
+                        natural * scale
+                    } else {
+                        0.
+                    }
+            },
+        )
+    }
     pub(super) fn measure(&mut self, index: Option<usize>, width: f32, key: StyleKey) -> bool {
         let changed = self.key != Some(key);
         if changed {
@@ -100,9 +114,9 @@ impl Layout {
             let (repo_spacing, workspace_spacing) = spacing(visible, scale);
             let overflow = if hidden != 0 { 36. * scale } else { 0. };
             if !key.0 {
-                // Caption mode uses natural, nonshrinking side content rather
-                // than equal flex columns. Include both measured identity
-                // controls and their Refresh/identity margins and drag spacer.
+                // Both flex side columns retain their measured minimums;
+                // extra space is shared equally when those minimums permit it.
+                // Include Refresh/identity margins and the drag spacer.
                 let identity = self.identity_width(key);
                 return identity
                     + repo

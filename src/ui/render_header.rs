@@ -426,6 +426,9 @@ impl KagiApp {
         let hidden = self.toolbar_layout.hidden(present, selected, style_key);
         let identity_width = self.toolbar_layout.identity_width(style_key);
         let visible = present & !hidden;
+        let workspace_width = self
+            .toolbar_layout
+            .workspace_width(visible, hidden, style_key);
         let gap = |left, right| toolbar_overflow::gap(visible, left, right);
         let layout_app = cx.entity().downgrade();
 
@@ -990,7 +993,16 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w_0()
-                    .when(!icon_only, |el| el.flex_none())
+                    .when(!icon_only, |el| {
+                        // Balance the unscaled native-light exclusion against
+                        // trailing padding/+ when both side columns have room.
+                        let balance = if cfg!(target_os = "macos") {
+                            (80. - f32::from(theme::scaled_px(40.))).max(0.)
+                        } else {
+                            0.
+                        };
+                        el.min_w(px(workspace_width)).flex_basis(px(balance))
+                    })
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(

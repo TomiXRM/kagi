@@ -49,18 +49,18 @@ impl KagiApp {
                     .h(px(1.))
                     .flex_shrink_0()
                     .bg(rgb(theme().surface))
-                    .group_hover("divider-bottom-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_hover("divider-bottom-panel", |s| s.bg(rgb(theme().ui_accent())))
                     .group_drag_over::<DividerDrag>("divider-bottom-panel", |s| {
-                        s.bg(rgb(theme().color_branch))
+                        s.bg(rgb(theme().ui_accent()))
                     })
                     .when(cfg!(feature = "gui-e2e"), |line| {
                         line.child(e2e::measure_inside("divider-bottom-panel-line"))
                     }),
             )
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_row_resize())
             .drag_over::<DividerDrag>(|style, drag, _, _| {
                 if drag.kind == DividerKind::BottomPanel {
-                    style.bg(rgb(theme().color_branch))
+                    style.bg(rgb(theme().ui_accent()))
                 } else {
                     style
                 }
@@ -450,7 +450,7 @@ impl KagiApp {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme().color_branch))
+                    .text_color(rgb(theme().accent_text_on(theme().panel)))
                     .flex_shrink_0()
                     .child(SharedString::from("Top contributors")),
             )

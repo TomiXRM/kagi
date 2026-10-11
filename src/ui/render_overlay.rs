@@ -77,10 +77,10 @@ impl gpui::Render for toast_stack::ToastStack {
                 // happened ("Copied …"), and a rotating arrow that never turns
                 // reads as an operation that never finished (user report).
                 // In-flight messages use `ToastKind::Sync` and its spinner.
-                ToastKind::Info => (theme().color_branch, "\u{2022}"), // •
+                ToastKind::Info => (theme().ui_accent(), "\u{2022}"), // •
                 ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
                 ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
-                ToastKind::Sync => (theme().color_branch, ""),
+                ToastKind::Sync => (theme().ui_accent(), ""),
             };
             let id = toast.id;
             let is_sync = toast.kind == ToastKind::Sync;

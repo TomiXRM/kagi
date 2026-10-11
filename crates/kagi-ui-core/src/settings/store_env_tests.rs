@@ -79,6 +79,61 @@ fn public_scale_migration_child() {
     assert_eq!(std::fs::read(&path).expect("persisted"), first_bytes);
 }
 
+#[test]
+fn accent_source_migration_uses_the_live_settings_store() {
+    for (document, expected) in [
+        (
+            r#"{"accent":"blue","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (
+            r#"{"accent":"system","future_only_key":"keepme"}"#,
+            Some("system"),
+        ),
+        (
+            r#"{"accent_source":"blue","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (
+            r#"{"accent_source":"theme","accent":"system","future_only_key":"keepme"}"#,
+            Some("theme"),
+        ),
+        (r#"{"future_only_key":"keepme"}"#, None),
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(tmp.path().join("settings.json"), document).expect("seed");
+        run_child("accent_source_migration_child", tmp.path());
+        let saved: serde_json::Value =
+            serde_json::from_str(&settings_text(tmp.path())).expect("json");
+        assert_eq!(saved["accent_source"].as_str(), expected);
+        assert!(saved.get("accent").is_none(), "legacy key removed");
+        assert_eq!(saved["future_only_key"], "keepme");
+    }
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn accent_source_migration_child() {
+    use crate::{settings::read_setting, system_accent};
+    system_accent::init();
+    match read_setting("accent_source").as_deref() {
+        Some("system") => {
+            assert!(system_accent::follows_system_accent_for(false));
+            assert!(system_accent::follows_system_accent_for(true));
+        }
+        Some("theme") => {
+            assert!(!system_accent::follows_system_accent_for(false));
+            assert!(!system_accent::follows_system_accent_for(true));
+        }
+        None => {
+            assert!(system_accent::follows_system_accent_for(false));
+            assert!(!system_accent::follows_system_accent_for(true));
+        }
+        other => panic!("uncanonical accent source: {other:?}"),
+    }
+    assert!(read_setting("accent").is_none());
+}
+
 // ── #617 review 3: the public read path sees a stat-invisible edit ─────────
 
 #[test]

@@ -260,15 +260,15 @@ pub fn render_file_history_view(
                 .h_full()
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover("fh-detail-divider", |s| s.bg(rgb(theme().color_branch)))
+                .group_hover("fh-detail-divider", |s| s.bg(rgb(theme().ui_accent())))
                 .group_drag_over::<DividerDrag>("fh-detail-divider", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::Panel {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }
@@ -412,15 +412,15 @@ pub(crate) fn render_fh_list_and_diff(
                 .h(px(1.))
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover("fh-rows-divider", |s| s.bg(rgb(theme().color_branch)))
+                .group_hover("fh-rows-divider", |s| s.bg(rgb(theme().ui_accent())))
                 .group_drag_over::<DividerDrag>("fh-rows-divider", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
-        .hover(|style| style.bg(rgb(theme().color_branch)).cursor_row_resize())
+        .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_row_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::FileHistoryRows {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }

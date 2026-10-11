@@ -34,7 +34,7 @@ pub(crate) fn render_input_modal_field(
 ) -> gpui::Div {
     input_modal_field(
         label,
-        state.map(|s| Input::new(s).into_any_element()),
+        state.map(|s| super::e2e::measure_control("input-modal-field", Input::new(s))),
         reason,
     )
 }

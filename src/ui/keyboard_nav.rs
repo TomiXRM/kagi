@@ -26,7 +26,7 @@
 //! landing) hands the focus on rather than leaving it nowhere.
 //!
 //! The focus ring is the one `Input` draws (`sync_gpui_component_theme` maps
-//! gpui-component's `ring` to `color_branch`), shown only for keyboard focus
+//! gpui-component's `ring` to `ui_accent()`), shown only for keyboard focus
 //! (`focus_visible`). It is a border kept transparent at rest, so taking focus
 //! does not move anything; callers pad with [`inset`], which takes its width
 //! out of their zoomed padding.
@@ -305,7 +305,6 @@ impl TabFocus {
     }
 
     /// The slot, as last drawn, whose cell holds the focus, if any.
-    #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
         self.cells
             .borrow()
@@ -977,7 +976,7 @@ pub(crate) fn recorded_switch(id: &str) -> Option<(String, bool)> {
 fn with_ring(el: Stateful<Div>) -> Stateful<Div> {
     el.border_2()
         .border_color(transparent_black())
-        .focus_visible(|s| s.border_color(rgb(theme().color_branch)))
+        .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
 }
 
 /// Enter / Space press the focused element (gpui's keyboard click, already

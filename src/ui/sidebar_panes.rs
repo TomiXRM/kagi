@@ -309,9 +309,9 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
                 .when(active, |line| {
-                    line.group_hover(PANE_DIVIDER_IDS[index], |s| s.bg(rgb(theme().color_branch)))
+                    line.group_hover(PANE_DIVIDER_IDS[index], |s| s.bg(rgb(theme().ui_accent())))
                         .group_drag_over::<DividerDrag>(PANE_DIVIDER_IDS[index], |s| {
-                            s.bg(rgb(theme().color_branch))
+                            s.bg(rgb(theme().ui_accent()))
                         })
                 })
                 .when(cfg!(feature = "gui-e2e"), |line| {
@@ -320,10 +320,10 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
         )
         .when(active, |el| {
             el.cursor_row_resize()
-                .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
+                .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
                 .drag_over::<DividerDrag>(move |style, drag, _, _| {
                     if drag.kind == DividerKind::SidebarPane(index as u8) {
-                        style.bg(rgb(theme().color_branch))
+                        style.bg(rgb(theme().ui_accent()))
                     } else {
                         style
                     }

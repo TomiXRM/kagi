@@ -3443,6 +3443,8 @@ dependencies = [
 name = "kagi-ui-core"
 version = "0.1.0"
 dependencies = [
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
  "gpui",
  "gpui-component",
  "gpui_wgpu",

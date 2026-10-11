@@ -96,6 +96,76 @@ gives 5.567:1 on white. Apple Dark's existing yellow link is already readable
 and remains unchanged. Underline, activation, selection and geometry are not
 altered.
 
+## Amendment — 2026-10-11: system chrome accent (#1181)
+
+Closes #1181.
+
+On macOS, built-in Apple Light defaults to the person's system accent for
+primary chrome, focus rings and text selection. Apple Dark defaults to its
+theme accent (`#ffd600` yellow), preserving ADR-0126's identity; System is an
+explicit opt-in on Dark. `Theme::ui_accent()` is distinct from the Git
+`color_branch` role: ref chips, graph lanes, status colours, terminal and body
+links keep their existing palette. This supersedes ADR-0126's non-goal of
+separating chrome from branch colour, not its yellow default.
+
+The startup and window-activation seams read `AppleAccentColor` with the
+in-process, read-only `CFPreferencesCopyAppValue` global-domain API. The key is
+retained per UI thread; there is no activation-time subprocess. Cache the
+detected enum and derived fill tokens; no native lookup or allocation occurs in
+a row/render. Refresh on activation is deliberately used rather than installing
+an AppKit notification observer or adding an Objective-C dependency. Changing
+Appearance and returning to Kagi updates the existing bridge and redraws.
+Both numeric and string-stored values are accepted; strings are trimmed and
+parsed as `i32`, matching AppKit's handling of e.g. the string `"1"` as Orange.
+Null, other property-list types, invalid or unsupported values use Default (Blue).
+
+The standard macOS accent palette ([HIG Color](https://developer.apple.com/design/human-interface-guidelines/color))
+is kept separately from the graph's increased-contrast/2025 system colours:
+
+| Default | Name | Light | Dark |
+|---|---|---|---|
+| -1 | Graphite | `#8e8e93` | `#98989d` |
+| 0 | Red | `#ff3b30` | `#ff453a` |
+| 1 | Orange | `#ff9500` | `#ff9f0a` |
+| 2 | Yellow | `#ffcc00` | `#ffd60a` |
+| 3 | Green | `#34c759` | `#30d158` |
+| 4 | Blue | `#007aff` | `#0a84ff` |
+| 5 | Purple | `#af52de` | `#bf5af2` |
+| 6 | Pink | `#ff2d55` | `#ff375f` |
+
+In System mode, missing/unsupported Mac values (including Multicolour) use blue
+and are labelled Default (Blue), rather than falsely identifying an explicit
+Blue preference. Settings → Appearance has an Apple-only **System / Theme accent**
+choice (JA: 「システム」/「テーマのアクセント」), persisted as
+`accent_source: system|theme`. An absent source uses System for Apple Light and
+Theme for Apple Dark; an explicit value applies to either Apple preset.
+Theme restores the preset's fixed chrome (`#0088ff` Light, `#ffd600` Dark) and
+selection tint. The detected Mac name remains visible in EN/JA in either mode.
+Reading migrates legacy `accent: blue` to `accent_source: theme` and legacy
+`accent: system` to `accent_source: system`, then removes the old key. A `blue`
+value under the new key is canonicalized to `theme`; the new key takes precedence.
+Other presets, custom themes including Apple-derived themes, and non-macOS
+platforms retain their fixed accent hue and do not follow macOS.
+
+Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
+derivation (4.5:1 minimum), including the update pill and filled thread badges.
+Accent-as-text now routes through `accent_text_on` on every theme for its actual
+background instead of the raw fill RGB, including busy footer text and conflict
+mode labels. Fixed-accent themes keep their accent hue but small text may become
+darker or lighter to achieve at least 4.5:1. This is a shared readability policy,
+not system-follow for other themes. Text selection retains the
+shared 30% alpha; Apple Light row selection derives a 15% accent wash on white,
+while Apple Dark keeps its neutral row selection. `selected_for_window(true)`
+uses this resolved wash; inactive selection keeps its independent neutral token.
+Pane divider hover/drag uses this same chrome accent, on both the centered
+hairline and its larger hit target; Git colour tokens are not used for either.
+Ring geometry stays at the existing fixed 2 logical px. Unit coverage includes
+all seven chromatic accents **and** graphite in both appearances and readable
+text on base/surface/selection backgrounds. Tier A `system_accent_chrome` injects
+blue/purple/graphite/red/yellow in memory and checks native primary/ring/graph-bar
+and active/inactive selection pixels, retained selection, and stable
+control/label bounds.
+
 ## Amendment — 2026-10-11: quiet Graph navigator group headers (#1177)
 
 The five pinned section headers use localized title-style labels (English
@@ -208,3 +278,55 @@ AX name and default tooltip (history tooltips retain a localized label prefix).
 View → Toolbar is declared in `MENU_BAR` as `DynSubmenu::ToolbarDisplay`;
 native menus and the Linux/FreeBSD inline dropdown share localized entries,
 selection markers and the `SetToolbarDisplay` action, per ADR-0085.
+## Amendment — 2026-10-11: neutral document tabs (#1180)
+
+The repository and Home strip takes Finder/Safari's neutral document-tab
+hierarchy, not native materials or a new tab-navigation model. Apple Light uses
+`bg_base` active / `surface` inactive; Apple Dark uses `surface` active / `bg_base`
+inactive, so inactive cells remain visible against the `panel` strip and its 1px gaps.
+Both keep `text_main` labels in key/non-key windows. Selection stays distinct from
+the independent keyboard focus ring; it does not require accent attenuation.
+Other presets retain their selection/surface palette, activation behavior and
+active accent rail: some existing fill pairs have <1.15:1 contrast without it
+(One Light 1.010:1, Flower Road 1.082:1, Tokyo Night key 1.099:1, Latte non-key
+1.142:1). Only Apple themes remove the permanent 2px top rail. All presets remove
+worktree-wide tint and stored lane rank; the existing 🌲 identity marker remains.
+Close is visible for active or focused
+tabs and on inactive-tab hover, with a reserved target so reveal never changes
+label width. Cmd+W, keyed identities, one Tab stop, manual activation, tooltips,
+40px strip and 80–200px cell limits remain unchanged. A single tab is not hidden.
+Native `repo_tabs_neutral` measures fills, top-edge rail absence, inherited
+label colours and bounds for 1/2/6 tabs, long JA names, 100%/167%, both Apple
+themes and the activation seam. Real pointer/AX delivery remains Tier B.
+The role-level unit test requires every preset without a rail to have
+active/inactive fill contrast ≥1.15:1 and each primary label ≥4.5:1. Other
+presets are asserted against existing selected/surface roles rather than
+recoloured. The native gap probe asserts strip-background pixels differ from
+inactive fills. The rail probe samples `bounds.top() - RING + 0.5`, including
+the old overlay above the content bounds; restoring it was measured to fail
+with actual blue `[0,136,255]` instead of white `[255,255,255]`.
+## Amendment — 2026-10-11: persistent conflict file selection (#1187)
+
+The dense Conflict Dashboard keeps the selected file's window-aware theme fill
+even while the pointer is over that row; hover is only a state of an unselected
+row. Both Conflicted Files and Resolved Files expose named ListBoxes with
+selected options. Existing navigation buttons (pointer or keyboard activation)
+select and open the same file, including clearing the content editor when the
+destination is binary. Selection is not inferred from a display name.
+
+Resolving an in-memory draft keeps its file open and selected in Resolved Files
+for review; it does not unexpectedly switch away while editing. Next / Previous
+conflict then wrap to an unresolved file, retaining the existing fallback to an
+adjacent file when none is unresolved. Save's authoritative re-detection retains
+the existing path-based fallback when a file leaves the session. No selection
+palette, geometry, repository-write or logging contract changes.
+
+Native `conflict_file_selection` reproduced the bug before the fix: after a
+measured click on `notes.txt`, the rendered fill was `#f5f5f5` (hover), not the
+required inactive `#d3d3d3`. Afterward the same assertion passes, as do active
+selection under hover, selected AX attributes, dashboard Next, editor Previous /
+Next, keyboard Space on Next, binary-preview cleanup and resolved-draft selection.
+The fixture's repository fingerprint remains unchanged. `inactive_selection`,
+`conflict_continue_cache` and `conflict_pane_survives_activation` also pass.
+These are native renderer / attribute-recorder assertions, not VoiceOver or
+Tier B evidence.

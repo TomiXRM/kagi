@@ -327,8 +327,8 @@ pub(crate) fn render_badges_column(
                     );
                     chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
                         style
-                            .bg(rgb(theme().selected))
-                            .border_color(rgb(theme().color_branch))
+                            .bg(rgb(theme().ui_selected()))
+                            .border_color(rgb(theme().ui_accent()))
                     })
                     .on_drop::<BranchDrag>(drop_handler)
                 } else {
@@ -344,8 +344,8 @@ pub(crate) fn render_badges_column(
                 );
                 chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
                     style
-                        .bg(rgb(theme().selected))
-                        .border_color(rgb(theme().color_branch))
+                        .bg(rgb(theme().ui_selected()))
+                        .border_color(rgb(theme().ui_accent()))
                 })
                 .on_drop::<BranchDrag>(drop_handler)
             }

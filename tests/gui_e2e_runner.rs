@@ -63,6 +63,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/system_accent.rs"]
+mod system_accent;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -191,6 +195,10 @@ mod conflict_abort_slot;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_continue_cache.rs"]
 mod conflict_continue_cache;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_file_selection.rs"]
+mod conflict_file_selection;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/repo_health.rs"]
@@ -1121,8 +1129,16 @@ mod macos {
                 Box::new(crate::primary_button::scenario_primary_button_states),
             ),
             (
+                "system_accent_chrome",
+                Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
                 "inactive_selection",
                 Box::new(crate::inactive_selection::scenario_inactive_selection),
+            ),
+            (
+                "repo_tabs_neutral",
+                Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
             ),
             (
                 "dialog_a11y_roles",
@@ -1769,6 +1785,10 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_file_selection",
+                Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
             ),
             (
                 "modal_polish_editor_fs",

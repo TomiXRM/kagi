@@ -15,10 +15,9 @@ use gpui::{Div, Role, SharedString, Stateful, StatefulInteractiveElement};
 use kagi_ui_core::i18n::Msg;
 
 /// Mark `el` as the list `id`, named `label`.
-pub(crate) fn list_box(id: &'static str, el: Stateful<Div>, label: &str) -> Stateful<Div> {
+pub(crate) fn list_box(id: &'static str, el: Stateful<Div>, label: &'static str) -> Stateful<Div> {
     record_list(id, Role::ListBox, label);
-    el.role(Role::ListBox)
-        .aria_label(SharedString::from(label.to_string()))
+    el.role(Role::ListBox).aria_label(SharedString::from(label))
 }
 
 /// A clickable trailing list row is a named button, not a list option.
@@ -35,12 +34,13 @@ pub(crate) fn list_option(
     el: Stateful<Div>,
     position: usize,
     size: usize,
-    label: String,
+    label: impl Into<SharedString>,
     selected: bool,
 ) -> Stateful<Div> {
+    let label = label.into();
     record_option(list, position, size, &label, selected);
     el.role(Role::ListBoxOption)
-        .aria_label(SharedString::from(label))
+        .aria_label(label)
         .aria_selected(selected)
         .aria_position_in_set(position + 1)
         .aria_size_of_set(size)

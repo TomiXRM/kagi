@@ -478,6 +478,15 @@ pub fn build_kagi_entity(
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
+        #[cfg(target_os = "macos")]
+        cx.observe_window_activation(window, |_, window, cx| {
+            if window.is_window_active() && theme::refresh_system_accent() {
+                theme::sync_gpui_component_theme(cx);
+                cx.refresh_windows();
+                cx.notify();
+            }
+        })
+        .detach();
         app_state
     });
     let close_owner = kagi.downgrade();

@@ -130,18 +130,18 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(theme().surface))
-                    .group_hover("divider-sidebar", |s| s.bg(rgb(theme().color_branch)))
+                    .group_hover("divider-sidebar", |s| s.bg(rgb(theme().ui_accent())))
                     .group_drag_over::<DividerDrag>("divider-sidebar", |s| {
-                        s.bg(rgb(theme().color_branch))
+                        s.bg(rgb(theme().ui_accent()))
                     })
                     .when(cfg!(feature = "gui-e2e"), |line| {
                         line.child(e2e::measure_inside("divider-sidebar-line"))
                     }),
             )
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .drag_over::<DividerDrag>(|style, drag, _, _| {
                 if drag.kind == DividerKind::Sidebar {
-                    style.bg(rgb(theme().color_branch))
+                    style.bg(rgb(theme().ui_accent()))
                 } else {
                     style
                 }
@@ -297,8 +297,12 @@ impl KagiApp {
                                     .py_0p5()
                                     .rounded_md()
                                     .bg(rgb(theme().surface))
-                                    .text_color(rgb(theme().color_branch))
-                                    .hover(|st| st.bg(rgb(theme().selected)))
+                                    .text_color(rgb(theme().accent_text_on(theme().surface)))
+                                    .hover(|st| {
+                                        st.bg(rgb(theme().selected)).text_color(rgb(
+                                            theme().accent_text_on(theme().selected)
+                                        ))
+                                    })
                                     .cursor_pointer()
                                     .child(SharedString::from(format!("← Solo: {name}")))
                                     .on_mouse_down(
@@ -334,7 +338,7 @@ impl KagiApp {
                     .flex()
                     .justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+                    .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag {
@@ -379,11 +383,11 @@ impl KagiApp {
                             .text_xs()
                             .cursor_pointer()
                             .text_color(rgb(if is_compact {
-                                theme().color_branch
+                                theme().accent_text_on(theme().panel)
                             } else {
                                 theme().text_muted
                             }))
-                            .hover(|s| s.text_color(rgb(theme().color_branch)))
+                            .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().panel))))
                             .on_click(compact_click)
                             .child(SharedString::from(if is_compact { "▥" } else { "▤" })),
                     )
@@ -406,7 +410,7 @@ impl KagiApp {
                     .flex()
                     .justify_center()
                     .child(div().w(px(1.)).h_full().bg(rgb(theme().selected)))
-                    .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+                    .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
                     .cursor_col_resize()
                     .on_drag(
                         DividerDrag {
@@ -751,18 +755,18 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .bg(rgb(theme().surface))
-                    .group_hover("divider-panel", |s| s.bg(rgb(theme().color_branch)))
+                    .group_hover("divider-panel", |s| s.bg(rgb(theme().ui_accent())))
                     .group_drag_over::<DividerDrag>("divider-panel", |s| {
-                        s.bg(rgb(theme().color_branch))
+                        s.bg(rgb(theme().ui_accent()))
                     })
                     .when(cfg!(feature = "gui-e2e"), |line| {
                         line.child(e2e::measure_inside("divider-panel-line"))
                     }),
             )
-            .hover(|style| style.bg(rgb(theme().color_branch)).cursor_col_resize())
+            .hover(|style| style.bg(rgb(theme().ui_accent())).cursor_col_resize())
             .drag_over::<DividerDrag>(|style, drag, _, _| {
                 if drag.kind == DividerKind::Panel {
-                    style.bg(rgb(theme().color_branch))
+                    style.bg(rgb(theme().ui_accent()))
                 } else {
                     style
                 }

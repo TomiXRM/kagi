@@ -1308,7 +1308,7 @@ impl CommitPanelView {
             let suggest_color = if llm_on {
                 theme().color_success
             } else {
-                theme().color_branch
+                theme().accent_text_on(theme().panel)
             };
             let suggest_btn: gpui::AnyElement = if smart_ui.0 {
                 // Spin the same icon rather than swapping in a text spinner, so
@@ -1426,11 +1426,18 @@ impl CommitPanelView {
                 .rounded_sm()
                 .text_xs()
                 .text_color(rgb(if on {
-                    theme().color_branch
+                    theme().accent_text_on(theme().panel)
                 } else {
                     theme().text_muted
                 }))
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .hover(|s| {
+                    let s = s.bg(rgb(theme().selected)).cursor_pointer();
+                    if on {
+                        s.text_color(rgb(theme().accent_text_on(theme().selected)))
+                    } else {
+                        s
+                    }
+                })
                 .tooltip(|w, cx| {
                     gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
                         .build(w, cx)

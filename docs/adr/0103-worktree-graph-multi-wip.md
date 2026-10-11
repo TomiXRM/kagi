@@ -97,3 +97,10 @@ for headless coverage.
   left colour stripe, and a colour wash across the row).
 - 🌲 relies on the platform emoji fallback (Inter has no such glyph). If a build
   target lacks colour-emoji fallback, swap for a monochrome worktree glyph.
+
+## Amendment — 2026-10-11: document-tab identity
+
+The tab colour/rank policy above is superseded by the
+[ADR-0125 document-tab amendment](0125-apple-hig-themes.md#amendment--2026-10-11-neutral-document-tabs-1180).
+Worktree tabs retain 🌲 but no longer carry a lane-colour wash or stored lane
+rank. Graph WIP-row lane colours and multi-HEAD markers remain unchanged.

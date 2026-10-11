@@ -21,6 +21,7 @@
 //! `cx.notify()` — so the whole UI repaints immediately and the choice survives a
 //! restart. No new persistence layer is introduced.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, rgb, AnyElement, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
@@ -252,7 +253,7 @@ fn section_header(title: SharedString) -> impl IntoElement {
     div()
         .text_sm()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme().color_branch))
+        .text_color(rgb(theme().accent_text_on(theme().panel)))
         .pb_1()
         .border_b_1()
         .border_color(rgb(theme().selected))
@@ -505,6 +506,29 @@ fn appearance_section(
             SharedString::from(Msg::SettingsThemeDesc.t()),
             theme_dropdown.into_any_element(),
         ))
+        .when(
+            cfg!(target_os = "macos") && matches!(&*theme().slug, "apple-light" | "apple-dark"),
+            |section| {
+                let owner = app.clone();
+                section.child(setting_row(
+                    Msg::SettingsAccent.t().into(),
+                    theme::detected_system_accent().detected_label().into(),
+                    RadioGroup::horizontal("settings-accent")
+                        .children([
+                            SharedString::from(Msg::SettingsAccentSystem.t()),
+                            SharedString::from(Msg::SettingsAccentTheme.t()),
+                        ])
+                        .selected_index(Some(usize::from(!theme::follows_system_accent())))
+                        .on_click(move |index: &usize, _, cx| {
+                            theme::set_follows_system_accent(*index == 0);
+                            theme::sync_gpui_component_theme(cx);
+                            cx.refresh_windows();
+                            owner.update(cx, |_, cx| cx.notify());
+                        })
+                        .into_any_element(),
+                ))
+            },
+        )
         .child(super::settings_theme_folder::section(app))
         .child(setting_row(
             SharedString::from(Msg::SettingsToolbarDisplay.t()),
@@ -655,7 +679,7 @@ fn smart_commit_section(
         for (label, this, available) in entries {
             let selected = provider == this;
             let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().color_branch)
+                (theme().selected, theme().text_main, theme().ui_accent())
             } else if available {
                 (theme().bg_base, theme().text_sub, theme().selected)
             } else {
@@ -750,7 +774,7 @@ fn smart_commit_section(
         for m in models {
             let selected = current.as_deref() == Some(m.as_str());
             let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().color_branch)
+                (theme().selected, theme().text_main, theme().ui_accent())
             } else {
                 (theme().bg_base, theme().text_sub, theme().selected)
             };

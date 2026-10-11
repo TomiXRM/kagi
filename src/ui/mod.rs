@@ -1146,6 +1146,8 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' single scroll owner survives control updates and redraws.
+    pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
     /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
     /// panel (gpui-component's Root) instead of reaching the terminal or the
@@ -1193,6 +1195,9 @@ pub struct KagiApp {
     /// offsets cannot account for the variable-height header (caused a
     /// visible jump on drag start).
     pub inspector_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    pub(crate) inspector_files_scroll: gpui::ScrollHandle,
+    pub(crate) inspector_message_scroll: gpui::ScrollHandle,
+    pub(crate) activity_ranking_scroll: gpui::ScrollHandle,
     /// ADR-0089: measured (top, bottom) screen-px bounds of the File History
     /// list+diff split region, recorded by a paint-time canvas so the
     /// list/diff divider drag maps the cursor to the real region (constant
@@ -1475,10 +1480,14 @@ impl KagiApp {
             inspector_generated_expanded: false,
             inspector_split: INSPECTOR_SPLIT_DEFAULT,
             inspector_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            inspector_files_scroll: gpui::ScrollHandle::new(),
+            inspector_message_scroll: gpui::ScrollHandle::new(),
+            activity_ranking_scroll: gpui::ScrollHandle::new(),
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,

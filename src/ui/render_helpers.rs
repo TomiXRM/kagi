@@ -791,3 +791,31 @@ pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle
     }
     container
 }
+
+/// macOS policy used by the PR table: auto-hide overlays content; persistent
+/// bars have a dedicated lane, including the kit's Hover system mapping.
+pub(crate) fn with_system_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
+    id: &'static str,
+    handle: &H,
+    content: impl IntoElement,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    let persistent = gpui_component::Theme::global(cx).scrollbar_show
+        != gpui_component::scroll::ScrollbarShow::Scrolling;
+    div()
+        .id(id)
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+        .min_w(px(0.))
+        .when(persistent, |area| area.pr(px(16.)))
+        .when(cfg!(feature = "gui-e2e"), |area| {
+            area.child(super::e2e::measure_inside(id))
+        })
+        .child(content)
+        .child(Scrollbar::vertical(handle).id(id).when(persistent, |bar| {
+            bar.scrollbar_show(gpui_component::scroll::ScrollbarShow::Always)
+        }))
+}

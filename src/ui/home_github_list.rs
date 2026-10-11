@@ -164,7 +164,7 @@ impl KagiApp {
             cx,
         ));
         let list_rows = rows.clone();
-        let list = gpui::list(state, move |i, _window, _cx| match items.get(i) {
+        let list = gpui::list(state.clone(), move |i, _window, _cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => note_row(text),
             Some(HomeItem::OrgsFailed(text)) => {
@@ -233,7 +233,12 @@ impl KagiApp {
                 div().id(HOME_LIST).flex().flex_col().flex_1().min_h(px(0.)),
                 name,
             ))
-            .child(list)
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "home-github-scrollbar",
+                &state,
+                list,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -561,6 +566,9 @@ fn github_row(
 /// Tier A hooks for the list's place (#942 review).
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn home_scroll_for_e2e(&self) -> Option<gpui::ListState> {
+        self.home_github.list.clone()
+    }
     /// Scroll Home's list so entry `ix` is at its top.
     pub fn scroll_home_list_for_e2e(&self, ix: usize) {
         if let Some(state) = &self.home_github.list {

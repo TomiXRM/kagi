@@ -125,6 +125,10 @@ mod side_panel_motion;
 mod hunk_staging;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_keyboard.rs"]
+mod diff_keyboard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/reconcile_unobservable.rs"]
 mod reconcile_unobservable;
 
@@ -2652,6 +2656,14 @@ mod macos {
             (
                 "hunk_staging",
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
+            ),
+            (
+                "diff_hunk_buttons",
+                Box::new(crate::diff_keyboard::scenario_diff_hunk_buttons),
+            ),
+            (
+                "diff_keyboard_selection",
+                Box::new(crate::diff_keyboard::scenario_diff_keyboard_selection),
             ),
             (
                 "hunk_staging_content_identity",

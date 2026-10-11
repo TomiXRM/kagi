@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Diff hunk actions use named EN/JA keyboard-reachable ghost Buttons and tooltips; Enter/Space preserve the displayed hunk approval and existing staging pipeline. The dense header geometry is retained. (#1233)
+- Focused diff panes support caret arrows, Shift-arrow range extension, Shift-Cmd-arrow start/end extension and Cmd+A; the caret scrolls into view, Cmd+C still copies code only, and Escape clears selection before notifications. Mouse selection remains unchanged. (#1234)
+  - Review: the body is a real Tab stop with a layout-neutral, keyboard-only accent focus ring; focus identity follows the title across row-count reloads, while selection remains content-keyed. Header caret paint is measured after styling. Existing std Mutex poison recovery avoids adding a dependency.
 - Inspector author identities retain their full names with layout ellipsis and full-name/email hover and accessibility text. The compact monospace SHA chip is a named EN/JA ghost Button; Tab, Enter and Space use the existing full-SHA clipboard action. (#1237)
   - Review: XSmall preserves the original SHA typography inside its dense hover/focus frame. Incomplete author/co-author identities omit empty or duplicated email brackets; native paint coverage asserts layout ellipsis and SHA label containment at both zooms.
 - macOS Settings opens or raises one separate non-modal 715-point window with related EN/JA panes, live preferences, restored pane/position, compact unified chrome and standard close/minimize controls. Cmd-W closes only Settings; Escape leaves the window open (text editors keep their own Escape behavior). Other platforms retain the existing overlay. (#1198, ADR-0223)

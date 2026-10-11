@@ -2912,6 +2912,27 @@ index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
 
+For #1233 / #1234 use
+`KAGI_GUI_E2E_ONLY='diff_hunk_buttons,diff_keyboard_selection'` with
+`KAGI_GUI_E2E_KEEP_GOING=1`. The first checks the pinned named ghost Button's
+role/name inputs, Tab/F19 routing, Enter Stage / Space Unstage in EN/JA and
+unchanged header bounds (original and new: 893×22.5 logical px at the fixture
+viewport). The second enters the body by Tab before moving a caret, checks
+header fill after final styling, and compares content-row selection fills after
+Shift+Down ×3, retraction, collapsed caret, boundary extension, Cmd+A and
+code-only Cmd+C. EN/JA unified/split use real backend rows; changing the row
+count must preserve body focus without another Tab or click. Both ends of a
+201-row diff remain inside the measured native viewport after keyboard
+movement. Neither recorder is native VoiceOver evidence.
+Tab shows the body ring, a measured header click keeps body focus without the
+ring, and subsequent arrow input restores the keyboard-only ring.
+Neighbor filter: `KAGI_GUI_E2E_ONLY='diff_,hunk_,peek_,copy_'`.
+Tier B: Tab into the body and hunk actions; inspect focus, Enter/Space, tooltip
+and live AX role/name, then Shift-arrow / Shift-Cmd-arrow / Cmd+A / Cmd+C /
+Escape in unified and split. Compare identical EN/JA data, viewport and zoom;
+selection Escape must leave the diff and copied notification visible.
+
+
 ### WIP diffstat after staging (#996)
 
 Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in

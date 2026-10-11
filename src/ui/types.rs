@@ -142,6 +142,8 @@ pub struct Toast {
     pub born: std::time::Instant,
     /// Hover pause began here; elapsed hover time is excluded from the timer.
     pub paused_at: Option<std::time::Instant>,
+    /// Retain the rendered Button handle until removal can release its focus.
+    pub close_focus: std::rc::Rc<std::cell::RefCell<Option<gpui::FocusHandle>>>,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot

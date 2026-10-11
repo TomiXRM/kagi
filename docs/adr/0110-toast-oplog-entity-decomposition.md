@@ -77,18 +77,25 @@ verify in the running app that toasts slide in/out, auto-dismiss, cap at 4, the
 ## Reading and dismissal amendment (#1240, 2026-10-12)
 
 The dense notification overlay is transient feedback, not a second durable log.
-Error cards now require explicit dismissal (unlimited lifetime, exceeding the
-ten-second minimum); they cannot disappear while hovered or keyboard-focused.
-Info/Success/Sync keep a four-second timer counting only unhovered time. The
-four-card cap evicts the oldest non-error first, falling back to the oldest
-error only if all five are errors; the Operation Log retains complete detail.
-Error previews wrap to at most three painted lines instead of a one-line
-ellipsis. The renderer bounds the preview, not the durable operation record.
+Error cards do not auto-expire (unlimited lifetime, exceeding the ten-second
+minimum), including while hovered or keyboard-focused. Explicit dismissal and
+cap eviction can still remove a card being read. Info/Success/Sync keep a
+four-second timer counting only unhovered time. The four-card cap always admits
+the new notification and evicts the oldest existing non-error first. If all
+four existing cards are errors, the new notification replaces the oldest error,
+regardless of hover/focus; the Operation Log retains complete detail.
+Stored error previews preserve at most three newline-separated lines and 768
+characters plus an ellipsis. They wrap to at most three painted lines; visual
+overflow also shows an ellipsis. Neither storage nor paint retains/shapes the
+unbounded durable operation record.
 The close control reuses the pinned gpui-kit ghost icon Button with its native
 keyboard Tab/Enter/Space handling, focus ring, localized AX name and Tooltip.
-Escape first cancels the existing modal/menu front layer, then dismisses the
-newest visible toast, and only then performs workspace fallback. Terminal's
-existing Escape exclusion and the single active-modal slot are unchanged.
+Escape first cancels the existing modal/menu front layer, then clears diff-line
+selection or closes the PR drawer, then dismisses the newest visible toast,
+then performs the main-diff/Graph fallback. Terminal's existing Escape exclusion
+and the single active-modal slot are unchanged. Removal and eviction notify the
+parent with the removed control's retained FocusHandle, returning orphaned focus
+to root like `release_closed`; a still-rendered Input/modal focus is not stolen.
 The pinned Button does not implement GPUI's stateful accessibility setters;
 a thin adapter delegates its interactivity/rendering unchanged and supplies
 the icon-only AX name without painting a redundant visible label.
@@ -100,3 +107,9 @@ Rest/hover/pressed/focus-visible close states are owned by gpui-kit; empty
 stack has no cards or ticker, and no close action is disabled. Tier A
 `toast_dismiss` uses an actual failed local fetch for the lifetime oracle and
 measures a three-line component preview at 940×660/167% in EN and JA.
+Review coverage also uses actual pointer hover on Info for ten seconds, verifies
+the remaining timer after leaving, traverses to the real close Button with Tab
+and activates it with Enter, and checks focus repair after keyboard dismissal
+and focused Info expiry. Six-line/long-single-line inputs exercise truncation;
+JA uses Japanese preview text. Button measurement wraps the component without
+adding children that would change its production icon geometry.

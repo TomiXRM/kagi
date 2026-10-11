@@ -7,22 +7,27 @@
 use super::*;
 
 impl KagiApp {
-    fn cancel_workspace_key_target(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn cancel_workspace_overlay(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
         if diff_selection::clear() {
             cx.notify();
-            return;
+            return true;
         }
-        if self.pr_mode_visible() {
-            if super::pr_layout::Layout::for_window(self, window)
+        if self.pr_mode_visible()
+            && super::pr_layout::Layout::for_window(self, window)
                 .drawer
                 .is_some()
-            {
-                if let Some(mode) = self.pr_mode_mut() {
-                    mode.companion = None;
-                }
-                cx.notify();
-                return;
+        {
+            if let Some(mode) = self.pr_mode_mut() {
+                mode.companion = None;
             }
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
+    fn cancel_workspace_key_target(&mut self, _window: &Window, cx: &mut Context<Self>) {
+        if self.pr_mode_visible() {
             if self.pr_mode().is_some_and(|m| m.active.is_some()) {
                 self.pr_mode_home(cx);
             } else {
@@ -80,6 +85,9 @@ impl KagiApp {
     ) -> gpui::AnyElement {
         let escape = cx.listener(move |this, _: &CloseMainDiff, window, cx| {
             if this.cancel_active_modal(cx) {
+                return;
+            }
+            if workspace_fallbacks && this.cancel_workspace_overlay(window, cx) {
                 return;
             }
             if this

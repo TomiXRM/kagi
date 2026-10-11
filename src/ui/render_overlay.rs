@@ -117,8 +117,6 @@ fn toast_card(
     error_line_height: gpui::Pixels,
     cx: &mut Context<toast_stack::ToastStack>,
 ) -> gpui::Stateful<gpui::Div> {
-    use gpui_component::button::{Button, ButtonVariants as _};
-    use gpui_component::Sizable as _;
     let (accent, glyph) = match toast.kind {
         // Info reports completed feedback; only Sync promises motion.
         ToastKind::Info => (theme().ui_accent(), "\u{2022}"),
@@ -136,7 +134,6 @@ fn toast_card(
             .child(SharedString::from(glyph))
             .into_any_element()
     };
-    let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.begin_exit(id, cx));
     // Explicit width lets the animated margin translate the complete card.
     div()
         .w_full()
@@ -166,6 +163,7 @@ fn toast_card(
                     d.line_height(error_line_height)
                         .max_h(error_line_height * 3.)
                         .line_clamp(3)
+                        .text_ellipsis()
                 })
                 .when(toast.kind != ToastKind::Error, |d| {
                     d.whitespace_nowrap().text_ellipsis()
@@ -175,20 +173,34 @@ fn toast_card(
                     d.child(e2e::measure_inside(format!("toast-message-{id}")))
                 }),
         )
-        .child(
-            toast_stack::ToastCloseButton(
-                Button::new(("toast-dismiss", id))
-                    .ghost()
-                    .small()
-                    .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
-                    .tooltip(Msg::ToastDismiss.t())
-                    .on_click(dismiss)
-                    .when(cfg!(feature = "gui-e2e"), |button| {
-                        button.child(e2e::measure_inside(format!("toast-dismiss-{id}")))
-                    }),
-            )
-            .aria_label(SharedString::from(Msg::ToastDismiss.t())),
-        )
+        .child(toast_close_control(toast, cx))
+}
+
+fn toast_close_control(
+    toast: &Toast,
+    cx: &mut Context<toast_stack::ToastStack>,
+) -> gpui::AnyElement {
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::Sizable as _;
+    let id = toast.id;
+    let control = toast_stack::ToastCloseButton(
+        Button::new(("toast-dismiss", id))
+            .ghost()
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
+            .tooltip(Msg::ToastDismiss.t())
+            .on_click(
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.begin_exit(id, cx)),
+            ),
+        id,
+        toast.close_focus.clone(),
+    )
+    .aria_label(SharedString::from(Msg::ToastDismiss.t()))
+    .on_key_down(super::keyboard_nav::stop_activation_keys);
+    #[cfg(feature = "gui-e2e")]
+    return e2e::measure_control(format!("toast-dismiss-{id}"), control);
+    #[cfg(not(feature = "gui-e2e"))]
+    control.into_any_element()
 }
 
 // The Operation Log panel's `impl Render for OpLogPanel` moved to

@@ -4,7 +4,9 @@ use super::{
     keyboard_nav::{self, Activation, TabFocus, TabList},
     theme,
 };
-use gpui::{div, prelude::*, rgb, AnyElement, App, Context, Role, Window};
+#[cfg(feature = "gui-e2e")]
+use gpui::Role;
+use gpui::{div, prelude::*, rgb, AnyElement, App, Context, Window};
 use kagi_ui_editor::{EditorPaneSelectors, EditorWorkspaceView, MiddlePaneTab, RightPaneTab};
 
 #[derive(Default)]
@@ -140,7 +142,7 @@ impl EditorPaneSelectors for PaneSelectors {
                     el.hover(|s| s.bg(rgb(theme::theme().surface)))
                 })
                 .child(label);
-            let cell = list.cell(slot, label, chip).role(Role::Button);
+            let cell = list.cell(slot, label, chip);
             strip = strip.child(segment_target(middle, slot, cell));
         }
         strip.into_any_element()
@@ -161,11 +163,7 @@ impl EditorPaneSelectors for PaneSelectors {
 
     #[cfg(feature = "gui-e2e")]
     fn probes(&self, middle: bool) -> Vec<(Role, String, bool, bool)> {
-        self.owner(middle)
-            .recorded_tabs()
-            .into_iter()
-            .map(|(_, name, selected, stop)| (Role::Button, name, selected, stop))
-            .collect()
+        self.owner(middle).recorded_tabs()
     }
     #[cfg(feature = "gui-e2e")]
     fn focus(&self, middle: bool, slot: usize, window: &mut Window, cx: &mut App) {

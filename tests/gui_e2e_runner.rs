@@ -552,6 +552,10 @@ mod macos {
     extern "C" {
         fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
         fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+        fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn object_getClass(object: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
     }
 
     /// The offscreen runner has no AppKit event loop to drain native windows.
@@ -586,6 +590,91 @@ mod macos {
         // MacWindow closes on MacPlatform's native executor, not TestDispatcher.
         unsafe {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, 0);
+        }
+    }
+
+    /// Supply a native frame tick for one hidden test window. AppKit stops its
+    /// display link while occluded, so draining the runloop alone cannot execute
+    /// GPUI's on_next_frame callbacks. GPUIView::displayLayer enters the same
+    /// request-frame callback with default options: it does not invalidate the
+    /// window or force rendering. In particular, a prepaint refresh ignored by
+    /// GPUI stays ignored; only a genuinely scheduled refresh draws another frame.
+    pub(crate) fn request_native_frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+        let title = format!("Kagi native-frame test {:?}", window.window_id());
+        cx.update_window(window, |_, window, _| {
+            if window.window_title() != title {
+                window.set_window_title(&title);
+            }
+        })
+        .expect("native frame target still mounted");
+        // Do not hold the GPUI App borrow here: displayLayer re-enters its
+        // request-frame callback, which updates that same App.
+        unsafe {
+            type Object = *mut std::ffi::c_void;
+            let send: unsafe extern "C" fn(Object, Object) -> Object =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let index: unsafe extern "C" fn(Object, Object, usize) -> Object =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let count_windows: unsafe extern "C" fn(Object, Object) -> usize =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let frame: unsafe extern "C" fn(Object, Object, Object) =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let application = send(
+                objc_getClass(c"NSApplication".as_ptr()),
+                sel_registerName(c"sharedApplication".as_ptr()),
+            );
+            assert!(!application.is_null(), "runner owns native NSApplication");
+            let windows = send(application, sel_registerName(c"windows".as_ptr()));
+            let count = count_windows(windows, sel_registerName(c"count".as_ptr()));
+            let mut target: Object = std::ptr::null_mut();
+            for position in 0..count {
+                let candidate = index(
+                    windows,
+                    sel_registerName(c"objectAtIndex:".as_ptr()),
+                    position,
+                );
+                let name = send(candidate, sel_registerName(c"title".as_ptr()));
+                let utf8 = send(name, sel_registerName(c"UTF8String".as_ptr()));
+                if !utf8.is_null()
+                    && std::ffi::CStr::from_ptr(utf8.cast()).to_bytes() == title.as_bytes()
+                {
+                    assert!(target.is_null(), "native frame title identifies one window");
+                    // Pinned MacWindow embeds GPUIView directly under AppKit's
+                    // contentView, alongside any separate blurred background.
+                    let content = send(candidate, sel_registerName(c"contentView".as_ptr()));
+                    let children = send(content, sel_registerName(c"subviews".as_ptr()));
+                    let count = count_windows(children, sel_registerName(c"count".as_ptr()));
+                    for child in 0..count {
+                        let view = index(
+                            children,
+                            sel_registerName(c"objectAtIndex:".as_ptr()),
+                            child,
+                        );
+                        if object_getClass(view) == objc_getClass(c"GPUIView".as_ptr()) {
+                            assert!(target.is_null(), "target window contains one GPUIView");
+                            target = view;
+                        }
+                    }
+                    assert!(
+                        !target.is_null(),
+                        "target window embeds its pinned GPUIView"
+                    );
+                }
+            }
+            assert!(
+                !target.is_null(),
+                "specific hidden native frame view exists"
+            );
+            assert_eq!(
+                object_getClass(target),
+                objc_getClass(c"GPUIView".as_ptr()),
+                "only the pinned GPUI native view receives the frame tick"
+            );
+            frame(
+                target,
+                sel_registerName(c"displayLayer:".as_ptr()),
+                std::ptr::null_mut(),
+            );
         }
     }
 

@@ -2355,6 +2355,7 @@ fn render_editor_workspace(
     let tree_divider = div()
         .id("ews-divider-tree")
         .group("ews-divider-tree")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2386,10 +2387,16 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorTree,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, true));
+            el
+        });
     let hunks_divider = div()
         .id("ews-divider-hunks")
         .group("ews-divider-hunks")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2421,7 +2428,12 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorHunks,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, false));
+            el
+        });
 
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —

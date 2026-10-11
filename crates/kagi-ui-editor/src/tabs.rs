@@ -7,31 +7,43 @@ use gpui_component::{
 };
 use kagi_ui_core::theme::{self, theme};
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
 };
 
-/// Clamp only presentation widths: saved divider widths remain the user's.
+impl EditorWorkspaceView {
+    /// Render-only compression shared with divider input's inverse conversion.
+    pub fn pane_width_fraction(&self, available: gpui::Pixels) -> f32 {
+        let tree = if self.show_tree { self.tree_w } else { 0. };
+        let total = theme::scaled_px(tree + self.hunks_w);
+        let dividers = theme::scaled_px(if self.show_tree { 8. } else { 4. });
+        let budget = (available - theme::scaled_px(180.) - dividers).max(px(0.));
+        if total > budget {
+            f32::from(budget) / f32::from(total)
+        } else {
+            1.
+        }
+    }
+
+    /// Divider coordinates are already unzoomed, but still presentation-clamped.
+    pub fn pane_width_from_rendered(&self, rendered: f32, available: gpui::Pixels) -> f32 {
+        rendered / self.pane_width_fraction(available).max(f32::EPSILON)
+    }
+}
+
 pub(crate) fn pane_widths(
     view: &EditorWorkspaceView,
     available: gpui::Pixels,
 ) -> (gpui::Pixels, gpui::Pixels) {
+    let fraction = view.pane_width_fraction(available);
     let tree = if view.show_tree {
-        theme::scaled_px(view.tree_w)
+        theme::scaled_px(view.tree_w) * fraction
     } else {
         px(0.)
     };
-    let hunks = theme::scaled_px(view.hunks_w);
-    let dividers = theme::scaled_px(if view.show_tree { 8. } else { 4. });
-    let budget = (available - theme::scaled_px(180.) - dividers).max(px(0.));
-    let total = tree + hunks;
-    let fraction = if total > budget {
-        f32::from(budget) / f32::from(total)
-    } else {
-        1.
-    };
-    (tree * fraction, hunks * fraction)
+    (tree, theme::scaled_px(view.hunks_w) * fraction)
 }
 
 struct TabIdentity {
@@ -49,17 +61,25 @@ pub(crate) struct TabPresentation {
 }
 
 fn distinguishing_label(path: &Path, tabs: &[PathBuf]) -> String {
-    let components: Vec<_> = path.components().collect();
-    for count in 1..=components.len() {
-        let suffix: PathBuf = components[components.len() - count..].iter().collect();
+    for count in 1..=path.components().count() {
+        let label = displayed_suffix(path, count);
         if !tabs
             .iter()
-            .any(|other| other != path && other.ends_with(&suffix))
+            .any(|other| other != path && displayed_suffix(other, count) == label)
         {
-            return suffix.to_string_lossy().into_owned();
+            return label.into_owned();
         }
     }
     path.to_string_lossy().into_owned()
+}
+
+fn displayed_suffix(path: &Path, count: usize) -> Cow<'_, str> {
+    let mut components = path.components();
+    let skip = components.clone().count().saturating_sub(count);
+    for _ in 0..skip {
+        components.next();
+    }
+    components.as_path().to_string_lossy()
 }
 
 impl TabPresentation {
@@ -138,7 +158,7 @@ pub(crate) fn render_tab_strip(
             if viewport.replace(bounds.size) != bounds.size {
                 if let Some(selected) = selected {
                     handle.scroll_to_item(selected);
-                    window.refresh();
+                    window.on_next_frame(|window, _| window.refresh());
                 }
             }
         },
@@ -174,18 +194,7 @@ fn render_tab(
     let active = view.open_path.as_ref() == Some(&identity.path);
     let dirty = view.tab_dirty(&identity.path);
     let activate_path = identity.path.clone();
-    let full_path = identity.full_path.clone();
-    #[cfg(feature = "gui-e2e")]
-    view.tab_probes.0.borrow_mut().push(crate::EditorTabProbe {
-        path: identity.path.to_string_lossy().into_owned(),
-        label: identity.label.to_string(),
-        full_path: full_path.to_string(),
-        tooltip: full_path.to_string(),
-        bounds: gpui::Bounds::default(),
-        role: Role::Tab,
-        close_bounds: gpui::Bounds::default(),
-    });
-    div()
+    let tab = div()
         .id(("ews-tab", index))
         .relative()
         .flex()
@@ -198,12 +207,8 @@ fn render_tab(
         .min_w(theme::scaled_px(120.))
         .max_w(theme::scaled_px(180.))
         .cursor_default()
-        .text_xs()
-        .role(Role::Tab)
-        .aria_label(full_path.clone())
-        .aria_description(full_path.clone())
-        .aria_selected(active)
-        .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+        .text_xs();
+    apply_identity(tab, view, identity, active)
         .bg(rgb(if active {
             theme().bg_base
         } else {
@@ -238,6 +243,33 @@ fn render_tab(
             el
         })
         .into_any_element()
+}
+
+/// Keep probe evidence at the same boundary that installs actual AX/Tooltip data.
+fn apply_identity(
+    tab: gpui::Stateful<gpui::Div>,
+    _view: &EditorWorkspaceView,
+    identity: &TabIdentity,
+    active: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let role = Role::Tab;
+    let name = identity.full_path.clone();
+    let tooltip = identity.full_path.clone();
+    #[cfg(feature = "gui-e2e")]
+    _view.tab_probes.0.borrow_mut().push(crate::EditorTabProbe {
+        path: identity.path.to_string_lossy().into_owned(),
+        label: identity.label.to_string(),
+        full_path: name.to_string(),
+        tooltip: tooltip.to_string(),
+        bounds: gpui::Bounds::default(),
+        role,
+        close_bounds: gpui::Bounds::default(),
+    });
+    tab.role(role)
+        .aria_label(name.clone())
+        .aria_description(name)
+        .aria_selected(active)
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
 }
 
 fn render_close(
@@ -303,5 +335,17 @@ mod tests {
                 "独自.rs"
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn duplicate_lossy_basenames_use_displayed_suffixes() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+        let paths = [
+            PathBuf::from(OsString::from_vec(b"x/\xff.rs".to_vec())),
+            PathBuf::from(OsString::from_vec(b"y/\xfe.rs".to_vec())),
+        ];
+        assert_eq!(distinguishing_label(&paths[0], &paths), "x/\u{fffd}.rs");
+        assert_eq!(distinguishing_label(&paths[1], &paths), "y/\u{fffd}.rs");
     }
 }

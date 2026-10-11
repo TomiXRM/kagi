@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{
-    px, size, AnyWindowHandle, AppContext, Bounds, Entity, Pixels, Role, VisualTestAppContext,
+    point, px, size, AnyWindowHandle, AppContext, Bounds, Entity, Modifiers, MouseButton, Pixels,
+    Role, VisualTestAppContext,
 };
 use kagi::ui::{e2e, editor_workspace::EditorWorkspaceView, KagiApp};
 use kagi_ui_core::{
@@ -226,6 +227,7 @@ pub fn scenario_editor_tab_overflow(cx: &mut VisualTestAppContext) {
                 }
             });
         }
+        assert_live_resize_reveal(cx, editor, window);
         assert_extra_tab_counts(cx, editor, window, repo);
         cx.read(|cx| {
             let view = editor.read(cx);
@@ -235,6 +237,7 @@ pub fn scenario_editor_tab_overflow(cx: &mut VisualTestAppContext) {
                 "viewport clamping must not overwrite stored pane preferences"
             );
         });
+        assert_compact_divider_drags(cx, editor, window);
     });
 }
 
@@ -294,6 +297,156 @@ fn assert_extra_tab_counts(
                 });
         }
     }
+}
+
+fn assert_live_resize_reveal(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    // The previous activation loop ends on the last tab, with its real load
+    // settled. Do not reactivate it or invalidate the view after resizing.
+    let original = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    let widths = cx.read(|cx| {
+        let view = editor.read(cx);
+        assert_eq!(view.open_path.as_deref(), Some(Path::new(PATHS[11])));
+        (view.tree_w, view.hunks_w)
+    });
+    for wanted in [size(px(1700.), original.height), original] {
+        let previous = cx.read(|cx| editor.read(cx).tab_strip_bounds_for_e2e().unwrap());
+        cx.update_window(window, |_, window, _| window.resize(wanted))
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            crate::macos::drain_native_events();
+            cx.run_until_parked();
+            // Hidden NSWindows have no display link. This enters GPUI's actual
+            // native frame callback, not paint(): no forced draw or refresh.
+            // Only the production next-frame callback can dirty the reveal frame.
+            crate::macos::request_native_frame(cx, window);
+            cx.run_until_parked();
+            let viewport = cx
+                .update_window(window, |_, window, _| window.viewport_size())
+                .unwrap();
+            let ready = cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.open_path.as_deref(), Some(Path::new(PATHS[11])));
+                assert_eq!(view.open_tabs.len(), PATHS.len());
+                assert_eq!((view.tree_w, view.hunks_w), widths);
+                let strip = view.tab_strip_bounds_for_e2e().unwrap();
+                let probes = view.tab_probes_for_e2e();
+                let active = probes[11].bounds;
+                viewport == wanted
+                    && (strip.size.width - previous.size.width).abs() > px(1.)
+                    && active.left() >= strip.left() - px(1.)
+                    && active.right() <= strip.right() + px(1.)
+            });
+            if ready {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "native resize to {wanted:?} did not fully reveal the unchanged last tab"
+            );
+        }
+    }
+}
+
+fn assert_compact_divider_drags(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    let available = cx
+        .update_window(window, |_, window, _| window.viewport_size().width)
+        .unwrap();
+    if available != px(940.) || (theme::zoom() - 1.67).abs() > 0.001 {
+        return;
+    }
+    let widths = cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(view.show_tree);
+        assert!(
+            view.pane_width_fraction(available) < 1.,
+            "compact panes really clamp"
+        );
+        (view.tree_w, view.hunks_w)
+    });
+    for tree in [true, false] {
+        assert_one_pixel_divider_drag(cx, editor, window, available, tree);
+        editor.update(cx, |view, cx| {
+            (view.tree_w, view.hunks_w) = widths;
+            cx.notify();
+        });
+        paint(cx, window);
+    }
+}
+
+fn assert_one_pixel_divider_drag(
+    cx: &mut VisualTestAppContext,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+    available: Pixels,
+    tree: bool,
+) {
+    let (bounds, before, fraction) = cx.read(|cx| {
+        let view = editor.read(cx);
+        (
+            view.divider_bounds_for_e2e(tree)
+                .expect("actual native Editor divider"),
+            (view.tree_w, view.hunks_w),
+            view.pane_width_fraction(available),
+        )
+    });
+    let start = bounds.center();
+    cx.simulate_mouse_move(window, start, None, Modifiers::none());
+    cx.simulate_mouse_down(window, start, MouseButton::Left, Modifiers::none());
+    // Cross GPUI's drag threshold vertically, so activation itself must not
+    // convert the clamped presentation width into a smaller saved preference.
+    let armed = point(start.x, start.y + px(20.));
+    cx.simulate_mouse_move(window, armed, MouseButton::Left, Modifiers::none());
+    assert!(
+        cx.read(|cx| cx.has_active_drag()),
+        "real divider drag activated"
+    );
+    paint(cx, window);
+    cx.simulate_mouse_move(window, armed, MouseButton::Left, Modifiers::none());
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        assert!(
+            (view.tree_w - before.0).abs() < 0.05,
+            "zero-x drag shrank saved tree width"
+        );
+        assert!(
+            (view.hunks_w - before.1).abs() < 0.05,
+            "zero-x drag shrank saved hunks width"
+        );
+    });
+    let end = point(armed.x + px(1.), armed.y);
+    cx.simulate_mouse_move(window, end, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(window, end, MouseButton::Left, Modifiers::none());
+    assert!(
+        !cx.read(|cx| cx.has_active_drag()),
+        "native mouse-up ends divider drag"
+    );
+    let delta = 1. / (theme::scaled(1.) * fraction);
+    cx.read(|cx| {
+        let view = editor.read(cx);
+        let expected = if tree {
+            (before.0 + delta, before.1)
+        } else {
+            (before.0, before.1 - delta)
+        };
+        assert!(
+            (view.tree_w - expected.0).abs() < 0.05
+                && (view.hunks_w - expected.1).abs() < 0.05,
+            "1px Editor {} drag must change only its inverse-fraction preference: before={before:?}, actual={:?}, expected={expected:?}, fraction={fraction}",
+            if tree { "Tree" } else { "Hunks" },
+            (view.tree_w, view.hunks_w)
+        );
+    });
 }
 
 fn selector_bounds(window: AnyWindowHandle, middle: bool) -> [Bounds<Pixels>; 2] {
@@ -359,7 +512,7 @@ fn assert_selector(
             "one Tab-entry stop for the whole selector"
         );
         for (index, (role, name, active, tab_stop)) in probes.iter().enumerate() {
-            assert_eq!(*role, Role::Button);
+            assert_eq!(*role, Role::Tab, "native TabList child exposes tab AX role");
             assert_eq!(name.as_str(), names[index]);
             assert_eq!(*active, index == selected);
             assert_eq!(*tab_stop, index == selected);

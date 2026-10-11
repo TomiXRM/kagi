@@ -1,6 +1,9 @@
 //! Renderer-fed Editor identity/geometry evidence; absent from normal builds.
 use gpui::{canvas, prelude::*, Bounds, Pixels, Role};
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Clone, Debug)]
 pub struct EditorTabProbe {
@@ -14,7 +17,10 @@ pub struct EditorTabProbe {
 }
 
 #[derive(Default)]
-pub(crate) struct TabProbes(pub Rc<RefCell<Vec<EditorTabProbe>>>);
+pub(crate) struct TabProbes(
+    pub Rc<RefCell<Vec<EditorTabProbe>>>,
+    Rc<Cell<[Option<Bounds<Pixels>>; 2]>>,
+);
 
 pub(crate) fn measure(probes: &TabProbes, index: usize) -> impl IntoElement {
     let probes = probes.0.clone();
@@ -48,7 +54,26 @@ pub(crate) fn measure_close(probes: &TabProbes, index: usize) -> impl IntoElemen
     .size_full()
 }
 
+pub(crate) fn measure_divider(probes: &TabProbes, tree: bool) -> impl IntoElement {
+    let dividers = probes.1.clone();
+    canvas(
+        move |bounds, _, _| {
+            let mut measured = dividers.get();
+            measured[usize::from(!tree)] = Some(bounds);
+            dividers.set(measured);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 impl crate::EditorWorkspaceView {
+    pub fn divider_bounds_for_e2e(&self, tree: bool) -> Option<Bounds<Pixels>> {
+        self.tab_probes.1.get()[usize::from(!tree)]
+    }
     pub fn tab_probes_for_e2e(&self) -> Vec<EditorTabProbe> {
         self.tab_probes.0.borrow().clone()
     }

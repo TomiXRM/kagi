@@ -325,6 +325,10 @@ mod recovery_commit_panel_i18n;
 mod recovery_commit_panel_polish;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_keyboard.rs"]
+mod recovery_commit_panel_keyboard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
 mod toolbar_count;
 
@@ -2246,6 +2250,18 @@ mod macos {
             (
                 "commit_panel_body_focus",
                 Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
+            ),
+            (
+                "commit_panel_segment_keys",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_segment_keys),
+            ),
+            (
+                "commit_panel_footer_tab_order",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_footer_tab_order),
+            ),
+            (
+                "commit_panel_coauthor_keys",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_coauthor_keys),
             ),
             (
                 "toolbar_count_scale",

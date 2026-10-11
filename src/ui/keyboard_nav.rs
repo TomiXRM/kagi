@@ -93,6 +93,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", TabListNext, Some(CONTEXT)),
         KeyBinding::new("home", TabListFirst, Some(CONTEXT)),
         KeyBinding::new("end", TabListLast, Some(CONTEXT)),
+        KeyBinding::new("up", TabListPrev, Some("KagiCommitPanelView")),
+        KeyBinding::new("down", TabListNext, Some("KagiCommitPanelView")),
     ]);
     // The row list's ↑/↓ outrank the app-wide `!Terminal && !Input` up/down
     // (stepping through a diff's files) the same way, and only inside a list.
@@ -399,6 +401,11 @@ impl TabList {
             #[cfg(feature = "gui-e2e")]
             a11y: focus.a11y.clone(),
         }
+    }
+
+    /// Stable cell handle for a composed control's accessibility/focus probes.
+    pub(crate) fn focus_handle(&self, slot: usize) -> &FocusHandle {
+        &self.handles[slot]
     }
 
     /// The list's container.

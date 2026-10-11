@@ -79,6 +79,18 @@ The AX recorder proves the renderer assignment, not native VoiceOver delivery.
 Tier B remains a real-window comparison of Japanese headers, batch actions and
 unchanged user Template text; `commit_panel_viewport` retains composer geometry.
 
+For #1229–#1231 use
+`KAGI_GUI_E2E_ONLY='commit_panel_segment_keys,commit_panel_footer_tab_order,commit_panel_coauthor_keys'`
+with `KAGI_GUI_E2E_KEEP_GOING=1`. The regressions deliver simulated keys to
+production focus handles: one roving List/Tree stop; body → Template → Generate
+→ co-author → Amend → available Commit; inert unavailable actions; Template
+pressed state; and twenty long-name/email co-author candidates with tail
+scrolling, duplicate-safe trailer insertion, empty candidates and Escape focus
+return. AX assertions compare both role and localized name assignments. Pair
+with `commit_panel_,commit_row_layout,smart_` for the existing neighbors.
+These renderer/simulated-input assertions do not prove Full Keyboard Access,
+VoiceOver or IME behavior; Tier B compares those in the real EN/JA window.
+
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
 `settings_quiet` measures inherited heading colour/size/weight and Metal pixels
 for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes

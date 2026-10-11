@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit Panel List/Tree is now one named keyboard tab group: arrows and Home/End move the selection, and Enter/Space activate without losing the selected file, draft or scroll state. (#1229)
+- Commit Panel Template, Generate, co-author and Amend actions use named EN/JA ghost Buttons in visual keyboard order. Bulk staging actions are keyboard reachable, disabled actions expose their reason without executing, and Template exposes its pressed state. (#1230)
+- The co-author picker supports arrow/Home/End selection, scrolls the active candidate into view, exposes named listbox options and a system scrollbar, and returns focus to its opener after insertion or dismissal. (#1231)
 - Commit Panel headings, List/Tree selectors and conflict badges now follow EN/JA language changes. The feature name Commit Panel and Stage/Unstage/Discard operation-button names remain English per ADR-0048, with consistent capitalization. Named view/batch controls expose Button roles and selectors expose their selected state; headers wrap rather than clipping longer labels, with at least 20 logical-pixel hit height. File paths, diffstats and user-owned commit Template text remain untouched. (#1227)
 - Error notifications now remain until explicitly dismissed, wrap to three lines, and preserve errors before routine notifications when the four-card stack fills. Routine notifications pause their four-second timer on hover. Named EN/JA ghost close Buttons and Escape provide keyboard dismissal without overriding modal/menu cancellation. (#1240)
   - Review: cap eviction always admits the new notification; stored previews are bounded to three lines/768 characters. Removal repairs orphaned keyboard focus; diff selection and PR drawers retain Escape priority. Native coverage uses production Button geometry, routine hover timing, keyboard activation and overflow inputs.

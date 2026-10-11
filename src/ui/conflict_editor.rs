@@ -99,11 +99,11 @@ fn render_toolbar(
     let n_of_m = format!("{} {}/{}", Msg::EditorConflictNofM.t(), resolved, total);
 
     let prev = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_nav_hunk(-1);
+        this.conflict_nav_unresolved(-1);
         cx.notify();
     });
     let next = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_nav_hunk(1);
+        this.conflict_nav_unresolved(1);
         cx.notify();
     });
     let p_ext = path.to_path_buf();
@@ -153,19 +153,25 @@ fn render_toolbar(
                         .child(SharedString::from(n_of_m)),
                 ),
         )
-        .child(tool_button(
-            "editor-prev",
-            Msg::EditorPrevHunk.t(),
-            ButtonRole::NeutralTinted,
-            prev,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-prev",
+            tool_button(
+                "editor-prev",
+                Msg::EditorPrevHunk.t(),
+                ButtonRole::NeutralTinted,
+                prev,
+                cx,
+            ),
         ))
-        .child(tool_button(
-            "editor-next",
-            Msg::EditorNextHunk.t(),
-            ButtonRole::NeutralTinted,
-            next,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-next",
+            tool_button(
+                "editor-next",
+                Msg::EditorNextHunk.t(),
+                ButtonRole::NeutralTinted,
+                next,
+                cx,
+            ),
         ))
         .child(icon_button(
             "editor-open-external",

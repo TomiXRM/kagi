@@ -3,8 +3,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, App, Context, FocusHandle, ListAlignment, ListState,
-    Role, SharedString, Window,
+    actions, div, prelude::*, px, rgb, AnyElement, App, Context, FocusHandle, KeyBinding,
+    ListAlignment, ListState, Role, SharedString, Window,
 };
 
 use super::commit_panel::CommitPanelView;
@@ -15,6 +15,20 @@ use super::render_helpers::with_system_vertical_scrollbar;
 use super::theme::{self, theme};
 
 pub(super) const ROW_HEIGHT: f32 = 40.;
+
+actions!(kagi_coauthor_menu, [CoauthorDismiss]);
+
+const MENU_CONTEXT: &str = "KagiCoauthorMenu";
+
+/// Like context menus, Tab closes this popup instead of visiting controls
+/// behind it. A scoped action outranks Root's Tab binding, which runs before
+/// capture_key_down; Escape remains owned by the existing FrontLayer chain.
+pub(crate) fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", CoauthorDismiss, Some(MENU_CONTEXT)),
+        KeyBinding::new("shift-tab", CoauthorDismiss, Some(MENU_CONTEXT)),
+    ]);
+}
 
 struct CoauthorRow {
     id: SharedString,
@@ -138,6 +152,12 @@ pub(super) fn render_content(
                 .flex_col(),
             Msg::AddCoAuthor.t(),
         ))
+        .key_context("KagiRowList KagiCoauthorMenu")
+        .on_action(cx.listener(|view, _: &CoauthorDismiss, window, cx| {
+            view.coauthor_menu = None;
+            view.reconcile_coauthor_menu(window, cx);
+            cx.notify();
+        }))
         .role(labels::role("cp-coauthor-menu", Role::ListBox))
         .aria_label(labels::name("cp-coauthor-menu", Msg::AddCoAuthor.t()));
     let content = if navigation.display.is_empty() {

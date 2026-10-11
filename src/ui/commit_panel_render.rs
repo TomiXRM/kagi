@@ -233,6 +233,7 @@ impl Render for CommitPanelView {
         // the child's input.
         self.sync_inputs(window, cx);
         self.reconcile_coauthor_menu(window, cx);
+        controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, window, cx)

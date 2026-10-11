@@ -368,8 +368,12 @@ impl KagiApp {
                     });
                 } else if self.ui().commit_panel.is_none() {
                     let weak_app = cx.weak_entity();
-                    let entity = cx
-                        .new(|_| CommitPanelView::new(panel, weak_app, repo_path.clone(), session));
+                    let entity = cx.new(|_| {
+                        let mut view =
+                            CommitPanelView::new(panel, weak_app, repo_path.clone(), session);
+                        view.pointer_root_focus = self.root_focus.clone();
+                        view
+                    });
                     if let Some(ui) = self.ui_mut() {
                         ui.commit_panel = Some(entity);
                     }

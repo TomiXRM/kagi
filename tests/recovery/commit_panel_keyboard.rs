@@ -12,6 +12,11 @@ use kagi_ui_core::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "commit_panel_coauthor_tab.rs"]
+mod commit_panel_coauthor_tab;
+#[path = "commit_panel_keyboard_focus.rs"]
+mod focus_regressions;
+
 const TEMPLATE: &str = "# Keyboard regression template\n";
 
 #[derive(Clone, Copy)]
@@ -187,6 +192,7 @@ pub fn scenario_commit_panel_segment_keys(cx: &mut VisualTestAppContext) {
         labels::clear();
         unmount(cx, app, window);
     }
+    focus_regressions::pointer_selector(cx);
     eprintln!("[gui-e2e] PASS commit_panel_segment_keys");
 }
 
@@ -207,8 +213,10 @@ pub fn scenario_commit_panel_footer_tab_order(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     enabled_footer(cx);
-    bulk_keys(cx);
+    focus_regressions::bulk_keys(cx);
     disabled_bulk_keys(cx);
+    focus_regressions::pointer_bulk(cx);
+    focus_regressions::hidden_bulk_focus(cx);
     eprintln!("[gui-e2e] PASS commit_panel_footer_tab_order");
 }
 
@@ -246,6 +254,7 @@ pub fn scenario_commit_panel_coauthor_keys(cx: &mut VisualTestAppContext) {
             .read(|cx| app.read(cx).ui().commit_panel.clone())
             .unwrap();
         focus(cx, window, "cp-coauthor");
+        commit_panel_coauthor_tab::check_tab_dismiss(cx, window, &panel);
         for activation in ["enter", "space"] {
             coauthor_activation(cx, window, &panel, case, activation);
         }
@@ -271,6 +280,7 @@ fn empty_coauthors(cx: &mut VisualTestAppContext) {
             .read(|cx| app.read(cx).ui().commit_panel.clone())
             .unwrap();
         focus(cx, window, "cp-coauthor");
+        commit_panel_coauthor_tab::check_tab_dismiss(cx, window, &panel);
         press(cx, window, "space");
         assert!(cx.read(|cx| panel.read(cx).coauthor_menu.as_ref().unwrap().is_empty()));
         ax("cp-coauthor-menu", Role::ListBox, Msg::AddCoAuthor.t());
@@ -393,74 +403,6 @@ fn contract_count(line: &str) -> usize {
         .iter()
         .filter(|entry| entry.as_str() == line)
         .count()
-}
-
-fn bulk_keys(cx: &mut VisualTestAppContext) {
-    let fixture = build_fixture();
-    std::fs::write(fixture.path().join("README.md"), "keyboard bulk edit\n").unwrap();
-    for case in matrix() {
-        let (app, window) = open(cx, fixture.path(), case);
-        let panel = cx
-            .read(|cx| app.read(cx).ui().commit_panel.clone())
-            .unwrap();
-        for key in ["enter", "space"] {
-            ax("cp-stage-all", Role::Button, Msg::CommitPanelStageAll.t());
-            ax(
-                "cp-discard-all",
-                Role::Button,
-                Msg::CommitPanelDiscardAll.t(),
-            );
-            assert_eq!(labels::accessible_disabled("cp-stage-all"), Some(false));
-            let row = bounds(window, "cp-selected-unstaged-row");
-            focus(cx, window, "cp-stage-all");
-            press(cx, window, "tab");
-            assert_focus(cx, window, "cp-discard-all");
-            assert_eq!(
-                bounds(window, "cp-selected-unstaged-row"),
-                row,
-                "bulk focus must not shift file rows"
-            );
-            press(cx, window, "tab");
-            assert_focus(cx, window, "cp-view-list");
-            focus(cx, window, "cp-stage-all");
-            let staged = contract_count("[kagi] staged-all: 1 file(s)");
-            press(cx, window, key);
-            assert_eq!(
-                contract_count("[kagi] staged-all: 1 file(s)"),
-                staged + 1,
-                "one keyboard activation must stage once"
-            );
-            assert_eq!(cx.read(|cx| panel.read(cx).state.staged.len()), 1);
-            assert!(cx.read(|cx| panel.read(cx).state.unstaged.is_empty()));
-            ax(
-                "cp-unstage-all",
-                Role::Button,
-                Msg::CommitPanelUnstageAll.t(),
-            );
-            focus(cx, window, "cp-unstage-all");
-            let unstaged = contract_count("[kagi] unstaged-all: 1 file(s)");
-            press(cx, window, key);
-            assert_eq!(
-                contract_count("[kagi] unstaged-all: 1 file(s)"),
-                unstaged + 1,
-                "one keyboard activation must unstage once"
-            );
-            assert!(cx.read(|cx| panel.read(cx).state.staged.is_empty()));
-            assert_eq!(cx.read(|cx| panel.read(cx).state.unstaged.len()), 1);
-            focus(cx, window, "cp-discard-all");
-            press(cx, window, key);
-            assert!(cx.read(|cx| app.read(cx).discard_modal().is_some()));
-            press(cx, window, "escape");
-            assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
-            assert_eq!(
-                std::fs::read_to_string(fixture.path().join("README.md")).unwrap(),
-                "keyboard bulk edit\n"
-            );
-        }
-        drop(panel);
-        labels::clear();
-        unmount(cx, app, window);
-    }
 }
 
 fn conflict_fixture() -> tempfile::TempDir {

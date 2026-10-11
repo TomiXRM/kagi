@@ -165,6 +165,30 @@ pub(super) fn footer_button(
     ))
 }
 
+/// Release only a focused bulk action whose section no longer renders it.
+/// Like `release_closed` / `yield_focus`, unrelated input or modal focus stays put.
+pub(super) fn reconcile_bulk_focus(
+    view: &CommitPanelView,
+    window: &mut Window,
+    cx: &mut Context<CommitPanelView>,
+) {
+    let hidden = match view.controls_focus.focused(window) {
+        Some(0 | 1) => view.state.unstaged.is_empty(),
+        Some(2) => view.state.staged.is_empty(),
+        _ => false,
+    };
+    if hidden {
+        if !window.last_input_was_keyboard() {
+            if let Some(root) = &view.pointer_root_focus {
+                root.focus(window, cx);
+                return;
+            }
+        }
+        let handles = view.view_focus.sync(&[0, 1], cx);
+        handles[usize::from(view.state.tree_view)].focus(window, cx);
+    }
+}
+
 pub(super) fn view_selector(
     view: &CommitPanelView,
     cx: &mut Context<CommitPanelView>,
@@ -176,7 +200,7 @@ pub(super) fn view_selector(
         vec![0, 1],
         Some(usize::from(view.state.tree_view)),
         keyboard_nav::Activation::Automatic,
-        None,
+        view.pointer_root_focus.clone(),
         move |slot, _, _, cx| {
             let _ = weak.update(cx, |view, cx| {
                 view.state.tree_view = slot == 1;
@@ -420,7 +444,7 @@ fn bulk_button(
     let pointer = activate.clone();
     let keyboard = activate;
     let content = div()
-        .id(id)
+        .id(("cp-bulk-paint", slot))
         .relative()
         .min_h(px(20.))
         .flex_shrink_0()
@@ -454,6 +478,15 @@ fn bulk_button(
         content,
         cx.listener(move |view: &mut CommitPanelView, _, window, cx| keyboard(view, window, cx)),
     )
+    .child(e2e::commit_panel_labels::measure_hit_box(
+        match slot {
+            0 => "cp-stage-all-hit",
+            1 => "cp-discard-all-hit",
+            2 => "cp-unstage-all-hit",
+            _ => unreachable!("bulk action slot"),
+        },
+        keyboard_nav::RING,
+    ))
 }
 
 pub(super) fn unstaged_header(

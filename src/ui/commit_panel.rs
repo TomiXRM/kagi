@@ -477,6 +477,8 @@ pub struct CommitPanelView {
     /// Weak back-reference to the parent. Used ONLY from deferred listener
     /// closures — NEVER read in a `Render` path.
     pub(crate) app: WeakEntity<KagiApp>,
+    /// Root pointer return target, supplied by the parent when mounting the panel.
+    pub(crate) pointer_root_focus: Option<gpui::FocusHandle>,
     /// Session that created this panel. A linked-worktree panel is still owned
     /// by its host tab; [`Self::repo_path`] remains the linked worktree target.
     pub owner: crate::app::SessionId,
@@ -508,6 +510,7 @@ impl CommitPanelView {
             state,
             view_focus: super::keyboard_nav::TabFocus::default(),
             controls_focus: super::keyboard_nav::FocusSlots::default(),
+            pointer_root_focus: None,
             window_active: true,
             window_activation_subscription: None,
             #[cfg(feature = "gui-e2e")]

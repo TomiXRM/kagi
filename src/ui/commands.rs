@@ -2579,6 +2579,7 @@ impl KagiApp {
                 self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
+                self.settings_scroll.clone(),
                 window,
                 cx,
             )),

@@ -34,6 +34,24 @@ pub struct HomeTab {
 }
 
 const SIDEBAR_W: f32 = 300.;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SIDEBAR_WIDTH_FOR_E2E: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn set_sidebar_width_for_e2e(width: Option<f32>) {
+    SIDEBAR_WIDTH_FOR_E2E.with(|value| value.set(width));
+}
+
+fn sidebar_width() -> gpui::Pixels {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(width) = SIDEBAR_WIDTH_FOR_E2E.with(|value| value.get()) {
+        return px(width);
+    }
+    theme::scaled_px(SIDEBAR_W)
+}
 const MAIN_MAX_W: f32 = 720.;
 
 impl KagiApp {
@@ -255,25 +273,61 @@ impl KagiApp {
         }
         div()
             .id("home-sidebar")
+            .relative()
+            .child(super::e2e::measure_inside("home-sidebar-bounds"))
             .flex()
             .flex_col()
             .gap_2()
-            .w(theme::scaled_px(SIDEBAR_W))
+            .w(sidebar_width())
             .flex_shrink_0()
             .h_full()
             .p_3()
             .bg(rgb(theme().panel))
             .border_r_1()
             .border_color(rgb(theme().surface))
-            .overflow_y_scroll()
-            .child(
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "home-sidebar-scrollbar",
+                &self.home_github.recent_scroll,
                 div()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::HomeRecent.t())),
-            )
-            .child(list)
+                    .id("home-recent-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.home_github.recent_scroll)
+                    .child(
+                        div()
+                            .id("home-recent-heading")
+                            .relative()
+                            .child(super::e2e::measure_inside("home-recent-heading"))
+                            .px_2()
+                            .py(theme::scaled_px(8.))
+                            .w_full()
+                            .min_w(px(0.))
+                            .text_size(theme::scaled_px(12.))
+                            .line_height(theme::scaled_px(12.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(theme().text_sub))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t())
+                                    .build(window, cx)
+                            })
+                            .child(
+                                div()
+                                    .relative()
+                                    .h(theme::scaled_px(12.))
+                                    .child(super::e2e::measure_inside("home-recent-heading-line"))
+                                    .child(SharedString::from(Msg::HomeRecent.t())),
+                            ),
+                    )
+                    .child(list),
+                cx,
+            ))
             .into_any_element()
     }
 

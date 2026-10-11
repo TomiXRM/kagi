@@ -353,6 +353,10 @@ pub struct TabUiState {
     pub branch_groups_collapsed: HashSet<String>,
     /// Branch Cleanup list position and checked branch names.
     pub cleanup_scroll: UniformListScrollHandle,
+    /// Positional state belongs to this repository session, not the active app.
+    pub inspector_files_scroll: gpui::ScrollHandle,
+    pub inspector_message_scroll: gpui::ScrollHandle,
+    pub activity_ranking_scroll: gpui::ScrollHandle,
     pub cleanup_selected: HashSet<String>,
     /// ADR-0128 Branch Cleanup takeover and GitHub Phase 1c PR mode are this
     /// tab's workspace mode; the PR tabs they hold name this repository's PRs.
@@ -520,6 +524,9 @@ impl Default for TabUiState {
             graph_scroll_x: 0.0,
             branch_groups_collapsed: HashSet::new(),
             cleanup_scroll: UniformListScrollHandle::new(),
+            inspector_files_scroll: gpui::ScrollHandle::new(),
+            inspector_message_scroll: gpui::ScrollHandle::new(),
+            activity_ranking_scroll: gpui::ScrollHandle::new(),
             smart_commit_generating: false,
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),

@@ -40,7 +40,8 @@ fn top(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHa
 }
 
 pub fn scenario_home_list_place(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
     let start = build_fixture();
     let _gh = OfflineGh::with_script(&gh_script());
     let mut cleared = kagi_git::github_repos::TOKEN_OVERRIDES.to_vec();
@@ -59,6 +60,36 @@ pub fn scenario_home_list_place(cx: &mut VisualTestAppContext) {
     .unwrap();
     wait_for(cx, &app, "the lists", settled);
     assert!(drawn(cx, window, "home-gh-acme/r00"));
+    let scroll = cx.read(|cx| {
+        app.read(cx)
+            .home_scroll_for_e2e()
+            .expect("Home scroll owner")
+    });
+    assert!(kagi::ui::theme::set_active("apple-light"));
+    cx.update(kagi::ui::theme::sync_gpui_component_theme);
+    crate::surface_scrollbars::resize(cx, window);
+    for lang in [Lang::En, Lang::Ja] {
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        for zoom in [1., 1.67] {
+            kagi::ui::theme::set_zoom(zoom);
+            for policy in [
+                gpui_component::scroll::ScrollbarShow::Always,
+                gpui_component::scroll::ScrollbarShow::Scrolling,
+            ] {
+                cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = policy);
+                app.update(cx, |app, _| app.scroll_home_list_for_e2e(0));
+                top(cx, &app, window);
+                if policy == gpui_component::scroll::ScrollbarShow::Scrolling {
+                    use gpui_component::scroll::ScrollbarHandle;
+                    scroll.set_offset(gpui::point(gpui::px(0.), gpui::px(-1.)));
+                    top(cx, &app, window);
+                }
+                crate::surface_scrollbars::drag(cx, window, "home-github-scrollbar", &scroll);
+            }
+        }
+    }
+    kagi::ui::theme::set_zoom(1.);
+    app.update(cx, |app, cx| app.set_lang(Lang::En, cx));
     app.update(cx, |app, _| app.scroll_home_list_for_e2e(30));
     assert_eq!(top(cx, &app, window), 30, "the list scrolls");
 

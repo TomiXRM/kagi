@@ -282,7 +282,12 @@ fn settings_group(name: &'static str) -> gpui::Div {
 }
 
 /// One setting row: label + description (left) and a control (right).
-fn setting_row(title: SharedString, description: SharedString, control: AnyElement) -> gpui::Div {
+fn setting_row(
+    first: bool,
+    title: SharedString,
+    description: SharedString,
+    control: AnyElement,
+) -> gpui::Div {
     #[cfg(feature = "gui-e2e")]
     let control = super::e2e::measure_control(format!("settings-control-{title}"), control);
     #[cfg(feature = "gui-e2e")]
@@ -295,8 +300,9 @@ fn setting_row(title: SharedString, description: SharedString, control: AnyEleme
         .justify_between()
         .gap_4()
         .py_2()
-        .border_b_1()
-        .border_color(rgb(theme().surface))
+        .when(!first, |row| {
+            row.border_t_1().border_color(rgb(theme().surface))
+        })
         .child(
             div()
                 .flex()
@@ -335,17 +341,37 @@ fn setting_row(title: SharedString, description: SharedString, control: AnyEleme
 }
 
 fn setting_row_with_help(
+    first: bool,
     id: &'static str,
     title: Msg,
     summary: Msg,
     detail: Msg,
     control: AnyElement,
 ) -> impl IntoElement {
-    setting_row(title.t().into(), summary.t().into(), control)
+    setting_row(first, title.t().into(), summary.t().into(), control)
+        .child(super::e2e::measure_inside(id))
         .id(id)
         .tooltip(move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            record_settings_help(id, detail.t());
             gpui_component::tooltip::Tooltip::new(detail.t()).build(window, cx)
         })
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static SETTINGS_HELP: std::cell::RefCell<std::collections::HashMap<&'static str, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn record_settings_help(id: &'static str, text: &str) {
+    SETTINGS_HELP.with(|help| help.borrow_mut().insert(id, text.to_string()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_settings_help_for_e2e(id: &str) -> Option<String> {
+    SETTINGS_HELP.with(|help| help.borrow_mut().remove(id))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -547,6 +573,7 @@ fn appearance_section(
 
     let appearance = settings_group("settings-appearance-group")
         .child(setting_row(
+            true,
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
             theme_dropdown.into_any_element(),
@@ -556,6 +583,7 @@ fn appearance_section(
             |section| {
                 let owner = app.clone();
                 section.child(setting_row(
+                    false,
                     Msg::SettingsAccent.t().into(),
                     theme::detected_system_accent().detected_label().into(),
                     RadioGroup::horizontal("settings-accent")
@@ -576,22 +604,26 @@ fn appearance_section(
         )
         .child(super::settings_theme_folder::section(app))
         .child(setting_row(
+            false,
             SharedString::from(Msg::SettingsToolbarDisplay.t()),
             SharedString::from(Msg::SettingsToolbarDisplayDesc.t()),
             toolbar_ctl,
         ))
         .child(setting_row(
+            false,
             SharedString::from(Msg::SettingsZoom.t()),
             SharedString::from(Msg::SettingsZoomDesc.t()),
             zoom_ctl,
         ));
     let graph = settings_group("settings-graph-group")
         .child(setting_row(
+            true,
             SharedString::from(Msg::SettingsCompact.t()),
             SharedString::from(Msg::SettingsCompactDesc.t()),
             compact_ctl,
         ))
         .child(setting_row_with_help(
+            false,
             "settings-avatar-help",
             Msg::SettingsLaneCompact,
             Msg::SettingsLaneCompactSummary,
@@ -599,6 +631,7 @@ fn appearance_section(
             lane_compact_ctl,
         ));
     let network = settings_group("settings-network-group").child(setting_row_with_help(
+        true,
         "settings-fetch-help",
         Msg::SettingsAutoFetch,
         Msg::SettingsAutoFetchSummary,
@@ -607,6 +640,7 @@ fn appearance_section(
     ));
     let behaviour = settings_group("settings-behaviour-group")
         .child(setting_row_with_help(
+            true,
             "settings-copy-help",
             Msg::SettingsGraphCopy,
             Msg::SettingsGraphCopySummary,
@@ -614,6 +648,7 @@ fn appearance_section(
             copy_target_ctl,
         ))
         .child(setting_row_with_help(
+            false,
             "settings-motion-help",
             Msg::SettingsReduceMotion,
             Msg::SettingsReduceMotionSummary,
@@ -621,6 +656,7 @@ fn appearance_section(
             reduce_motion_ctl,
         ))
         .child(setting_row_with_help(
+            false,
             "settings-terminal-lock-help",
             Msg::SettingsTerminalAutoLock,
             Msg::SettingsTerminalAutoLockSummary,
@@ -721,6 +757,7 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
             SharedString::from(Msg::SettingsLanguage.t()),
         ))
         .child(settings_group("settings-language-group").child(setting_row(
+            true,
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
             chips.into_any_element(),
@@ -921,6 +958,7 @@ fn smart_commit_section(
 
     let mut section = settings_group("settings-smart-group")
         .child(setting_row_with_help(
+            true,
             "settings-smart-enable-help",
             Msg::SettingsSmartEnable,
             Msg::SettingsSmartEnableSummary,
@@ -928,6 +966,7 @@ fn smart_commit_section(
             enabled_ctl,
         ))
         .child(setting_row_with_help(
+            false,
             "settings-provider-help",
             Msg::SettingsSmartProvider,
             Msg::SettingsSmartProviderSummary,
@@ -936,11 +975,12 @@ fn smart_commit_section(
         ));
 
     if let Some(warning) = cli_warning {
-        section = section.child(warning);
+        section = section.child(div().py_2().child(warning));
     }
 
     if show_model_row {
         section = section.child(setting_row(
+            false,
             SharedString::from(Msg::SettingsSmartModel.t()),
             SharedString::from(Msg::SettingsSmartModelDesc.t()),
             control,
@@ -1025,44 +1065,56 @@ fn analyze_ignore_section(
             SharedString::from(Msg::SettingsAnalyze.t()),
         ))
         .child(
-            settings_group("settings-analyze-group")
-                .child(
-                    div()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(Msg::SettingsAnalyzeIgnore.t())),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .id("settings-analyze-help")
-                        .tooltip(|window, cx| {
-                            gpui_component::tooltip::Tooltip::new(
-                                Msg::SettingsAnalyzeIgnoreDesc.t(),
-                            )
-                            .build(window, cx)
-                        })
-                        .text_color(rgb(theme().text_sub))
-                        .child(super::e2e::measure_inside("settings-analyze-description"))
-                        .child(SharedString::from(Msg::SettingsAnalyzeIgnoreSummary.t())),
-                )
-                .child(super::e2e::measure_control(
-                    "settings-analyze-editor",
-                    editor,
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_2()
-                        .justify_end()
-                        .child(super::e2e::measure_control(
-                            "settings-analyze-reset",
-                            reset_btn,
-                        ))
-                        .child(super::e2e::measure_control(
-                            "settings-analyze-save",
-                            save_btn,
-                        )),
-                ),
+            settings_group("settings-analyze-group").child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .py_2()
+                    .child(
+                        div()
+                            .text_color(rgb(theme().text_main))
+                            .child(super::e2e::measure_inside("settings-analyze-label"))
+                            .child(SharedString::from(Msg::SettingsAnalyzeIgnore.t())),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .id("settings-analyze-help")
+                            .tooltip(|window, cx| {
+                                #[cfg(feature = "gui-e2e")]
+                                record_settings_help(
+                                    "settings-analyze-help",
+                                    Msg::SettingsAnalyzeIgnoreDesc.t(),
+                                );
+                                gpui_component::tooltip::Tooltip::new(
+                                    Msg::SettingsAnalyzeIgnoreDesc.t(),
+                                )
+                                .build(window, cx)
+                            })
+                            .text_color(rgb(theme().text_sub))
+                            .child(super::e2e::measure_inside("settings-analyze-description"))
+                            .child(SharedString::from(Msg::SettingsAnalyzeIgnoreSummary.t())),
+                    )
+                    .child(super::e2e::measure_control(
+                        "settings-analyze-editor",
+                        editor,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .justify_end()
+                            .child(super::e2e::measure_control(
+                                "settings-analyze-reset",
+                                reset_btn,
+                            ))
+                            .child(super::e2e::measure_control(
+                                "settings-analyze-save",
+                                save_btn,
+                            )),
+                    ),
+            ),
         )
 }

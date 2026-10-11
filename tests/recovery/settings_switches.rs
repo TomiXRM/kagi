@@ -270,6 +270,10 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
             );
             check_grouped_rows(cx, &app, window, zoom);
             check_extra_settings_controls(cx, &app, window, zoom);
+            check_analyze_spacing(window);
+            if zoom == 1. {
+                check_settings_help(cx, &app, window);
+            }
         }
     }
     app.update(cx, |app, cx| {
@@ -278,6 +282,90 @@ pub fn scenario_settings_groups(cx: &mut VisualTestAppContext) {
     });
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_groups EN/JA 100%/167% grouped page reachability");
+}
+
+fn check_settings_help(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    use gpui::{point, px};
+    use kagi::ui::settings_view::take_settings_help_for_e2e;
+    let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
+    let viewport = e2e::control_bounds(window.window_id(), "settings-scrollbar").unwrap();
+    for (id, measurement, detail) in [
+        (
+            "settings-avatar-help",
+            "settings-avatar-help",
+            Msg::SettingsLaneCompactDesc,
+        ),
+        (
+            "settings-custom-themes-help",
+            "settings-custom-description",
+            Msg::SettingsCustomThemesDesc,
+        ),
+        (
+            "settings-analyze-help",
+            "settings-analyze-description",
+            Msg::SettingsAnalyzeIgnoreDesc,
+        ),
+    ] {
+        cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, gpui::Modifiers::none());
+        let bounds = e2e::control_bounds(window.window_id(), measurement).unwrap();
+        scroll.set_offset(point(
+            px(0.),
+            scroll.offset().y - bounds.top() + viewport.top() + px(8.),
+        ));
+        draw(cx, window);
+        let bounds = e2e::control_bounds(window.window_id(), measurement).unwrap();
+        take_settings_help_for_e2e(id);
+        cx.simulate_mouse_move(
+            window,
+            point(bounds.left() + px(10.), bounds.center().y),
+            None,
+            gpui::Modifiers::none(),
+        );
+        for _ in 0..3 {
+            cx.advance_clock(std::time::Duration::from_millis(400));
+            cx.run_until_parked();
+            draw(cx, window);
+        }
+        assert_eq!(
+            take_settings_help_for_e2e(id).as_deref(),
+            Some(detail.t()),
+            "{id} hover builds the full localized explanation"
+        );
+    }
+    cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, gpui::Modifiers::none());
+    draw(cx, window);
+}
+
+fn check_analyze_spacing(window: AnyWindowHandle) {
+    let bounds = |name| e2e::control_bounds(window.window_id(), name).unwrap();
+    let group = bounds("settings-analyze-group");
+    let title = bounds("settings-analyze-label");
+    let description = bounds("settings-analyze-description");
+    let editor = bounds("settings-analyze-editor");
+    let reset = bounds("settings-analyze-reset");
+    let save = bounds("settings-analyze-save");
+    let spacing = kagi::ui::theme::scaled_px(8.) - gpui::px(1.);
+    assert!(title.top() - group.top() >= spacing, "Analyze top padding");
+    assert!(
+        description.top() - title.bottom() >= spacing,
+        "Analyze label gap"
+    );
+    assert!(
+        editor.top() - description.bottom() >= spacing,
+        "Analyze editor gap"
+    );
+    assert!(
+        reset.top() - editor.bottom() >= spacing,
+        "Analyze action gap"
+    );
+    assert!(
+        group.bottom() - save.bottom() >= spacing,
+        "Analyze bottom padding"
+    );
 }
 
 fn check_group_surface(

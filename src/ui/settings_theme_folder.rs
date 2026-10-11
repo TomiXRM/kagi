@@ -29,6 +29,8 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex_col()
         .gap_2()
         .py_2()
+        .border_t_1()
+        .border_color(rgb(theme().surface))
         .child(
             div()
                 .text_color(rgb(theme().text_main))
@@ -39,6 +41,11 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                 .text_sm()
                 .id("settings-custom-themes-help")
                 .tooltip(|window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::settings_view::record_settings_help(
+                        "settings-custom-themes-help",
+                        Msg::SettingsCustomThemesDesc.t(),
+                    );
                     gpui_component::tooltip::Tooltip::new(Msg::SettingsCustomThemesDesc.t())
                         .build(window, cx)
                 })

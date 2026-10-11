@@ -187,3 +187,18 @@ gpui-kit maps non-auto-hide macOS settings to `Hover`; both `Hover` and `Always`
 therefore reserve a 16px lane and pin this table's scrollbar to `Always`, so its
 track hitbox cannot steal bottom-row clicks. Global scrollbar colours and
 keyboard/wheel routing are unchanged.
+
+## Amendment — 2026-10-11: configurable compact toolbar (#1178)
+
+Finder's default icon-only presentation is the default for Apple Light and
+Apple Dark; other active themes retain Icon and Text. The flat string preference
+`toolbar_display` accepts `icon_only` and `icon_and_text`; an explicit value
+overrides theme changes, while an absent/invalid value follows the active theme.
+Settings → Appearance and the View menu share the settings persistence owner.
+The existing action row is 36 reference px in icon-only mode with 20px glyphs;
+Icon and Text retains its 52px row and existing caption geometry.
+No captions are retained exceptionally: distinct action glyphs, localized
+tooltips and AX names identify every action (rationale in the decision log).
+Unavailable reasons, count overlays, group hairlines, mode highlighting and
+keyboard focus rings keep their existing owners. This reuses the existing SVG
+pipeline, not SF Symbols, native material or a replacement action dispatcher.

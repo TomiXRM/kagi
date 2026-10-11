@@ -73,6 +73,21 @@ fn shaped_width_scale(actual: f32, baseline: f32, zoom: f32) {
 
 pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
+    let _toolbar_restore = crate::gui_isolation::SavedKeys::keep(&["toolbar_display", "theme"]);
+    let original_theme = theme::theme();
+    kagi_ui_core::settings::write_setting("toolbar_display", None);
+    kagi_ui_core::settings::init_toolbar_display();
+    for slug in ["apple-light", "apple-dark"] {
+        assert_eq!(
+            kagi_ui_core::settings::toolbar_display(slug),
+            kagi_ui_core::settings::ToolbarDisplay::IconOnly
+        );
+    }
+    assert_eq!(
+        kagi_ui_core::settings::toolbar_display("catppuccin"),
+        kagi_ui_core::settings::ToolbarDisplay::IconAndText
+    );
+    assert!(theme::set_active("apple-light"));
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);
@@ -82,49 +97,146 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
         app.read(cx).root_focus.clone().unwrap().focus(window, cx);
     })
     .unwrap();
-    for count in [1, 99, 100] {
-        // Seed the session-owned accepted read, not an alternate badge component.
+    for display in [
+        kagi_ui_core::settings::ToolbarDisplay::IconOnly,
+        kagi_ui_core::settings::ToolbarDisplay::IconAndText,
+    ] {
+        cx.dispatch_action(
+            window,
+            kagi::ui::commands::SetToolbarDisplay { mode: display },
+        );
         app.update(cx, |app, cx| {
-            app.view_mut().toolbar_state.ahead = count;
-            app.view_mut().toolbar_state.behind = count;
+            app.view_mut().toolbar_state.ahead = 100;
+            app.view_mut().toolbar_state.behind = 100;
             cx.notify();
         });
-        cx.dispatch_action(window, ZoomReset);
         frame(cx, window);
-        let baseline = [inspect(window, "tb-pull"), inspect(window, "tb-push")];
-        assert!((theme::zoom() - 1.).abs() < 0.001);
-        // The public zoom action caps at 1670 permille (displayed 167%),
-        // approximately the migrated 1667-permille maximum used by the issue.
-        for _ in 0..7 {
-            cx.dispatch_action(window, ZoomIn);
+        assert_eq!(
+            kagi_ui_core::settings::Settings::load().toolbar_display(),
+            Some(display)
+        );
+        let expected = if display == kagi_ui_core::settings::ToolbarDisplay::IconOnly {
+            36.
+        } else {
+            52.
+        };
+        assert!(
+            (f32::from(bounds(window, "toolbar-row").size.height) - theme::scaled(expected)).abs()
+                < 1.
+        );
+        if display == kagi_ui_core::settings::ToolbarDisplay::IconOnly {
+            for locale in ["en", "ja"] {
+                std::env::set_var("KAGI_LANG", locale);
+                kagi_ui_core::i18n::init_lang();
+                for zoom in [1., 1.667] {
+                    theme::set_zoom(zoom);
+                    for width in [940., 1392.] {
+                        let wanted = gpui::size(gpui::px(width), gpui::px(883.));
+                        cx.update_window(window, |_, window, _| window.resize(wanted))
+                            .unwrap();
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(2);
+                        loop {
+                            crate::macos::drain_native_events();
+                            cx.run_until_parked();
+                            if cx
+                                .update_window(window, |_, window, _| window.viewport_size())
+                                .unwrap()
+                                == wanted
+                            {
+                                break;
+                            }
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "native resize timed out"
+                            );
+                        }
+                        crate::recovery_layout::draw(cx, window, (width, 883.));
+                        let row = bounds(window, "toolbar-row");
+                        assert!((f32::from(row.size.height) - theme::scaled(expected)).abs() < 1.);
+                        inspect(window, "tb-pull");
+                        inspect(window, "tb-push");
+                        let mut previous = None;
+                        for button in [
+                            "tb-pull",
+                            "tb-push",
+                            "tb-branch",
+                            "tb-stash",
+                            "tb-pop",
+                            "tb-undo",
+                            "tb-redo",
+                            "tb-terminal",
+                            "tb-graph-mode",
+                            "tb-editor-ws",
+                            "tb-ecosystem",
+                        ] {
+                            assert!(!e2e::toolbar_label(button)
+                                .expect("AX/tooltip label")
+                                .is_empty());
+                            let icon = bounds(window, &format!("{button}-icon"));
+                            contained(row, icon, button);
+                            let glyph = bounds(window, &format!("{button}-glyph"));
+                            assert!((f32::from(glyph.size.height) - theme::scaled(20.)).abs() < 1.);
+                            assert!((f32::from(icon.size.height) - theme::scaled(22.)).abs() < 1.);
+                            if let Some(right) = previous {
+                                assert!(
+                                    icon.left() >= right,
+                                    "{locale}/{width}/{zoom}: {button} overlaps preceding icon"
+                                );
+                            }
+                            previous = Some(icon.right());
+                        }
+                    }
+                }
+            }
+        }
+        for count in [1, 99, 100] {
+            // Seed the session-owned accepted read, not an alternate badge component.
+            app.update(cx, |app, cx| {
+                app.view_mut().toolbar_state.ahead = count;
+                app.view_mut().toolbar_state.behind = count;
+                cx.notify();
+            });
+            cx.dispatch_action(window, ZoomReset);
             frame(cx, window);
-        }
-        assert!((theme::zoom() - 1.667).abs() < 0.004);
-        for (index, button) in ["tb-pull", "tb-push"].into_iter().enumerate() {
-            let measured = inspect(window, button);
-            ratio(measured.0, baseline[index].0, 1.667, "badge height");
-            ratio(measured.1, baseline[index].1, 1.667, "badge font");
-            shaped_width_scale(measured.2, baseline[index].2, 1.667);
-            assert!(
-                baseline[index].1 >= 11.,
-                "100% count font must be at least 11 logical points; got {}",
-                baseline[index].1
-            );
-        }
-        cx.dispatch_action(window, ZoomReset);
-        frame(cx, window);
-        for _ in 0..3 {
-            cx.dispatch_action(window, ZoomOut);
+            let baseline = [inspect(window, "tb-pull"), inspect(window, "tb-push")];
+            assert!((theme::zoom() - 1.).abs() < 0.001);
+            // The public zoom action caps at 1670 permille (displayed 167%),
+            // approximately the migrated 1667-permille maximum used by the issue.
+            for _ in 0..7 {
+                cx.dispatch_action(window, ZoomIn);
+                frame(cx, window);
+            }
+            assert!((theme::zoom() - 1.667).abs() < 0.004);
+            for (index, button) in ["tb-pull", "tb-push"].into_iter().enumerate() {
+                let measured = inspect(window, button);
+                ratio(measured.0, baseline[index].0, 1.667, "badge height");
+                ratio(measured.1, baseline[index].1, 1.667, "badge font");
+                shaped_width_scale(measured.2, baseline[index].2, 1.667);
+                assert!(
+                    baseline[index].1 >= 11.,
+                    "100% count font must be at least 11 logical points; got {}",
+                    baseline[index].1
+                );
+            }
+            cx.dispatch_action(window, ZoomReset);
             frame(cx, window);
-        }
-        assert!((theme::zoom() - 0.7).abs() < 0.001);
-        for (index, button) in ["tb-pull", "tb-push"].into_iter().enumerate() {
-            let measured = inspect(window, button);
-            ratio(measured.0, baseline[index].0, 0.7, "small badge height");
-            ratio(measured.1, baseline[index].1, 0.7, "small badge font");
-            shaped_width_scale(measured.2, baseline[index].2, 0.7);
+            for _ in 0..3 {
+                cx.dispatch_action(window, ZoomOut);
+                frame(cx, window);
+            }
+            assert!((theme::zoom() - 0.7).abs() < 0.001);
+            for (index, button) in ["tb-pull", "tb-push"].into_iter().enumerate() {
+                let measured = inspect(window, button);
+                ratio(measured.0, baseline[index].0, 0.7, "small badge height");
+                ratio(measured.1, baseline[index].1, 0.7, "small badge font");
+                shaped_width_scale(measured.2, baseline[index].2, 0.7);
+            }
         }
     }
+    assert!(theme::set_active(&original_theme.slug));
+    drop(_toolbar_restore);
+    kagi_ui_core::settings::init_toolbar_display();
     assert_eq!(
         repo_fingerprint(&repo),
         before,

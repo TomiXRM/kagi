@@ -43,6 +43,56 @@ pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, ter
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Toolbar caption preference; an unset preference follows the active preset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarDisplay {
+    IconOnly,
+    IconAndText,
+}
+
+impl ToolbarDisplay {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::IconOnly => "icon_only",
+            Self::IconAndText => "icon_and_text",
+        }
+    }
+}
+
+static TOOLBAR_DISPLAY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn init_toolbar_display() {
+    let mode = Settings::load().toolbar_display();
+    TOOLBAR_DISPLAY.store(
+        match mode {
+            None => 0,
+            Some(ToolbarDisplay::IconOnly) => 1,
+            Some(ToolbarDisplay::IconAndText) => 2,
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub fn toolbar_display(theme_slug: &str) -> ToolbarDisplay {
+    match TOOLBAR_DISPLAY.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => ToolbarDisplay::IconOnly,
+        2 => ToolbarDisplay::IconAndText,
+        _ if matches!(theme_slug, "apple-light" | "apple-dark") => ToolbarDisplay::IconOnly,
+        _ => ToolbarDisplay::IconAndText,
+    }
+}
+
+pub fn set_toolbar_display(mode: ToolbarDisplay) {
+    write_setting("toolbar_display", Some(mode.as_str()));
+    TOOLBAR_DISPLAY.store(
+        match mode {
+            ToolbarDisplay::IconOnly => 1,
+            ToolbarDisplay::IconAndText => 2,
+        },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 /// The legacy scalar coercion: kagi writes strings, but tolerate bool/number.
 fn scalar_to_string(v: &serde_json::Value) -> Option<String> {
     match v {
@@ -165,6 +215,18 @@ impl Settings {
     /// Active theme slug (`"theme"`), if persisted.
     pub fn theme(&self) -> Option<String> {
         self.get_str("theme")
+    }
+
+    pub fn toolbar_display(&self) -> Option<ToolbarDisplay> {
+        match self
+            .raw
+            .get("toolbar_display")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("icon_only") => Some(ToolbarDisplay::IconOnly),
+            Some("icon_and_text") => Some(ToolbarDisplay::IconAndText),
+            _ => None,
+        }
     }
 
     /// Graph Cmd+C copy target (`graph_copy_target`, `"hash"`/`"branch"`;
@@ -457,6 +519,25 @@ mod tests {
 
     fn parse(text: &str) -> Settings {
         serde_json::from_str(text).unwrap_or_default()
+    }
+
+    #[test]
+    fn toolbar_display_round_trips_flat_strings() {
+        for mode in [ToolbarDisplay::IconOnly, ToolbarDisplay::IconAndText] {
+            let mut settings = parse(r#"{"future":"preserve"}"#);
+            settings.set_str("toolbar_display", mode.as_str());
+            let serialized = serde_json::to_string(&settings).unwrap();
+            assert_eq!(parse(&serialized).toolbar_display(), Some(mode));
+            assert_eq!(
+                parse(&serialized).get_str("future").as_deref(),
+                Some("preserve")
+            );
+        }
+        assert_eq!(parse("{}").toolbar_display(), None);
+        assert_eq!(
+            parse(r#"{"toolbar_display":"invalid"}"#).toolbar_display(),
+            None
+        );
     }
 
     #[test]

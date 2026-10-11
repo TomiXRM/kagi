@@ -41,6 +41,9 @@ thread_local! {
     /// The exact string passed to `aria_description` for each drawn button.
     static DESCRIPTION: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
         std::cell::RefCell::new(Default::default());
+    /// Same localized label passed to both AX name and Tooltip.
+    static LABEL: std::cell::RefCell<std::collections::HashMap<&'static str, &'static str>> =
+        std::cell::RefCell::new(Default::default());
     /// A harmless F19 key identifies the toolbar button that actually owns focus.
     static FOCUS_PROBE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
@@ -57,6 +60,16 @@ pub(crate) fn record_description(_id: &'static str, _reason: &'static str) {}
 #[cfg(feature = "gui-e2e")]
 pub fn toolbar_description(id: &str) -> Option<&'static str> {
     DESCRIPTION.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_label(id: &'static str, label: &'static str) {
+    LABEL.with(|map| map.borrow_mut().insert(id, label));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn toolbar_label(id: &str) -> Option<&'static str> {
+    LABEL.with(|map| map.borrow().get(id).copied())
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -90,6 +103,7 @@ pub fn toolbar_unavailable(id: &str) -> Option<bool> {
 pub fn clear_toolbar_unavailable() {
     UNAVAILABLE.with(|map| map.borrow_mut().clear());
     DESCRIPTION.with(|map| map.borrow_mut().clear());
+    LABEL.with(|map| map.borrow_mut().clear());
 }
 
 #[cfg(test)]

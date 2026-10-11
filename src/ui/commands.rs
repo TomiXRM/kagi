@@ -55,6 +55,7 @@ thread_local! {
 
 use super::context_menu::CommitAction;
 use super::i18n::{self, Lang, Msg};
+use super::settings;
 use super::theme::{self, theme};
 use super::{BottomTab, FooterStatus, KagiApp, ToastKind, ToggleBottomPanel};
 
@@ -170,6 +171,12 @@ fn visibility_command_handler(id: &str) -> Option<fn(&App)> {
 #[action(namespace = kagi_menu, no_json)]
 pub struct SetTheme {
     pub slug: SharedString,
+}
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub struct SetToolbarDisplay {
+    pub mode: settings::ToolbarDisplay,
 }
 
 /// Map a language command id back to its [`Lang`].
@@ -1119,6 +1126,24 @@ pub fn build_menus() -> Vec<Menu> {
                     }
                 })
                 .collect();
+            let mut items: Vec<MenuItem> = items;
+            if section.label == "View" {
+                items.push(MenuItem::separator());
+                let selected = settings::toolbar_display(&theme().slug);
+                for (mode, label) in [
+                    (
+                        settings::ToolbarDisplay::IconAndText,
+                        Msg::ToolbarIconAndText,
+                    ),
+                    (settings::ToolbarDisplay::IconOnly, Msg::ToolbarIconOnly),
+                ] {
+                    let marker = if selected == mode { "✓ " } else { "   " };
+                    items.push(MenuItem::action(
+                        SharedString::from(format!("{marker}{}", label.t())),
+                        SetToolbarDisplay { mode },
+                    ));
+                }
+            }
             Menu {
                 name: section.label.into(),
                 items,

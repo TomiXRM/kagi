@@ -135,7 +135,7 @@ fn check_narrow(
     theme::set_active("apple-dark");
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
-        for (width, zoom) in [(1392., 1.), (940., 1.67), (1392., 1.)] {
+        for (width, zoom) in [(1392., 1.), (940., 1.67), (760., 1.67), (1392., 1.)] {
             theme::set_zoom(zoom);
             let wanted = gpui::size(gpui::px(width), gpui::px(660.));
             cx.update_window(window, |_, window, _| window.resize(wanted))
@@ -173,17 +173,19 @@ fn check_narrow(
             ] {
                 let bounds = e2e::control_bounds(window.window_id(), id)
                     .unwrap_or_else(|| panic!("missing {id}"));
-                crate::recovery_layout::contained(viewport, bounds, id);
+                if width >= 940. {
+                    crate::recovery_layout::contained(viewport, bounds, id);
+                }
             }
             let action_id = format!("home-gh-acme/gpui-component:{}", Msg::HomeGithubClone.t());
-            crate::recovery_layout::contained(
-                viewport,
-                e2e::control_bounds(window.window_id(), &action_id).unwrap(),
-                &action_id,
-            );
+            let action = e2e::control_bounds(window.window_id(), &action_id).unwrap();
+            if width >= 940. {
+                crate::recovery_layout::contained(viewport, action, &action_id);
+            }
             if zoom > 1. {
                 let row =
                     e2e::control_bounds(window.window_id(), "home-gh-acme/gpui-component").unwrap();
+                crate::recovery_layout::contained(row, action, &action_id);
                 let name = e2e::control_bounds(
                     window.window_id(),
                     "home-gh-acme/gpui-component-name-column",

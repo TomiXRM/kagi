@@ -561,12 +561,17 @@ synced kit palette and scrollbar policy on Drop, including panic unwinding.
 Home is an open dashboard with a secondary Recent navigator. Like PR detail,
 the content reader takes priority: reuse its 420-reference-px minimum, and
 narrow Recent from 300 to 120 reference px when the ordinary sidebar leaves
-less than that after Home's literal 48px horizontal padding. Keep Recent
+less than that after Home's scaled 48-reference-px horizontal padding (matching
+the existing `px_6` rem geometry). Compute compact mode once against the actual
+sidebar width, including its test override, and pass it to repository rows. Keep Recent
 mounted and reachable rather than inventing a disclosure, focus owner or
 preference. Above the threshold, sidebar and centered 720-reference-px column
 retain their existing geometry. The column explicitly fits viewport minus
 sidebar rather than relying on percentage sizing against an indefinite flex
 parent.
+The 120-reference-px choice leaves a recognisable short-name navigator while
+returning 180 reference px to the primary content. Long names/paths ellipsize;
+the full path remains available through the row Tooltip and AX description.
 
 Open Folder stays first when actions wrap. The existing TabList retains full
 localized accessibility names and automatic arrow activation; its visible
@@ -595,3 +600,14 @@ sidebar-interior/column widths. `cargo clippy -q -p kagi` reports no warnings
 in changed files; existing unrelated warnings remain. The scenario uses
 `GlobalSettings::capture()` for in-memory theme/language/zoom/toolbar restoration
 on Drop, in addition to persisted-key restoration.
+
+Review correction: date can shrink and ellipsize once badges have exhausted their
+available width, rather than remaining an unshrinkable sibling of Clone. A
+760×660/167% row-containment oracle failed with the old fixed date: Clone's right
+edge was 739.5px against its row's 724px right edge. This additional cell checks
+Clone against its row, not whole-screen containment; the complete-control
+viewport oracle remains 940×660/167% EN/JA.
+The scoped `home_` native suite passes all 11 scenarios after correction,
+including the additional narrower row in EN/JA (507.5px row, 212px name
+column, 41.77%). Existing Home reads, keyboard paging, list placement and
+incomplete-search scenarios remain green.

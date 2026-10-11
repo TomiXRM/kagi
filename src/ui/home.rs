@@ -54,17 +54,6 @@ fn sidebar_width() -> gpui::Pixels {
 }
 const MAIN_MAX_W: f32 = 720.;
 
-/// Share the PR reader's 420 reference-pixel minimum. Recent remains reachable
-/// in a narrow navigator rather than disappearing with its keyboard targets.
-fn fitted_sidebar_width(viewport: gpui::Pixels) -> gpui::Pixels {
-    let normal = sidebar_width();
-    if viewport - normal - px(48.) < theme::scaled_px(super::pr_layout::CENTER_MIN) {
-        theme::scaled_px(120.).min((viewport - px(48.)).max(px(0.)))
-    } else {
-        normal
-    }
-}
-
 impl KagiApp {
     /// Does the window show Home? Always when no tab is open (except the
     /// read-only remote view, which has no tab but a workspace).
@@ -185,7 +174,15 @@ impl KagiApp {
     /// workspace compositor.
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_home_github(window, cx);
-        let sidebar = fitted_sidebar_width(window.viewport_size().width);
+        let normal_sidebar = sidebar_width();
+        let padding = theme::scaled_px(48.);
+        let compact = window.viewport_size().width - normal_sidebar - padding
+            < theme::scaled_px(super::pr_layout::CENTER_MIN);
+        let sidebar = if compact {
+            theme::scaled_px(120.).min((window.viewport_size().width - padding).max(px(0.)))
+        } else {
+            normal_sidebar
+        };
         let body = div()
             .id("home-tab-panel")
             .flex()
@@ -193,7 +190,7 @@ impl KagiApp {
             .flex_1()
             .min_h(px(0.))
             .child(self.render_home_sidebar(sidebar, cx))
-            .child(self.render_home_main(sidebar, window, cx));
+            .child(self.render_home_main(sidebar, compact, window, cx));
         // Home's content is the Home cell's panel while the strip is drawn
         // (#983); with no tab there is no strip, so no tab list.
         let body = if self.tabs.is_empty() {
@@ -346,6 +343,7 @@ impl KagiApp {
     fn render_home_main(
         &mut self,
         sidebar: gpui::Pixels,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -409,7 +407,7 @@ impl KagiApp {
                             .child(SharedString::from(Msg::HomeTitle.t())),
                     )
                     .child(actions.flex_shrink_0())
-                    .child(self.render_home_github(window, cx)),
+                    .child(self.render_home_github(compact, window, cx)),
             )
             .into_any_element()
     }
@@ -422,13 +420,21 @@ fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoEl
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
+    let name = SharedString::from(name);
     let full = path.display().to_string();
+    let full = SharedString::from(full);
+    let tooltip = full.clone();
     let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
         app.open_repository(path.clone(), cx);
         cx.notify();
     });
     div()
         .id(("home-recent", i))
+        .aria_label(name.clone())
+        .aria_description(full.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
         .flex()
         .flex_col()
         .px_2()
@@ -442,7 +448,7 @@ fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoEl
                 .text_sm()
                 .text_color(rgb(theme().text_main))
                 .truncate()
-                .child(SharedString::from(name)),
+                .child(name),
         )
         .child(
             div()

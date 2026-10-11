@@ -71,6 +71,7 @@ impl KagiApp {
     pub(super) fn render_github_list(
         &mut self,
         query: String,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -213,6 +214,7 @@ impl KagiApp {
                 github_row(
                     listing.clone(),
                     state,
+                    compact,
                     &rows,
                     positions[i].unwrap_or(0),
                     &app,
@@ -477,13 +479,11 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 fn github_row(
     listing: RepoListing,
     state: &'static str,
+    compact: bool,
     rows: &super::keyboard_nav::RowList,
     at: usize,
     app: &Entity<KagiApp>,
 ) -> AnyElement {
-    let compact = theme::viewport_w().is_some_and(|width| {
-        px(width) < theme::scaled_px(300. + super::pr_layout::CENTER_MIN) + px(48.)
-    });
     let chip = |text: &str| {
         div()
             .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
@@ -508,7 +508,7 @@ fn github_row(
         meta = meta.child(
             div()
                 .text_sm()
-                .when(compact, |el| el.min_w(px(0.)).flex_shrink_0().truncate())
+                .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(day.to_string())),
         );

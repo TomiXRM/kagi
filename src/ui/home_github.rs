@@ -704,6 +704,7 @@ impl KagiApp {
     /// as a virtualized list filling the rest of the column.
     pub(crate) fn render_home_github(
         &mut self,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -771,7 +772,7 @@ impl KagiApp {
         }
         let body = match (&self.home_github.repos, self.home_github.work.pane) {
             (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
-                self.render_github_list(query, window, cx)
+                self.render_github_list(query, compact, window, cx)
             }
             (GithubRepos::NotLoaded | GithubRepos::Loading, _) => div()
                 .flex()
@@ -799,7 +800,7 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, window, cx),
+            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, compact, window, cx),
         };
         div()
             .flex()

@@ -241,6 +241,216 @@ pub fn scenario_unified_toolbar(cx: &mut VisualTestAppContext) {
     }
 }
 
+/// #1252: captions must not let either toolbar group paint over its neighbours.
+pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
+    let _restore = ToolbarRestore::capture(cx);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let fixture = build_fixture();
+    assert!(theme::set_active("apple-light"));
+    for language in ["en", "ja"] {
+        std::env::set_var("KAGI_LANG", language);
+        i18n::init_lang();
+        for display in [
+            settings::ToolbarDisplay::IconAndText,
+            settings::ToolbarDisplay::IconOnly,
+        ] {
+            settings::set_toolbar_display(display);
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                for (width, height) in [(940., 660.), (1000., 660.), (1392., 883.)] {
+                    let state = e2e::app_state(fixture.path()).unwrap();
+                    let captured = Rc::new(RefCell::new(None));
+                    let output = captured.clone();
+                    let win: AnyWindowHandle = crate::macos::open_offscreen(
+                        cx,
+                        size(px(width), px(height)),
+                        move |window, cx| e2e::mount_root(state, window, cx, &output),
+                    )
+                    .into();
+                    let app = captured.borrow().clone().unwrap();
+                    for _ in 0..8 {
+                        frame(cx, win);
+                    }
+                    let ids = [
+                        "tb-pull",
+                        "tb-push",
+                        "tb-branch",
+                        "tb-stash",
+                        "tb-pop",
+                        "tb-undo",
+                        "tb-redo",
+                        "tb-terminal",
+                        "tb-graph-mode",
+                        "tb-pr-mode",
+                        "tb-editor-ws",
+                        "tb-ecosystem",
+                        "tb-settings",
+                        "tb-update",
+                        "tb-overflow",
+                        "tab-add",
+                        "toolbar-identity",
+                        "tb-refresh",
+                    ];
+                    for id in ids {
+                        e2e::clear_control_bounds(win.window_id(), id);
+                    }
+                    frame(cx, win);
+                    for (i, left) in ids.iter().enumerate() {
+                        let Some(a) = e2e::control_bounds(win.window_id(), left)
+                            .filter(|b| b.size.width > px(0.))
+                        else {
+                            continue;
+                        };
+                        contained(
+                            e2e::control_bounds(win.window_id(), "toolbar-row").unwrap(),
+                            a,
+                            left,
+                        );
+                        for right in &ids[i + 1..] {
+                            let Some(b) = e2e::control_bounds(win.window_id(), right)
+                                .filter(|b| b.size.width > px(0.))
+                            else {
+                                continue;
+                            };
+                            assert!(
+                                a.right() <= b.left() || b.right() <= a.left()
+                                    || a.bottom() <= b.top() || b.bottom() <= a.top(),
+                                "{language}/{display:?}/{width}x{height}/{zoom}: {left} intersects {right}: {a:?} / {b:?}"
+                            );
+                        }
+                    }
+                    assert_eq!(settings::toolbar_display("apple-light"), display);
+                    if width == 1392.
+                        && zoom == 1.
+                        && display == settings::ToolbarDisplay::IconAndText
+                    {
+                        let first = e2e::control_bounds(win.window_id(), "tb-pull").unwrap();
+                        let last = e2e::control_bounds(win.window_id(), "tb-terminal").unwrap();
+                        let center = f32::from(first.left() + last.right()) / 2.;
+                        assert!(
+                            (center - width / 2.).abs() <= 8.,
+                            "action center {center} vs window {}",
+                            width / 2.
+                        );
+                    }
+                    exercise_overflow_actions(cx, &app, win, &ids[..13]);
+                    if width == 940.
+                        && zoom == 1.67
+                        && display == settings::ToolbarDisplay::IconAndText
+                    {
+                        // Force the secondary overflow tier too; normal matrix
+                        // widths may fit every workspace control after actions collapse.
+                        resize_overflow_window(cx, win, 480.);
+                        for id in ids {
+                            e2e::clear_control_bounds(win.window_id(), id);
+                        }
+                        for _ in 0..8 {
+                            frame(cx, win);
+                        }
+                        for id in &ids[9..13] {
+                            assert!(
+                                e2e::control_bounds(win.window_id(), id)
+                                    .filter(|b| b.size.width > px(0.))
+                                    .is_none(),
+                                "{id}: positive control for workspace overflow execution"
+                            );
+                        }
+                        exercise_overflow_actions(cx, &app, win, &ids[..13]);
+                    }
+                    unmount(cx, app, win);
+                }
+            }
+        }
+    }
+}
+
+fn exercise_overflow_actions(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    actions: &[&str],
+) {
+    if e2e::control_bounds(win.window_id(), "tb-overflow").is_none() {
+        return;
+    }
+    for (index, id) in actions.iter().enumerate() {
+        if e2e::control_bounds(win.window_id(), id)
+            .filter(|b| b.size.width > px(0.))
+            .is_some()
+        {
+            continue;
+        }
+        app.update(cx, |app, cx| {
+            app.status_footer = kagi::ui::FooterStatus::Idle("overflow dispatch sentinel".into());
+            app.bottom_panel_open = false;
+            cx.notify();
+        });
+        open_keyboard_overflow(cx, app, win);
+        let item = e2e::control_bounds(win.window_id(), &format!("tb-overflow-item-{index}"))
+            .expect("every hidden action must be in the menu");
+        let reason = e2e::toolbar_description(id);
+        cx.simulate_click(win, item.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        frame(cx, win);
+        if let Some(reason) = reason {
+            assert!(
+                cx.read(|cx| matches!(&app.read(cx).status_footer,
+                kagi::ui::FooterStatus::Idle(text) if text.as_ref() == reason)),
+                "{id}: overflow executes the localized unavailable-action path"
+            );
+        } else if index == 7 {
+            assert!(
+                cx.read(|cx| app.read(cx).bottom_panel_open),
+                "Terminal overflow executes the real panel action"
+            );
+        } else if (8..=11).contains(&index) {
+            use kagi::ui::workspace_mode::WorkspaceMode;
+            let expected = match index {
+                8 => WorkspaceMode::Graph,
+                9 => WorkspaceMode::Prs,
+                10 => WorkspaceMode::Editor,
+                _ => WorkspaceMode::Takeover,
+            };
+            assert_eq!(
+                cx.read(|cx| app.read(cx).workspace_mode()),
+                expected,
+                "{id}: overflow workspace activation"
+            );
+            if index == 11 {
+                assert!(
+                    cx.read(|cx| app.read(cx).ui().ecosystem.is_some()),
+                    "Analyze pane opens"
+                );
+            }
+            app.update(cx, |app, cx| app.show_graph_mode(cx));
+            for control in actions {
+                e2e::clear_control_bounds(win.window_id(), control);
+            }
+            for _ in 0..5 {
+                frame(cx, win);
+            }
+        } else if index == 12 {
+            assert!(
+                cx.read(|cx| matches!(
+                    app.read(cx).menu_overlay,
+                    Some(kagi::ui::commands::MenuOverlay::Settings)
+                )),
+                "Settings overflow opens overlay"
+            );
+            cx.simulate_keystrokes(win, "escape");
+            cx.run_until_parked();
+        } else {
+            assert!(
+                cx.read(|cx| e2e::active_modal_present(app.read(cx))),
+                "{id}: overflow executes the existing operation planner"
+            );
+            cx.simulate_keystrokes(win, "escape");
+            cx.run_until_parked();
+        }
+    }
+}
+
 pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
     let _restore = ToolbarRestore::capture(cx);
     let _ports = crate::gui_isolation::PortStore::keep();

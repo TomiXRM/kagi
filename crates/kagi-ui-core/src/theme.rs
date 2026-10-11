@@ -1507,6 +1507,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn apple_secondary_text_meets_wcag_aa_without_changing_light() {
+        let light = &crate::theme_apple_light::APPLE_LIGHT;
+        assert_eq!(light.text_sub, 0x606060);
+        assert_eq!(light.text_label, 0x606060);
+        assert_eq!(light.text_muted, 0x666666);
+        assert_eq!(light.panel, 0xf7f7f7);
+        assert_eq!(light.bg_base, 0xffffff);
+
+        for t in [light, &crate::theme_apple_dark::APPLE_DARK] {
+            for (role, foreground) in [
+                ("text_sub", t.text_sub),
+                ("text_label", t.text_label),
+                ("text_muted", t.text_muted),
+            ] {
+                for (surface, background) in [("panel", t.panel), ("base", t.bg_base)] {
+                    let contrast = contrast_ratio(foreground, background);
+                    assert!(
+                        contrast >= 4.5,
+                        "{} {role} #{foreground:06x} on {surface} #{background:06x}: \
+                         {contrast:.3}:1 is below 4.5:1",
+                        t.slug
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
         for t in THEMES {
             let mut gc = gpui_component::Theme::default();

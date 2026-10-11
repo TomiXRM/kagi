@@ -25,10 +25,11 @@ pub const APPLE_DARK: Theme = Theme {
     modal: 0x2c2c2e,
     modal_overlay: 0x000000,
 
-    text_main: 0xffffff,  // label (dark)
+    text_main: 0xffffff, // label (dark)
+    // Readable secondaryLabel approximation; tertiary is not readable metadata.
     text_sub: 0x98989f,   // secondaryLabel composited on #1c1c1e
-    text_muted: 0x636366, // systemGray2 (dark)
-    text_label: 0x7c7c80, // systemGray2 (dark, increased contrast)
+    text_muted: 0x98989f, // >= 4.5:1 on panel and base (ADR-0125, #1239)
+    text_label: 0x98989f,
 
     // Git/ref, status and body-link palette keeps ADR-0126's yellow character.
     // On macOS the independent chrome role follows the cached system accent;

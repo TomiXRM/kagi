@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-11
+> **Last updated:** 2026-10-12
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-12 | Apple Dark `text_label` and `text_muted` reuse existing `text_sub = #98989f`; no new theme role or component patch | #1239. WCAG sRGB source contrast is 6.305:1 on panel `#161618` and 5.937:1 on base `#1c1c1e`; previous muted/label values failed 4.5:1. Apple Light values are pinned by regression. There is no dedicated disabled/placeholder token; those controls inherit brighter muted text while their opacity contracts stay unchanged. [ADR-0125 amendment](adr/0125-apple-hig-themes.md#amendment--2026-10-12-readable-apple-dark-secondary-text-1239). |
 | 2026-10-11 | #1179/#1212 integration: Home window-containment oracle covers fixed controls and the first Recent repository row, not virtualized GitHub overdraw | The unified frame can mount a GitHub row partially below the fold at 940×660/167%. Its unclipped recorded bounds are not a window-overflow defect. Keep compact row/action containment, name priority and all fixed-control/wide geometry assertions. No production layout changes. [ADR-0125 amendment](adr/0125-apple-hig-themes.md). |
 | 2026-10-11 | #1179 integration: desktop Commit Panel file-list oracle is 440.5px rather than the old 411.5px with separate strip + toolbar | The unified single-document frame reclaims vertical viewport space. Keep the AutoGrow-era body (257px), Generate (21.5px), Commit (25px) and panel width (324px) oracles unchanged; only the flexible list inherits the gain. Searching recovery tests for 411.5, 36/52px chrome constants and header offsets found no other obsolete fixed-height oracle. [ADR-0125 amendment](adr/0125-apple-hig-themes.md). |
 | 2026-10-11 | #1179 review: draggable targets are real blank spacers only; macOS app-owned titlebar dragging delegates press/move and double-click to GPUI, not AppKit's enlarged whole-frame drag band | Supersedes the initial 64px-caption frame below: shared Home/workspace heights are 52px icons / 60px captions (46.8 / 54 logical px at 100%). No interactive descendant is inside a drag target. Empty Home hides inert +; the legacy no-tabs remote route names its folder dialog Open Repository in EN/JA. A shared document-count predicate gates TabList and TabPanel together. Three-tab close/reindex preserves #961 keyed focus alongside the independent two→one hiding oracle. [ADR-0125 amendment](adr/0125-apple-hig-themes.md). |

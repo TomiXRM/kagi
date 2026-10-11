@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Apple Dark readable secondary labels, counts, captions, timestamps and Commit Panel section headers now reuse `#98989f`, meeting 4.5:1 WCAG contrast on both panel and content backgrounds. Apple Light is unchanged; disabled controls retain their existing opacity behavior. (#1239)
 - Window chrome now unifies native macOS traffic lights, repository/branch identity, toolbar actions, overflow and workspace controls in one frame across every theme. Repository/Home document tabs appear below it only with multiple documents; the trailing +, Cmd+T/Cmd+W and File menu remain available with the strip hidden. Icon Only uses a 52-reference-px frame (46.8 logical px at 100%); Icon and Text remains available in a taller 60px frame (54 logical px). (#1179)
   - Review: only real blank spacers own drag hit targets; macOS app-owned press/move and double-click preserve system titlebar behavior without covering buttons. Home shares both frame heights, hides its inert + without repositories, and TabPanel roles appear only with a visible TabList. The three-tab keyed-focus reindexing regression remains independent of single-tab hiding.
   - Integration: updated the recorded 1392×883 desktop Commit Panel file-list height from 411.5 to 440.5 logical px for the space reclaimed by single-document unified chrome; composer and primary-action heights remain unchanged.

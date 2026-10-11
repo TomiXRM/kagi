@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-12 | #1241 review: remove source-string cursor assertions; native cursor observation remains Tier B | GPUI's macOS cursor publication runs only for an active window; hidden Tier A windows cannot publish NSCursor changes, and activating them would take the user's foreground. Rendered cursor request/hitbox state is crate-private. A parallel recorder of declared constants would not prove hitbox precedence, so no misleading oracle replaces the removed source-inclusion test. File menus and Home GitHub/Work list rows now request Arrow too. |
 | 2026-10-12 | #1228: Commit Panel selection and conflict fills outrank ordinary hover | Dense file rows preserve their existing window-aware selection role and conflict diagnostic role; hover changes only ordinary unselected rows. No file identity, diff ownership or hitbox change. |
 | 2026-10-12 | #1232: focus styling belongs to the complete body composer frame | Reuse the pinned Input's one-pixel theme ring border while keeping the inner Input plain: Input suffix cannot hold the stacked Template/AI/co-author footer without overlap (ADR-0134). Border width remains constant on focus. |
 | 2026-10-12 | #1241: non-link actions use Arrow, real URLs retain PointingHand | Existing custom dense controls keep callbacks, keyboard focus and hover fills; cursor role no longer imitates a web link. Text-selection cursors remain unchanged. |

@@ -254,7 +254,7 @@ pub fn render_settings_overlay(
 // Section / row helpers
 // ────────────────────────────────────────────────────────────
 
-fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
+pub fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
     div()
         .text_size(super::theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
@@ -267,7 +267,7 @@ fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
 }
 
 /// One setting row: label + description (left) and a control (right).
-fn setting_row(
+pub fn setting_row(
     title: SharedString,
     description: SharedString,
     control: AnyElement,

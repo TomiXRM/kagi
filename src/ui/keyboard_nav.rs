@@ -87,7 +87,7 @@ pub(crate) fn inset(n: f32) -> gpui::Pixels {
 /// (that cell is the Tab stop of the frame on screen), so the next frame's
 /// stop goes back to the selected cell: they are watched before any binding
 /// runs, and every list forgets its arrowed-to cell.
-pub(crate) fn bind_keys(cx: &mut App) {
+pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("left", TabListPrev, Some(CONTEXT)),
         KeyBinding::new("right", TabListNext, Some(CONTEXT)),
@@ -165,7 +165,7 @@ thread_local! {
 /// control — would otherwise bring the next Tab back to a cell the user
 /// never selected (#968), so the stop goes back to the selected cell. Called
 /// at the top of every frame; it reads only lists with an arrowed-to cell.
-pub(crate) fn forget_roving_without_focus(window: &Window) {
+pub fn forget_roving_without_focus(window: &Window) {
     ROVING.with(|lists| {
         for list in lists.borrow().iter() {
             let Some(roving) = list.roving.upgrade() else {
@@ -195,7 +195,7 @@ pub(crate) fn forget_roving_without_focus(window: &Window) {
 /// handle, a focus on it and the arrowed-to mark, with nothing to adjust
 /// (#961 review). A cell that goes away keeps its handle until
 /// [`Self::release_closed`], which hands a focus left on it to the window.
-pub(crate) struct TabFocus {
+pub struct TabFocus {
     cells: Rc<RefCell<Vec<(u64, FocusHandle)>>>,
     roving: Rc<Cell<Option<u64>>>,
     /// Handles of cells gone since the last frame.
@@ -323,7 +323,7 @@ impl TabFocus {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Activation {
+pub enum Activation {
     /// Moving to a cell selects it: selecting is cheap and starts nothing.
     Automatic,
     /// Moving only focuses; Enter/Space select.
@@ -331,7 +331,7 @@ pub(crate) enum Activation {
 }
 
 /// The identities of `n` cells that never move: their slot numbers.
-pub(crate) fn slot_keys(n: usize) -> Vec<u64> {
+pub fn slot_keys(n: usize) -> Vec<u64> {
     (0..n as u64).collect()
 }
 
@@ -340,7 +340,7 @@ type Select = Rc<dyn Fn(usize, bool, &mut Window, &mut App)>;
 /// One tab list being drawn: the slots on screen in order, the selected one
 /// (none while something no cell names is on screen), and what selecting a
 /// slot does.
-pub(crate) struct TabList {
+pub struct TabList {
     handles: Vec<FocusHandle>,
     /// Each slot's cell identity (see [`TabFocus`]).
     keys: Rc<Vec<u64>>,
@@ -364,7 +364,7 @@ impl TabList {
     /// cells never move: [`slot_keys`]); their handles are kept in `focus`.
     /// `shown` lists the slots drawn, in order.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub fn new(
         focus: &TabFocus,
         keys: Vec<u64>,
         shown: Vec<usize>,
@@ -402,12 +402,12 @@ impl TabList {
     }
 
     /// The list's container.
-    pub(crate) fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
+    pub fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
         el.role(Role::TabList).key_context(CONTEXT)
     }
 
     /// The cell for `slot`, named `label`.
-    pub(crate) fn cell(&self, slot: usize, label: &str, el: Stateful<Div>) -> Stateful<Div> {
+    pub fn cell(&self, slot: usize, label: &str, el: Stateful<Div>) -> Stateful<Div> {
         let selected = self.selected == Some(slot);
         #[cfg(feature = "gui-e2e")]
         self.a11y.borrow_mut().push((

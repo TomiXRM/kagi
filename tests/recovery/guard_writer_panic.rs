@@ -252,52 +252,43 @@ pub fn scenario_pr_ref_fetch_restarts_after_revisit(cx: &mut VisualTestAppContex
         .iter()
         .filter(|line| line.as_str() == contract_line)
         .count();
-    let previous_completions = kagi_ui_core::klog::tail()
-        .iter()
-        .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 ok")
-        .count();
-    app.update(cx, |app, cx| {
+    let original_generation = app.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         let owner = app.active_session().unwrap();
         let original_visit = app.app_sessions.attachment(owner).unwrap().visit;
         app.pr_mode_open(&pr, cx);
-        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+        let tab = &mut app
+            .ui
+            .get_mut(&owner)
+            .unwrap()
+            .pr_mode
+            .as_mut()
+            .unwrap()
+            .tabs[0];
+        assert!(tab.local_refs_loading);
+        let generation = tab.local_refs_generation;
+        tab.comment_draft = "retained PR draft".into();
         app.switch_repo(1, cx);
         app.switch_repo(0, cx);
         assert_ne!(
             app.app_sessions.attachment(owner).map(|a| a.visit),
             Some(original_visit)
         );
-        // #643 S6 clears PR mode on activation. Reopen the same PR before
-        // releasing the old worker; this new tab owns its own fetch latch.
-        assert!(app.pr_mode().is_none());
+        // #1119 retains the PR tab and its old request across activation.
+        // Reopening must not duplicate that pending fetch; its stale completion
+        // must retry under the new visit instead of publishing the old read.
         app.pr_mode_open(&pr, cx);
-        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+        let mode = app.pr_mode().unwrap();
+        assert_eq!(mode.tabs.len(), 1);
+        let tab = &mode.tabs[0];
+        assert_eq!(tab.pr.key(), pr.key());
+        assert_eq!(tab.comment_draft, "retained PR draft");
+        assert!(tab.local_refs_loading);
+        assert_eq!(tab.local_refs_generation, generation);
+        assert_eq!(tab.local_refs_visit, Some(original_visit));
+        assert!(tab.head.0.is_empty(), "old worker has not published");
+        generation
     });
-    // Wait for the old completion without advancing the virtual clock: the
-    // new visit's fetch is queued behind its 200ms lease retry timer.
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        cx.run_until_parked();
-        if kagi_ui_core::klog::tail()
-            .iter()
-            .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 ok")
-            .count()
-            > previous_completions
-        {
-            break;
-        }
-        assert!(Instant::now() < deadline, "old PR fetch did not settle");
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    cx.read(|cx| {
-        assert!(
-            app.read(cx).pr_mode().unwrap().tabs[0].local_refs_loading,
-            "old visit cleared the reopened PR's current-visit loading latch"
-        );
-    });
-    cx.advance_clock(Duration::from_millis(250));
-    cx.run_until_parked();
     crate::pr_viewed::wait_loaded(cx, &app, &head);
     assert_eq!(
         kagi_ui_core::klog::tail()
@@ -311,6 +302,16 @@ pub fn scenario_pr_ref_fetch_restarts_after_revisit(cx: &mut VisualTestAppContex
         let state = app.read(cx);
         let tab = &state.pr_mode().unwrap().tabs[0];
         assert!(!tab.local_refs_loading, "fresh fetch left PR loading");
+        assert_eq!(tab.local_refs_generation, original_generation + 1);
+        assert_eq!(
+            tab.local_refs_visit,
+            state
+                .app_sessions
+                .attachment(state.active_session().unwrap())
+                .map(|attachment| attachment.visit),
+            "only the new visit may publish the retained PR's refs"
+        );
+        assert_eq!(tab.comment_draft, "retained PR draft");
         assert_eq!(
             tab.head.0, head,
             "the new visit did not receive the PR head"
@@ -375,7 +376,10 @@ pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {
             &crate::cleanup_publish_owner::pr(356, "another-missing"),
             cx,
         );
-        assert!(app.pr_mode().unwrap().tabs[0].local_refs_loading);
+        let mode = app.pr_mode().unwrap();
+        assert_eq!(mode.tabs.len(), 2, "the first PR remains retained");
+        let tab = mode.tabs.iter().find(|tab| tab.pr.number == 356).unwrap();
+        assert!(tab.local_refs_loading);
         app.switch_repo(1, cx);
         app.status_footer = FooterStatus::Idle("other tab sentinel".into());
         owner
@@ -385,7 +389,9 @@ pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {
         let state = app.read(cx);
         assert!(matches!(&state.status_footer, FooterStatus::Idle(text) if text.as_ref() == "other tab sentinel"),
             "old PR fetch presented in a different owner's footer");
-        assert!(!state.ui.get(&owner).unwrap().pr_mode.as_ref().unwrap().tabs[0].local_refs_loading,
+        let mode = state.ui[&owner].pr_mode.as_ref().unwrap();
+        let tab = mode.tabs.iter().find(|tab| tab.pr.number == 356).unwrap();
+        assert!(!tab.local_refs_loading,
             "old visit left its PR loading latch set in the background tab");
     });
     // A stale completion still owns its receipt and reconciliation, not B's UI.

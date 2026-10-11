@@ -227,6 +227,69 @@ fn burst_and_graceful_quit_child() {
 }
 
 #[test]
+fn settings_window_bounds_burst_coalesces_frame() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    run_child("settings_window_bounds_burst_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["settings_window_frame"], "99,198,599");
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn settings_window_bounds_burst_child() {
+    use crate::settings::{flush, write_settings_window_frame, SettingsWindowFrame};
+    let before = super::store::committed_flushes();
+    for i in 0..100 {
+        write_settings_window_frame(SettingsWindowFrame {
+            x: i as f32,
+            y: (i * 2) as f32,
+            height: (500 + i) as f32,
+        });
+    }
+    flush();
+    let commits = super::store::committed_flushes() - before;
+    assert!(
+        commits <= 2,
+        "100 bounds changes must coalesce into <=2 commits, got {commits}"
+    );
+}
+
+#[test]
+fn settings_window_frame_migrates_legacy_geometry_once() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(tmp.path().join("settings.json"),
+        r#"{"settings_window_position":"-120,240","settings_window_height":"640","future_only_key":"keepme"}"#)
+        .expect("seed");
+    run_child("settings_window_frame_migration_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["settings_window_frame"], "-120,240,640");
+    assert_eq!(saved["future_only_key"], "keepme");
+    assert!(saved.get("settings_window_position").is_none());
+    assert!(saved.get("settings_window_height").is_none());
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn settings_window_frame_migration_child() {
+    use crate::settings::{read_setting, settings_window_frame, SettingsWindowFrame};
+    let expected = Some(SettingsWindowFrame {
+        x: -120.,
+        y: 240.,
+        height: 640.,
+    });
+    assert_eq!(settings_window_frame(), expected);
+    assert!(read_setting("settings_window_position").is_none());
+    assert!(read_setting("settings_window_height").is_none());
+    let committed = super::store::committed_flushes();
+    assert_eq!(settings_window_frame(), expected);
+    assert_eq!(
+        super::store::committed_flushes(),
+        committed,
+        "migration never repeats"
+    );
+}
+
+#[test]
 fn a_hard_kill_loses_only_the_repeated_key() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let out = spawn_child("hard_exit_mid_burst_child", tmp.path());

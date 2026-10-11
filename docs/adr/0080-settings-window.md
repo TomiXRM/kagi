@@ -5,6 +5,8 @@
   (`src/ui/settings.rs`: `settings.json`, `read_setting`/`write_setting`,
   `SETTINGS_KEYS`) and theme/i18n/zoom (ADR-0036/0048). Reference: OpenLogi
   `crates/openlogi-gui/src/windows/settings.rs`.
+- macOS host superseded by [ADR-0223](0223-macos-settings-window-host.md) (#1198):
+  one non-modal native Settings window. The overlay remains on other platforms.
 
 ## Decision
 

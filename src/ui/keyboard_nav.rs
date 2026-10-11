@@ -88,6 +88,7 @@ pub(crate) fn inset(n: f32) -> gpui::Pixels {
 /// stop goes back to the selected cell: they are watched before any binding
 /// runs, and every list forgets its arrowed-to cell.
 pub(crate) fn bind_keys(cx: &mut App) {
+    super::diff_selection::keyboard::bind_keys(cx);
     cx.bind_keys([
         KeyBinding::new("left", TabListPrev, Some(CONTEXT)),
         KeyBinding::new("right", TabListNext, Some(CONTEXT)),
@@ -492,6 +493,17 @@ pub(crate) enum RowScroll {
     Uniform(UniformListScrollHandle, std::ops::Range<usize>),
 }
 
+/// Reveal a lazy-list row, anchoring an unmeasured destination before layout.
+pub(crate) fn reveal_list_row(state: &ListState, ix: usize) {
+    state.scroll_to_reveal_item(ix);
+    if state.bounds_for_item(ix).is_none() {
+        state.scroll_to(ListOffset {
+            item_ix: ix,
+            offset_in_item: gpui::px(0.),
+        });
+    }
+}
+
 impl RowScroll {
     /// The entry at the top of the list's viewport.
     fn top(&self) -> usize {
@@ -514,18 +526,7 @@ impl RowScroll {
     /// Scroll entry `ix` into view, as little as it takes.
     fn reveal(&self, ix: usize) {
         match self {
-            Self::List(state) => {
-                state.scroll_to_reveal_item(ix);
-                // gpui's lazy list does not yet know the height of distant
-                // items. Reveal cannot reach one until it has been measured;
-                // anchor it directly so the next layout can draw that row.
-                if state.bounds_for_item(ix).is_none() {
-                    state.scroll_to(ListOffset {
-                        item_ix: ix,
-                        offset_in_item: gpui::px(0.),
-                    });
-                }
-            }
+            Self::List(state) => reveal_list_row(state, ix),
             // Not strict: it scrolls only when the item is out of view.
             Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
         }

@@ -124,7 +124,7 @@ impl KagiApp {
             9 => self.handle_menu_command("view.togglePrMode", window, cx),
             10 => self.handle_menu_command("view.toggleEditorWorkspace", window, cx),
             11 => self.open_ecosystem_view(cx),
-            12 => self.open_settings_overlay(window, cx),
+            12 => self.open_settings(window, cx),
             13 => self.open_update_modal(),
             _ => unreachable!("toolbar command index"),
         }

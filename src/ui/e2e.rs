@@ -10,12 +10,17 @@
 
 use std::cell::RefCell;
 use std::path::Path;
+pub mod commit_panel_labels;
+
+#[cfg(feature = "gui-e2e")]
+pub mod inspector_metadata;
 
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]
 pub mod diff_presentation;
+pub mod diff_controls;
 
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
@@ -492,6 +497,35 @@ pub fn init_app(cx: &mut App) {
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
     super::commands::setup_app(cx);
+    #[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+    cx.set_global(super::settings_view::SettingsHostForE2e::default());
+}
+
+/// Run the production Dock-reopen decision/session restore without activating
+/// a visible window; callers mount the returned state through the normal root.
+pub fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
+    super::dock_reopen_state(cx)
+}
+
+/// Explicit opt-in interception of Quit for native restart regressions. The
+/// normal key/action dispatch and quit-time settings flush still execute.
+#[cfg(feature = "gui-e2e")]
+#[derive(Default)]
+pub struct QuitForE2e {
+    pub requested: bool,
+}
+#[cfg(feature = "gui-e2e")]
+impl gpui::Global for QuitForE2e {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn capture_app_quit(cx: &mut App) -> bool {
+    if cx.try_global::<QuitForE2e>().is_none() {
+        return false;
+    }
+    // Mirrors the unconditional final on_app_quit preference observer.
+    super::settings::flush();
+    cx.global_mut::<QuitForE2e>().requested = true;
+    true
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
@@ -521,7 +555,7 @@ pub fn build_kagi_entity(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<KagiApp> {
-    let kagi: Entity<KagiApp> = cx.new(|cx| {
+    let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {

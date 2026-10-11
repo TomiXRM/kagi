@@ -69,6 +69,39 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
+six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
+cleanup. Owner-release coverage starts a real fetch ticker, closes its repository
+root and asserts the entity is released and Settings closes while another
+repository stays usable. Position coverage reopens three times and exercises
+repository Cmd-Q with Settings still open, quit-time flush and root recreation
+without a Settings-close save. Dock coverage uses the production typed-root
+decision and saved-session restore with only Settings remaining.
+Existing `settings_*`, `platform_menu_*` and
+`filter_menu_then_settings` scenarios deliberately select the portable overlay
+host; none of their assertions are removed. An RAII host guard restores the
+selection even on panic; ordinary launches always use the native macOS host.
+Pair native geometry coverage with `cargo test -p kagi-ui-core settings_window_`.
+The existing isolated-child store harness checks 100 production frame writes
+cost at most two successful commits, preserve the final "x,y,height" value, and
+migrate/remove the obsolete position/height pair exactly once.
+Tier B must list **both** CGWindow IDs for the PID it launched and capture the
+Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
+repository rather than Settings. Check Cmd-comma raise, Cmd-W independent
+closure, native traffic lights, restored position/pane/height (also after app
+quit while Settings remains open) and live preferences.
+Escape is deliberately not a window-dismiss command; check editing-field/IME
+behavior separately. Native hidden-window assertions do not prove OS activation.
+For #1227 use `KAGI_GUI_E2E_ONLY='commit_panel_i18n,commit_panel_viewport,commit_row_layout'`.
+`commit_panel_i18n` draws Apple Light/Dark at 1392×883/100% and 940×660/167%,
+changes JA→EN→JA→EN on the same panel, compares renderer-fed captions plus AX
+name/role assignments with Msg, checks selector selection state, measures containment
+and ≥20 logical-pixel hit heights, clicks Tree, and preserves Template data verbatim.
+The feature name Commit Panel and operation-button names intentionally stay English.
+The AX recorder proves the renderer assignment, not native VoiceOver delivery.
+Tier B remains a real-window comparison of Japanese headers, batch actions and
+unchanged user Template text; `commit_panel_viewport` retains composer geometry.
+
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
 `settings_quiet` measures inherited heading colour/size/weight and Metal pixels
 for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes
@@ -2890,6 +2923,27 @@ sides, the re-read diff shows one hunk), then on the staged diff in split view
 index unchanged). M: open a two-hunk file from the Commit Panel, Stage hunk /
 Unstage hunk in unified and split view (EN/JA labels), and check the panel and
 diff update.
+
+For #1233 / #1234 use
+`KAGI_GUI_E2E_ONLY='diff_hunk_buttons,diff_keyboard_selection'` with
+`KAGI_GUI_E2E_KEEP_GOING=1`. The first checks the pinned named ghost Button's
+role/name inputs, Tab/F19 routing, Enter Stage / Space Unstage in EN/JA and
+unchanged header bounds (original and new: 893×22.5 logical px at the fixture
+viewport). The second enters the body by Tab before moving a caret, checks
+header fill after final styling, and compares content-row selection fills after
+Shift+Down ×3, retraction, collapsed caret, boundary extension, Cmd+A and
+code-only Cmd+C. EN/JA unified/split use real backend rows; changing the row
+count must preserve body focus without another Tab or click. Both ends of a
+201-row diff remain inside the measured native viewport after keyboard
+movement. Neither recorder is native VoiceOver evidence.
+Tab shows the body ring, a measured header click keeps body focus without the
+ring, and subsequent arrow input restores the keyboard-only ring.
+Neighbor filter: `KAGI_GUI_E2E_ONLY='diff_,hunk_,peek_,copy_'`.
+Tier B: Tab into the body and hunk actions; inspect focus, Enter/Space, tooltip
+and live AX role/name, then Shift-arrow / Shift-Cmd-arrow / Cmd+A / Cmd+C /
+Escape in unified and split. Compare identical EN/JA data, viewport and zoom;
+selection Escape must leave the diff and copied notification visible.
+
 
 ### WIP diffstat after staging (#996)
 

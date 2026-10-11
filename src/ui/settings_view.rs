@@ -1,7 +1,7 @@
 //! T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window.
 //!
-//! A thin view over the existing preference storage (`theme.rs`'s
-//! `read_setting`/`write_setting` and the `theme::*` / `i18n::*` apply paths). It
+//! A thin view over the existing preference storage (`settings::`) and the
+//! `theme::*` / `i18n::*` apply paths. It
 //! never touches the repository (ADR-0078 — the settings view makes no git calls,
 //! so the `src/ui/` repo-access grep gate stays at 0).
 //!
@@ -37,6 +37,16 @@ use gpui_component::{FocusTrapElement as _, IndexPath, Sizable as _};
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
 use super::{settings, KagiApp};
+
+/// Native scenarios opt into the macOS host; the portable suite keeps testing
+/// the non-macOS overlay implementation on the native renderer.
+#[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+#[derive(Default)]
+pub struct SettingsHostForE2e {
+    pub native: bool,
+}
+#[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+impl gpui::Global for SettingsHostForE2e {}
 
 impl KagiApp {
     /// Lazily build the multiline `analyze_ignore` editor input, seeded from the
@@ -243,7 +253,7 @@ pub fn render_settings_overlay(
         )
         .child(match trap {
             // gpui-component's Root keeps Tab / Shift+Tab inside a trap while
-            // the focus is in it; `open_settings_overlay` puts it there.
+            // the focus is in it; the portable `open_settings` path puts it there.
             Some(trap) => panel.focus_trap("settings-trap", &trap).into_any_element(),
             None => panel.into_any_element(),
         })
@@ -378,7 +388,7 @@ pub fn take_settings_help_for_e2e(id: &str) -> Option<String> {
 // Appearance
 // ────────────────────────────────────────────────────────────
 
-fn appearance_section(
+pub(super) fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
     switches: &super::keyboard_nav::FocusSlots,
@@ -413,6 +423,8 @@ fn appearance_section(
     let app_minus = app.clone();
     let dec = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         theme::set_zoom(theme::step_zoom(theme::zoom(), false));
+        theme::sync_gpui_component_theme(cx);
+        cx.refresh_windows();
         app_minus.update(cx, |app, cx| {
             app.apply_terminal_config(cx);
             cx.notify();
@@ -421,6 +433,8 @@ fn appearance_section(
     let app_plus = app.clone();
     let inc = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
         theme::set_zoom(theme::step_zoom(theme::zoom(), true));
+        theme::sync_gpui_component_theme(cx);
+        cx.refresh_windows();
         app_plus.update(cx, |app, cx| {
             app.apply_terminal_config(cx);
             cx.notify();
@@ -729,7 +743,7 @@ fn stepper_btn(
 // Language
 // ────────────────────────────────────────────────────────────
 
-fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
+pub(super) fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
     // Two-way segmented choice → gpui-component RadioGroup (stateless). The
     // on_click index maps back to the Lang ordering below.
     const LANGS: [(Lang, &str); 2] = [(Lang::En, "English"), (Lang::Ja, "日本語")];
@@ -768,7 +782,7 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
 // Smart Commit (ADR-0090): pick the local LLM model used for commit messages.
 // ────────────────────────────────────────────────────────────
 
-fn smart_commit_section(
+pub(super) fn smart_commit_section(
     app: &Entity<KagiApp>,
     smart: &super::smart_commit::SmartCommitState,
     switches: &super::keyboard_nav::FocusSlots,
@@ -1003,7 +1017,7 @@ fn smart_commit_section(
 // the Analyze view, persisted to the sibling `analyze_ignore` file.
 // ────────────────────────────────────────────────────────────
 
-fn analyze_ignore_section(
+pub(super) fn analyze_ignore_section(
     app: &Entity<KagiApp>,
     input: Option<Entity<InputState>>,
 ) -> impl IntoElement {

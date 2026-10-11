@@ -135,6 +135,8 @@ pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
 mod settings_theme_folder;
 pub mod settings_view;
+#[cfg(target_os = "macos")]
+mod settings_window;
 pub mod sidebar;
 mod sidebar_focus;
 mod sidebar_panes;

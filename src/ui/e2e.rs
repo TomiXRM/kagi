@@ -489,6 +489,8 @@ pub fn init_app(cx: &mut App) {
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);
     super::commands::setup_app(cx);
+    #[cfg(all(target_os = "macos", feature = "gui-e2e"))]
+    cx.set_global(super::settings_view::SettingsHostForE2e::default());
 }
 
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
@@ -518,7 +520,7 @@ pub fn build_kagi_entity(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<KagiApp> {
-    let kagi: Entity<KagiApp> = cx.new(|cx| {
+    let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         let seed = std::mem::take(&mut app_state.op_log_seed);

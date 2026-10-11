@@ -1602,8 +1602,8 @@ pub enum MenuOverlay {
         title: SharedString,
         lines: Vec<SharedString>,
     },
-    /// T-SETTINGS-001 / ADR-0080: the OpenLogi-style Settings window
-    /// (Appearance + Language pages). Hosted as an overlay (no sub-window yet).
+    /// ADR-0080's portable Settings overlay. macOS uses ADR-0223's independent
+    /// native host instead (the E2E portable-host suite still exercises this).
     Settings,
     /// Issue #352: the command palette (fuzzy search over [`COMMANDS`]). The
     /// mutable palette state (search input + highlighted index) lives in
@@ -1805,8 +1805,8 @@ impl KagiApp {
         match id {
             // ── kagi ────────────────────────────────────────────────
             "app.about" => self.open_about_overlay(),
-            // T-SETTINGS-001: open the OpenLogi-style Settings overlay.
-            "app.settings" => self.open_settings_overlay(window, cx),
+            // Settings uses the platform's non-modal window or portable overlay.
+            "app.settings" => self.open_settings(window, cx),
             "app.quit" => {
                 if !self.hold_host_close(cx) {
                     cx.quit();
@@ -1971,14 +1971,39 @@ impl KagiApp {
 
     /// Rebuild terminal config and push it into every retained session.
     pub(crate) fn apply_terminal_config(&mut self, cx: &mut Context<Self>) {
-        let new_config = super::terminal::build_terminal_config();
+        let config = super::terminal::build_terminal_config();
+        self.apply_terminal_config_local(&config, cx);
+        let owner = cx.entity_id();
+        cx.defer(move |cx| {
+            for handle in cx.windows() {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let Some(app) = window
+                        .root::<gpui_component::Root>()
+                        .flatten()
+                        .and_then(|root| root.read(cx).view().clone().downcast::<KagiApp>().ok())
+                        .filter(|app| app.entity_id() != owner)
+                    else {
+                        return;
+                    };
+                    app.update(cx, |app, cx| app.apply_terminal_config_local(&config, cx));
+                });
+            }
+        });
+        cx.refresh_windows();
+    }
+
+    fn apply_terminal_config_local(
+        &mut self,
+        config: &gpui_terminal::TerminalConfig,
+        cx: &mut Context<Self>,
+    ) {
         for session in self
             .ui
             .values()
             .filter_map(|ui| ui.terminal_session.as_ref())
         {
             if let Some(view) = session.view.clone() {
-                let cfg = new_config.clone();
+                let cfg = config.clone();
                 view.update(cx, |v, vcx| v.update_config(cfg, vcx));
             }
         }
@@ -2010,6 +2035,7 @@ impl KagiApp {
 
         // Rebuild the menu bar (active marker moved).
         cx.set_menus(build_menus());
+        cx.refresh_windows();
         cx.notify();
     }
 
@@ -2025,6 +2051,7 @@ impl KagiApp {
         i18n::set_lang(l);
         klog!("lang: {}", l.slug());
         cx.set_menus(build_menus());
+        cx.refresh_windows();
         if let Some(select) = self.theme_select.as_ref() {
             select.update(cx, |_, cx| cx.notify());
         }

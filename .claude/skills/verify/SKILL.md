@@ -69,6 +69,19 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
+three production macOS host scenarios (EN/JA, 100%/167%). Existing `settings_*`,
+`platform_menu_*` and `filter_menu_then_settings` scenarios deliberately select
+the portable overlay host; none of their assertions are removed. The production
+host is selected only by `SettingsHostForE2e { native: true }` in the new tests;
+ordinary application launches always use the native macOS host.
+Tier B must list **both** CGWindow IDs for the PID it launched and capture the
+Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
+repository rather than Settings. Check Cmd-comma raise, Cmd-W independent
+closure, native traffic lights, restored position/pane and live preferences.
+Escape is deliberately not a window-dismiss command; check editing-field/IME
+behavior separately. Native hidden-window assertions do not prove OS activation.
+
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
 `settings_quiet` measures inherited heading colour/size/weight and Metal pixels
 for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes

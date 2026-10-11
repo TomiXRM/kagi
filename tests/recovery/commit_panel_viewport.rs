@@ -15,6 +15,11 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();
+            if width < 1000. {
+                // The compact entry is the real WIP row, absent in this clean
+                // fixture. Leave the wide golden fixture completely unchanged.
+                std::fs::write(fixture.path().join("compact-wip.txt"), "viewport WIP\n").unwrap();
+            }
             theme::set_zoom(zoom);
             let state = e2e::app_state(fixture.path()).unwrap();
             let captured = Rc::new(RefCell::new(None));
@@ -85,7 +90,20 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
             let composer = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
             let generate = e2e::control_bounds(window.window_id(), "cp-smart-suggest").unwrap();
             let commit = e2e::control_bounds(window.window_id(), "cp-commit-action").unwrap();
-            assert!(files.bottom() <= composer.top());
+            if width >= 1000. {
+                assert!(files.bottom() <= composer.top());
+            } else {
+                let popup = e2e::control_bounds(window.window_id(), "compact-composer").unwrap();
+                crate::recovery_layout::contained(popup, composer, "compact body");
+                crate::recovery_layout::contained(popup, commit, "compact Commit");
+                for column in ["compact-changes-unstaged", "compact-changes-staged"] {
+                    crate::recovery_layout::contained(
+                        files,
+                        e2e::control_bounds(window.window_id(), column).unwrap(),
+                        column,
+                    );
+                }
+            }
             crate::recovery_layout::contained(
                 composer,
                 generate,

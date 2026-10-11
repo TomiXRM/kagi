@@ -114,8 +114,13 @@ with `missing compact-tab-changes`, then passed the same 16-cell matrix with
 equal column bounds, actual independent wheel scrolling, both List/Tree headers
 and original entity/input identity across 940→1392→940. Actual Stage all and
 Unstage all update the fixture's Git index; their empty-column controls remain
-present and inert. Composer and shared-state gates are recorded with their own
-functional commits; their result is not inferred from either preceding PASS.
+present and inert. Composer Tier A `compact_layout_popup` rejected the Changes
+source with `missing compact-wip-row`, then passed the same 16-cell matrix with
+actual hover/reveal, WIP click, ⌘⏎, pointer/outside persistence, Escape/×, scroll-out
+draft retention and short-window containment. `compact_layout_geometry` also
+passes measured rail/graph/columns/popup containment over the full matrix.
+Shared-state/commit-success gates are recorded with their functional commit;
+their result is not inferred from the preceding surface PASS results.
 The required compact matrix includes 940×660 and 940×1000, EN/JA, 100%/167%,
 Apple Light/Dark and a non-Apple preset; exact-threshold transitions; both toolbar
 modes; graph outer bounds and unchanged row/column/lane geometry; real measured

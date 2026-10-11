@@ -13,6 +13,11 @@ impl KagiApp {
             cx.notify();
             return;
         }
+        if self.compact.enabled && self.compact.popup_owner.is_some() {
+            self.close_compact_composer(window, cx);
+            cx.notify();
+            return;
+        }
         if diff_selection::clear() {
             cx.notify();
             return;
@@ -88,6 +93,23 @@ impl KagiApp {
                 this.cancel_workspace_key_target(window, cx);
             }
         });
+        let composer = cx.listener(
+            move |this, _: &super::compact::OpenCommitComposer, window, cx| {
+                if !workspace_fallbacks
+                    || !super::compact::for_window(window)
+                    || this.has_modal_or_visible_plan(cx)
+                    || this.workspace_mode() != super::workspace_mode::WorkspaceMode::Graph
+                    || this.conflict_body_visible()
+                {
+                    cx.propagate();
+                    return;
+                }
+                if this.compact.popup_owner != this.active_session() {
+                    this.open_commit_panel(window, cx);
+                    cx.notify();
+                }
+            },
+        );
         let enter = cx.listener(move |this, e: &KeyDownEvent, window, cx| {
             if std::env::var("KAGI_DEBUG_KEYS").as_deref() == Ok("1") {
                 eprintln!(
@@ -116,6 +138,7 @@ impl KagiApp {
         div()
             .size_full()
             .on_action(escape)
+            .on_action(composer)
             .on_key_down(enter)
             .child(content)
             .into_any()

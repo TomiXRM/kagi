@@ -607,6 +607,7 @@ impl Render for KagiApp {
             Some(&super::front_layer::LayerKind::PlatformMenu)
         );
         let root = div()
+            .relative()
             .flex()
             .flex_col()
             .size_full()
@@ -797,6 +798,7 @@ impl Render for KagiApp {
                     cx,
                 ))
             })
+            .children(self.render_compact_composer(window, cx))
             // The body owns the Commit Panel coauthor popover. Keep these
             // two root-level pane popovers below workspace menus as in Z_ORDER.
             .children(conflict_file_menu_overlay)

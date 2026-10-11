@@ -1326,6 +1326,11 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
     // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
     cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-enter",
+        super::compact::OpenCommitComposer,
+        Some("!Terminal"),
+    )]);
     // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
     // text field keeps its own copy; no-ops when nothing is selected.
     cx.bind_keys([KeyBinding::new(

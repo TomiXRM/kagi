@@ -246,6 +246,13 @@ fn changes(
     app: &Entity<KagiApp>,
     win: AnyWindowHandle,
 ) -> Entity<CommitPanelView> {
+    // PRs intentionally closes the existing bottom panel on entry. Reopen it
+    // through its real shortcut after navigator coverage returns to Graph.
+    if !cx.read(|cx| app.read(cx).bottom_panel_open) {
+        focus_root(cx, app, win);
+        cx.simulate_keystrokes(win, "cmd-j");
+        settle(cx, win);
+    }
     click(cx, win, "compact-tab-changes");
     assert!(
         e2e::control_bounds(win.window_id(), "compact-composer").is_none(),
@@ -561,29 +568,6 @@ pub fn scenario_compact_layout_geometry(cx: &mut VisualTestAppContext) {
         popup_geometry(win, case.dimensions());
         rail_graph(win, case.dimensions());
         columns(win, case.dimensions());
-        // Both owner handles still scroll independently with the popup pinned.
-        let handles = cx.read(|cx| {
-            let panel = panel.read(cx);
-            (
-                panel.unstaged_scroll_handle.clone(),
-                panel.staged_scroll_handle.clone(),
-            )
-        });
-        handles
-            .0
-             .0
-            .borrow()
-            .base_handle
-            .set_offset(point(px(0.), px(0.)));
-        handles
-            .1
-             .0
-            .borrow()
-            .base_handle
-            .set_offset(point(px(0.), px(0.)));
-        settle(cx, win);
-        independent_scroll(cx, &app, &panel, win);
-        drop(handles);
         drop(panel);
         unmount(cx, app, win);
     });

@@ -25,6 +25,7 @@ mod commit_panel_files;
 mod commit_panel_render;
 mod commit_panel_surfaces;
 mod compact;
+mod compact_popup;
 mod compact_sidebar;
 pub mod compare_pane;
 pub mod conflict_abort;

@@ -319,6 +319,7 @@ impl KagiApp {
         } else {
             row.bg(row_wash)
         };
+        row = self.render_compact_wip(row, &click, cx);
         // Both row kinds are clickable and open the commit panel: the open
         // repo's row against the tab's repository, a linked worktree's row
         // against that worktree (#473 — read-only, no tab, no snapshot). The

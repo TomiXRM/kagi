@@ -211,10 +211,10 @@ impl KagiApp {
         Some((ix, super::commands::linux_menu_sections().nth(ix)?))
     }
     /// The Commit Panel's plan confirmation, only where it is drawn: not with
-    /// Home in front, and only while the panel is open.
+    /// Home in front, and only while a desktop panel or pinned composer is open.
     pub(crate) fn commit_plan_visible(&self, cx: &App) -> bool {
         !self.home_in_front()
-            && self.ui().commit_panel_open
+            && self.commit_panel_surface_open()
             && self
                 .ui()
                 .commit_panel

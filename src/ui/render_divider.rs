@@ -238,8 +238,13 @@ impl KagiApp {
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
-                let new_w = ((cursor_x - 2.0 * z) / z).clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
                 entity.update(cx, |v, cx| {
+                    let new_w = v
+                        .pane_width_from_rendered(
+                            (cursor_x - 2.0 * z) / z,
+                            window.viewport_size().width,
+                        )
+                        .clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
                     if (new_w - v.tree_w).abs() > 0.5 {
                         v.tree_w = new_w;
                         cx.notify();
@@ -254,10 +259,14 @@ impl KagiApp {
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
-                let viewport_w = f32::from(window.viewport_size().width);
-                let new_w = ((viewport_w - cursor_x - 2.0 * z) / z)
-                    .clamp(EDITOR_HUNKS_MIN, EDITOR_HUNKS_MAX);
                 entity.update(cx, |v, cx| {
+                    let viewport = window.viewport_size();
+                    let new_w = v
+                        .pane_width_from_rendered(
+                            (f32::from(viewport.width) - cursor_x - 2.0 * z) / z,
+                            viewport.width,
+                        )
+                        .clamp(EDITOR_HUNKS_MIN, EDITOR_HUNKS_MAX);
                     if (new_w - v.hunks_w).abs() > 0.5 {
                         v.hunks_w = new_w;
                         cx.notify();

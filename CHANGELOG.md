@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Editor buffer tabs retain a zoom-scaled minimum width and scroll horizontally instead of collapsing. Duplicate file names show the shortest distinguishing parent path; every tab exposes its complete path through the pinned tooltip and accessibility name. Active-file selection keeps the tab visible, and dirty-close guards remain unchanged. (#1262)
+- Editor Diff/History and Diff/Snapshot selectors reuse the existing single-stop keyboard tab-list owner with named selected Tab segments. Left/Right/Home/End select, Enter/Space activate, and keyboard selection retains selector focus instead of jumping to the root. (#1263)
 - Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
 - macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)

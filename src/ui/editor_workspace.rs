@@ -47,6 +47,7 @@ fn editor_hooks() -> EditorHooks {
     EditorHooks {
         lang_for_path: super::diff_view::lang_for_path,
         image_from_bytes: super::avatar_fetch::image_from_bytes,
+        pane_selectors: Box::<super::editor_pane_selectors::PaneSelectors>::default(),
         render_hunks: Box::new(|view, cx| {
             // `view.diff` is seeded below as a boxed `MainDiffView` (a bin
             // type the crate can't name) — downcast and hand it to the

@@ -1137,6 +1137,10 @@ mod macos {
                 Box::new(crate::inactive_selection::scenario_inactive_selection),
             ),
             (
+                "repo_tabs_neutral",
+                Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
+            ),
+            (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),

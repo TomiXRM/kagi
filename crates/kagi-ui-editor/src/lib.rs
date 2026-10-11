@@ -27,6 +27,7 @@ mod bottom_panel;
 pub mod markdown;
 mod panes;
 mod save_binding;
+mod snapshot;
 mod tree_layout;
 mod watcher;
 
@@ -55,7 +56,7 @@ use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::tree_a11y;
 
-pub(crate) use panes::{render_history_pane, render_snapshot_pane};
+pub(crate) use panes::render_history_pane;
 use save_binding::{deliver, dirty_after_save, SaveDelivery};
 
 /// What the Editor Workspace asks of the host app (ADR-0121 C4). Everything
@@ -444,20 +445,15 @@ pub struct EditorWorkspaceView {
     /// selected so switching to History immediately sees the latest images.
     /// Only snapshot changes notify this entity; empty maps keep initial circles.
     pub avatars: std::sync::Arc<kagi_ui_core::avatar::AvatarImages>,
-    /// The Snapshot tab's OWN `InputState`, independent of the WIP `editor`
-    /// below — same `code_editor(lang).line_number(true)` recipe (bug
-    /// report: a hand-rolled `uniform_list` of styled divs had none of that
-    /// widget's font/line-number/selection behavior). Lazily created by
-    /// `sync_snapshot_editor`, mirroring `sync_editor`'s pattern for
-    /// `editor`. No dirty-tracking subscription — nothing reads back an
-    /// edit here (there's nowhere to save a historical commit's content
-    /// to); gpui-component has no read-only-but-selectable mode distinct
-    /// from `disabled` (which also blocks focus/selection), so an
-    /// unobserved-edits editable input is the closest available.
-    pub snapshot_editor: Option<Entity<InputState>>,
-    /// Hash of the last `(path, content)` pushed into `snapshot_editor` —
-    /// same guard shape as `pushed_sig`/`content_sig` for `editor`.
-    snapshot_pushed_sig: u64,
+    /// Selectable historical text has no editing or dirty/save owner.
+    snapshot_text: Option<Entity<gpui_component::text::TextViewState>>,
+    /// Renderer-measured snapshot surface for native input regressions.
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_indicator: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_current: Option<snapshot::SnapshotControl>,
 
     /// The code viewer `InputState`, created lazily on first render (needs a
     /// `Window`, only available there — see `sync_editor`).
@@ -596,8 +592,13 @@ impl EditorWorkspaceView {
             snapshot_req: RequestSlot::new(),
             history_scroll: UniformListScrollHandle::new(),
             avatars: Default::default(),
-            snapshot_editor: None,
-            snapshot_pushed_sig: 0,
+            snapshot_text: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_indicator: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_current: None,
             editor: None,
             pushed_sig: 0,
             dirty: false,
@@ -1085,11 +1086,6 @@ impl EditorWorkspaceView {
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
         // preference — not reset here. See `select_history_commit`.
         self.clear_selected_commit_views();
-        // Drop the InputState too, not just its content — otherwise it
-        // lingers (unrendered but alive) for every file ever snapshotted in
-        // the session.
-        self.snapshot_editor = None;
-        self.snapshot_pushed_sig = 0;
     }
 
     /// Drop the selected commit's Diff/Snapshot content **and** whatever load
@@ -1100,6 +1096,7 @@ impl EditorWorkspaceView {
         self.history_diff = None;
         self.history_diff_req.clear();
         self.snapshot = None;
+        self.snapshot_text = None;
         self.snapshot_req.clear();
     }
 
@@ -1409,6 +1406,7 @@ impl EditorWorkspaceView {
             return;
         }
         self.snapshot = result;
+        self.snapshot_text = None;
         cx.notify();
     }
 
@@ -1501,34 +1499,20 @@ impl EditorWorkspaceView {
         }
     }
 
-    /// Lazily create the Snapshot tab's `InputState` and push the loaded
-    /// commit content into it — same recipe as `sync_editor` above, minus
-    /// the dirty-tracking subscription (see `snapshot_editor`'s doc
-    /// comment). No-ops while there's nothing loaded yet.
-    fn sync_snapshot_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.clone()) else {
+    /// Prepare literal historical text once per accepted snapshot. This view
+    /// owns selection/copy only; it never registers an input mutation handler.
+    fn sync_snapshot_text(&mut self, cx: &mut Context<Self>) {
+        if self.snapshot_text.is_some() {
+            return;
+        }
+        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.as_deref()) else {
             return;
         };
-        if self.snapshot_editor.is_none() {
-            let state = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .code_editor(self.content_lang)
-                    .line_number(true)
-            });
-            self.snapshot_editor = Some(state);
-        }
-        let sig = buffer_sig(self.open_path.as_deref().unwrap_or(Path::new("")), &text);
-        if self.snapshot_pushed_sig == sig {
-            return;
-        }
-        self.snapshot_pushed_sig = sig;
-        let lang = self.content_lang;
-        if let Some(editor) = self.snapshot_editor.clone() {
-            editor.update(cx, |s, cx| {
-                s.set_highlighter(lang, cx);
-                s.set_value(text, window, cx);
-            });
-        }
+        let source = snapshot::literal_source(text, self.content_lang);
+        self.snapshot_text =
+            Some(cx.new(|cx| {
+                gpui_component::text::TextViewState::markdown(&source, cx).selectable(true)
+            }));
     }
 
     /// Step the file selection up/down (root ↑/↓ handler, T-WS-EDITOR-001
@@ -2247,7 +2231,7 @@ impl EditorWorkspaceView {
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
-        self.sync_snapshot_editor(window, cx);
+        self.sync_snapshot_text(cx);
         if self.show_tree && !self.loading && self.error.is_none() {
             self.refresh_tree_layout();
         }
@@ -2964,7 +2948,7 @@ fn render_center_pane(
                     pane.child(placeholder_text(msg))
                 }
             },
-            MiddlePaneTab::Snapshot => pane.child(render_snapshot_pane(view, cx)),
+            MiddlePaneTab::Snapshot => pane.child(snapshot::render(view, cx)),
         };
         return pane.into_any_element();
     }

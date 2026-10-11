@@ -161,3 +161,39 @@ first step rather than a cleanup afterwards.
   code surface in kagi must set the font itself. Known remaining duplicate:
   `src/ui/inspector.rs::change_badge` is a third copy of
   `kagi_ui_core::file_tree::status_badge` — flagged, not yet merged.
+
+## Amendment — 2026-10-12: immutable selectable historical content (#1264)
+
+Historical snapshots must not own an `InputState`. The previous independent
+code editor accepted input without dirty tracking or a persistence owner:
+its edits appeared real until switching revisions discarded them. The pinned
+gpui-kit Input has no read-only-but-selectable mode; disabling it also prevents
+the focus/selection needed for copy. Do not vendor or fork the widget for this
+surface.
+
+Use the existing selectable `TextView` for literal monospace code, with encoded
+content prepared once when the accepted snapshot is installed. No typing,
+paste, cut, delete, undo or IME mutation path exists, and no insertion caret is
+drawn. The working-tree Input and its save/dirty owner remain independent.
+
+The snapshot pane header exposes an EN/JA read-only indicator with historical
+file path and full revision SHA to accessibility and its tooltip. Two bounded
+rows keep the read-only title separate from the truncated identity and named
+`Open current` Button, rather than allowing a full SHA to consume the body
+height at high zoom. Open current returns to the already-owned live buffer,
+without reloading or discarding edits. No restore action exists on this Editor
+surface and none is added: historical content must not become a working-tree
+write outside the existing approved write lifecycle.
+
+Copy retains the pinned selectable TextView's existing clipboard semantics:
+the shared Root trims outer whitespace, including the final newline. Snapshot
+source content remains unchanged; no local clipboard override or second
+selection owner is introduced. Native coverage checks the copied literal code
+before and after editing attempts and separately compares the complete raw
+snapshot content.
+
+The focused snapshot body has an `EditorSnapshot` key context. Application
+Save and repository Undo/Redo bindings exclude this context: a historical
+reader must not save a hidden live buffer or reinterpret text undo as a
+repository operation. Selection/copy and scroll retain the component's normal
+bindings; Open current leaves that context with the live Input focused.

@@ -73,3 +73,10 @@ ref の移動として追える**。これを使えば「突然開いたリポ�
 - 既存テスト `undo_preserves_working_tree_changes` 等は soft 化に合わせて期待値更新が必要
   (working tree 保持は不変、index は「commit ツリーのまま=staged」に変更)。
 - 将来: oplog UI からの restore、merge-undo の多段対応、reflog kind 推定の精緻化。
+
+## Amendment — 2026-10-12: historical text is not repository history (#1264)
+
+`EditorSnapshot` joins `Input` and `Terminal` in the application Undo/Redo
+binding exclusion. The immutable selectable viewer has no input Undo handler,
+but text undo there must not plan a repository history move. Normal graph
+Undo/Redo and the explicit toolbar actions are unchanged.

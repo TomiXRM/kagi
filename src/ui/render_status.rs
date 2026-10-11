@@ -27,6 +27,63 @@ pub(crate) fn footer_message_bounds() -> gpui::Bounds<gpui::Pixels> {
     FOOTER_MSG_BOUNDS.with(|handle| handle.bounds())
 }
 
+/// Compact named toggle using the header's keyboard/ring contract.
+fn panel_button(
+    id: &'static str,
+    label: &'static str,
+    tip: &'static str,
+    pressed: bool,
+    icon: gpui_component::IconName,
+) -> gpui::Stateful<gpui::Div> {
+    let toggled = if pressed {
+        gpui::Toggled::True
+    } else {
+        gpui::Toggled::False
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::render_header::toolbar_a11y::record_label(id, label);
+        super::render_header::toolbar_a11y::record_tooltip(id, tip);
+        super::e2e::record_status_control(id, gpui::Role::Button, label, toggled);
+    }
+    let el = div()
+        .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
+        .aria_description(tip)
+        .aria_toggled(toggled)
+        .relative()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(theme::scaled_px(24.))
+        .h(theme::scaled_px(22.))
+        .flex_shrink_0()
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(theme().surface)))
+        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
+        .child(
+            gpui_component::Icon::new(icon)
+                .size(theme::scaled_px(16.))
+                .text_color(rgb(if pressed {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                })),
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(id))
+        });
+    #[cfg(feature = "gui-e2e")]
+    let el = el.on_key_down(move |event, _, _| {
+        if event.keystroke.key == "f19" {
+            super::render_header::toolbar_a11y::record_focus_probe(id);
+        }
+    });
+    keyboard_nav::focusable(el)
+}
+
 impl KagiApp {
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
@@ -91,7 +148,8 @@ impl KagiApp {
         let oplog_active = bottom_panel_open && bottom_tab == BottomTab::OperationLog;
         let terminal_active = bottom_panel_open && bottom_tab == BottomTab::Terminal;
 
-        let icon_terminal_click = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+        let icon_terminal_click = cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+            let keyboard_focus = event.is_keyboard().then(|| window.focused(cx)).flatten();
             if terminal_active {
                 // Same tab visible → close panel.
                 this.bottom_panel_open = false;
@@ -100,6 +158,9 @@ impl KagiApp {
                 this.bottom_tab = BottomTab::Terminal;
                 // T-BP-007: lazy-start terminal when opening via status bar icon.
                 this.ensure_terminal(window, cx);
+            }
+            if let Some(focus) = keyboard_focus {
+                focus.focus(window, cx);
             }
             cx.notify();
         });
@@ -115,44 +176,34 @@ impl KagiApp {
             cx.notify();
         });
 
-        let icon_terminal_color = if terminal_active {
-            theme().text_main
-        } else {
-            theme().text_muted
-        };
-        let icon_oplog_color = if oplog_active {
-            theme().text_main
-        } else {
-            theme().text_muted
-        };
-
-        let icon_terminal = div()
-            .id("status-icon-terminal")
-            .ml(theme::scaled_px(4.))
-            .px_1()
-            .flex_shrink_0()
-            .text_color(rgb(icon_terminal_color))
-            .hover(|s| s.text_color(rgb(theme().text_main)).cursor_pointer())
-            .on_click(icon_terminal_click)
-            .child(
-                gpui_component::Icon::new(gpui_component::IconName::SquareTerminal)
-                    .with_size(gpui_component::Size::XSmall)
-                    .text_color(rgb(icon_terminal_color)),
-            );
-
-        let icon_oplog = div()
-            .id("status-icon-oplog")
-            .ml(theme::scaled_px(2.))
-            .px_1()
-            .flex_shrink_0()
-            .text_color(rgb(icon_oplog_color))
-            .hover(|s| s.text_color(rgb(theme().text_main)).cursor_pointer())
-            .on_click(icon_oplog_click)
-            .child(
-                gpui_component::Icon::new(gpui_component::IconName::Menu)
-                    .with_size(gpui_component::Size::XSmall)
-                    .text_color(rgb(icon_oplog_color)),
-            );
+        let icon_terminal = panel_button(
+            "status-icon-terminal",
+            Msg::ToolbarTerminal.t(),
+            if terminal_active {
+                Msg::StatusHideTerminal
+            } else {
+                Msg::StatusShowTerminal
+            }
+            .t(),
+            terminal_active,
+            gpui_component::IconName::SquareTerminal,
+        )
+        .ml(theme::scaled_px(4.))
+        .on_click(icon_terminal_click);
+        let icon_oplog = panel_button(
+            "status-icon-oplog",
+            Msg::BottomTabOperationLog.t(),
+            if oplog_active {
+                Msg::StatusHideOperationLog
+            } else {
+                Msg::StatusShowOperationLog
+            }
+            .t(),
+            oplog_active,
+            gpui_component::IconName::Menu,
+        )
+        .ml(theme::scaled_px(2.))
+        .on_click(icon_oplog_click);
 
         // ── Assemble status bar ────────────────────────────────
         let mut bar = div()

@@ -555,3 +555,33 @@ and scrollbar behavior and are likewise not replaced.
 
 Native scenario guards restore disk keys, in-memory zoom/language, active theme,
 synced kit palette and scrollbar policy on Drop, including panic unwinding.
+
+## Amendment — 2026-10-11: discoverable status-bar panel controls (#1207)
+
+The dense footer retains Terminal and Operation Log as its two bottom-panel
+toggles, not inspector controls. Both reuse the header's named
+`keyboard_nav::focusable` contract: individual Tab stops after content,
+Enter/Space activation and the existing fixed accent focus-visible ring.
+Localized stable Button names and state-dependent Show/Hide tooltips are
+provided in EN/JA. `aria_toggled` maps Button's pressed state through the
+pinned GPUI/AccessKit API, which has no `aria_pressed` setter.
+Terminal advertises its existing Cmd+J shortcut; Operation Log advertises
+focused Enter/Space because no dedicated shortcut exists.
+
+The footer keeps its 22-reference-px height, with centered 16-reference-px
+icons in 24-reference-px-wide targets and neutral `surface` hover. Resting
+labels use existing primary/muted roles. No disabled/loading/error state is
+introduced: these controls only select or hide the existing panel. Existing
+lazy startup, panel ownership and logging remain authoritative. Keyboard
+Terminal activation restores the status button's focus after lazy startup;
+pointer activation retains the PTY focus. Native renderer/attribute and
+keyboard assertions are not live VoiceOver or Tier B evidence.
+
+Native `status_controls` failed before the fix with no recorded Terminal AX
+name (`None`, expected `Terminal`). It now passes Apple Light/Dark × EN/JA ×
+100%/167% at 600×660: named Button/pressed attribute inputs, state-dependent
+tooltips, measured content-box containment in the footer, consecutive Tab
+stops and Enter/Space opening/closing the corresponding panel exactly once.
+The bounds oracle accounts for the fixed 2px ring and native half-pixel
+snapping. The shared presentation Drop guard restores disk keys and in-memory
+language/zoom/theme/kit palette even on unwind; toolbar display is untouched.

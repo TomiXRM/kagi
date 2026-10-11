@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Status-bar Terminal and Operation Log controls expose localized names, show/hide tooltips, toggle state and individual keyboard Tab stops with focus-visible rings. Enter/Space reuse their existing callbacks; compact 16px glyphs and neutral hover affordances remain inside the footer. (#1207)
 - Bottom-panel Operation Log / Terminal / Activity use the shared single-stop keyboard tab list with manual activation, localized EN/JA names and distinct focus rings. Rounded pane-selector cells retain their window-aware selected fill under hover; arrow focus alone never starts Terminal. Cmd+J and lazy terminal startup remain unchanged. (#1205, #1206)
 - Bottom-selector review: keyboard Terminal activation keeps the selector focus for further arrow navigation, while a pointer click gives text input to the PTY. The native scenario restores in-memory theme/language/zoom as well as persisted settings. (#1205 review)
 - Dialog Cancel uses the shared bordered Secondary push button at the same S size as the trailing default; destructive dialog actions use the filled red role. Input cards expose named modal Dialog boundaries with available Confirm/Cancel actions and reuse the existing focus trap, preserving localized EN/JA titles, blocked reasons, Escape and IME routing. Existing plan/alert boundaries remain unnested. (#1208, #1209)

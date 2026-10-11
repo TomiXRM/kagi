@@ -19,6 +19,26 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
     super::modal_command::recorded_disclosure(id)
 }
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_control(
+    id: &'static str,
+    role: gpui::Role,
+    label: &'static str,
+    toggled: gpui::Toggled,
+) {
+    STATUS_CONTROLS.with(|map| map.borrow_mut().insert(id, (role, label, toggled)));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_control(id: &str) -> Option<(gpui::Role, &'static str, gpui::Toggled)> {
+    STATUS_CONTROLS.with(|map| map.borrow().get(id).copied())
+}
+
 /// #707 review: the revision-laundering and cross-session regressions need to
 /// produce a detector payload for one state and land it against another.
 pub use super::operations::conflict_detect::detect_payload_for_test;

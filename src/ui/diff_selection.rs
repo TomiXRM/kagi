@@ -13,14 +13,18 @@
 //! highlights, and it stores the extracted TEXT eagerly at mouse-up, so ⌘C
 //! needs no access to any pane's rows.
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use super::diff_view::DiffRow;
+
+pub(crate) mod keyboard;
 
 struct Selection {
     key: u64,
     anchor: usize,
     cursor: usize,
+    /// Headers show a caret only for keyboard navigation, not mouse selection.
+    keyboard_caret: bool,
     /// Extracted at mouse-up (and single click) — what ⌘C puts on the clipboard.
     text: String,
 }
@@ -39,17 +43,18 @@ pub(crate) fn surface_key(title: &str, row_count: usize) -> u64 {
 
 /// Mouse-down on row `ix`: start a new selection (single row until dragged).
 pub(crate) fn begin(key: u64, ix: usize) {
-    *SELECTION.lock().unwrap() = Some(Selection {
+    *SELECTION.lock() = Some(Selection {
         key,
         anchor: ix,
         cursor: ix,
+        keyboard_caret: false,
         text: String::new(),
     });
 }
 
 /// Drag over row `ix`: extend. Returns true when the range changed (repaint).
 pub(crate) fn drag_to(key: u64, ix: usize) -> bool {
-    let mut sel = SELECTION.lock().unwrap();
+    let mut sel = SELECTION.lock();
     match sel.as_mut() {
         Some(s) if s.key == key && s.cursor != ix => {
             s.cursor = ix;
@@ -61,7 +66,7 @@ pub(crate) fn drag_to(key: u64, ix: usize) -> bool {
 
 /// The inclusive selected range for surface `key`, if the selection is on it.
 pub(crate) fn range(key: u64) -> Option<(usize, usize)> {
-    let sel = SELECTION.lock().unwrap();
+    let sel = SELECTION.lock();
     sel.as_ref()
         .filter(|s| s.key == key)
         .map(|s| (s.anchor.min(s.cursor), s.anchor.max(s.cursor)))
@@ -72,9 +77,16 @@ pub(crate) fn contains(key: u64, ix: usize) -> bool {
     range(key).is_some_and(|(lo, hi)| ix >= lo && ix <= hi)
 }
 
+pub(crate) fn is_keyboard_caret(key: u64, ix: usize) -> bool {
+    SELECTION
+        .lock()
+        .as_ref()
+        .is_some_and(|s| s.key == key && s.keyboard_caret && s.cursor == ix)
+}
+
 /// Store the copyable text (called at mouse-up with the freshly built text).
 pub(crate) fn set_text(key: u64, text: String) {
-    let mut sel = SELECTION.lock().unwrap();
+    let mut sel = SELECTION.lock();
     if let Some(s) = sel.as_mut() {
         if s.key == key {
             s.text = text;
@@ -84,7 +96,7 @@ pub(crate) fn set_text(key: u64, text: String) {
 
 /// The stored text, if any selection exists (⌘C reads this).
 pub(crate) fn selected_text() -> Option<String> {
-    let sel = SELECTION.lock().unwrap();
+    let sel = SELECTION.lock();
     sel.as_ref()
         .map(|s| s.text.clone())
         .filter(|t| !t.is_empty())
@@ -92,7 +104,46 @@ pub(crate) fn selected_text() -> Option<String> {
 
 /// Clear the selection. Returns whether one existed (Esc-chain short-circuit).
 pub(crate) fn clear() -> bool {
-    SELECTION.lock().unwrap().take().is_some()
+    SELECTION.lock().take().is_some()
+}
+
+/// Move the shared inclusive caret/range and eagerly refresh code-only copy text.
+fn move_rows(
+    key: u64,
+    rows: &[DiffRow],
+    step: i8,
+    extend: bool,
+    boundary: bool,
+    all: bool,
+) -> Option<usize> {
+    let last = rows.len().checked_sub(1)?;
+    let mut selection = SELECTION.lock();
+    let current = selection.as_ref().filter(|s| s.key == key);
+    let cursor = current.map_or(0, |s| s.cursor.min(last));
+    let target = if all || (boundary && step > 0) {
+        last
+    } else if boundary {
+        0
+    } else if step > 0 {
+        cursor.saturating_add(1).min(last)
+    } else {
+        cursor.saturating_sub(1)
+    };
+    let anchor = if all {
+        0
+    } else if extend {
+        current.map_or(0, |s| s.anchor.min(last))
+    } else {
+        target
+    };
+    *selection = Some(Selection {
+        key,
+        anchor,
+        cursor: target,
+        keyboard_caret: true,
+        text: build_text(rows, anchor.min(target), anchor.max(target)),
+    });
+    Some(target)
 }
 
 /// Build the clipboard text for rows `[lo, hi]`: content lines only, sigil
@@ -147,6 +198,10 @@ mod tests {
         let (k1, k2) = (surface_key("a.rs", 10), surface_key("b.rs", 10));
         begin(k1, 2);
         assert!(drag_to(k1, 5));
+        assert!(
+            !is_keyboard_caret(k1, 5),
+            "mouse drag retains its original header paint"
+        );
         assert!(!drag_to(k2, 7), "another surface must not steal the drag");
         assert_eq!(range(k1), Some((2, 5)));
         assert_eq!(range(k2), None);
@@ -155,5 +210,27 @@ mod tests {
         assert_eq!(selected_text().as_deref(), Some("x\n"));
         assert!(clear());
         assert!(selected_text().is_none());
+        let rows = vec![line("+a"), line(" b"), line("-c"), line("+d")];
+        assert_eq!(move_rows(k1, &[], 1, true, false, false), None);
+        assert_eq!(move_rows(k1, &rows, 1, true, false, false), Some(1));
+        assert!(is_keyboard_caret(k1, 1));
+        assert!(!is_keyboard_caret(k2, 1));
+        assert_eq!(range(k1), Some((0, 1)));
+        assert_eq!(selected_text().as_deref(), Some("a\nb\n"));
+        assert_eq!(move_rows(k1, &rows, 1, true, true, false), Some(3));
+        assert_eq!(range(k1), Some((0, 3)));
+        assert_eq!(move_rows(k1, &rows, -1, false, false, false), Some(2));
+        assert_eq!(range(k1), Some((2, 2)));
+        assert_eq!(move_rows(k1, &rows, -1, true, true, false), Some(0));
+        assert_eq!(range(k1), Some((0, 2)));
+        assert_eq!(move_rows(k2, &rows, 1, false, false, false), Some(1));
+        assert_eq!(
+            range(k1),
+            None,
+            "keyboard movement respects surface isolation"
+        );
+        assert_eq!(move_rows(k2, &rows, 1, true, true, true), Some(3));
+        assert_eq!(selected_text().as_deref(), Some("a\nb\nc\nd\n"));
+        clear();
     }
 }

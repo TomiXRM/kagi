@@ -50,6 +50,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
 gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
 portable-pty = "0.9"
+parking_lot = "0.12"
 git2 = { version = "0.21", default-features = false }
 notify = "7"
 # W11-AVATAR (ADR-0037): blocking HTTP for GitHub avatar fetch. gpui 0.2.2 ships

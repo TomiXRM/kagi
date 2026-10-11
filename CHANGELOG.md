@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Diff hunk actions use named EN/JA keyboard-reachable ghost Buttons and tooltips; Enter/Space preserve the displayed hunk approval and existing staging pipeline. The dense header geometry is retained. (#1233)
+- Focused diff panes support caret arrows, Shift-arrow range extension, Shift-Cmd-arrow start/end extension and Cmd+A; the caret scrolls into view, Cmd+C still copies code only, and Escape clears selection before notifications. Mouse selection remains unchanged. (#1234)
 - Error notifications now remain until explicitly dismissed, wrap to three lines, and preserve errors before routine notifications when the four-card stack fills. Routine notifications pause their four-second timer on hover. Named EN/JA ghost close Buttons and Escape provide keyboard dismissal without overriding modal/menu cancellation. (#1240)
   - Review: cap eviction always admits the new notification; stored previews are bounded to three lines/768 characters. Removal repairs orphaned keyboard focus; diff selection and PR drawers retain Escape priority. Native coverage uses production Button geometry, routine hover timing, keyboard activation and overflow inputs.
 - Apple Dark readable secondary labels, counts, captions, timestamps and Commit Panel section headers now reuse `#98989f`, meeting 4.5:1 WCAG contrast on both panel and content backgrounds. Apple Light is unchanged; disabled controls retain their existing opacity behavior. (#1239)

@@ -305,6 +305,11 @@ fn split_cell(
                 el.bg(rgb(bg))
             }
         })
+        .map(|el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = crate::ui::e2e::diff_controls::row(sel_key, row_ix, el);
+            el
+        })
         // #349 move marker: a solid vertical BAR in the gutter (line-style, not
         // colour) marks a moved block. The signal is the bar's presence and
         // position — colourblind-safe (#354) — so a moved block reads as

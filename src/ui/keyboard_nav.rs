@@ -305,7 +305,6 @@ impl TabFocus {
     }
 
     /// The slot, as last drawn, whose cell holds the focus, if any.
-    #[cfg(feature = "gui-e2e")]
     pub(crate) fn focused(&self, window: &Window) -> Option<usize> {
         self.cells
             .borrow()

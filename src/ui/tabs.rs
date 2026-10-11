@@ -44,13 +44,9 @@ pub struct RepoTab {
     /// `Some` for a remote read-only repository opened over SSH; `None` for a
     /// normal local repository.
     pub remote: Option<super::RemoteRepoView>,
-    /// True when this tab is a linked git worktree (shown with a 🌲 marker and a
-    /// distinct tab colour so it's not mistaken for the main repository).
+    /// True when this tab is a linked git worktree (shown with a 🌲 marker so
+    /// it is not mistaken for the main repository).
     pub is_worktree: bool,
-    /// Lane-colour index for a worktree tab, matching that worktree's WIP-row
-    /// colour (its rank in the repo's worktree list). Set when the tab's view is
-    /// applied; `None` until then / for non-worktree tabs.
-    pub wt_color_idx: Option<usize>,
 }
 
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
@@ -60,6 +56,61 @@ pub(crate) const TAB_STRIP_H: f32 = 40.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;
+
+/// Document tabs are neutral chrome in Apple themes, not accent-selected rows.
+fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (gpui::Hsla, u32) {
+    match palette.slug.as_ref() {
+        "apple-light" => (
+            rgb(if selected {
+                palette.bg_base
+            } else {
+                palette.surface
+            })
+            .into(),
+            palette.text_main,
+        ),
+        "apple-dark" => (
+            rgb(if selected {
+                palette.surface
+            } else {
+                palette.bg_base
+            })
+            .into(),
+            palette.text_main,
+        ),
+        _ => (
+            if selected {
+                palette.selected_for_window(window_active)
+            } else {
+                rgb(palette.surface).into()
+            },
+            if selected {
+                palette.text_main
+            } else {
+                palette.text_sub
+            },
+        ),
+    }
+}
+
+fn tab_has_rail(palette: &theme::Theme) -> bool {
+    !matches!(palette.slug.as_ref(), "apple-light" | "apple-dark")
+}
+
+fn tab_rail(palette: &theme::Theme, window_active: bool) -> gpui::Div {
+    let ring = super::keyboard_nav::RING;
+    div()
+        .absolute()
+        .top(px(-ring))
+        .left(px(-ring))
+        .right(px(-ring))
+        .h(px(2.))
+        .bg(rgb(if window_active {
+            palette.ui_accent()
+        } else {
+            palette.text_muted
+        }))
+}
 
 impl KagiApp {
     // ──────────────────────────────────────────────────────────────────────
@@ -129,7 +180,6 @@ impl KagiApp {
             name: info.name.clone(),
             remote: None,
             is_worktree: info.is_worktree,
-            wt_color_idx: None,
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
@@ -375,7 +425,6 @@ impl KagiApp {
                     name: name.clone(),
                     remote: Some(rv.clone()),
                     is_worktree: false,
-                    wt_color_idx: None,
                 });
                 self.tabs.len() - 1
             }
@@ -953,24 +1002,13 @@ impl KagiApp {
             // left for the traffic lights drawn over it.
             .window_control_area(gpui::WindowControlArea::Drag)
             .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
-        let ring = super::keyboard_nav::RING;
+        let focused = self.tab_strip_focus.focused(window);
 
         for (i, tab) in tabs.into_iter().enumerate() {
             let is_active = i == active && !home_front;
             let is_wt = tab.is_worktree;
-            // Match the tab colour to the worktree's WIP-row lane colour.
-            let wt_color = is_wt.then(|| theme().lane_color(tab.wt_color_idx.unwrap_or(0)));
-            let bg = if is_active {
-                theme().selected_for_window(self.window_active_for_render(window))
-            } else {
-                rgb(theme().surface).into()
-            };
-            let fg = if is_active {
-                theme().text_main
-            } else {
-                theme().text_sub
-            };
-            let full_path = tab.path.display().to_string();
+            let (bg, fg) = tab_colors(&theme(), is_active, self.window_active_for_render(window));
+            let full_path = SharedString::from(tab.path.display().to_string());
 
             // chars()-based truncation is handled by `.truncate()` on the label
             // div (the byte-slice approach panics on multi-byte names). Remote
@@ -997,20 +1035,19 @@ impl KagiApp {
                 .tab_stop(false)
                 .on_click(close);
 
-            // Accent bar colour: worktree lane colour (every worktree tab), else
-            // the blue accent on the active main-repo tab; `None` → no bar.
-            let accent = wt_color.or_else(|| {
-                is_active.then(|| {
-                    rgb(if self.window_active_for_render(window) {
-                        theme().ui_accent()
-                    } else {
-                        theme().text_muted
-                    })
-                    .into()
+            // Reserve the close target; revealing it must not reflow the label.
+            let close_btn = div()
+                .id(("tab-close-reveal", i))
+                .opacity(if is_active || focused == Some(i) {
+                    1.
+                } else {
+                    0.
                 })
-            });
+                .group_hover(full_path.clone(), |style| style.opacity(1.))
+                .child(close_btn);
             let tab_el = strip_tabs
                 .cell(i, &name, div().id(("repo-tab", i)))
+                .group(full_path.clone())
                 .relative()
                 .flex()
                 .flex_row()
@@ -1020,31 +1057,15 @@ impl KagiApp {
                 .max_w(theme::scaled_px(TAB_MAX_W))
                 .px(super::keyboard_nav::inset(8.))
                 .gap_1()
-                // Worktree tabs are tinted with the SAME lane colour as that
-                // worktree's WIP row (user request), washed when inactive.
-                .when(!is_wt || is_active, |el| el.bg(bg))
-                .when_some(wt_color.filter(|_| is_wt && !is_active), |el, c| {
-                    el.bg(gpui::hsla(c.h, c.s, c.l, 0.20))
-                })
+                .bg(bg)
                 .text_sm()
                 .text_color(rgb(fg))
                 // The 1px between tabs is the strip showing through (the
                 // tab's own border is the keyboard focus ring).
                 .mr(px(1.))
                 .child(super::e2e::measure_inside(format!("repo-tab-{i}")))
-                // Top accent as an ABSOLUTE overlay bar (not `border_t_2`): no
-                // layout shift on selection, and an even full-width line. It
-                // covers the ring's top edge, as it did the tab's.
-                .when_some(accent, |el, c| {
-                    el.child(
-                        div()
-                            .absolute()
-                            .top(px(-ring))
-                            .left(px(-ring))
-                            .right(px(-ring))
-                            .h(px(2.))
-                            .bg(c),
-                    )
+                .when(is_active && tab_has_rail(&theme()), |el| {
+                    el.child(tab_rail(&theme(), self.window_active_for_render(window)))
                 })
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
@@ -1064,6 +1085,7 @@ impl KagiApp {
                 slot,
                 home.front,
                 self.window_active_for_render(window),
+                focused == Some(slot),
                 cx,
             ));
         }
@@ -1094,6 +1116,7 @@ fn render_home_tab(
     slot: usize,
     front: bool,
     window_active: bool,
+    focused: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let close = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
@@ -1106,16 +1129,14 @@ fn render_home_tab(
         .ml(theme::scaled_px(4.))
         .tab_stop(false)
         .on_click(close);
-    let (bg, fg) = if front {
-        (
-            theme().selected_for_window(window_active),
-            theme().text_main,
-        )
-    } else {
-        (rgb(theme().surface).into(), theme().text_sub)
-    };
-    let ring = super::keyboard_nav::RING;
+    let (bg, fg) = tab_colors(&theme(), front, window_active);
+    let close_btn = div()
+        .id("home-tab-close-reveal")
+        .opacity(if front || focused { 1. } else { 0. })
+        .group_hover("home-tab", |style| style.opacity(1.))
+        .child(close_btn);
     tabs.cell(slot, Msg::HomeTabTitle.t(), div().id("home-tab"))
+        .group("home-tab")
         .relative()
         .flex()
         .flex_row()
@@ -1130,20 +1151,8 @@ fn render_home_tab(
         .text_color(rgb(fg))
         .mr(px(1.))
         .child(super::e2e::measure_inside("home-tab"))
-        .when(front, |el| {
-            el.child(
-                div()
-                    .absolute()
-                    .top(px(-ring))
-                    .left(px(-ring))
-                    .right(px(-ring))
-                    .h(px(2.))
-                    .bg(rgb(if window_active {
-                        theme().ui_accent()
-                    } else {
-                        theme().text_muted
-                    })),
-            )
+        .when(front && tab_has_rail(&theme()), |el| {
+            el.child(tab_rail(&theme(), window_active))
         })
         .cursor(gpui::CursorStyle::PointingHand)
         .child(div().flex_1().truncate().child(SharedString::from(format!(
@@ -1216,7 +1225,6 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                     name: info.name.clone(),
                     remote: None,
                     is_worktree: info.is_worktree,
-                    wt_color_idx: None,
                 });
             }
             Err(e) => klog!("session: skip {} ({})", path.display(), e),
@@ -1239,4 +1247,58 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     app.reload_prelaunch();
     app.prompt_trust_if_untrusted(); // ADR-0160: prompt on restore too.
     klog!("session: restored {} tab(s)", app.tabs.len());
+}
+
+#[cfg(test)]
+mod tab_chrome_tests {
+    use super::*;
+
+    fn luminance(color: gpui::Hsla) -> f64 {
+        let color: gpui::Rgba = color.into();
+        let channel = |value: f32| {
+            let value = value as f64;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    }
+
+    #[test]
+    fn apple_tab_selection_contrast_and_preset_roles() {
+        for palette in theme::THEMES {
+            for key in [true, false] {
+                let (active, active_text) = tab_colors(palette, true, key);
+                let (inactive, inactive_text) = tab_colors(palette, false, key);
+                if !tab_has_rail(palette) {
+                    let first = luminance(active);
+                    let second = luminance(inactive);
+                    assert!(
+                        (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
+                        "{} selected tab must be distinct",
+                        palette.slug
+                    );
+                    for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
+                        let fill = luminance(fill);
+                        let text = luminance(rgb(text).into());
+                        assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
+                    }
+                } else {
+                    assert_eq!(
+                        active,
+                        palette.selected_for_window(key),
+                        "{} keeps selection palette",
+                        palette.slug
+                    );
+                    assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
+                    assert_eq!(
+                        (active_text, inactive_text),
+                        (palette.text_main, palette.text_sub)
+                    );
+                }
+            }
+        }
+    }
 }

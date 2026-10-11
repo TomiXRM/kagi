@@ -354,7 +354,7 @@ selection wash is `selection_tint` at 30 % opacity.
 | `change_typechange` | `#585b70` | `T` (type change) badge. |
 | `change_dir` | `#6c7086` | Directory names in the changed-files trees (inspector, commit panel, editor, commit preview). |
 | `accent` | `#cba6f7` | Cherry-pick button in the inspector, middle loading dot. |
-| `lane_hsl` | `[0.937, 1.0, 0.749]`, … (8 triples) | Commit-graph lane colours (lines, nodes, ref pills in swimlane mode), WIP rows and the matching worktree tab, PR commit lanes; cycles every 8 lanes. |
+| `lane_hsl` | `[0.937, 1.0, 0.749]`, … (8 triples) | Commit-graph lane colours (lines, nodes, ref pills in swimlane mode), WIP rows and PR commit lanes; cycles every 8 lanes. |
 | `avatar_sat` | `0.70` | Saturation of initial-letter avatar circles (hue comes from the author e-mail) in the graph and inspector. |
 | `avatar_light` | `0.60` | Lightness of the same avatar circles. |
 | `term_bg` | `#1e1e2e` | Integrated terminal background. |

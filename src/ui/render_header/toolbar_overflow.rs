@@ -301,7 +301,17 @@ impl gpui::RenderOnce for OverflowTrigger {
                 .cursor_pointer()
                 .when(self.selected, |el| el.bg(rgb(theme().surface)))
                 .hover(|style| style.bg(rgb(theme().surface)))
-                .tooltip(|window, cx| Tooltip::new(Msg::ToolbarOverflow.t()).build(window, cx))
+                .when(!self.selected, |el| {
+                    el.tooltip(|window, cx| {
+                        Tooltip::element(|_, _| {
+                            super::super::e2e::measure_control(
+                                "tb-overflow-tooltip",
+                                div().child(Msg::ToolbarOverflow.t()),
+                            )
+                        })
+                        .build(window, cx)
+                    })
+                })
                 .child("»")
                 .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                     let focus = window.focused(cx);
@@ -350,7 +360,7 @@ struct MenuState {
     trigger_focus: gpui::FocusHandle,
     // Retain state until synchronous dismissal has released deferred context.
     popover: Option<gpui::Entity<gpui_component::popover::PopoverState>>,
-    snapshot: Option<(u16, [Option<&'static str>; 14], i18n::Lang)>,
+    snapshot: Option<(u16, [Option<&'static str>; 14], i18n::Lang, gpui::Pixels)>,
 }
 
 impl MenuState {
@@ -446,17 +456,21 @@ impl gpui::RenderOnce for OverflowMenu {
                 focus: cached.read(cx).trigger_focus.clone(),
             })
             .content(move |_, window, cx| {
-                let snapshot = (self.hidden, self.reasons, i18n::lang());
+                let max_width = (window.viewport_size().width - px(32.))
+                    .max(px(0.))
+                    .min(px(500.));
+                let snapshot = (self.hidden, self.reasons, i18n::lang(), max_width);
                 let state = cached.read(cx);
                 if state.snapshot == Some(snapshot) {
                     if let Some(menu) = state.menu.clone() {
-                        return menu;
+                        return super::super::e2e::measure_control("tb-overflow-menu", menu);
                     }
                 }
                 let app = self.app.clone();
                 let hidden = self.hidden;
                 let reasons = self.reasons;
                 let menu = PopupMenu::build(window, cx, move |mut menu, _, _| {
+                    menu = menu.min_w(max_width.min(px(200.))).max_w(max_width);
                     for (index, &reason) in reasons.iter().enumerate() {
                         if hidden & (1 << index) == 0 {
                             continue;
@@ -479,6 +493,10 @@ impl gpui::RenderOnce for OverflowMenu {
                             _ => None,
                         };
                         let item = PopupMenuItem::element(move |window, _| {
+                            #[cfg(feature = "gui-e2e")]
+                            if let Some(reason) = reason {
+                                super::toolbar_a11y::record_description(IDS[index], reason);
+                            }
                             div()
                                 .id(("toolbar-overflow-item", index))
                                 .relative()
@@ -493,21 +511,28 @@ impl gpui::RenderOnce for OverflowMenu {
                                     )
                                 })
                                 .flex()
-                                .items_center()
+                                .items_start()
                                 .justify_between()
                                 .w_full()
                                 .gap_4()
-                                .child(div().flex().flex_col().child(name).when_some(
-                                    reason,
-                                    |el, reason| {
-                                        el.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(rgb(theme().text_muted))
-                                                .child(reason),
-                                        )
-                                    },
-                                ))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().truncate().child(name))
+                                        .when_some(reason, |el, reason| {
+                                            el.child(
+                                                div()
+                                                    .text_xs()
+                                                    .truncate()
+                                                    .text_color(rgb(theme().text_muted))
+                                                    .child(reason),
+                                            )
+                                        }),
+                                )
                                 .when_some(
                                     action.as_deref().and_then(|action| {
                                         gpui_component::kbd::Kbd::binding_for_action(
@@ -521,7 +546,7 @@ impl gpui::RenderOnce for OverflowMenu {
                                             format!("tb-overflow-shortcut-{index}"),
                                             kbd,
                                         );
-                                        el.child(kbd)
+                                        el.child(div().flex_shrink_0().child(kbd))
                                     },
                                 )
                                 .when(cfg!(feature = "gui-e2e"), |el| {
@@ -554,7 +579,7 @@ impl gpui::RenderOnce for OverflowMenu {
                         let _ = dismissed_cache.update(cx, |state, _| state.menu = None);
                     })
                     .detach();
-                menu
+                super::super::e2e::measure_control("tb-overflow-menu", menu)
             })
             .into_any_element()
     }

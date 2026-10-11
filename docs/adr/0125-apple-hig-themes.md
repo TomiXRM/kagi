@@ -555,3 +555,30 @@ and scrollbar behavior and are likewise not replaced.
 
 Native scenario guards restore disk keys, in-memory zoom/language, active theme,
 synced kit palette and scrollbar policy on Drop, including panic unwinding.
+
+## Amendment — 2026-10-11: bounded toolbar overflow detail (#1217)
+
+The dense transient command menu keeps gpui-kit Popover/PopupMenu navigation,
+focus and activation ownership. Labels and action-bound shortcuts share the
+first line; the shortcut column does not shrink. The label column can shrink
+to zero and its secondary unavailable reason truncates within that column.
+Full reasons remain in AX descriptions and the ordinary refusal footer.
+The menu width is bounded by the current viewport minus a 16 logical-pixel
+edge margin on each side; resizing an open menu refreshes that limit.
+The trigger has a tooltip only while closed. Japanese toolbar guard prose
+is fully translated, without English fallback clauses; English is unchanged.
+Rest, hover, disabled explanation and focus-visible roles retain the #1210
+contract. This does not alter Git planning, logging or unavailable activation.
+Tier B integration target: Apple Light JA 940×660 at 167%, both toolbar modes,
+open » and inspect shortcut containment and absence of the trigger tooltip.
+
+Native `toolbar_overflow` failed before the layout correction: a row starting
+at Y=187 placed its shortcut at Y=201.5, centered across the reason instead
+of on the first line. The same assertion passes afterward, along with actual
+popup/row/window shortcut containment, viewport width cap, Japanese drawn AX
+reason prose and no measured tooltip after hovering the open trigger for one
+second. The matrix retains EN/JA, both display modes and 940×660@167% plus
+1392×660@100%, with the existing Drop guard restoring global presentation.
+This first-line failure is regression evidence, not a claim that Tier A
+reproduced the issue's photographed glyph clipping; Tier B remains integration
+owner evidence.

@@ -146,6 +146,63 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                             "{language}/{display:?}/{id}: exact overflow membership"
                         );
                     }
+                    for index in 0..IDS.len() {
+                        if let Some(shortcut) = e2e::control_bounds(
+                            win.window_id(),
+                            &format!("tb-overflow-shortcut-{index}"),
+                        ) {
+                            let row = e2e::control_bounds(
+                                win.window_id(),
+                                &format!("tb-overflow-item-{index}"),
+                            )
+                            .unwrap();
+                            contained(viewport, shortcut, "overflow shortcut inside window");
+                            contained(
+                                e2e::control_bounds(win.window_id(), "tb-overflow-menu").unwrap(),
+                                shortcut,
+                                "shortcut inside actual popup menu",
+                            );
+                            contained(row, shortcut, "overflow shortcut inside its row");
+                            assert!(
+                                shortcut.top() <= row.top() + px(1.),
+                                "shortcut must occupy the label's first line: {row:?} / {shortcut:?}"
+                            );
+                        }
+                    }
+                    let menu_bounds =
+                        e2e::control_bounds(win.window_id(), "tb-overflow-menu").unwrap();
+                    assert!(menu_bounds.size.width <= px(width - 32.));
+                    if language == "ja" {
+                        for id in [
+                            "tb-pull", "tb-push", "tb-stash", "tb-pop", "tb-undo", "tb-redo",
+                        ] {
+                            if let Some(reason) = e2e::toolbar_description(id) {
+                                assert!(
+                                    !reason.chars().any(|ch| ch.is_ascii_alphabetic()),
+                                    "{id} reason must be Japanese: {reason}"
+                                );
+                            }
+                        }
+                    }
+                    e2e::clear_control_bounds(win.window_id(), "tb-overflow-tooltip");
+                    cx.update_window(win, |_, window, cx| {
+                        window.dispatch_event(
+                            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                                position: bounds.center(),
+                                pressed_button: None,
+                                modifiers: gpui::Modifiers::none(),
+                            }),
+                            cx,
+                        );
+                    })
+                    .unwrap();
+                    cx.advance_clock(std::time::Duration::from_secs(1));
+                    cx.run_until_parked();
+                    frame(cx, win);
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "tb-overflow-tooltip").is_none(),
+                        "open overflow must not render its trigger tooltip"
+                    );
                     assert!(
                         e2e::control_bounds(win.window_id(), "tb-overflow-shortcut-5").is_some(),
                         "Undo retains its actual shortcut"

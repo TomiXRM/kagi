@@ -140,3 +140,245 @@ pub fn scenario_bottom_panel_nested(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS bottom_panel_nested PR/Issues/Editor");
 }
+
+/// #1205 / #1206: manual keyboard activation and persistent selection paint.
+pub fn scenario_bottom_panel_tab_hover(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{i18n::Lang, BottomTab};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let fixture = build_fixture();
+    let before = repo_fingerprint(fixture.path());
+    let (app, window) = mount(cx, fixture.path());
+    let paint = |cx: &mut VisualTestAppContext, id: &str| {
+        cx.update_window(window, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+            let rect = e2e::control_bounds(window.window_handle().window_id(), id)
+                .expect("bottom tab measured");
+            let image = window.render_to_image().expect("native tab capture");
+            let scale = window.scale_factor();
+            image
+                .get_pixel(
+                    ((f32::from(rect.left()) + theme::scaled(8.)) * scale) as u32,
+                    ((f32::from(rect.top()) + theme::scaled(5.)) * scale) as u32,
+                )
+                .0
+        })
+        .unwrap()
+    };
+    for slug in ["apple-light", "apple-dark"] {
+        for zoom in [1.0, 1.67] {
+            for lang in [Lang::En, Lang::Ja] {
+                app.update(cx, |app, cx| {
+                    app.set_theme(slug, cx);
+                    theme::set_zoom(zoom);
+                    app.set_lang(lang, cx);
+                    app.bottom_tab = BottomTab::OperationLog;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                for active in [false, true] {
+                    app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+                    cx.simulate_mouse_move(
+                        window,
+                        gpui::point(gpui::px(0.), gpui::px(0.)),
+                        None,
+                        gpui::Modifiers::none(),
+                    );
+                    let rest = paint(cx, "tab-oplog");
+                    crate::app_conflict::click_control(cx, window, "tab-oplog");
+                    assert_eq!(
+                        paint(cx, "tab-oplog"),
+                        rest,
+                        "selection wins over hover: {slug}/{zoom}/{lang:?}/{active}"
+                    );
+                    if slug == "apple-light" && !active {
+                        assert_eq!(&rest[..3], &[211, 211, 211]);
+                    }
+                    let other = bounds(window, "tab-activity");
+                    cx.simulate_mouse_move(window, other.center(), None, gpui::Modifiers::none());
+                    assert_eq!(
+                        paint(cx, "tab-oplog"),
+                        rest,
+                        "unselected hover cannot erase selection"
+                    );
+                    assert_eq!(
+                        cx.read(|cx| app.read(cx).bottom_tab),
+                        BottomTab::OperationLog
+                    );
+                }
+                let attrs = cx.read(|cx| app.read(cx).bottom_tab_attributes_for_e2e());
+                let labels = if lang == Lang::En {
+                    ["Operation Log", "Terminal", "Activity"]
+                } else {
+                    ["操作ログ", "ターミナル", "アクティビティ"]
+                };
+                assert_eq!(attrs.len(), 3);
+                assert_eq!(attrs.iter().filter(|a| a.2).count(), 1);
+                assert_eq!(attrs.iter().filter(|a| a.3).count(), 1);
+                for (attr, label) in attrs.iter().zip(labels) {
+                    assert_eq!(attr.0, gpui::Role::Tab);
+                    assert_eq!(attr.1, label);
+                }
+                for id in ["tab-oplog", "tab-terminal", "tab-activity"] {
+                    let cell = bounds(window, id);
+                    let label = bounds(window, &format!("{id}-label"));
+                    assert!(label.left() >= cell.left() && label.right() <= cell.right());
+                    assert!(label.top() >= cell.top() && label.bottom() <= cell.bottom());
+                }
+                let reached = cx
+                    .update_window(window, |_, window, cx| {
+                        let root = app.read(cx).root_focus.clone().unwrap();
+                        root.focus(window, cx);
+                        window.draw(cx).clear();
+                        (0..100).find_map(|_| {
+                            window.focus_next(cx);
+                            window.draw(cx).clear();
+                            app.read(cx).bottom_tab_focused_for_e2e(window)
+                        })
+                    })
+                    .unwrap();
+                assert_eq!(reached, Some(0), "Tab reaches the selected pane");
+                let spawns = cx.read(|cx| {
+                    app.read(cx)
+                        .ui()
+                        .terminal_session
+                        .as_ref()
+                        .map_or(0, |session| session.spawns)
+                });
+                crate::keyboard_nav::keys(cx, window, "right");
+                assert_eq!(
+                    cx.read(|cx| app.read(cx).bottom_tab),
+                    BottomTab::OperationLog,
+                    "arrow focus never activates Terminal"
+                );
+                assert_eq!(
+                    cx.read(|cx| app
+                        .read(cx)
+                        .ui()
+                        .terminal_session
+                        .as_ref()
+                        .map_or(0, |session| session.spawns)),
+                    spawns,
+                    "arrow focus never starts a shell"
+                );
+                crate::keyboard_nav::keys(cx, window, "enter");
+                assert_eq!(cx.read(|cx| app.read(cx).bottom_tab), BottomTab::Terminal);
+                cx.simulate_keystrokes(window, "f19");
+                cx.update_window(window, |_, window, cx| {
+                    window.draw(cx).clear();
+                    let rect = bounds(window.window_handle(), "tab-terminal");
+                    let image = window.render_to_image().expect("native focus-ring capture");
+                    let scale = window.scale_factor();
+                    let ring = image
+                        .get_pixel(
+                            (f32::from(rect.center().x) * scale) as u32,
+                            ((f32::from(rect.top()) - 1.) * scale) as u32,
+                        )
+                        .0;
+                    let accent = theme::theme().ui_accent();
+                    assert_eq!(
+                        &ring[..3],
+                        &[
+                            ((accent >> 16) & 255) as u8,
+                            ((accent >> 8) & 255) as u8,
+                            (accent & 255) as u8,
+                        ],
+                        "focus ring is independent of selected fill"
+                    );
+                })
+                .unwrap();
+                cx.simulate_mouse_move(
+                    window,
+                    gpui::point(gpui::px(0.), gpui::px(0.)),
+                    None,
+                    gpui::Modifiers::none(),
+                );
+                let terminal_rest = paint(cx, "tab-terminal");
+                let terminal = bounds(window, "tab-terminal");
+                cx.simulate_mouse_move(window, terminal.center(), None, gpui::Modifiers::none());
+                assert_eq!(
+                    paint(cx, "tab-terminal"),
+                    terminal_rest,
+                    "selected Terminal retains its fill under hover"
+                );
+                crate::keyboard_nav::keys(cx, window, "right space");
+                assert_eq!(cx.read(|cx| app.read(cx).bottom_tab), BottomTab::Activity);
+                crate::keyboard_nav::keys(cx, window, "left");
+                assert_eq!(
+                    cx.update_window(window, |_, window, cx| app
+                        .read(cx)
+                        .bottom_tab_focused_for_e2e(window))
+                        .unwrap(),
+                    Some(1)
+                );
+                crate::keyboard_nav::keys(cx, window, "home space end");
+                assert_eq!(
+                    cx.read(|cx| app.read(cx).bottom_tab),
+                    BottomTab::OperationLog
+                );
+                assert_eq!(
+                    cx.update_window(window, |_, window, cx| app
+                        .read(cx)
+                        .bottom_tab_focused_for_e2e(window))
+                        .unwrap(),
+                    Some(2)
+                );
+                for forward in [true, false] {
+                    cx.update_window(window, |_, window, cx| {
+                        window.draw(cx).clear();
+                        if forward {
+                            window.focus_next(cx);
+                        } else {
+                            window.focus_prev(cx);
+                        }
+                        window.draw(cx).clear();
+                        assert_eq!(
+                            app.read(cx).bottom_tab_focused_for_e2e(window),
+                            None,
+                            "one Tab leaves the strip"
+                        );
+                    })
+                    .unwrap();
+                    // Re-enter by traversal to the selected pane.
+                    cx.update_window(window, |_, window, cx| {
+                        let root = app.read(cx).root_focus.clone().unwrap();
+                        root.focus(window, cx);
+                        window.draw(cx).clear();
+                        assert_eq!(
+                            (0..100).find_map(|_| {
+                                window.focus_next(cx);
+                                window.draw(cx).clear();
+                                app.read(cx).bottom_tab_focused_for_e2e(window)
+                            }),
+                            Some(0)
+                        );
+                    })
+                    .unwrap();
+                }
+                app.update(cx, |app, cx| {
+                    app.bottom_panel_open = false;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                draw(cx, window);
+                assert_eq!(
+                    cx.update_window(window, |_, window, cx| app
+                        .read(cx)
+                        .bottom_tab_focused_for_e2e(window))
+                        .unwrap(),
+                    None,
+                    "hidden pane yields focus"
+                );
+                app.update(cx, |app, cx| {
+                    app.bottom_panel_open = true;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+            }
+        }
+    }
+    assert_eq!(before, repo_fingerprint(fixture.path()));
+    unmount(cx, app, window);
+}

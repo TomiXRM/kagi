@@ -330,3 +330,27 @@ The fixture's repository fingerprint remains unchanged. `inactive_selection`,
 `conflict_continue_cache` and `conflict_pane_survives_activation` also pass.
 These are native renderer / attribute-recorder assertions, not VoiceOver or
 Tier B evidence.
+
+## Amendment — 2026-10-11: bottom-panel pane selectors (#1205, #1206)
+
+Operation Log / Terminal / Activity reuse `keyboard_nav::TabList`: one Tab
+stop, Left / Right / Home / End move focus, Enter / Space activate, Tab leaves.
+Activation is manual because Terminal may start a process. Rounded, compact
+cells take the sidebar mode-selector geometry, with a coherent neutral panel
+boundary and localized visible/AX names in EN/JA. The existing fixed focus ring
+is independent of selection. Selected cells keep `selected_for_window` under
+hover; only unselected cells receive the `surface` wash. Closing the panel
+returns focus to the app root rather than leaving focus on an absent cell.
+BottomTab ownership, lazy terminal startup, Cmd+J and existing logging remain
+unchanged. This is shared Kagi chrome, not AppKit material or native controls.
+
+Native `bottom_panel_tab_hover` failed before the cutover with rendered
+`#e5e5e5` hover instead of inactive `#d3d3d3` selection. Afterward it passes
+Apple Light/Dark × EN/JA × 100%/167% with active/inactive hover paint, named
+Tab attributes, one selected cell/Tab stop, label containment, manual key
+activation, unchanged shell spawn count on arrow focus, distinct accent-ring
+pixels, one-step Tab departure and focus release on close. Lazy Terminal
+startup's focus transfer is restored to the keyboard cell; otherwise the next
+Right/Space goes to Terminal rather than the selector. `bottom_panel_nested`
+and `bottom_panel_motion` also pass. These are native renderer and attribute
+recorder assertions; live VoiceOver / real-window comparison remain Tier B.

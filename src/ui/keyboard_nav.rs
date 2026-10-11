@@ -200,6 +200,8 @@ pub(crate) struct TabFocus {
     roving: Rc<Cell<Option<u64>>>,
     /// Handles of cells gone since the last frame.
     closed: RefCell<Vec<FocusHandle>>,
+    #[cfg(feature = "gui-e2e")]
+    a11y: Rc<RefCell<Vec<(Role, String, bool, bool)>>>,
 }
 
 impl Default for TabFocus {
@@ -216,11 +218,18 @@ impl Default for TabFocus {
             cells,
             roving,
             closed: RefCell::default(),
+            #[cfg(feature = "gui-e2e")]
+            a11y: Default::default(),
         }
     }
 }
 
 impl TabFocus {
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn recorded_tabs(&self) -> Vec<(Role, String, bool, bool)> {
+        self.a11y.borrow().clone()
+    }
+
     /// The handles of the cells `keys` names, in that order: a known cell
     /// keeps its handle, a new one gets one, and a cell no longer named
     /// leaves (its handle kept for [`Self::release_closed`]).
@@ -346,6 +355,8 @@ pub(crate) struct TabList {
     /// Where focus goes back to after a pointer click: the cell must not keep
     /// it, or the arrows would stop reaching what they did before the click.
     pointer_focus: Option<FocusHandle>,
+    #[cfg(feature = "gui-e2e")]
+    a11y: Rc<RefCell<Vec<(Role, String, bool, bool)>>>,
 }
 
 impl TabList {
@@ -364,6 +375,8 @@ impl TabList {
         cx: &App,
     ) -> Self {
         let handles = focus.sync(&keys, cx);
+        #[cfg(feature = "gui-e2e")]
+        focus.a11y.borrow_mut().clear();
         let roving = focus
             .roving
             .get()
@@ -383,6 +396,8 @@ impl TabList {
             activation,
             select: Rc::new(select),
             pointer_focus,
+            #[cfg(feature = "gui-e2e")]
+            a11y: focus.a11y.clone(),
         }
     }
 
@@ -394,6 +409,13 @@ impl TabList {
     /// The cell for `slot`, named `label`.
     pub(crate) fn cell(&self, slot: usize, label: &str, el: Stateful<Div>) -> Stateful<Div> {
         let selected = self.selected == Some(slot);
+        #[cfg(feature = "gui-e2e")]
+        self.a11y.borrow_mut().push((
+            Role::Tab,
+            label.to_string(),
+            selected,
+            self.stop == Some(slot),
+        ));
         let handle = self.handles[slot]
             .clone()
             .tab_index(0)

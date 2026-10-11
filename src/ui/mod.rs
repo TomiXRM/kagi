@@ -1091,6 +1091,8 @@ pub struct KagiApp {
     pub(crate) panel_motion: panel_motion::PanelMotions,
     /// Active tab in the bottom panel.
     pub bottom_tab: BottomTab,
+    /// Shared roving focus for the bottom-panel pane selector.
+    pub(crate) bottom_tab_focus: keyboard_nav::TabFocus,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
     pub activity_granularity: kagi_domain::activity::Granularity,
     /// Index of the chart bucket the pointer is over (instant hover readout),
@@ -1463,6 +1465,7 @@ impl KagiApp {
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
+            bottom_tab_focus: Default::default(),
             activity_granularity: kagi_domain::activity::Granularity::Week,
             activity_hover: None,
             smart_commit: smart_commit::SmartCommitState::load(),

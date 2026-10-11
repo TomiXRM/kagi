@@ -5,6 +5,16 @@
 use super::*;
 
 impl KagiApp {
+    #[cfg(feature = "gui-e2e")]
+    pub fn bottom_tab_focused_for_e2e(&self, window: &Window) -> Option<usize> {
+        self.bottom_tab_focus.focused(window)
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn bottom_tab_attributes_for_e2e(&self) -> Vec<(gpui::Role, String, bool, bool)> {
+        self.bottom_tab_focus.recorded_tabs()
+    }
+
     /// Bottom panel slot — T-BP-002: open/close + height resize.
     ///
     /// Returns `None` when the panel is closed (so `div().children(…)` adds no
@@ -21,9 +31,12 @@ impl KagiApp {
         visible: f32,
         height: f32,
         active_tab: BottomTab,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         if visible <= 0. {
+            self.bottom_tab_focus
+                .yield_focus(self.root_focus.as_ref(), window, cx);
             return None;
         }
 
@@ -73,92 +86,92 @@ impl KagiApp {
                 |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
             );
 
-        // ── Tab bar ──
-        let tab_bar = {
-            let tab_operationlog_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                this.bottom_tab = BottomTab::OperationLog;
-                cx.notify();
-            });
-            let tab_terminal_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                this.bottom_tab = BottomTab::Terminal;
-                // T-BP-007: lazy-start the terminal on first show.
-                this.ensure_terminal(window, cx);
-                cx.notify();
-            });
-            let tab_activity_click = cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                this.bottom_tab = BottomTab::Activity;
-                cx.notify();
-            });
-
-            let make_tab = |label: &'static str, is_active: bool| {
-                let text_color = if is_active {
+        // Manual activation: focusing Terminal must never start its process.
+        const TABS: [BottomTab; 3] = [
+            BottomTab::OperationLog,
+            BottomTab::Terminal,
+            BottomTab::Activity,
+        ];
+        let entity = cx.weak_entity();
+        let tabs = keyboard_nav::TabList::new(
+            &self.bottom_tab_focus,
+            keyboard_nav::slot_keys(TABS.len()),
+            vec![0, 1, 2],
+            TABS.iter().position(|&tab| tab == active_tab),
+            keyboard_nav::Activation::Manual,
+            self.root_focus.clone(),
+            move |slot, window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    let kept = this.bottom_tab_focus.focused_cell(window);
+                    this.bottom_tab = TABS[slot];
+                    if this.bottom_tab == BottomTab::Terminal {
+                        this.ensure_terminal(window, cx);
+                    }
+                    // Lazy startup focuses the terminal; keyboard activation
+                    // must keep the selector's focus until Tab leaves it.
+                    if let Some(cell) = kept {
+                        window.focus(&cell, cx);
+                    }
+                    cx.notify();
+                });
+            },
+            cx,
+        );
+        let cell = |slot: usize, id: &'static str| {
+            let tab = TABS[slot];
+            let selected = tab == active_tab;
+            tabs.cell(slot, tab.label(), div().id(id))
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .flex_shrink_0()
+                .h(theme::scaled_px(BOTTOM_PANEL_TAB_H))
+                .px(keyboard_nav::inset(12.))
+                .rounded(theme::scaled_px(4.))
+                .text_xs()
+                .cursor_pointer()
+                .text_color(rgb(if selected {
                     theme().text_main
                 } else {
                     theme().text_muted
-                };
-                let bg_color = if is_active {
-                    theme().selected_for_window(self.window_active)
-                } else {
-                    rgb(theme().panel).into()
-                };
-                div()
-                    .px_3()
-                    .h(theme::scaled_px(BOTTOM_PANEL_TAB_H))
-                    .flex()
-                    .items_center()
-                    .flex_shrink_0()
-                    .bg(bg_color)
-                    .text_sm()
-                    .text_color(rgb(text_color))
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    .child(SharedString::from(label))
-            };
-
-            div()
-                .id("bottom-panel-tab-bar")
-                .flex()
-                .flex_row()
-                .items_center()
-                .w_full()
-                .flex_shrink_0()
-                .bg(rgb(theme().panel))
-                .child(
-                    div()
-                        .id("tab-oplog")
-                        .flex()
-                        .flex_shrink_0()
-                        .on_click(tab_operationlog_click)
-                        .hover(|s| s.cursor_pointer())
-                        .child(make_tab(
-                            BottomTab::OperationLog.label(),
-                            active_tab == BottomTab::OperationLog,
-                        )),
-                )
-                .child(
-                    div()
-                        .id("tab-terminal")
-                        .flex()
-                        .flex_shrink_0()
-                        .on_click(tab_terminal_click)
-                        .hover(|s| s.cursor_pointer())
-                        .child(make_tab(
-                            BottomTab::Terminal.label(),
-                            active_tab == BottomTab::Terminal,
-                        )),
-                )
-                .child(
-                    div()
-                        .id("tab-activity")
-                        .flex()
-                        .flex_shrink_0()
-                        .on_click(tab_activity_click)
-                        .hover(|s| s.cursor_pointer())
-                        .child(make_tab(
-                            BottomTab::Activity.label(),
-                            active_tab == BottomTab::Activity,
-                        )),
-                )
+                }))
+                .when(selected, |cell| {
+                    cell.bg(theme().selected_for_window(self.window_active))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                })
+                .when(!selected, |cell| {
+                    cell.hover(|style| style.bg(rgb(theme().surface)))
+                })
+                .child(e2e::measure_control(
+                    match slot {
+                        0 => "tab-oplog-label",
+                        1 => "tab-terminal-label",
+                        _ => "tab-activity-label",
+                    },
+                    SharedString::from(tab.label()),
+                ))
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(e2e::measure_inside(id))
+                })
         };
+        let tab_bar = tabs
+            .list(div().id("bottom-panel-tab-bar"))
+            .flex()
+            .items_center()
+            .w_full()
+            .flex_shrink_0()
+            .bg(rgb(theme().panel))
+            .child(
+                div()
+                    .flex()
+                    .mx_2()
+                    .gap_1()
+                    .rounded(theme::scaled_px(4.))
+                    .child(cell(0, "tab-oplog"))
+                    .child(cell(1, "tab-terminal"))
+                    .child(cell(2, "tab-activity")),
+            );
 
         // ── Body: Operation Log or Terminal ──
         let body = match active_tab {

@@ -68,6 +68,9 @@ mod tests {
     }
     #[test]
     fn ui_font_has_bundled_japanese_fallback() {
+        let _guard = crate::theme::ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let font = ui_font();
         assert_eq!(font.family.as_ref(), ui_font_family());
         assert_eq!(

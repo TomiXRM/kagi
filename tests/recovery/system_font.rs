@@ -34,7 +34,7 @@ fn select_font(cx: &mut VisualTestAppContext, source: settings::UiFontSource) {
             gpui_component::Theme::global(cx).font_family.as_ref(),
             fonts::ui_font_family()
         );
-        for weight in [FontWeight::NORMAL, FontWeight::SEMIBOLD, FontWeight::BOLD] {
+        let ids = [FontWeight::NORMAL, FontWeight::SEMIBOLD, FontWeight::BOLD].map(|weight| {
             let mut font = theme::ui_font();
             font.weight = weight;
             let id = cx.text_system().resolve_font(&font);
@@ -46,6 +46,18 @@ fn select_font(cx: &mut VisualTestAppContext, source: settings::UiFontSource) {
                 font.family,
                 "requested family must resolve, not silently use the generic fallback"
             );
+            id
+        });
+        assert_ne!(
+            ids[0], ids[2],
+            "normal and bold must resolve distinct native faces"
+        );
+        if source == settings::UiFontSource::System {
+            assert_ne!(
+                ids[0], ids[1],
+                "system semibold must not fall back to regular"
+            );
+            assert_ne!(ids[1], ids[2], "system semibold must have its own face");
         }
     });
 }

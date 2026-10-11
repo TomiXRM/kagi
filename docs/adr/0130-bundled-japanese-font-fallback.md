@@ -123,6 +123,14 @@ layout constants and existing geometry oracles remain unchanged. Font-size
 adjustments, if necessary, must be justified by this measurement, not guessed.
 The startup contract is `[kagi] ui_font: <family>`.
 
+Review validation also requires distinct native FontIds for System normal,
+semibold and bold, and distinct normal/bold IDs for bundled Inter (which ships
+only Regular/Bold). GPUI's public `get_font_for_id` returns the cached requested
+Font, not the native face's weight property; request weight alone is therefore
+not evidence of the selected face. The font-stack unit test holds the existing
+active-theme test mutex so its two policy reads cannot straddle another test's
+Apple/non-Apple theme switch.
+
 Measured on the native hidden 1440×900 fixture: all 128 height comparisons had
 **0px delta**, including both toolbar modes. At 100%/167%, Icon Only toolbar
 heights were 47/78px, captions 54/90px, sidebar body rows 18/30px, headers

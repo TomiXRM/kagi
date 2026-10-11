@@ -479,10 +479,8 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the closed Home tab's focus goes to the window"
     );
-    // ⌘W with the focus arrowed to another tab's cell closes the tab in
-    // front, not that one; the cells after it move up a slot, and the focus
-    // and the arrowed-to cell move with their tab (#961 review): Enter then
-    // switches to the tab that had the focus.
+    // ⌘W closes the front tab, not the arrow-focused cell. Once only one
+    // document remains, #1179 hides the strip and releases that cell's focus.
     assert_eq!(
         cx.read(|cx| app.read(cx).tabs.len()),
         2,
@@ -493,6 +491,43 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         0,
         "the first in front"
     );
+    // #961 retains keyed focus when closing/reindexing still leaves a strip.
+    let reindex_fixture = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(reindex_fixture.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1));
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "keyed focus follows second tab into slot zero"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        1,
+        "the third tab stays selected while keyed focus follows the second"
+    );
+    keys(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        0,
+        "Enter activates reindexed focus"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs[0].path.canonicalize().unwrap()),
+        second.path().canonicalize().unwrap()
+    );
+    // Keep the independent two→one hiding oracle below.
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
     })
@@ -503,10 +538,13 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         strip_focus(cx),
-        Some(0),
-        "the focus moved with the second tab into the first slot"
+        None,
+        "single-document hiding releases the arrow-focused surviving tab"
     );
-    keys(cx, window, "enter");
+    assert!(
+        root_focused(cx, &app, window),
+        "hidden strip hands focus to root"
+    );
     let (tabs, active, path) = cx.read(|cx| {
         let app = app.read(cx);
         (
@@ -518,8 +556,8 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     assert_eq!((tabs, active), (1, 0));
     assert_eq!(
         path.map(|p| p.canonicalize().unwrap()),
-        Some(second.path().canonicalize().unwrap()),
-        "the tab left is the one the focus was on"
+        Some(reindex_fixture.path().canonicalize().unwrap()),
+        "the surviving arrow-focused repository remains selected with the strip hidden"
     );
     let third = build_fixture();
     app.update(cx, |app, cx| {

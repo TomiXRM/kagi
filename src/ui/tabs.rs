@@ -913,8 +913,49 @@ impl KagiApp {
     // Rendering
     // ──────────────────────────────────────────────────────────────────────
 
-    /// Render the repository tab strip (above the header toolbar).  Returns
-    /// `None` when no tabs are open (Welcome screen is shown instead).
+    /// New-document affordance belongs to the frame, including hidden-strip states.
+    pub(super) fn render_tab_add(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.tabs.is_empty() && self.remote_view.is_some() {
+            match i18n::lang() {
+                i18n::Lang::Ja => {
+                    i18n::command_label_ja("file.openRepository").unwrap_or("Open Repository…")
+                }
+                i18n::Lang::En => "Open Repository…",
+            }
+        } else {
+            Msg::HomeTabTitle.t()
+        };
+        // Like the named overflow trigger, a glyph-only node cannot take its AX
+        // name from gpui-kit's visible label (which would name it merely "+").
+        super::e2e::measure_control(
+            "tab-add",
+            div()
+                .id("tab-add")
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(theme::scaled_px(28.))
+                .h(theme::scaled_px(24.))
+                .flex_shrink_0()
+                .rounded_md()
+                .text_color(rgb(theme().text_main))
+                .hover(|style| style.bg(rgb(theme().surface)))
+                .cursor_pointer()
+                .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+                .child("+")
+                // Cmd+T / File → New Tab is the keyboard path.
+                .on_click(cx.listener(|this, _, window, cx| this.open_home_tab(window, cx))),
+        )
+    }
+
+    pub(super) fn tab_strip_visible(&self) -> bool {
+        self.tabs.len() + usize::from(self.home.is_some()) > 1
+    }
+
+    /// Render document tabs below the unified frame only when multiple documents
+    /// are open. Home counts as a document; Cmd+T/Cmd+W work without the strip.
     pub fn render_tab_strip(
         &mut self,
         window: &mut Window,
@@ -925,9 +966,8 @@ impl KagiApp {
         // handle, a focus on it and the arrowed-to mark with it (#961
         // review). Home is the last cell, under a key no tab has.
         const HOME_KEY: u64 = u64::MAX;
-        if self.tabs.is_empty() {
-            // No strip: every cell is gone, and one that still holds the
-            // focus (the last tab's, Home's) hands it to the window.
+        if !self.tab_strip_visible() {
+            // Hidden strip: release focus from cells no longer drawn.
             self.tab_strip_focus.sync(&[], cx);
             self.tab_strip_focus
                 .release_closed(self.root_focus.as_ref(), window, cx);
@@ -996,12 +1036,7 @@ impl KagiApp {
             .h(theme::scaled_px(TAB_STRIP_H))
             .bg(rgb(theme().panel))
             .border_b_1()
-            .border_color(rgb(theme().surface))
-            // Themed title bar: the strip now fills the (transparent) OS title-bar
-            // area. Drag it to move the window, and on macOS reserve space at the
-            // left for the traffic lights drawn over it.
-            .window_control_area(gpui::WindowControlArea::Drag)
-            .when(cfg!(target_os = "macos"), |s| s.pl(gpui::px(80.)));
+            .border_color(rgb(theme().surface));
         let focused = self.tab_strip_focus.focused(window);
 
         for (i, tab) in tabs.into_iter().enumerate() {
@@ -1089,21 +1124,6 @@ impl KagiApp {
                 cx,
             ));
         }
-
-        // [+] new-tab button at the right end → the Home tab (#923).
-        let plus = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-            this.open_home_tab(window, cx);
-        });
-        let plus_btn = Button::new("tab-add")
-            .label("+")
-            .ghost()
-            .small()
-            .tooltip(Msg::HomeTabTitle.t())
-            // The strip is one Tab stop (#961 review); ⌘T opens Home.
-            .tab_stop(false)
-            .on_click(plus);
-
-        strip = strip.child(super::e2e::measure_control("tab-add", plus_btn));
 
         Some(strip.into_any())
     }

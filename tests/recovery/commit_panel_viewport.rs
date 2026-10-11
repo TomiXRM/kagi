@@ -62,7 +62,10 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                 );
                 if zoom == 1. {
                     let expected_height = match name {
-                        "cp-files" => 411.5,
+                        // #1179's unified frame hides the single-document strip,
+                        // giving the flexible file list more viewport height.
+                        // The fixed AutoGrow-era composer/action sizes below stay.
+                        "cp-files" => 440.5,
                         "cp-body" => 257.,
                         "cp-smart-suggest" => 21.5,
                         "cp-commit-action" => 25.,
@@ -71,7 +74,7 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                     assert_eq!(
                         bounds.size.height,
                         px(expected_height),
-                        "desktop height must match AutoGrow-era measurement"
+                        "desktop height must match recorded unified-frame measurement"
                     );
                 }
             }

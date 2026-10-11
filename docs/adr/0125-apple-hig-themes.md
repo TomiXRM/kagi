@@ -556,6 +556,86 @@ and scrollbar behavior and are likewise not replaced.
 Native scenario guards restore disk keys, in-memory zoom/language, active theme,
 synced kit palette and scrollbar policy on Drop, including panic unwinding.
 
+## Amendment — 2026-10-11: unified window frame (#1179)
+
+Every theme uses the same unified top-frame geometry, not an Apple-only fork.
+GPUI still owns native macOS traffic lights, positioned at (9,16) logical px;
+the frame reserves an unscaled 80px left exclusion. Repository name and branch
+remain left, existing actions and » retain their dispatch/focus/AX owners, and
+workspace controls stay right. Only blank spacers use `WindowControlArea::Drag`.
+Colours continue through the existing panel/surface/accent bridge, not AppKit
+material imitation or a new title state.
+
+Icon Only has a 52-reference-px frame (46.8 logical px at 100%, below the 54px
+target); Icon and Text uses 60 reference px (54 logical px at 100%).
+The 20px glyphs, caption geometry and #1178 setting/menu paths remain unchanged.
+#1210's production layout fitting additionally reserves the native exclusion
+and trailing +; natural-width caching, overflow priority, keyboard menu and
+unavailable reasons remain authoritative.
+
+The document strip moves below the frame and is shown only when repository
+tabs plus the optional Home tab total more than one. This explicitly supersedes
+#1180's “A single tab is not hidden.” Home is still a document: one repository
+plus Home shows both cells. The + affordance moves from the strip to the frame's
+right end, including Home's frame; Cmd+T and File → New Tab open Home, Cmd+W and
+File → Close Tab close the front document even with the strip hidden. Hidden
+cells release keyboard focus to the root through the existing `TabList` owner.
+Neutral fills, tab close/reveal rules and manual keyboard activation stay intact.
+
+Native regressions intentionally update `toolbar-row` heights and single-tab
+expectations; they measure first-frame ordering, exclusion/identity/action
+containment, blank chrome region and the two-document strip below the frame at
+1392×883, EN/JA, 100%/167%, Apple Light/Dark and Mocha. Neutral-tab paint and
+existing toolbar/overflow/keyboard scenarios retain their behavioral oracles.
+Real native traffic-light interaction, window dragging and the requested
+Finder comparison remain integration-owned Tier B, not claimed by bounds probes.
+
+Regression-first evidence: against the old sources, `unified_toolbar` failed
+because the toolbar began at Y=36 instead of Y=0. After recomposition the
+scenario passes its full matrix, including hidden-strip New/Close Tab commands,
+frame + → Home and focus release when closing two documents down to one.
+Scoped native verification passes all eight affected scenarios (six in the
+first post-cutover selection, then `repo_tabs_neutral` / `keyboard_nav` after
+deliberately updating their viewport and single-document focus expectations).
+`ToolbarRestore` composes the existing presentation Drop guard, including
+`GlobalSettings::capture()`, and restores cached toolbar display from its saved
+key on unwind. Neutral fill/rail pixels and toolbar counts/reasons remain tested.
+
+Review correction: workspace and Home share a single frame-height owner for both
+display modes. The drag target is the actual, full-height blank spacer after
+identity, not a container wrapping controls or a test-only band. macOS windows
+set `app_owns_titlebar_drag: true`, disabling AppKit's enlarged native titlebar
+drag band over the toolbar. A left press arms movement only in that blank spacer;
+the following pressed move calls `window.start_window_move()`. Double-click on
+the spacer calls `window.titlebar_double_click()`, honoring macOS's configured
+titlebar double-click behavior (zoom/minimize/none); toolbar controls do neither.
+Windows retains its native Drag hit test on the same blank spacers only.
+
+Empty Home has no + when it cannot open another document. The no-tabs remote
+route retains the folder-dialog action and uses Open Repository's localized
+tooltip/AX name. As with the existing named overflow trigger, the + glyph's
+node is drawn explicitly because the pinned Button derives AX names only from
+visible labels. Cmd+T remains its keyboard route rather than adding a Tab stop.
+`tab_strip_visible` gates both the strip and corresponding TabPanel roles:
+hidden single-document panels are ordinary content. Native regression measures
+production spacer bounds disjoint from every toolbar control, covers both display
+modes ≤54px at 100%, equal Home/workspace heights and empty-Home + absence.
+The original three-tab #961 close/reindex/Enter oracle is retained beside the
+two→one focus-release check.
+
+Review validation: the bounded native selection
+`unified_toolbar,repo_tabs_neutral,keyboard_nav,toolbar_overflow,toolbar_count_scale,workspace_mode_toolbar,home_,repo_tab_panels`
+passes 18/18 scenarios, including all 11 matching Home scenarios. The unified
+matrix now includes Icon and Text and measures the real spacer rather than an
+E2E-only drag proxy. Real AppKit drag/double-click delivery remains Tier B.
+
+Integration geometry correction: the `commit_panel_viewport` desktop file-list
+measurement becomes 440.5 logical px at 1392×883@100%, replacing 411.5px from
+the separate strip/toolbar arrangement. The single-document unified frame gives
+its flexible viewport more height; fixed composer (257px), Generate (21.5px),
+Commit (25px), desktop panel width and small-body AutoGrow oracles are unchanged.
+Recovery-test searches for the old list height, 36/52px chrome constants and
+header offsets found no additional obsolete recorded-header-height expectation.
 ## Amendment — 2026-10-11: Home narrow-window containment (#1212)
 
 Home is an open dashboard with a secondary Recent navigator. Like PR detail,
@@ -725,3 +805,13 @@ the nonshrinking Secondary action. Repository row state/compact presentation
 are grouped at the renderer boundary, following the existing pane-cell tuple
 convention rather than adding a Clippy suppression. The merged scoped `home_`
 suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.
+
+## Amendment — 2026-10-11: Home virtual-list containment oracle (#1179, #1212)
+
+The unified frame can expose a partially mounted GitHub repository row below
+Home's scrollable fold at 940×660/167%. Native row bounds include virtualization
+overdraw, not only painted clipped content. `home_heading` therefore restricts
+window containment to fixed controls and the first Recent repository row;
+compact GitHub action-in-row and name-priority checks remain, along with every
+other heading, fixed-control and wide-layout assertion. Production is unchanged.
+

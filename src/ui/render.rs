@@ -752,11 +752,11 @@ impl Render for KagiApp {
             // (`is_action_available`, walks the dispatch tree) then greys out
             // any command whose handler is absent — the ADR-0029 disabled model.
             .map(|el| self.register_menu_actions(el, cx))
-            // ── W4-TABS: repository tab strip (above the header toolbar) ──
-            .children(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
             .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
+            // Document tabs are separate from the unified native top frame.
+            .children(self.render_tab_strip(window, cx))
             // ── Operation strip (#704) — while a merge / rebase / cherry-pick
             //    / revert is in progress AND the conflict editor is not up.
             //    Owner ruling over #707: the editor's dashboard already carries

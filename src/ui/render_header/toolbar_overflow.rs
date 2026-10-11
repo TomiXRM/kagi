@@ -90,7 +90,10 @@ impl Layout {
             let overflow = if hidden != 0 { 36. * scale } else { 0. };
             repo + repo_spacing
                 + 2. * (workspace + workspace_spacing + overflow).max(100. * scale)
+                // Frame padding, native lights (unscaled) and trailing +.
                 + 24. * scale
+                + if cfg!(target_os = "macos") { 80. - 12. * scale } else { 0. }
+                + 28. * scale
         };
         if required(repo, workspace, 0) <= self.available {
             self.last_hidden = 0;

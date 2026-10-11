@@ -996,6 +996,8 @@ pub struct KagiApp {
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     pub(crate) window_active: bool,
     pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
+    /// Armed only by a press on blank unified chrome, never toolbar controls.
+    pub(crate) titlebar_should_move: bool,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
@@ -1439,6 +1441,7 @@ impl KagiApp {
             window_activation_subscription: None,
             window_active: true,
             toolbar_layout: render_header::toolbar_overflow::Layout::default(),
+            titlebar_should_move: false,
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             view_epoch: 0,
@@ -3398,6 +3401,7 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: main_window_titlebar(),
+            app_owns_titlebar_drag: true,
             window_decorations: main_window_decorations(),
             // Linux: gpui sets the Wayland app_id / X11 WM_CLASS from this so
             // GNOME binds the window to com.tomixrm.kagi.desktop instead of a
@@ -3502,11 +3506,11 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // Themed title bar: make the native bar transparent so kagi's own top
     // content fills the title-bar area. macOS still draws the traffic lights,
-    // positioned over our content; the tab strip reserves space for them.
+    // positioned over the unified frame, which reserves an unscaled 80px inset.
     Some(gpui::TitlebarOptions {
         title: None,
         appears_transparent: true,
-        traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
+        traffic_light_position: Some(gpui::point(px(9.0), px(16.0))),
     })
 }
 

@@ -193,7 +193,7 @@ impl KagiApp {
             .child(self.render_home_main(sidebar, compact, window, cx));
         // Home's content is the Home cell's panel while the strip is drawn
         // (#983); with no tab there is no strip, so no tab list.
-        let body = if self.tabs.is_empty() {
+        let body = if !self.tab_strip_visible() {
             body
         } else {
             super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t())
@@ -206,21 +206,37 @@ impl KagiApp {
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            // With no tab there is no strip, but the (transparent, themed)
-            // title bar still needs its band: the traffic lights are drawn
-            // over it and it is what drags the window.
-            .child(match self.render_tab_strip(window, cx) {
-                Some(strip) => strip,
-                None => div()
+            // Home shares the native frame; document tabs never host the lights.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
                     .w_full()
-                    .h(theme::scaled_px(super::tabs::TAB_STRIP_H))
+                    .h(super::render_header::chrome_frame_height())
+                    .pl(if cfg!(target_os = "macos") {
+                        px(80.)
+                    } else {
+                        theme::scaled_px(12.)
+                    })
+                    .pr_3()
                     .flex_shrink_0()
                     .bg(rgb(theme().panel))
-                    .border_b_1()
-                    .border_color(rgb(theme().surface))
-                    .window_control_area(gpui::WindowControlArea::Drag)
-                    .into_any_element(),
-            })
+                    .relative()
+                    .child(super::e2e::measure_inside("home-frame"))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(Msg::HomeTabTitle.t()),
+                    )
+                    .child(self.render_chrome_spacer("home-drag-region", cx))
+                    .when(!self.tabs.is_empty() || self.remote_view.is_some(), |el| {
+                        el.child(self.render_tab_add(cx))
+                    }),
+            )
+            .children(self.render_tab_strip(window, cx))
             .child(body);
         // A flex box, as the Welcome screen's root was: the window-global
         // modals attached below are absolute overlays, and in a plain block
@@ -381,10 +397,6 @@ impl KagiApp {
             .flex_1()
             .min_w(px(0.))
             .h_full()
-            // Most of Home is empty surface: let it drag the window, as the
-            // Welcome screen did (the themed title bar has no OS drag area
-            // when no tab strip is drawn). Controls keep their own clicks.
-            .window_control_area(gpui::WindowControlArea::Drag)
             .child(
                 div()
                     .flex()

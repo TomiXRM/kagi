@@ -195,21 +195,33 @@ snapshot content.
 The snapshot body additionally has an `EditorSnapshot` key context, but key
 predicates alone are not a safety boundary: selecting a revision leaves root
 focus, and its header Button is outside the body. Save and repository Undo/Redo
-handlers therefore also check `showing_history_commit()` (History right pane
-with a selected commit), independent of focus. A dirty live buffer must remain
+handlers therefore require foreground `WorkspaceMode::Editor` and
+`showing_history_commit()` (History right pane with a selected commit),
+independent of focus. A retained historical Editor behind PRs, Issues or a
+takeover must not block those surfaces' normal shortcuts. Native coverage
+switches from a selected historical commit to PRs and opens its real Undo modal.
+A dirty live buffer in the foreground historical Editor must remain
 dirty and unchanged on disk before and after clicking the reader. Native
 coverage retains a real undo-capable history entry and verifies no modal opens.
 Open current leaves historical state with the same live Input focused.
 
-Each literal block contains at most 32 source lines so TextView's existing
-`ListState` virtualizes chunks rather than laying out the whole file on every
-frame. Syntax highlighting is disabled above 128 KiB or 2,048 lines; initial
+For LF content, each literal block contains at most 32 source lines so
+TextView's existing `ListState` virtualizes chunks rather than laying out the
+whole file on every frame. Syntax highlighting is disabled above 128 KiB or
+2,048 lines; initial
 parsing/measurement is still proportional to source size. Native coverage
 copies the complete 20,000-line fixture, then compares median warm forced
 TextView redraws against a 102-line fixture (8× plus 15 ms allowance, not the
 196× source growth).
 Small-file highlighting follows the kit's block-local behavior; multiline syntax
 context is not carried across chunk boundaries.
+
+CRLF content deliberately uses a single literal block: Markdown consumes the CR
+before a closing fence, so splitting on line boundaries would silently replace
+those source separators with LF in copied text. The native 102-line CRLF leg
+compares complete clipboard content across the former 32-line boundaries.
+This correctness fallback does not provide bounded warm layout for large CRLF
+files; the 20,000-line performance claim applies to LF content only.
 
 Accepted presentation trade-off: this pinned selectable reader loses the former
 CodeEditor's line-number gutter and horizontal no-wrap scrolling; long lines

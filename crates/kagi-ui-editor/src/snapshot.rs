@@ -27,7 +27,7 @@ impl gpui::RenderOnce for SnapshotButton {
     }
 }
 
-/// Bound each virtualized ListState item; large snapshots skip syntax work.
+/// Bound LF blocks; preserve CRLF verbatim in one block; large text skips syntax.
 /// Fence longer than every literal backtick run, retaining source separators.
 pub(crate) fn literal_source(text: &str, language: &str) -> String {
     const CHUNK_LINES: usize = 32;
@@ -41,6 +41,12 @@ pub(crate) fn literal_source(text: &str, language: &str) -> String {
     };
     let blocks = line_count.max(1).div_ceil(CHUNK_LINES);
     let mut source = String::with_capacity(text.len() + blocks * (language.len() + 11));
+    // Markdown consumes the CR before each closing fence. Splitting a CRLF
+    // line boundary would therefore silently replace that separator with LF.
+    if text.contains("\r\n") {
+        append_block(&mut source, text, language);
+        return source;
+    }
     let mut start = 0;
     let mut lines = 0;
     for (offset, byte) in text.bytes().enumerate() {

@@ -79,6 +79,8 @@ ref の移動として追える**。これを使えば「突然開いたリポ�
 `EditorSnapshot` joins `Input` and `Terminal` in the application Undo/Redo
 binding exclusion. Predicates alone cannot protect root/header focus after
 revision selection, so HistoryUndo/HistoryRedo handlers additionally return
-without action while the Editor shows a selected History commit. The immutable
+without action only while the foreground workspace is Editor and shows a
+selected History commit. A retained Editor behind PRs/Issues/takeovers must not
+suppress their normal shortcuts. The immutable
 reader has no input Undo handler; text undo must not plan a repository move.
 Normal graph Undo/Redo outside this historical Editor state remains unchanged.

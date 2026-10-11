@@ -25,6 +25,7 @@ pub use kagi_ui_editor::*;
 
 use super::i18n::{self, Msg};
 use super::render_helpers::{render_diff_list, DiffHeader};
+use super::workspace_mode::WorkspaceMode;
 use super::{
     build_main_diff_view, EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp,
     MainDiffSource, MainDiffView, ToastKind,
@@ -651,7 +652,9 @@ impl KagiApp {
             return;
         };
         let view = ev.read(cx);
-        if view.showing_history_commit() || !view.dirty {
+        if (self.workspace_mode() == WorkspaceMode::Editor && view.showing_history_commit())
+            || !view.dirty
+        {
             return;
         }
         ev.update(cx, |v, cx| v.save(cx));

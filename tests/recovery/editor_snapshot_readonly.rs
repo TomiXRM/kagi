@@ -480,6 +480,72 @@ fn large_snapshot(cx: &mut VisualTestAppContext, repo: &std::path::Path, small: 
     eprintln!("[gui-e2e] snapshot warm redraw median/7 forced TextView draws: 102 lines={small_time:?}, 20,000 lines={large_time:?}, limit={limit:?}; full-document copy preserved");
 }
 
+fn crlf_snapshot(cx: &mut VisualTestAppContext, repo: &std::path::Path, original: &str) {
+    let crlf = original.replace('\n', "\r\n");
+    std::fs::write(repo.join(FILE), &crlf).unwrap();
+    git(repo, &["add", FILE]);
+    git(repo, &["commit", "-q", "-m", "CRLF historical snapshot"]);
+    std::fs::write(repo.join(FILE), CURRENT).unwrap();
+    exercise(
+        cx,
+        repo,
+        &crlf,
+        &Case {
+            preset: "apple-light",
+            lang: Lang::En,
+            zoom: 1.,
+            dimensions: (1392., 883.),
+        },
+    );
+    eprintln!(
+        "[gui-e2e] PASS snapshot CRLF copy preserves all 102 lines and former 32-line boundaries"
+    );
+}
+
+fn retained_editor_shortcuts(cx: &mut VisualTestAppContext, repo: &std::path::Path) {
+    use kagi::ui::workspace_mode::WorkspaceMode;
+    let case = Case {
+        preset: "apple-light",
+        lang: Lang::En,
+        zoom: 1.,
+        dimensions: (1392., 883.),
+    };
+    let mounted = setup(cx, repo, &case);
+    assert!(cx.read(|cx| mounted.editor.read(cx).showing_history_commit()));
+    mounted.app.update(cx, |app, cx| app.show_pr_mode(cx));
+    paint(cx, mounted.window);
+    assert_eq!(
+        cx.read(|cx| mounted.app.read(cx).workspace_mode()),
+        WorkspaceMode::Prs
+    );
+    assert!(
+        cx.read(|cx| mounted.editor.read(cx).showing_history_commit()),
+        "historical Editor is retained behind PRs"
+    );
+    cx.update_window(mounted.window, |_, window, cx| {
+        let focus = mounted.app.read(cx).root_focus.clone().unwrap();
+        window.focus(&focus, cx);
+    })
+    .unwrap();
+    cx.simulate_keystrokes(mounted.window, "cmd-z");
+    paint(cx, mounted.window);
+    assert!(
+        cx.read(|cx| mounted.app.read(cx).history_modal().is_some()),
+        "PRs root Undo must open its real plan modal despite retained historical Editor"
+    );
+    let Mounted {
+        app,
+        editor,
+        live,
+        window,
+        ..
+    } = mounted;
+    drop(live);
+    drop(editor);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS retained historical Editor does not suppress PRs root Undo");
+}
+
 pub fn scenario(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let fixture = build_fixture();
@@ -514,5 +580,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         }
     }
     large_snapshot(cx, fixture.path(), &original);
+    crlf_snapshot(cx, fixture.path(), &original);
+    retained_editor_shortcuts(cx, fixture.path());
     eprintln!("[gui-e2e] PASS editor_snapshot_readonly EN/JA × 100/167% × Apple Light/Dark × 940×660/1392×883; actual History loads, selection/copy, mutation refusal, Open current");
 }

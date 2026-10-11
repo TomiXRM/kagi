@@ -600,7 +600,7 @@ fn github_row(
     .px(super::keyboard_nav::inset(12.))
     .py(super::keyboard_nav::inset(8.))
     .rounded_lg()
-    .cursor(gpui::CursorStyle::PointingHand)
+    .cursor(gpui::CursorStyle::Arrow)
     .hover(|s| s.bg(rgb(theme().surface)))
     .on_click(move |_, window, cx| {
         app.update(cx, |app, cx| {

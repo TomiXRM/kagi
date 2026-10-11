@@ -66,6 +66,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toast_dismiss.rs"]
+mod toast_dismiss;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
 mod system_accent;
 
@@ -317,6 +321,12 @@ mod recovery_header_fit;
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_viewport.rs"]
 mod recovery_commit_panel_viewport;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_i18n.rs"]
+mod recovery_commit_panel_i18n;
+#[path = "recovery/commit_panel_polish.rs"]
+mod recovery_commit_panel_polish;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
@@ -1812,6 +1822,10 @@ mod macos {
                 Box::new(crate::slow_read::scenario_worktree_size_not_explained),
             ),
             (
+                "toast_dismiss",
+                Box::new(crate::toast_dismiss::scenario_toast_dismiss),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),
@@ -2252,6 +2266,18 @@ mod macos {
             (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
+            ),
+            (
+                "commit_panel_i18n",
+                Box::new(crate::recovery_commit_panel_i18n::scenario_commit_panel_i18n),
+            ),
+            (
+                "commit_panel_selection_hover",
+                Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_selection_hover),
+            ),
+            (
+                "commit_panel_body_focus",
+                Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
             ),
             (
                 "toolbar_count_scale",

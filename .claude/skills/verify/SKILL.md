@@ -92,6 +92,15 @@ closure, native traffic lights, restored position/pane/height (also after app
 quit while Settings remains open) and live preferences.
 Escape is deliberately not a window-dismiss command; check editing-field/IME
 behavior separately. Native hidden-window assertions do not prove OS activation.
+For #1227 use `KAGI_GUI_E2E_ONLY='commit_panel_i18n,commit_panel_viewport,commit_row_layout'`.
+`commit_panel_i18n` draws Apple Light/Dark at 1392×883/100% and 940×660/167%,
+changes JA→EN→JA→EN on the same panel, compares renderer-fed captions plus AX
+name/role assignments with Msg, checks selector selection state, measures containment
+and ≥20 logical-pixel hit heights, clicks Tree, and preserves Template data verbatim.
+The feature name Commit Panel and operation-button names intentionally stay English.
+The AX recorder proves the renderer assignment, not native VoiceOver delivery.
+Tier B remains a real-window comparison of Japanese headers, batch actions and
+unchanged user Template text; `commit_panel_viewport` retains composer geometry.
 
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
 `settings_quiet` measures inherited heading colour/size/weight and Metal pixels

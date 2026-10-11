@@ -167,7 +167,7 @@ pub fn refresh_system_accent() -> bool {
             })
         });
         let next = value as u8;
-        return DETECTED.swap(next, Ordering::Relaxed) != next;
+        DETECTED.swap(next, Ordering::Relaxed) != next
     }
     #[cfg(not(target_os = "macos"))]
     false

@@ -90,7 +90,7 @@ pub mod home_work;
 mod home_work_list;
 pub mod inspector;
 mod inspector_model;
-pub mod keyboard_nav;
+pub(crate) mod keyboard_nav;
 pub mod list_a11y;
 pub mod main_diff_pane;
 mod menu_keys;

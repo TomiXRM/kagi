@@ -254,7 +254,7 @@ pub fn render_settings_overlay(
 // Section / row helpers
 // ────────────────────────────────────────────────────────────
 
-pub fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
+fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
     div()
         .text_size(super::theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)

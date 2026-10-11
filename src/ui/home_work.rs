@@ -420,7 +420,7 @@ impl KagiApp {
             PANES.iter().position(|&p| p == active),
             super::keyboard_nav::Activation::Automatic,
             self.root_focus.clone(),
-            move |slot, _, cx| {
+            move |slot, _, _, cx| {
                 let _ = app.update(cx, |app, cx| app.set_home_pane(PANES[slot], cx));
             },
             cx,

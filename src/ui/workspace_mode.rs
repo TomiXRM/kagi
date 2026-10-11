@@ -212,7 +212,7 @@ pub(super) fn render_sidebar_mode_nav(
         MODES.iter().position(|&m| m == mode),
         super::keyboard_nav::Activation::Manual,
         app.root_focus.clone(),
-        move |slot, _, cx| {
+        move |slot, _, _, cx| {
             let _ = entity.update(cx, |app, cx| match MODES[slot] {
                 WorkspaceMode::Prs => app.show_pr_mode(cx),
                 WorkspaceMode::Issues => app.show_issues_mode(cx),

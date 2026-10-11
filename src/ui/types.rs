@@ -27,9 +27,9 @@ pub enum BottomTab {
 impl BottomTab {
     pub(crate) fn label(self) -> &'static str {
         match self {
-            BottomTab::OperationLog => "Operation Log",
-            BottomTab::Terminal => "Terminal",
-            BottomTab::Activity => "Activity",
+            BottomTab::OperationLog => super::i18n::Msg::BottomTabOperationLog.t(),
+            BottomTab::Terminal => super::i18n::Msg::ToolbarTerminal.t(),
+            BottomTab::Activity => super::i18n::Msg::BottomTabActivity.t(),
         }
     }
 }

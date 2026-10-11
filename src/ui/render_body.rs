@@ -679,7 +679,7 @@ impl KagiApp {
         let panel_height = self.bottom_panel_height;
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
-            .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, cx)
+            .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, window, cx)
             .map(|panel| panel.into_any_element());
         // These takeovers render their own side panes. Their actual center
         // consumes the panel; only the other modes place it in the outer row.

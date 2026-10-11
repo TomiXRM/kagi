@@ -956,7 +956,7 @@ impl KagiApp {
             if home_front { home_slot } else { Some(active) },
             super::keyboard_nav::Activation::Manual,
             self.root_focus.clone(),
-            move |slot, window, cx| {
+            move |slot, _, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
                     if slot < repos {
                         // A repository tab moves Home (if open) to the back;

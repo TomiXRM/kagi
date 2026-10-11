@@ -2783,6 +2783,10 @@ mod macos {
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
+                "bottom_panel_tab_hover",
+                Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_tab_hover),
+            ),
+            (
                 "bottom_panel_nested",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_nested),
             ),

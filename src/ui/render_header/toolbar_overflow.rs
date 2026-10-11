@@ -470,7 +470,10 @@ impl gpui::RenderOnce for OverflowMenu {
                 let hidden = self.hidden;
                 let reasons = self.reasons;
                 let menu = PopupMenu::build(window, cx, move |mut menu, _, _| {
-                    menu = menu.min_w(max_width.min(px(200.))).max_w(max_width);
+                    // PopupMenu caps its inner items; its outer frame adds two
+                    // literal 1px borders. Include those in the viewport limit.
+                    let items_width = (max_width - px(2.)).max(px(0.));
+                    menu = menu.min_w(items_width.min(px(200.))).max_w(items_width);
                     for (index, &reason) in reasons.iter().enumerate() {
                         if hidden & (1 << index) == 0 {
                             continue;
@@ -514,6 +517,12 @@ impl gpui::RenderOnce for OverflowMenu {
                                 .items_start()
                                 .justify_between()
                                 .w_full()
+                                // The kit wraps custom content in an intrinsic
+                                // flex row: constrain this row too, accounting
+                                // for items p_1 and fixed 8px item side padding.
+                                .max_w(
+                                    (items_width - window.rem_size() * 0.5 - px(16.)).max(px(0.)),
+                                )
                                 .gap_4()
                                 .child(
                                     div()

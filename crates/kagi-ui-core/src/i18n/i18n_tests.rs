@@ -49,10 +49,17 @@ fn toolbar_unavailable_reasons_are_japanese_prose() {
         Msg::NoRepoOpen,
     ] {
         let japanese = message.t_for(Lang::Ja);
-        assert!(
-            !japanese.chars().any(|ch| ch.is_ascii_alphabetic()),
-            "{message:?}: {japanese}"
-        );
+        for fragment in [
+            "nothing to",
+            "is clean",
+            "configured",
+            "is empty",
+            "in progress",
+            "switch to",
+            "no commits",
+        ] {
+            assert!(!japanese.contains(fragment), "{message:?}: {japanese}");
+        }
         assert_ne!(japanese, message.t_for(Lang::En));
     }
 }
@@ -73,6 +80,8 @@ fn t_switches_with_set_lang() {
 fn domain_words_stay_english_in_both_langs() {
     let _g = LOCK.lock();
     set_lang_no_persist(Lang::Ja);
+    assert!(Msg::PullDetached.t().starts_with("Pull:"));
+    assert!(Msg::PushDetached.t().starts_with("Push:"));
     // ADR-0048: conflict-domain words stay English even in Japanese
     // (conflict / merge / resolved / unresolved are never translated).
     assert_eq!(Msg::EditorConflictNofM.t(), "conflict");

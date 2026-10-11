@@ -566,7 +566,9 @@ Full reasons remain in AX descriptions and the ordinary refusal footer.
 The menu width is bounded by the current viewport minus a 16 logical-pixel
 edge margin on each side; resizing an open menu refreshes that limit.
 The trigger has a tooltip only while closed. Japanese toolbar guard prose
-is fully translated, without English fallback clauses; English is unchanged.
+is translated without English fallback clauses; ADR-0048 domain words remain
+English (`upstream`, `commit`, `branch`, `pull`, `push`, `undo`, `redo`).
+English messages are unchanged.
 Rest, hover, disabled explanation and focus-visible roles retain the #1210
 contract. This does not alter Git planning, logging or unavailable activation.
 Tier B integration target: Apple Light JA 940×660 at 167%, both toolbar modes,
@@ -582,3 +584,19 @@ second. The matrix retains EN/JA, both display modes and 940×660@167% plus
 This first-line failure is regression evidence, not a claim that Tier A
 reproduced the issue's photographed glyph clipping; Tier B remains integration
 owner evidence.
+
+Review correction: Japanese reason tests reject English prose fragments rather
+than domain vocabulary. The native tooltip assertion has a measured closed-state
+positive control before checking its absence while open. A native resize from
+940 to 480 logical pixels while open exercises the viewport-dependent 448px cap,
+then restores the original width for the existing activation/focus coverage.
+PopupMenu applies `max_w` to its inner items, not its bordered outer frame.
+The cap subtracts the two literal 1px borders so the whole measured menu
+fits within the viewport limit.
+The custom row also has an explicit content-width ceiling that subtracts
+the kit's rem-scaled `p_1` and fixed 8px item side padding: its intrinsic
+wrapper otherwise allowed the newly restored long JA domain-word reason to
+push a shortcut 2px outside the measured 500px menu. The strengthened native
+scenario failed on that containment and the 480px shrink cap before these
+corrections, and passes with both applied. Closed hover records a tooltip;
+open hover records none in both languages and presentation modes.

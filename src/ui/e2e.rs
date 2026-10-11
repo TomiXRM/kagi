@@ -20,6 +20,8 @@ pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]
 pub mod diff_presentation;
+
+#[cfg(feature = "gui-e2e")]
 pub mod diff_controls;
 
 #[cfg(feature = "gui-e2e")]

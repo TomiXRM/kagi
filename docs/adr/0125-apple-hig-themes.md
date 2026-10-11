@@ -589,3 +589,78 @@ terminal view's focus handle the focus.
 The bounds oracle accounts for the fixed 2px ring and native half-pixel
 snapping. The shared presentation Drop guard restores disk keys and in-memory
 language/zoom/theme/kit palette even on unwind; toolbar display is untouched.
+## Amendment — 2026-10-11: bounded toolbar overflow detail (#1217)
+
+The dense transient command menu keeps gpui-kit Popover/PopupMenu navigation,
+focus and activation ownership. Labels and action-bound shortcuts share the
+first line; the shortcut column does not shrink. The label column can shrink
+to zero and its secondary unavailable reason truncates within that column.
+Full reasons remain in AX descriptions and the ordinary refusal footer.
+The menu width is bounded by the current viewport minus a 16 logical-pixel
+edge margin on each side; resizing an open menu refreshes that limit.
+The trigger has a tooltip only while closed. Japanese toolbar guard prose
+is translated without English fallback clauses; ADR-0048 domain words remain
+English (`upstream`, `commit`, `branch`, `pull`, `push`, `undo`, `redo`).
+English messages are unchanged.
+Rest, hover, disabled explanation and focus-visible roles retain the #1210
+contract. This does not alter Git planning, logging or unavailable activation.
+Tier B integration target: Apple Light JA 940×660 at 167%, both toolbar modes,
+open » and inspect shortcut containment and absence of the trigger tooltip.
+
+Native `toolbar_overflow` failed before the layout correction: a row starting
+at Y=187 placed its shortcut at Y=201.5, centered across the reason instead
+of on the first line. The same assertion passes afterward, along with actual
+popup/row/window shortcut containment, viewport width cap, Japanese drawn AX
+reason prose and no measured tooltip after hovering the open trigger for one
+second. The matrix retains EN/JA, both display modes and 940×660@167% plus
+1392×660@100%, with the existing Drop guard restoring global presentation.
+This first-line failure is regression evidence, not a claim that Tier A
+reproduced the issue's photographed glyph clipping; Tier B remains integration
+owner evidence.
+
+Review correction: Japanese reason tests reject English prose fragments rather
+than domain vocabulary. The native tooltip assertion has a measured closed-state
+positive control before checking its absence while open. A native resize from
+940 to 480 logical pixels while open exercises the viewport-dependent 448px cap,
+then restores the original width for the existing activation/focus coverage.
+PopupMenu applies `max_w` to its inner items, not its bordered outer frame.
+The cap subtracts the two literal 1px borders so the whole measured menu
+fits within the viewport limit.
+The custom row also has an explicit content-width ceiling that subtracts
+the kit's rem-scaled `p_1` and fixed 8px item side padding: its intrinsic
+wrapper otherwise allowed the newly restored long JA domain-word reason to
+push a shortcut 2px outside the measured 500px menu. The strengthened native
+scenario failed on that containment and the 480px shrink cap before these
+corrections, and passes with both applied. Closed hover records a tooltip;
+open hover records none in both languages and presentation modes.
+## Amendment — 2026-10-11: Home repository reveal and actions (#1203, #1204)
+
+Home remains an open-density list with single-line ellipsized descriptions.
+The cached entry owns sanitized SharedString text reused by the visible label,
+full-text Tooltip and row `aria_description`, preserving Japanese and literal
+braces without converting descriptions on every repaint.
+
+Clone/Open use the shared `KagiButton` Secondary (Default-outline) at 22
+reference px, following macOS small-push-button density rather than the quiet
+metadata chip. Its visible localized EN/JA label also names its Button AX node.
+Private/Fork metadata remains `text_sub` on `surface`; no palette changes.
+gpui-kit owns border, hover and pressed styles; RowList owns keyboard focus,
+Enter/Space and the single list Tab stop. The button is not another Tab stop,
+and child clicks stop propagation before invoking the existing pick once.
+Loading/cloning continues through that existing pick/card owner; no Git-write,
+logging or confirmation path changes. This is control hierarchy, not AppKit
+material parity. Native renderer/recorder coverage and Tier B are distinct.
+
+Native `home_repository_affordances` restores in-memory presentation via the
+shared Drop guard and `GlobalSettings::capture()`. Restoring the old action chip
+failed its measured height (17.5px versus 22px at 100%); removing the description
+reveal and its observation failed with no recorded description. The description helper
+sets `aria_description` and records that same argument on one call path; this is
+an assignment-path assertion, not readback of GPUI's accessibility tree. Each
+matrix cell clears old observations and consumes freshly built tooltip text.
+The fixed matrix checks full EN/JA/braces text supplied on native hover,
+constructor-supplied Button role/name, scaled height, rendered border distinct
+from fill and metadata, and focused-row Space opening the existing clone card.
+Attribute recorders do
+not establish live VoiceOver delivery. Tier B: Home Repositories, Apple Light EN,
+hover a truncated description and inspect the trailing action.

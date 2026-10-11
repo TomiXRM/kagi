@@ -1198,6 +1198,10 @@ mod macos {
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
             ),
             (
+                "home_repository_affordances",
+                Box::new(crate::home_rows::scenario_home_repository_affordances),
+            ),
+            (
                 "home_tab",
                 Box::new(crate::home_tab::scenario_home_tab),
             ),

@@ -62,12 +62,21 @@ pub fn scenario_diff_binary_states(cx: &mut VisualTestAppContext) {
     let repo = fixture.path();
     std::fs::write(repo.join("changed.png"), png_bytes([255, 0, 0, 255])).unwrap();
     std::fs::write(repo.join("unsupported.bin"), b"\0old").unwrap();
+    let removed = image::RgbaImage::from_fn(64, 64, |x, y| {
+        image::Rgba([(x * 17) as u8, (y * 31) as u8, (x * 11 + y * 23) as u8, 255])
+    });
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(removed)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    std::fs::write(repo.join("deleted.png"), bytes.into_inner()).unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "before"]);
     std::fs::write(repo.join("changed.png"), png_bytes([0, 255, 0, 255])).unwrap();
     std::fs::write(repo.join("added.png"), png_bytes([0, 0, 255, 255])).unwrap();
     std::fs::write(repo.join("unsupported.bin"), b"\0new").unwrap();
-    git(repo, &["add", "."]);
+    std::fs::remove_file(repo.join("deleted.png")).unwrap();
+    git(repo, &["add", "-A"]);
     git(repo, &["commit", "-qm", "after"]);
     let (app, win) = mount(cx, repo);
     app.update(cx, |app, cx| {
@@ -82,6 +91,7 @@ pub fn scenario_diff_binary_states(cx: &mut VisualTestAppContext) {
             ("unsupported.bin", "Binary file — no text diff. Open in external editor to compare.", "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。"),
             ("added.png", "Added image (no previous version)", "追加された画像（以前のバージョンはありません）"),
             ("changed.png", "Modified image: before → after", "変更された画像：変更前 → 変更後"),
+            ("deleted.png", "Deleted image", "削除された画像"),
         ] {
             e2e::diff_presentation::clear();
             let index = commit_image_index(cx, &app, path);
@@ -93,4 +103,56 @@ pub fn scenario_diff_binary_states(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
     drop(restore);
     eprintln!("[gui-e2e] PASS diff_binary_states");
+}
+
+pub(crate) fn assert_conflict_binary_states(cx: &mut VisualTestAppContext) {
+    let restore = GlobalSettings::capture();
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("binary.bin"), b"\0base").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", "binary base"]);
+    git(repo, &["checkout", "-qb", "binary-incoming"]);
+    std::fs::write(repo.join("binary.bin"), b"\0incoming").unwrap();
+    git(repo, &["commit", "-qam", "incoming"]);
+    git(repo, &["checkout", "-q", "main"]);
+    std::fs::write(repo.join("binary.bin"), b"\0current").unwrap();
+    git(repo, &["commit", "-qam", "current"]);
+    let repository = git2::Repository::open(repo).unwrap();
+    let commit = repository
+        .revparse_single("binary-incoming")
+        .unwrap()
+        .peel_to_commit()
+        .unwrap();
+    let annotated = repository.find_annotated_commit(commit.id()).unwrap();
+    repository.merge(&[&annotated], None, None).unwrap();
+    drop(annotated);
+    drop(commit);
+    drop(repository);
+    for locale in ["en", "ja"] {
+        std::env::set_var("KAGI_LANG", locale);
+        i18n::init_lang();
+        e2e::diff_presentation::clear();
+        let (app, win) = mount(cx, repo);
+        app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+        cx.run_until_parked();
+        let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+        conflict.update(cx, |view, cx| {
+            view.conflict_select_file(0);
+            cx.notify();
+        });
+        frame(cx, win);
+        assert_eq!(
+            e2e::diff_presentation::description().as_deref(),
+            Some(if locale == "en" {
+                "Binary file — no text diff. Open in external editor to compare."
+            } else {
+                "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。"
+            }),
+            "{locale}: binary conflict explanation must render"
+        );
+        drop(conflict);
+        unmount(cx, app, win);
+    }
+    drop(restore);
 }

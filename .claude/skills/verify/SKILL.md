@@ -837,15 +837,27 @@ The current suite covers:
   `tests/recovery/header_fit.rs`): #809. A real `KagiApp` at 1000x720, zoom
   1.25, EN and JA opens a commit's long-path file diff, then File History for
   it. Each Main Diff header control (`main-diff-back`, `-ext-editor`,
-  `-history`, `diff-mode-toggle`, `main-diff-stats`), each File History header
+  `-history`, `diff-mode-unified`, `diff-mode-split`, `main-diff-stats`), each File History header
   button (`fh-back`, `fh-refresh`, `fh-copy-path`, `fh-open-file`,
-  `fh-follow`) and the embedded diff's toggle/stats must lie inside its header
+  `fh-follow`) and the embedded diff's mode segments/stats must lie inside its header
   row, and each row inside the window — bounds recorded by the production
   `HeaderFit`, which is what the pane crate can reach. The narrow case must be
   icon-only; 1920x1080 at zoom 1 must keep the labels. Tier B: 1000px wide at
   125% in JA, open a file diff and File History; every button is visible and
   clickable, icon-only buttons name themselves in a hover tooltip, and a wide
   window shows the labels again.
+- diff presentation (`KAGI_GUI_E2E_ONLY=diff_mode_segment,diff_binary_states`,
+  `tests/recovery/diff_presentation.rs`): #1235/#1236. The first scenario clicks
+  measured Unified/Split segments and checks Button role/name/current selection;
+  pair it with `header_fit` for narrow icon-only collapse. The second renders
+  binary, added, modified and deleted images in EN/JA using production reads.
+  `conflict_save_boundary` also renders binary conflict sides in both languages
+  and checks the shared no-text-diff explanation. A partially previewable
+  modified image retains both versions and shows a preview-unavailable side,
+  rather than incorrectly claiming it was added/deleted; preparation unit
+  coverage includes BMP on either side. Tier B: compare selected paint, focus
+  and icon tooltips in narrow/wide diff and File History panes, then inspect
+  each binary/image state and the existing external-editor action.
 - worktree port in the shell and the sidebar (`KAGI_GUI_E2E_ONLY=worktree_port_env`,
   `tests/recovery/worktree_ports.rs`): #855 / ADR-0171. The shell is swapped for a
   script through `KagiApp::set_terminal_shell_for_e2e` (`gui-e2e` only) that

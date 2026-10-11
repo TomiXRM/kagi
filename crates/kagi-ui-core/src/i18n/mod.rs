@@ -217,6 +217,7 @@ pub enum Msg {
     DiffImageDeleted,
     DiffImageBefore,
     DiffImageAfter,
+    DiffImagePreviewUnavailable,
     /// `kagi_ui_core::commit_header::render_commit_header`'s placeholder
     /// before any commit is selected — shared by the Editor Workspace's
     /// History pane and File History's detail pane.
@@ -2218,6 +2219,8 @@ impl Msg {
             (Ja, DiffImageBefore) => "変更前",
             (En, DiffImageAfter) => "After",
             (Ja, DiffImageAfter) => "変更後",
+            (En, DiffImagePreviewUnavailable) => "Preview not available for this version.",
+            (Ja, DiffImagePreviewUnavailable) => "このバージョンはプレビューできません。",
             (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
             (Ja, CommitHeaderSelectPrompt) => "commit を選択すると詳細が表示されます。",
 

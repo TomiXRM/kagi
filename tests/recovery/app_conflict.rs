@@ -91,6 +91,7 @@ pub(crate) fn wait_idle(cx: &mut VisualTestAppContext, app: &gpui::Entity<kagi::
 }
 
 pub fn scenario_conflict_save_boundary(cx: &mut VisualTestAppContext) {
+    crate::recovery_diff_presentation::assert_conflict_binary_states(cx);
     refusal::save_and_abort(cx);
 
     let fixture = content_fixture();

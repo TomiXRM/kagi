@@ -158,9 +158,33 @@ fn prepare_diff_images(
             backend.blob_bytes_index(path).ok().flatten(),
         ),
     };
+    image_pair_from_bytes(old, new)
+}
+
+fn image_pair_from_bytes(old: Option<Vec<u8>>, new: Option<Vec<u8>>) -> Option<DiffImagePair> {
     let pair = DiffImagePair {
+        old_exists: old.is_some(),
+        new_exists: new.is_some(),
         old: old.and_then(crate::ui::avatar_fetch::image_from_bytes),
         new: new.and_then(crate::ui::avatar_fetch::image_from_bytes),
     };
     (pair.old.is_some() || pair.new.is_some()).then_some(pair)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn partially_previewable_modified_image_keeps_both_versions() {
+        let png = vec![0x89, b'P', b'N', b'G', 13, 10, 26, 10];
+        let bmp = b"BM unsupported preview encoding".to_vec();
+        for (old, new) in [(bmp.clone(), png.clone()), (png.clone(), bmp.clone())] {
+            let pair = super::image_pair_from_bytes(Some(old), Some(new)).unwrap();
+            assert!(pair.old_exists && pair.new_exists);
+            assert_ne!(pair.old.is_some(), pair.new.is_some());
+        }
+        let added = super::image_pair_from_bytes(None, Some(png.clone())).unwrap();
+        assert!(!added.old_exists && added.new_exists);
+        let deleted = super::image_pair_from_bytes(Some(png), None).unwrap();
+        assert!(deleted.old_exists && !deleted.new_exists);
+    }
 }

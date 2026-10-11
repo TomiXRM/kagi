@@ -224,6 +224,9 @@ pub struct MainDiffView {
 /// added or deleted files have only one).
 #[derive(Clone)]
 pub struct DiffImagePair {
+    /// Blob existence is independent of whether its encoding is previewable.
+    pub old_exists: bool,
+    pub new_exists: bool,
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
 }

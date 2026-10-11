@@ -13,7 +13,7 @@ pub(crate) fn caption(message: Msg) -> Div {
 }
 
 pub(crate) fn image_panel(pair: super::super::diff_view::DiffImagePair) -> gpui::AnyElement {
-    let state = match (pair.old.is_some(), pair.new.is_some()) {
+    let state = match (pair.old_exists, pair.new_exists) {
         (true, true) => Msg::DiffImageModified,
         (true, false) => Msg::DiffImageDeleted,
         (false, true) => Msg::DiffImageAdded,
@@ -39,19 +39,17 @@ pub(crate) fn image_panel(pair: super::super::diff_view::DiffImagePair) -> gpui:
                 .flex()
                 .flex_row()
                 .gap_4()
-                .children(
-                    pair.old
-                        .map(|img| image_column(Msg::DiffImageBefore.t(), img)),
-                )
-                .children(
-                    pair.new
-                        .map(|img| image_column(Msg::DiffImageAfter.t(), img)),
-                ),
+                .when(pair.old_exists, |el| {
+                    el.child(image_column(Msg::DiffImageBefore.t(), pair.old))
+                })
+                .when(pair.new_exists, |el| {
+                    el.child(image_column(Msg::DiffImageAfter.t(), pair.new))
+                }),
         )
         .into_any_element()
 }
 
-fn image_column(label: &'static str, image: std::sync::Arc<gpui::Image>) -> Div {
+fn image_column(label: &'static str, image: Option<std::sync::Arc<gpui::Image>>) -> Div {
     // An absolute contained image keeps portrait images inside the flex
     // viewport; percentage heights on an in-flow image resolve to zero (#362).
     div()
@@ -74,12 +72,18 @@ fn image_column(label: &'static str, image: std::sync::Arc<gpui::Image>) -> Div 
                 .flex_1()
                 .min_h(px(0.))
                 .self_stretch()
-                .child(
-                    gpui::img(gpui::ImageSource::Image(image))
+                .child(match image {
+                    Some(image) => gpui::img(gpui::ImageSource::Image(image))
                         .absolute()
                         .inset_0()
                         .size_full()
-                        .object_fit(gpui::ObjectFit::Contain),
-                ),
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .into_any_element(),
+                    None => div()
+                        .text_sm()
+                        .text_color(rgb(theme().text_muted))
+                        .child(Msg::DiffImagePreviewUnavailable.t())
+                        .into_any_element(),
+                }),
         )
 }

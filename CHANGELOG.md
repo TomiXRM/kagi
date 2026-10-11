@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Narrow/high-zoom toolbars move commands that cannot fit into a named, keyboard-accessible » menu rather than clipping them. Both display modes retain localized names, shortcuts, unavailable reasons and the same action paths; workspace controls collapse after repository actions, with the selected mode retained longest. (#1210)
 - Toolbar display can be changed in Appearance or View → Toolbar → Icon Only / Icon and Text. Apple Light and Apple Dark follow Finder's default with a compact 36-reference-px icon-only row; other presets retain the 52px caption row. Names, tooltips, counts, unavailable reasons, keyboard rings and workspace feedback remain. (#1178)
 - Test-only: migrated native repository-tab PR ownership scenarios to ADR-0200 retention, covering predicates, opened panes, unsent drafts, refreshed head evidence and rejected departed-request publication without changing production behavior. (#1194)
 - Apple Light/Dark repository and Home tabs use neutral content/surface fills in key and non-key windows, with readable primary labels instead of full blue selection and no permanent top accent rail. Dark inactive cells remain distinct from strip gaps. Other presets retain their active rail and selection palette where fill contrast alone is insufficient. All themes lose full worktree tint and its stored lane rank (the 🌲 marker stays); inactive close controls appear on hover/focus, active closes remain visible, and Cmd+W/manual keyboard activation are unchanged. (#1180)

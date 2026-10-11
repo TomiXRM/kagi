@@ -1423,6 +1423,14 @@ pub(crate) fn setup_app(cx: &mut App) {
     cx.set_menus(build_menus());
 }
 
+pub(super) fn quit_app(cx: &mut App) {
+    #[cfg(feature = "gui-e2e")]
+    if super::e2e::capture_app_quit(cx) {
+        return;
+    }
+    cx.quit();
+}
+
 pub fn register_keybindings(cx: &mut App) {
     // (id, action). The keystroke comes from the registry / settings; a
     // command with no effective keystroke is simply not bound.
@@ -1809,7 +1817,7 @@ impl KagiApp {
             "app.settings" => self.open_settings(window, cx),
             "app.quit" => {
                 if !self.hold_host_close(cx) {
-                    cx.quit();
+                    quit_app(cx);
                 }
             }
 

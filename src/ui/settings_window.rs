@@ -115,7 +115,7 @@ impl SettingsWindow {
             settings::flush();
             true
         });
-        cx.observe_window_bounds(window, |_, window, _| remember_position(window))
+        cx.observe_window_bounds(window, |_, window, _| remember_geometry(window))
             .detach();
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
         let release = cx.observe_release_in(&owner, window, |_, _, window, _| close(window));
@@ -276,7 +276,7 @@ impl Render for SettingsWindow {
                 {
                     remember_geometry(window);
                     settings::flush();
-                    cx.quit();
+                    commands::quit_app(cx);
                 }
             }))
             .child(titlebar())

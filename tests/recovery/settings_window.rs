@@ -58,6 +58,23 @@ impl Drop for AutoFetchGuard {
     }
 }
 
+struct QuitGuard(VisualTestAppContext);
+
+impl QuitGuard {
+    fn capture(cx: &mut VisualTestAppContext) -> Self {
+        cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+        Self(cx.clone())
+    }
+}
+
+impl Drop for QuitGuard {
+    fn drop(&mut self) {
+        self.0.update(|cx| {
+            cx.remove_global::<e2e::QuitForE2e>();
+        });
+    }
+}
+
 fn configurations(cx: &mut VisualTestAppContext, mut run: impl FnMut(&mut VisualTestAppContext)) {
     let _saved = GlobalSettings::capture();
     let _keys = crate::gui_isolation::SavedKeys::keep(&[
@@ -338,7 +355,74 @@ pub fn scenario_settings_window_position_restore(cx: &mut VisualTestAppContext) 
         cx.simulate_keystrokes(current, "cmd-w");
         cx.run_until_parked();
     });
+    configurations(cx, restart_settings_after_app_quit);
     eprintln!("[gui-e2e] PASS settings_window_position_restore");
+}
+
+fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    // Start at a different saved height, then let the actual page resize.
+    kagi::ui::settings::write_setting("settings_window_height", Some("500"));
+    let (app, repo) = mount(cx, fixture.path());
+    draw(cx, repo);
+    cx.simulate_keystrokes(repo, "cmd-,");
+    cx.run_until_parked();
+    let settings = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| w.window_id() != repo.window_id())
+            .unwrap()
+    });
+    settle(cx, settings);
+    let before = cx
+        .update_window(settings, |_, window, _| {
+            (window.bounds(), f32::from(window.viewport_size().height))
+        })
+        .unwrap();
+    assert!(before.1 > 500., "General pane resized the initial frame");
+    let _quit = QuitGuard::capture(cx);
+    cx.simulate_keystrokes(repo, "cmd-q");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested),
+        "repository Cmd-Q dispatched Quit"
+    );
+    let saved_height = kagi::ui::settings::read_setting("settings_window_height")
+        .and_then(|height| height.parse::<f32>().ok())
+        .expect("height persisted at app quit");
+    assert!(
+        (saved_height - before.1).abs() <= 1.,
+        "app quit persists Settings height without closing it"
+    );
+    // Process shutdown does not dispatch per-window close. Dispose Settings
+    // first so owner-release cleanup cannot accidentally save missing geometry.
+    cx.update_window(settings, |_, window, _| window.remove_window())
+        .unwrap();
+    unmount(cx, app, repo);
+    let (app, repo) = mount(cx, fixture.path());
+    draw(cx, repo);
+    cx.simulate_keystrokes(repo, "cmd-,");
+    cx.run_until_parked();
+    let settings = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| w.window_id() != repo.window_id())
+            .unwrap()
+    });
+    settle(cx, settings);
+    let after = cx
+        .update_window(settings, |_, window, _| window.bounds())
+        .unwrap();
+    assert!(
+        (f32::from(before.0.origin.x) - f32::from(after.origin.x)).abs() <= 1.
+            && (f32::from(before.0.origin.y) - f32::from(after.origin.y)).abs() <= 1.
+            && (f32::from(before.0.size.height) - f32::from(after.size.height)).abs() <= 1.,
+        "Settings frame must not drift after app quit/restart: {:?} -> {after:?}",
+        before.0
+    );
+    cx.simulate_keystrokes(settings, "cmd-w");
+    cx.run_until_parked();
+    unmount(cx, app, repo);
 }
 
 pub fn scenario_settings_window_dock_reopen(cx: &mut VisualTestAppContext) {

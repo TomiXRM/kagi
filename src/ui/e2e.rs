@@ -499,6 +499,27 @@ pub fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
     super::dock_reopen_state(cx)
 }
 
+/// Explicit opt-in interception of Quit for native restart regressions. The
+/// normal key/action dispatch and quit-time settings flush still execute.
+#[cfg(feature = "gui-e2e")]
+#[derive(Default)]
+pub struct QuitForE2e {
+    pub requested: bool,
+}
+#[cfg(feature = "gui-e2e")]
+impl gpui::Global for QuitForE2e {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn capture_app_quit(cx: &mut App) -> bool {
+    if cx.try_global::<QuitForE2e>().is_none() {
+        return false;
+    }
+    // Mirrors the unconditional final on_app_quit preference observer.
+    super::settings::flush();
+    cx.global_mut::<QuitForE2e>().requested = true;
+    true
+}
+
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
 /// `kagi_git`, no `git2` token) + a single active tab, as `main.rs` does.
 pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {

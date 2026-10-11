@@ -23,6 +23,8 @@ initial resize moving the saved frame on each reopen. The selected pane
 determines content height through real layout, clamped to 500 logical points and
 85% of the current display; oversized pages remain reachable through one
 persistent system-scrollbar owner. Width does not scale with UI zoom.
+Both position and height are saved on bounds changes, not just Settings close,
+so the normal application-quit flush also preserves an open Settings frame.
 
 Closing or Cmd-W removes only the Settings window and flushes the existing
 store. It never dispatches repository Close Tab, changes sessions, or exits the
@@ -53,7 +55,11 @@ settings_window_position_restore and settings_window_dock_reopen explicitly
 select the production macOS host at EN/JA and 100%/167%. Tests check window
 identity/count, independent closure, native repository theme pixels, repository
 entity release after a running fetch ticker, session restoration with only
-Settings open, and stable geometry over three reopen cycles.
+Settings open, stable geometry over three reopen cycles, and repository Cmd-Q
+with Settings still open followed by root teardown/recreation. The explicit
+Quit interception seam runs normal action dispatch and the quit-time preference
+flush without exiting the test controller; teardown bypasses Settings close so
+its close handler cannot hide missing geometry persistence.
 settings_window_host_isolation also exercises guard cleanup during unwinding.
 
 Tier A's hidden windows do not prove real OS activation, dragging, traffic-light

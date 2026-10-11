@@ -171,6 +171,7 @@ pub enum Msg {
     MenuShowAll,
     MenuServices,
     AppNoticeDismiss,
+    ToastDismiss,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -845,6 +846,21 @@ pub enum Msg {
     SettingsTitle,
     /// Settings sidebar: Appearance page title.
     SettingsAppearance,
+    /// Semantic grouped-form headings (#1200).
+    SettingsGraph,
+    SettingsNetwork,
+    SettingsBehaviour,
+    /// Compact visible supporting text; full guidance remains in help.
+    SettingsLaneCompactSummary,
+    SettingsTerminalAutoLockSummary,
+    SettingsCustomThemesSummary,
+    SettingsAnalyzeIgnoreSummary,
+    SettingsGraphCopySummary,
+    SettingsSmartProviderSummary,
+    SettingsAnalyze,
+    SettingsAutoFetchSummary,
+    SettingsReduceMotionSummary,
+    SettingsSmartEnableSummary,
     /// Settings sidebar: Language page title.
     SettingsLanguage,
     /// Appearance → Theme row title.
@@ -2136,6 +2152,8 @@ impl Msg {
 
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
+            (En, ToastDismiss) => "Dismiss notification",
+            (Ja, ToastDismiss) => "通知を閉じる",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
@@ -3193,6 +3211,30 @@ impl Msg {
             (Ja, SettingsTitle) => "設定",
             (En, SettingsAppearance) => "Appearance",
             (Ja, SettingsAppearance) => "外観",
+            (En, SettingsGraph) | (Ja, SettingsGraph) => "Graph",
+            (En, SettingsNetwork) => "Network",
+            (Ja, SettingsNetwork) => "ネットワーク",
+            (En, SettingsBehaviour) => "Behaviour / Terminal",
+            (Ja, SettingsBehaviour) => "動作 / Terminal",
+            (En, SettingsLaneCompactSummary) => "Show author avatars and lane-colour bands.",
+            (Ja, SettingsLaneCompactSummary) => "著者アバターとレーン色の帯を表示します。",
+            (En, SettingsTerminalAutoLockSummary) => "Offer to lock linked worktrees; confirm each time.",
+            (Ja, SettingsTerminalAutoLockSummary) => "linked worktree のロックを毎回確認して提案します。",
+            (En, SettingsCustomThemesSummary) => "Load themes from JSON files.",
+            (Ja, SettingsCustomThemesSummary) => "JSON ファイルからテーマを読み込みます。",
+            (En, SettingsAnalyzeIgnoreSummary) => "Exclude matching files. Save, then reload to apply.",
+            (Ja, SettingsAnalyzeIgnoreSummary) => "一致するファイルを除外します。保存後に再読み込みで反映します。",
+            (En, SettingsGraphCopySummary) => "Copy Hash or Branch; Hash if no local branch.",
+            (Ja, SettingsGraphCopySummary) => "Hash または Branch。local branch が無い行は Hash。",
+            (En, SettingsSmartProviderSummary) => "Local Ollama or your installed CLI.",
+            (Ja, SettingsSmartProviderSummary) => "ローカルの Ollama、またはインストール済み CLI。",
+            (En, SettingsAnalyze) | (Ja, SettingsAnalyze) => "Analyze",
+            (En, SettingsAutoFetchSummary) => "Keep remote history up to date in the background.",
+            (Ja, SettingsAutoFetchSummary) => "remote の履歴をバックグラウンドで最新に保ちます。",
+            (En, SettingsReduceMotionSummary) => "Keep decorative animations still.",
+            (Ja, SettingsReduceMotionSummary) => "装飾的なアニメーションを静止させます。",
+            (En, SettingsSmartEnableSummary) => "Draft commit messages with an LLM.",
+            (Ja, SettingsSmartEnableSummary) => "LLM で commit メッセージの草案を作成します。",
             (En, SettingsLanguage) => "Language",
             (Ja, SettingsLanguage) => "言語",
             (En, SettingsTheme) => "Theme",

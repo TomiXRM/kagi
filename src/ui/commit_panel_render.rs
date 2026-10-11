@@ -18,6 +18,8 @@ use super::commit_panel::CommitPanelView;
 use super::render_helpers::*;
 use super::*;
 use crate::ui::button_style::{ButtonRole, KagiButton};
+use gpui::Focusable as _;
+use gpui_component::ActiveTheme as _;
 use gpui_component::Disableable as _;
 
 // ──────────────────────────────────────────────────────────────
@@ -229,7 +231,15 @@ fn render_cp_file_row(
         })
         .py_px()
         .bg(row_bg)
-        .hover(|s| s.bg(rgb(theme().surface)))
+        .relative()
+        .child(super::e2e::measure_inside(if staged {
+            "cp-selected-staged-row"
+        } else {
+            "cp-selected-unstaged-row"
+        }))
+        .when(!is_sel && !wip_hit && !is_conflicted, |el| {
+            el.hover(|s| s.bg(rgb(theme().surface)))
+        })
         .on_click(file_click)
         .child(
             div()
@@ -462,7 +472,7 @@ fn render_cp_fold_header(
         .items_center()
         .px_2()
         .py_px()
-        .hover(|s| s.bg(rgb(theme().surface)).cursor_pointer())
+        .hover(|s| s.bg(rgb(theme().surface)).cursor_default())
         .on_click(toggle)
         .child(
             div()
@@ -827,7 +837,7 @@ fn render_coauthor_menu(
                 .py_1()
                 .flex()
                 .flex_col()
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_pointer())
+                .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
                 .on_click(cx.listener(
                     move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
                         view.add_coauthor(&candidate, window, cx);
@@ -994,7 +1004,7 @@ impl Render for CommitPanelView {
         self.sync_inputs(window, cx);
         self.refresh_tree_layout();
         let panel_width = self.panel_render_width;
-        self.render_panel(panel_width, cx)
+        self.render_panel(panel_width, window, cx)
     }
 }
 
@@ -1028,6 +1038,7 @@ impl CommitPanelView {
     pub(crate) fn render_panel(
         &self,
         panel_width: f32,
+        window: &Window,
         cx: &mut Context<CommitPanelView>,
     ) -> impl IntoElement {
         let panel = &self.state;
@@ -1104,7 +1115,7 @@ impl CommitPanelView {
                 } else {
                     theme().text_muted
                 }))
-                .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
+                .hover(|st| st.text_color(rgb(theme().text_main)).cursor_default())
                 .role(super::e2e::commit_panel_labels::role(
                     id,
                     gpui::Role::Button,
@@ -1173,7 +1184,7 @@ impl CommitPanelView {
                         .bg(rgb(theme().surface))
                         .text_xs()
                         .text_color(rgb(theme().color_success))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
                         .on_click(stage_all_click)
                         .role(super::e2e::commit_panel_labels::role(
                             "cp-stage-all",
@@ -1223,7 +1234,7 @@ impl CommitPanelView {
                 if enabled {
                     btn = btn
                         .text_color(rgb(theme().color_blocker))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
                         .on_click(discard_all_click);
                 } else {
                     btn = btn.text_color(rgb(theme().text_muted));
@@ -1289,7 +1300,7 @@ impl CommitPanelView {
                         .bg(rgb(theme().surface))
                         .text_xs()
                         .text_color(rgb(theme().color_warning))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
+                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
                         .on_click(unstage_all_click)
                         .role(super::e2e::commit_panel_labels::role(
                             "cp-unstage-all",
@@ -1370,7 +1381,7 @@ impl CommitPanelView {
                                 .text_color(rgb(if enabled { accent } else { theme().text_muted })),
                         );
                     if enabled {
-                        b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
+                        b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_default());
                     }
                     b
                 };
@@ -1505,7 +1516,7 @@ impl CommitPanelView {
                     theme().text_muted
                 }))
                 .hover(|s| {
-                    let s = s.bg(rgb(theme().selected)).cursor_pointer();
+                    let s = s.bg(rgb(theme().selected)).cursor_default();
                     if on {
                         s.text_color(rgb(theme().accent_text_on(theme().selected)))
                     } else {
@@ -1563,7 +1574,10 @@ impl CommitPanelView {
                         // do not have visibly different corners.
                         .rounded(input_radius)
                         .border_1()
-                        .border_color(rgb(theme().text_muted))
+                        .border_color(cx.theme().input)
+                        .when(body.read(cx).focus_handle(cx).is_focused(window), |el| {
+                            el.border_color(cx.theme().ring)
+                        })
                         .bg(rgb(theme().bg_base))
                         .child(
                             div()

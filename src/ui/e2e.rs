@@ -522,6 +522,27 @@ pub fn build_kagi_entity(
     let kagi: Entity<KagiApp> = cx.new(|cx| {
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
+        if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.subscribe_in(
+                stack,
+                window,
+                |app: &mut KagiApp, _, removed: &toast_stack::ToastRemoved, window, cx| {
+                    if let Some(root) = app.root_focus.as_ref() {
+                        let closed_focused = removed
+                            .0
+                            .as_ref()
+                            .is_some_and(|focus| focus.is_focused(window));
+                        if closed_focused
+                            || window.focused(cx).is_none()
+                            || !root.contains_focused(window, cx)
+                        {
+                            root.focus(window, cx);
+                        }
+                    }
+                },
+            )
+            .detach();
+        }
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         #[cfg(target_os = "macos")]

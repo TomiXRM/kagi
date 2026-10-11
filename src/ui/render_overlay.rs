@@ -70,71 +70,12 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let error_line_height = (_window.rem_size() * 1.4).round();
         let mut stack = div().flex().flex_col().gap_2();
         for toast in self.toasts() {
-            let (accent, glyph) = match toast.kind {
-                // A bullet, not ⟳: an Info toast reports something that already
-                // happened ("Copied …"), and a rotating arrow that never turns
-                // reads as an operation that never finished (user report).
-                // In-flight messages use `ToastKind::Sync` and its spinner.
-                ToastKind::Info => (theme().ui_accent(), "\u{2022}"), // •
-                ToastKind::Success => (theme().color_success, "\u{2713}"), // ✓
-                ToastKind::Error => (theme().color_blocker, "\u{2715}"), // ✕
-                ToastKind::Sync => (theme().ui_accent(), ""),
-            };
             let id = toast.id;
-            let is_sync = toast.kind == ToastKind::Sync;
-            // Sync toasts reuse the busy snackbar's big spinning icon (user
-            // request: "already up to date" must match an in-flight op); the
-            // others keep the compact text glyph.
-            let icon_el: gpui::AnyElement = if is_sync {
-                big_sync_icon(accent, ("kagi-toast-sync", id))
-            } else {
-                div()
-                    .text_color(rgb(accent))
-                    .child(SharedString::from(glyph))
-                    .into_any_element()
-            };
             let leaving = toast.dismissing.is_some();
-            let dismiss = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
-                this.begin_exit(id, cx);
-            });
-            // Explicit width so the animated margin-left slides the whole card
-            // horizontally (a stretched flex child wouldn't translate cleanly).
-            let card = div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .when(is_sync, |d| d.items_center().gap_3())
-                .when(!is_sync, |d| d.items_start().gap_2())
-                .px_4()
-                .py_3()
-                .rounded(theme::scaled_px(8.))
-                .bg(rgb(theme().panel))
-                .border_1()
-                .border_color(rgb(accent))
-                .text_base()
-                .text_color(rgb(theme().text_main))
-                .child(div().flex_shrink_0().child(icon_el))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(toast.message.clone()),
-                )
-                .child(
-                    div()
-                        .id(("toast-dismiss", id))
-                        .flex_shrink_0()
-                        .px_1()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| s.text_color(rgb(theme().text_main)))
-                        .on_click(dismiss)
-                        .child(SharedString::from("\u{00d7}")),
-                );
+            let card = toast_card(toast, error_line_height, cx);
 
             // Slide + fade: in from the left on appear, out to the left on
             // dismiss. Keyed by toast id so the animation plays once and holds.
@@ -169,6 +110,97 @@ impl gpui::Render for toast_stack::ToastStack {
         }
         stack
     }
+}
+
+fn toast_card(
+    toast: &Toast,
+    error_line_height: gpui::Pixels,
+    cx: &mut Context<toast_stack::ToastStack>,
+) -> gpui::Stateful<gpui::Div> {
+    let (accent, glyph) = match toast.kind {
+        // Info reports completed feedback; only Sync promises motion.
+        ToastKind::Info => (theme().ui_accent(), "\u{2022}"),
+        ToastKind::Success => (theme().color_success, "\u{2713}"),
+        ToastKind::Error => (theme().color_blocker, "\u{2715}"),
+        ToastKind::Sync => (theme().ui_accent(), ""),
+    };
+    let id = toast.id;
+    let is_sync = toast.kind == ToastKind::Sync;
+    let icon = if is_sync {
+        big_sync_icon(accent, ("kagi-toast-sync", id))
+    } else {
+        div()
+            .text_color(rgb(accent))
+            .child(SharedString::from(glyph))
+            .into_any_element()
+    };
+    // Explicit width lets the animated margin translate the complete card.
+    div()
+        .w_full()
+        .id(("toast-card", id))
+        .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
+            this.set_hovered(id, *hovered);
+        }))
+        .flex()
+        .flex_row()
+        .when(is_sync, |d| d.items_center().gap_3())
+        .when(!is_sync, |d| d.items_start().gap_2())
+        .px_4()
+        .py_3()
+        .rounded(theme::scaled_px(8.))
+        .bg(rgb(theme().panel))
+        .border_1()
+        .border_color(rgb(accent))
+        .text_base()
+        .text_color(rgb(theme().text_main))
+        .child(div().flex_shrink_0().child(icon))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .when(toast.kind == ToastKind::Error, |d| {
+                    d.line_height(error_line_height)
+                        .max_h(error_line_height * 3.)
+                        .line_clamp(3)
+                        .text_ellipsis()
+                })
+                .when(toast.kind != ToastKind::Error, |d| {
+                    d.whitespace_nowrap().text_ellipsis()
+                })
+                .child(toast.message.clone())
+                .when(cfg!(feature = "gui-e2e"), |d| {
+                    d.child(e2e::measure_inside(format!("toast-message-{id}")))
+                }),
+        )
+        .child(toast_close_control(toast, cx))
+}
+
+fn toast_close_control(
+    toast: &Toast,
+    cx: &mut Context<toast_stack::ToastStack>,
+) -> gpui::AnyElement {
+    use gpui_component::button::{Button, ButtonVariants as _};
+    use gpui_component::Sizable as _;
+    let id = toast.id;
+    let control = toast_stack::ToastCloseButton(
+        Button::new(("toast-dismiss", id))
+            .ghost()
+            .small()
+            .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
+            .tooltip(Msg::ToastDismiss.t())
+            .on_click(
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.begin_exit(id, cx)),
+            ),
+        id,
+        toast.close_focus.clone(),
+    )
+    .aria_label(SharedString::from(Msg::ToastDismiss.t()))
+    .on_key_down(super::keyboard_nav::stop_activation_keys);
+    #[cfg(feature = "gui-e2e")]
+    return e2e::measure_control(format!("toast-dismiss-{id}"), control);
+    #[cfg(not(feature = "gui-e2e"))]
+    control.into_any_element()
 }
 
 // The Operation Log panel's `impl Render for OpLogPanel` moved to

@@ -9,6 +9,9 @@ pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
     0x98989d, 0xff453a, 0xff9f0a, 0xffd60a, 0x30d158, 0x0a84ff, 0xbf5af2, 0xff375f,
 ];
 
+/// Quiet identifying boundary: at least 3:1 on the dark base and panel.
+pub const INPUT_BORDER: u32 = 0x67676a;
+
 pub const APPLE_DARK: Theme = Theme {
     slug: Cow::Borrowed("apple-dark"),
     name: Cow::Borrowed("Apple Dark"),
@@ -25,10 +28,11 @@ pub const APPLE_DARK: Theme = Theme {
     modal: 0x2c2c2e,
     modal_overlay: 0x000000,
 
-    text_main: 0xffffff,  // label (dark)
+    text_main: 0xffffff, // label (dark)
+    // Readable secondaryLabel approximation; tertiary is not readable metadata.
     text_sub: 0x98989f,   // secondaryLabel composited on #1c1c1e
-    text_muted: 0x636366, // systemGray2 (dark)
-    text_label: 0x7c7c80, // systemGray2 (dark, increased contrast)
+    text_muted: 0x98989f, // >= 4.5:1 on panel and base (ADR-0125, #1239)
+    text_label: 0x98989f,
 
     // Git/ref, status and body-link palette keeps ADR-0126's yellow character.
     // On macOS the independent chrome role follows the cached system accent;

@@ -75,11 +75,38 @@ fn focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     paint(cx, window);
 }
 
+#[track_caller]
 fn assert_focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    let (focused, actual, handle, expected) = cx
+        .update_window(window, |_, window, cx| {
+            let actual = [
+                "cp-stage-all",
+                "cp-discard-all",
+                "cp-view-list",
+                "cp-view-tree",
+                "cp-unstage-all",
+                "cp-staged-view-list",
+                "cp-staged-view-tree",
+                "cp-template-toggle",
+                "cp-smart-suggest",
+                "cp-coauthor",
+                "cp-amend-btn",
+                "cp-commit-btn",
+            ]
+            .into_iter()
+            .find(|candidate| labels::focused(candidate, window));
+            let focused = labels::focused(id, window);
+            (
+                focused,
+                actual,
+                window.focused(cx),
+                labels::focus_handle(id),
+            )
+        })
+        .unwrap();
     assert!(
-        cx.update_window(window, |_, window, _| labels::focused(id, window))
-            .unwrap(),
-        "{id} must own window focus after real keyboard input"
+        focused,
+        "{id} must own window focus after real keyboard input; actual control={actual:?}, handle={handle:?}, expected={expected:?}"
     );
 }
 
@@ -213,6 +240,9 @@ pub fn scenario_commit_panel_footer_tab_order(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     enabled_footer(cx);
+    // Model-picker activation above keeps its real online admission contract.
+    // The remaining phases exercise local Git/keyboard state, not networking.
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
     focus_regressions::bulk_keys(cx);
     disabled_bulk_keys(cx);
     focus_regressions::pointer_bulk(cx);
@@ -245,6 +275,7 @@ fn author_fixture(repo: &std::path::Path) {
 
 pub fn scenario_commit_panel_coauthor_keys(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
     let fixture = build_fixture();
     author_fixture(fixture.path());
     let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);

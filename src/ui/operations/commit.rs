@@ -1233,6 +1233,11 @@ impl KagiApp {
             }
         };
         self.open_amend_modal(mode, cx);
+        if self.compact.enabled && self.amend_modal().is_some() {
+            // Amend suspends the pinned composer and unmounts its focused
+            // footer. Route Enter/Escape through the still-drawn modal root.
+            self.focus_root_for_modal();
+        }
         cx.notify();
     }
 }

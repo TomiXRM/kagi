@@ -460,12 +460,12 @@ fn apply_common_choice(choice: Choice, common: &mut ListFilter, order: &mut List
 }
 
 fn item(choice: Choice, label: &str, selected: bool) -> MenuItem<Choice> {
-    MenuItem {
-        action: choice,
-        label: safe_text(&format!("{}{}", if selected { "[x] " } else { "" }, label)),
-        state: ItemState::Enabled,
-        dangerous: false,
-    }
+    MenuItem::command(
+        choice,
+        safe_text(&format!("{}{}", if selected { "[x] " } else { "" }, label)),
+        ItemState::Enabled,
+        false,
+    )
 }
 
 fn candidates(app: &KagiApp, kind: ListKind, field: Field) -> BTreeSet<&str> {

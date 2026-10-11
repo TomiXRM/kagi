@@ -39,6 +39,14 @@ fn compact_composer_localizes_prose_and_keeps_git_controls_english() {
         Msg::CompactCommitClose.t_for(Lang::Ja),
         "Commit の入力を閉じる"
     );
+    assert_eq!(
+        Msg::CommitPanelNothingUnstaged.t_for(Lang::En),
+        "No unstaged changes"
+    );
+    assert_eq!(
+        Msg::CommitPanelNothingUnstaged.t_for(Lang::Ja),
+        "未 stage の変更がありません"
+    );
     for message in [
         Msg::CompactCommitAffordance,
         Msg::CompactUnstaged,

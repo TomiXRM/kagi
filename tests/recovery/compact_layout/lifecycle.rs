@@ -16,6 +16,7 @@ pub fn scenario_compact_layout_lifecycle(cx: &mut VisualTestAppContext) {
             owner_switches(cx, case);
             escape_priority(cx, case);
             blocked_plan_focus(cx, case);
+            focused_input_escape(cx, case);
         }
     }
 }
@@ -311,6 +312,15 @@ fn blocked_plan_focus(cx: &mut VisualTestAppContext, case: Case) {
         }),
         inputs
     );
+    focus_control(cx, win, "cp-amend-btn");
+    press_key(cx, win, "enter");
+    assert!(cx.read(|cx| app.read(cx).amend_modal().is_some()));
+    assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_none());
+    root_focused(cx, &app, win);
+    press_key(cx, win, "escape");
+    assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
+    popup_geometry(win, case.dimensions());
+    assert_eq!(draft(cx, &panel), preserved);
     press_key(cx, win, "escape");
     assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_none());
     assert_eq!(draft(cx, &panel), preserved);
@@ -319,6 +329,53 @@ fn blocked_plan_focus(cx: &mut VisualTestAppContext, case: Case) {
         staged,
         "both Escapes never execute Git"
     );
+    drop(panel);
+    unmount(cx, app, win);
+}
+
+fn focused_input_escape(cx: &mut VisualTestAppContext, case: Case) {
+    use gpui::Focusable;
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("README.md"), "Focused input WIP\n").unwrap();
+    let (app, win) = mount(cx, fixture.path(), case);
+    let panel = changes(cx, &app, win);
+    for body in [false, true] {
+        open_wip(cx, win);
+        set_draft(cx, &panel, win);
+        let preserved = draft(cx, &panel);
+        let input = cx.read(|cx| {
+            let view = panel.read(cx);
+            if body {
+                view.body_input.clone()
+            } else {
+                view.title_input.clone()
+            }
+            .unwrap()
+        });
+        cx.update_window(win, |_, window, cx| {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        })
+        .unwrap();
+        settle(cx, win);
+        assert!(cx
+            .update_window(win, |_, window, cx| input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window))
+            .unwrap());
+        press_key(cx, win, "escape");
+        assert!(
+            e2e::control_bounds(win.window_id(), "compact-composer").is_none(),
+            "real Escape from focused Summary/body dismisses the pinned composer"
+        );
+        root_focused(cx, &app, win);
+        assert_eq!(draft(cx, &panel), preserved);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+            panel.entity_id()
+        );
+        drop(input);
+    }
     drop(panel);
     unmount(cx, app, win);
 }

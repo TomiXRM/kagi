@@ -102,17 +102,24 @@ impl Render for CommitPanelSurfaceView {
         panel.update(cx, |view, pcx| {
             view.prepare_render(window, pcx);
             match self.surface {
-                Surface::Composer => div()
-                    .w_full()
-                    .h_full()
-                    .min_h(px(0.))
-                    .flex()
-                    .flex_col()
-                    .when(view.foreign.is_some(), |el| {
-                        el.child(view.render_panel_header())
-                    })
-                    .child(view.render_composer(true, window, pcx))
-                    .into_any_element(),
+                Surface::Composer => {
+                    // Only the projection drawing the picker may reconcile it.
+                    // Changes also prepares this owner, but a second reconcile
+                    // before lazy-list layout would mistake an End destination
+                    // for a row scrolled away and hand its focus back.
+                    view.reconcile_coauthor_menu(window, pcx);
+                    div()
+                        .w_full()
+                        .h_full()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col()
+                        .when(view.foreign.is_some(), |el| {
+                            el.child(view.render_panel_header())
+                        })
+                        .child(view.render_composer(true, window, pcx))
+                        .into_any_element()
+                }
                 Surface::Changes => view.render_changes(pcx).into_any_element(),
             }
         })

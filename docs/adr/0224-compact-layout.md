@@ -139,16 +139,31 @@ through existing menu reconciliation. Closing the composer yields its hidden
 input focus to the root. The lifecycle native oracle exercises menu, error toast,
 rail and composer together; no second modal slot or Git write path is introduced.
 
-Warned/blocked compact Commit plans request the existing modal root-focus handoff
-before suspending a keyboard-focused footer. A controlled pinned Popover has no
-implicit prior-focus restore, so leaving focus on its unmounted Commit control
-would prevent Escape from reaching the visible plan. The direct execution path
-and wide plan presentation remain unchanged. Native lifecycle coverage checks the
-drawn plan heading, root focus, first Escape returning the same pinned owner/
-inputs/draft, second Escape dismissing the composer, and unchanged Git index.
+Warned/blocked compact Commit plans and successfully opened Amend modals request
+the existing modal root-focus handoff before suspending a keyboard-focused footer.
+A controlled pinned Popover has no implicit prior-focus restore, so leaving focus
+on an unmounted Commit or Amend control prevents Escape reaching the visible modal.
+Direct execution and wide modal presentation remain unchanged. Native lifecycle
+coverage checks the drawn plan heading, modal root focus, Escape returning the same
+pinned owner/inputs/draft, next Escape dismissal, and unchanged Git index.
 Incoming narrow keyboard fixtures provide real untracked WIP; wide fixtures stay
 unchanged. Localization tests close the occluding composer before pointer-selecting
 Changes, then reopen the same WIP owner rather than clicking through a pinned popup.
+
+Only the actual picker render owner (desktop Commit Panel or compact composer)
+reconciles co-author row focus. Changes prepares shared lists/inputs but never
+reconciles a picker it does not draw. Reconciliation from both compact projections
+could prematurely treat an End-selected lazy tail as scrolled away before its
+layout, despite the selected AX state. The existing 20-candidate keyboard oracle
+retains real End focus, tail containment, Enter/Space insertion and opener return;
+the shared row navigation algorithm and wide single-reconciliation path are unchanged.
+
+Compact headers retain empty-column Stage all/Unstage all controls, disabled and
+keyboard-focusable; desktop headers keep the original disappearing-control focus
+fallback. The shared bulk-key oracle follows those actual visibility contracts,
+checks Enter/Space cannot mutate the index or repeat an operation when disabled,
+and reaches both compact column tab groups with real Tab/Shift+Tab. Empty Unstaged
+uses an EN/JA no-changes reason, distinct from the unchanged conflict-only reason.
 
 ## State and verification contract
 
@@ -187,6 +202,25 @@ popup checks an offscreen shortcut leaves the tab/draft untouched.
 `compact_layout_lifecycle` checks clean-WIP shortcut/focus, deferred new-repository
 and cached-tab Changes ownership/draft retention, real tracked diffstat separation,
 and canonical Operation Log selection/first-click toggle in EN/JA, Light/Dark.
+The integration lifecycle additionally dispatches Escape from the actual focused
+Summary and body inputs, keeping the same draft entity and restoring root focus.
+Warned Commit plans and Amend are cancelled through the existing modal root,
+without committing or discarding the retained draft. Header-only keyboard
+fixtures first dismiss the composer through real Escape; composer and picker
+keyboard behaviour remain separate native lifecycle oracles.
+
+Compact headers retain empty-column Stage all/Unstage all as focusable disabled
+Buttons with EN/JA reasons. Completing them by pointer returns focus to the
+existing navigation root, retaining diff-file arrow routing; keyboard completion
+keeps the now-disabled action focused. Wide headers retain their disappearing-action
+fallback. After Unstage all restores the left file row, Shift-Tab from the right
+header reaches that row's existing Stage SDK Button before the left List tab.
+The native oracle measures the actual row Button and compares its perimeter
+focus paint before/after Shift-Tab, then requires the named left List focus
+handle. It does not remove the row Button's Tab stop or accept an unclassified
+focus target. Disabled Enter/Space also preserve the real index and operation
+contract counts.
+
 The required compact matrix includes 940×660 and 940×1000, EN/JA, 100%/167%,
 Apple Light/Dark and a non-Apple preset; exact-threshold transitions; both toolbar
 modes; graph outer bounds and unchanged row/column/lane geometry; real measured
@@ -207,6 +241,23 @@ The exact-breakpoint desktop viewport adds 1000×660/560 at 167%, including the
 non-overlap and scrolling oracles from #1167. Presentation sizing/publication
 lives with the existing Commit Panel surface adapters, keeping workspace.rs
 below the 800-line target.
+
+UI-only bulk, co-author and bottom-tab fixtures scope the existing
+`KAGI_OFFLINE=1` mode and restore its prior environment value on drop. This
+removes unrelated avatar/update/LLM probes from the fixed 120-second native
+deadline without dropping any matrix cell or keyboard/pointer operation.
+Footer model-picker activation keeps the real online admission contract: global
+offline mode intentionally disables generation and cannot prove that oracle.
+
+Final feature-branch integration passes the filtered native suite: **40 passed,
+0 failed of 40**, with the same 120-second per-scenario deadline. A focused
+footer/co-author/bottom-tab preflight also passes **3 passed, 0 failed of 3**.
+The six `compact_layout_*` scenarios, existing Commit Panel/Home/overflow/bottom
+panel oracles and worktree/diff regressions all remain enabled. Functional gates
+pass: locked build, Kagi tests (773 passed, 5 ignored), UI-core tests (197 passed,
+8 ignored), workspace clippy with existing warnings only, formatting and all 22
+CI invariant gates. The final command is a plain production `cargo build` after
+the native-feature run.
 
 PM's initial Tier B at 940×660, Apple Light, Icon and Text found invisible rail
 glyphs and an overlapping Commit reveal/diffstat. These are real-window findings,

@@ -183,6 +183,9 @@ mod home_heading;
 mod home_tab;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/branch_menu_compact.rs"]
+mod branch_menu_compact;
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_paging.rs"]
 mod commit_paging;
 #[cfg(target_os = "macos")]
@@ -1302,6 +1305,10 @@ mod macos {
                 Box::new(crate::commit_paging::scenario_commit_paging),
             ),
             (
+                "branch_menu_compact",
+                Box::new(crate::branch_menu_compact::scenario_branch_menu_compact),
+            ),
+            (
                 "context_menu_keys",
                 Box::new(crate::context_menu_keys::scenario_context_menu_keys),
             ),
@@ -2113,6 +2120,7 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (

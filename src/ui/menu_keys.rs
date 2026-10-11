@@ -4,10 +4,10 @@
 //! Every context menu (commit, branch, remote branch, tag, stash, worktree)
 //! is drawn by `menu_overlay::render_menu_overlay`; this module gives that
 //! one renderer its keyboard path. When a menu opens it takes the focus, on
-//! its first enabled item: ↑/↓ move between the enabled items (wrapping,
-//! disabled ones passed by), Home/End go to the ends, Enter/Space press the
-//! focused item (gpui's keyboard click on its `on_click`), and Escape closes
-//! the menu (the window's cancel chain). When the menu closes the focus goes
+//! its first visible item: ↑/↓ move between all visible items (wrapping,
+//! disabled ones focusable but inert), Home/End go to the ends, Enter/Space
+//! press the focused item; → opens a submenu and ←/Escape closes one level.
+//! When the menu closes the focus goes
 //! back to where it was when it opened — the row the key was pressed on, or
 //! the window for a right-click — except that an item which opened a modal
 //! leaves the focus on the window, where the modal's Enter / Escape run
@@ -36,6 +36,9 @@ actions!(
         MenuFirst,
         MenuLast,
         MenuDismiss,
+        MenuOpen,
+        MenuBack,
+        MenuEscape,
         ContextMenuKey
     ]
 );
@@ -51,6 +54,9 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", MenuNext, Some(MENU_CONTEXT)),
         KeyBinding::new("home", MenuFirst, Some(MENU_CONTEXT)),
         KeyBinding::new("end", MenuLast, Some(MENU_CONTEXT)),
+        KeyBinding::new("right", MenuOpen, Some(MENU_CONTEXT)),
+        KeyBinding::new("left", MenuBack, Some(MENU_CONTEXT)),
+        KeyBinding::new("escape", MenuEscape, Some(MENU_CONTEXT)),
         // Tab / Shift+Tab would walk out of the menu to the controls behind
         // it; they close it instead, and the focus goes back where the menu
         // was opened from (#991 review).
@@ -74,18 +80,23 @@ struct Inner {
     items: FocusSlots,
     /// A menu was open last frame.
     open: Cell<bool>,
-    /// The menu just opened: its first enabled item takes the focus.
+    /// The menu just opened: its first visible item takes the focus.
     focus_first: Cell<bool>,
     /// Where the focus was when the menu opened.
     return_to: RefCell<Option<FocusHandle>>,
-    /// The open menu's enabled items, as slots in menu order.
-    enabled: RefCell<Vec<usize>>,
+    /// The open menu's visible, focusable items, as slots in menu order.
+    visible: RefCell<Vec<usize>>,
     /// Each drawn item's place among the item list's children (separators
     /// and group titles are children too), by slot; `None` for a hidden one.
     children: RefCell<Vec<Option<usize>>>,
     /// The item list's scroll: a menu taller than the window scrolls, and
     /// the item the keys move to is scrolled into view (#991 review).
     scroll: gpui::ScrollHandle,
+    /// The currently open child, tied to its launching row's stable slot.
+    submenu: RefCell<Option<(usize, MenuKeys)>>,
+    bounds: RefCell<Vec<Option<Bounds<Pixels>>>>,
+    /// Pointer changes wait briefly so diagonal travel can reach a child panel.
+    hover_task: RefCell<Option<gpui::Task<()>>>,
 }
 
 impl MenuKeys {
@@ -99,17 +110,12 @@ impl MenuKeys {
         &self.0.scroll
     }
 
-    /// The menu is being drawn with `enabled` as its enabled items' slots
-    /// (each drawn item's place in the list comes after, through
-    /// [`Self::place`]). A slot is an item's place in the menu's own list,
-    /// hidden items included, so a handle stays with its action when an
-    /// item above it appears or hides while the menu is open (#991 review).
-    /// True once when it has just opened: its first enabled item takes the
-    /// focus.
-    pub(crate) fn drawn(&self, enabled: impl Iterator<Item = usize>) -> bool {
-        let mut slots = self.0.enabled.borrow_mut();
+    /// Update visible focusable slots; hidden rows retain their stable slot.
+    /// True once when opening requires focusing the first row.
+    pub(crate) fn drawn(&self, visible: impl Iterator<Item = usize>) -> bool {
+        let mut slots = self.0.visible.borrow_mut();
         slots.clear();
-        slots.extend(enabled);
+        slots.extend(visible);
         self.0.children.borrow_mut().clear();
         self.0.focus_first.take()
     }
@@ -128,35 +134,133 @@ impl MenuKeys {
         self.0.items.focused(window)
     }
 
-    /// Move the focus among the enabled items: one step back or on
-    /// (wrapping, the disabled ones passed by), or to an end.
+    /// Move among every visible item, including unavailable commands.
     pub(crate) fn step(&self, step: Step, window: &mut Window, cx: &mut App) {
+        self.cancel_hover();
         let to = {
-            let enabled = self.0.enabled.borrow();
-            let Some((&first, &last)) = enabled.first().zip(enabled.last()) else {
+            let visible = self.0.visible.borrow();
+            let Some((&first, &last)) = visible.first().zip(visible.last()) else {
                 return;
             };
             let at = self
                 .focused(window)
-                .and_then(|slot| enabled.iter().position(|&s| s == slot));
-            let n = enabled.len();
+                .and_then(|slot| visible.iter().position(|&s| s == slot));
+            let n = visible.len();
             match (step, at) {
                 (Step::First, _) | (Step::Next, None) => first,
                 (Step::Last, _) | (Step::Prev, None) => last,
-                (Step::Next, Some(at)) => enabled[(at + 1) % n],
-                (Step::Prev, Some(at)) => enabled[(at + n - 1) % n],
+                (Step::Next, Some(at)) => visible[(at + 1) % n],
+                (Step::Prev, Some(at)) => visible[(at + n - 1) % n],
             }
         };
+        self.0.submenu.borrow_mut().take();
         self.0.items.get(to, cx).focus(window, cx);
         if let Some(&Some(child)) = self.0.children.borrow().get(to) {
             self.0.scroll.scroll_to_item(child);
         }
     }
 
-    /// The item holding the focus and the enabled items, as slots.
+    pub(crate) fn record_bounds(&self, slot: usize, bounds: Bounds<Pixels>) {
+        let mut rows = self.0.bounds.borrow_mut();
+        if rows.len() <= slot {
+            rows.resize(slot + 1, None);
+        }
+        rows[slot] = Some(bounds);
+    }
+
+    pub(crate) fn bounds(&self, slot: usize) -> Option<Bounds<Pixels>> {
+        self.0.bounds.borrow().get(slot).copied().flatten()
+    }
+
+    pub(crate) fn open_submenu(&self, slot: usize, keyboard: bool) {
+        let mut submenu = self.0.submenu.borrow_mut();
+        if submenu.as_ref().is_none_or(|(current, _)| *current != slot) {
+            *submenu = Some((slot, Self::default()));
+        }
+        if keyboard {
+            if let Some((_, keys)) = submenu.as_ref() {
+                keys.0.focus_first.set(true);
+            }
+        }
+    }
+
+    pub(crate) fn submenu(&self) -> Option<(usize, Self)> {
+        self.0.submenu.borrow().clone()
+    }
+
+    pub(crate) fn close_submenu(&self, window: &mut Window, cx: &mut App) {
+        self.cancel_hover();
+        self.restore_submenu_focus(window, cx);
+    }
+
+    fn restore_submenu_focus(&self, window: &mut Window, cx: &mut App) {
+        if let Some((slot, _)) = self.0.submenu.borrow_mut().take() {
+            self.item(slot, cx).focus(window, cx);
+        }
+    }
+
+    pub(crate) fn cancel_hover(&self) {
+        self.0.hover_task.borrow_mut().take();
+    }
+
+    pub(crate) fn hover_submenu(
+        &self,
+        slot: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<KagiApp>,
+    ) {
+        self.cancel_hover();
+        if self.submenu().map(|(at, _)| at) == slot {
+            return;
+        }
+        let keys = Rc::downgrade(&self.0);
+        *self.0.hover_task.borrow_mut() = Some(cx.spawn_in(window, async move |app, acx| {
+            acx.background_executor()
+                .timer(std::time::Duration::from_millis(200))
+                .await;
+            let _ = app.update_in(acx, |_, window, cx| {
+                let Some(keys) = keys.upgrade().map(Self) else {
+                    return;
+                };
+                if slot.is_some_and(|slot| !keys.0.visible.borrow().contains(&slot)) {
+                    return;
+                }
+                if keys
+                    .submenu()
+                    .is_some_and(|(_, child)| child.holds_focus(window))
+                {
+                    keys.restore_submenu_focus(window, cx);
+                } else {
+                    keys.0.submenu.borrow_mut().take();
+                }
+                if let Some(slot) = slot {
+                    keys.open_submenu(slot, false);
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn holds_focus(&self, window: &Window) -> bool {
+        self.focused(window).is_some()
+            || self
+                .submenu()
+                .is_some_and(|(_, child)| child.holds_focus(window))
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    fn submenu_depth(&self) -> usize {
+        self.submenu()
+            .map_or(0, |(_, child)| 1 + child.submenu_depth())
+    }
+
+    /// The active level's focused item and all visible focusable slots.
     #[cfg(feature = "gui-e2e")]
     pub(crate) fn state_for_e2e(&self, window: &Window) -> (Option<usize>, Vec<usize>) {
-        (self.focused(window), self.0.enabled.borrow().clone())
+        if let Some((_, child)) = self.submenu() {
+            return child.state_for_e2e(window);
+        }
+        (self.focused(window), self.0.visible.borrow().clone())
     }
 }
 
@@ -215,10 +319,12 @@ impl KagiApp {
     /// nowhere (#991 review).
     pub(crate) fn reset_context_menus(&mut self) {
         self.close_context_menus();
+        self.menu_keys.cancel_hover();
         let keys = &self.menu_keys.0;
         keys.open.set(false);
         keys.focus_first.set(false);
         keys.return_to.borrow_mut().take();
+        keys.submenu.borrow_mut().take();
     }
 
     /// Close every workspace context menu on the tab on screen (a reload
@@ -226,6 +332,7 @@ impl KagiApp {
     /// the focus back as any close does: where the menu was opened from, or
     /// to the window when a modal is up (#991 review).
     pub(crate) fn close_context_menus(&mut self) {
+        self.menu_keys.cancel_hover();
         self.commit_menu = None;
         self.branch_menu = None;
         self.stash_menu = None;
@@ -248,15 +355,18 @@ impl KagiApp {
         let open = self.any_context_menu_open();
         let keys = &self.menu_keys.0;
         if open && !keys.open.get() {
+            keys.hover_task.borrow_mut().take();
             keys.open.set(true);
             keys.focus_first.set(true);
+            keys.submenu.borrow_mut().take();
             *keys.return_to.borrow_mut() = window.focused(cx).or_else(|| self.root_focus.clone());
         } else if !open && keys.open.get() {
+            keys.hover_task.borrow_mut().take();
             keys.open.set(false);
             let back = keys.return_to.borrow_mut().take();
             // Only a focus the menu held (or lost with it) moves: an item may
             // have moved it on itself.
-            let held = window.focused(cx).is_none() || keys.items.focused(window).is_some();
+            let held = window.focused(cx).is_none() || self.menu_keys.holds_focus(window);
             if held {
                 let target = if self.active_modal.is_some() || covered {
                     self.root_focus.clone()
@@ -267,6 +377,7 @@ impl KagiApp {
                     target.focus(window, cx);
                 }
             }
+            keys.submenu.borrow_mut().take();
         }
     }
 
@@ -341,9 +452,13 @@ fn menu_point(anchor: &RowAnchor, window: &Window) -> Point<Pixels> {
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
-    /// The open menu's focused item and enabled items, as slots.
+    /// The active level's focused item and visible focusable slots.
     pub fn menu_keys_for_e2e(&self, window: &Window) -> (Option<usize>, Vec<usize>) {
         self.menu_keys.state_for_e2e(window)
+    }
+
+    pub fn submenu_depth_for_e2e(&self) -> usize {
+        self.menu_keys.submenu_depth()
     }
 
     /// Where the selected commit row was last drawn, if it was.

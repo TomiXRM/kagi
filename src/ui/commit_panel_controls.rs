@@ -165,7 +165,7 @@ pub(super) fn footer_button(
     ))
 }
 
-/// Release only a focused bulk action whose section no longer renders it.
+/// Release hidden bulk actions, or empty actions reached by pointer, to navigation.
 /// Like `release_closed` / `yield_focus`, unrelated input or modal focus stays put.
 pub(super) fn reconcile_bulk_focus(
     view: &CommitPanelView,
@@ -173,6 +173,7 @@ pub(super) fn reconcile_bulk_focus(
     cx: &mut Context<CommitPanelView>,
 ) {
     let compact = super::compact::for_window(window);
+    let keyboard = window.last_input_was_keyboard();
     if !compact && view.staged_view_focus.focused(window).is_some() {
         let handles = view.view_focus.sync(&[0, 1], cx);
         view.staged_view_focus.yield_focus(
@@ -181,14 +182,14 @@ pub(super) fn reconcile_bulk_focus(
             cx,
         );
     }
-    let hidden = match view.controls_focus.focused(window) {
-        Some(0) => !compact && view.state.unstaged.is_empty(),
+    let release = match view.controls_focus.focused(window) {
+        Some(0) => (!compact || !keyboard) && view.state.unstaged.is_empty(),
         Some(1) => view.state.unstaged.is_empty(),
-        Some(2) => !compact && view.state.staged.is_empty(),
+        Some(2) => (!compact || !keyboard) && view.state.staged.is_empty(),
         _ => false,
     };
-    if hidden {
-        if !window.last_input_was_keyboard() {
+    if release {
+        if !keyboard {
             if let Some(root) = &view.pointer_root_focus {
                 root.focus(window, cx);
                 return;
@@ -564,7 +565,13 @@ pub(super) fn unstaged_header(
             0,
             Msg::CommitPanelStageAll,
             eligible > 0,
-            (eligible == 0).then(|| Msg::CommitPanelNoStageTargets.t()),
+            (eligible == 0).then(|| {
+                if count == 0 {
+                    Msg::CommitPanelNothingUnstaged.t()
+                } else {
+                    Msg::CommitPanelNoStageTargets.t()
+                }
+            }),
             theme().color_success,
             cx,
             |view, window, cx| view.defer_stage_all(window, cx),

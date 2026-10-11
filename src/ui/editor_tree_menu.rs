@@ -94,12 +94,12 @@ fn item(
     label: &'static str,
     dangerous: bool,
 ) -> MenuItem<EditorTreeAction> {
-    MenuItem {
+    MenuItem::command(
         action,
-        label: SharedString::from(label),
-        state: ItemState::Enabled,
+        SharedString::from(label),
+        ItemState::Enabled,
         dangerous,
-    }
+    )
 }
 
 /// Build the header + grouped items for `info`. `is_root` narrows the menu to

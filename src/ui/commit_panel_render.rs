@@ -209,6 +209,7 @@ impl CommitPanelView {
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.prepare_render(window, cx);
+        self.reconcile_coauthor_menu(window, cx);
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, window, cx)
     }
@@ -229,7 +230,6 @@ impl CommitPanelView {
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
         self.sync_inputs(window, cx);
-        self.reconcile_coauthor_menu(window, cx);
         controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
     }

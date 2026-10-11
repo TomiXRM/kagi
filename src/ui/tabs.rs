@@ -915,19 +915,43 @@ impl KagiApp {
 
     /// New-document affordance belongs to the frame, including hidden-strip states.
     pub(super) fn render_tab_add(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = if self.tabs.is_empty() && self.remote_view.is_some() {
+            match i18n::lang() {
+                i18n::Lang::Ja => {
+                    i18n::command_label_ja("file.openRepository").unwrap_or("Open Repository…")
+                }
+                i18n::Lang::En => "Open Repository…",
+            }
+        } else {
+            Msg::HomeTabTitle.t()
+        };
+        // Like the named overflow trigger, a glyph-only node cannot take its AX
+        // name from gpui-kit's visible label (which would name it merely "+").
         super::e2e::measure_control(
             "tab-add",
-            Button::new("tab-add")
-                .label("+")
-                .ghost()
-                .small()
+            div()
+                .id("tab-add")
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .flex()
+                .items_center()
+                .justify_center()
                 .w(theme::scaled_px(28.))
+                .h(theme::scaled_px(24.))
                 .flex_shrink_0()
-                .tooltip(Msg::HomeTabTitle.t())
+                .rounded_md()
+                .text_color(rgb(theme().text_main))
+                .hover(|style| style.bg(rgb(theme().surface)))
+                .cursor_pointer()
+                .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
+                .child("+")
                 // Cmd+T / File → New Tab is the keyboard path.
-                .tab_stop(false)
                 .on_click(cx.listener(|this, _, window, cx| this.open_home_tab(window, cx))),
         )
+    }
+
+    pub(super) fn tab_strip_visible(&self) -> bool {
+        self.tabs.len() + usize::from(self.home.is_some()) > 1
     }
 
     /// Render document tabs below the unified frame only when multiple documents
@@ -942,7 +966,7 @@ impl KagiApp {
         // handle, a focus on it and the arrowed-to mark with it (#961
         // review). Home is the last cell, under a key no tab has.
         const HOME_KEY: u64 = u64::MAX;
-        if self.tabs.len() + usize::from(self.home.is_some()) <= 1 {
+        if !self.tab_strip_visible() {
             // Hidden strip: release focus from cells no longer drawn.
             self.tab_strip_focus.sync(&[], cx);
             self.tab_strip_focus

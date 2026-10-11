@@ -162,7 +162,7 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
         let expected = if display == kagi_ui_core::settings::ToolbarDisplay::IconOnly {
             52.
         } else {
-            64.
+            60.
         };
         assert!(
             (f32::from(bounds(window, "toolbar-row").size.height) - theme::scaled(expected)).abs()

@@ -110,8 +110,8 @@ pub fn scenario_repo_tab_panels(cx: &mut VisualTestAppContext) {
     };
     assert_eq!(
         panel(cx, window, "repo-tab-panel"),
-        Some(name(cx, 0)),
-        "the body is the first tab's panel"
+        None,
+        "one hidden document strip has no repository TabPanel"
     );
 
     app.update(cx, |app, cx| {

@@ -12,12 +12,72 @@ pub(super) mod toolbar_overflow;
 use super::*;
 use crate::ui::workspace_mode::WorkspaceMode;
 
+/// Shared workspace/Home frame height; both presentation modes fit ≤54px at 100%.
+pub(super) fn chrome_frame_height() -> gpui::Pixels {
+    theme::scaled_px(
+        if settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly {
+            52.
+        } else {
+            60.
+        },
+    )
+}
+
 // ── AppShell layout slots ────────────────────────────────────────────────────
 // ADR-0007 / T-BP-001: KagiApp::render is decomposed into four vertical
 // flex slots.  Each slot is a plain method so that later tickets
 // (T-BP-002, T-HT-001, …) can extend their signatures without
 // touching the caller site.
 impl KagiApp {
+    /// Only blank spacers are draggable. macOS disables AppKit's whole-titlebar
+    /// gesture and delegates movement/double-click from this exact hit target.
+    pub(super) fn render_chrome_spacer(
+        &self,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(id)
+            .relative()
+            .flex_1()
+            .min_w(theme::scaled_px(8.))
+            .h_full()
+            .window_control_area(gpui::WindowControlArea::Drag)
+            .child(super::e2e::measure_inside(id))
+            .when(cfg!(target_os = "macos"), |el| {
+                el.on_mouse_down_out(cx.listener(|this, _, _, _| {
+                    this.titlebar_should_move = false;
+                }))
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.titlebar_should_move = true;
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| {
+                        this.titlebar_should_move = false;
+                    }),
+                )
+                .on_mouse_move(
+                    cx.listener(|this, event: &gpui::MouseMoveEvent, window, _| {
+                        if this.titlebar_should_move
+                            && event.pressed_button == Some(gpui::MouseButton::Left)
+                        {
+                            this.titlebar_should_move = false;
+                            window.start_window_move();
+                        }
+                    }),
+                )
+                .on_click(|event, window, _| {
+                    if event.click_count() == 2 {
+                        window.titlebar_double_click();
+                    }
+                })
+            })
+    }
+
     /// Pointer, keyboard and overflow items share exactly one activation path.
     fn activate_toolbar(
         &mut self,
@@ -640,22 +700,12 @@ impl KagiApp {
             } else {
                 theme::scaled_px(12.)
             })
-            .h(theme::scaled_px(if icon_only { 52.0 } else { 64.0 }))
-            .window_control_area(gpui::WindowControlArea::Drag)
+            .h(chrome_frame_height())
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
             .when(cfg!(feature = "gui-e2e"), |el| {
-                el.child(super::e2e::measure_inside("toolbar-row")).child(
-                    div()
-                        .absolute()
-                        .top(px(0.))
-                        .left(px(80.))
-                        .right(px(0.))
-                        .h(px(3.))
-                        .window_control_area(gpui::WindowControlArea::Drag)
-                        .child(super::e2e::measure_inside("toolbar-drag-region")),
-                )
+                el.child(super::e2e::measure_inside("toolbar-row"))
             })
             // ── LEFT column (flex_1, equal width to the RIGHT column so the
             // centre cluster is window-centred regardless of side widths).
@@ -743,7 +793,7 @@ impl KagiApp {
                         div()
                             .flex()
                             .flex_col()
-                            .flex_1()
+                            .w(theme::scaled_px(180.))
                             .min_w_0()
                             .relative()
                             .child(super::e2e::measure_inside("toolbar-identity"))
@@ -769,7 +819,8 @@ impl KagiApp {
                                     .truncate()
                                     .child(SharedString::from(branch_label)),
                             ),
-                    ),
+                    )
+                    .child(self.render_chrome_spacer("toolbar-drag-region", cx)),
             ) // ── end LEFT column ──
             // ── CENTRE: window-centred cluster (flex_shrink_0 group) ──
             // Pull Push | Branch Stash Pop | Undo Terminal

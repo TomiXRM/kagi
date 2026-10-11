@@ -562,12 +562,12 @@ Every theme uses the same unified top-frame geometry, not an Apple-only fork.
 GPUI still owns native macOS traffic lights, positioned at (9,16) logical px;
 the frame reserves an unscaled 80px left exclusion. Repository name and branch
 remain left, existing actions and » retain their dispatch/focus/AX owners, and
-workspace controls stay right. Blank frame surface uses `WindowControlArea::Drag`.
+workspace controls stay right. Only blank spacers use `WindowControlArea::Drag`.
 Colours continue through the existing panel/surface/accent bridge, not AppKit
 material imitation or a new title state.
 
 Icon Only has a 52-reference-px frame (46.8 logical px at 100%, below the 54px
-target); Icon and Text intentionally uses a taller 64-reference-px frame.
+target); Icon and Text uses 60 reference px (54 logical px at 100%).
 The 20px glyphs, caption geometry and #1178 setting/menu paths remain unchanged.
 #1210's production layout fitting additionally reserves the native exclusion
 and trailing +; natural-width caching, overflow priority, keyboard menu and
@@ -600,3 +600,31 @@ deliberately updating their viewport and single-document focus expectations).
 `ToolbarRestore` composes the existing presentation Drop guard, including
 `GlobalSettings::capture()`, and restores cached toolbar display from its saved
 key on unwind. Neutral fill/rail pixels and toolbar counts/reasons remain tested.
+
+Review correction: workspace and Home share a single frame-height owner for both
+display modes. The drag target is the actual, full-height blank spacer after
+identity, not a container wrapping controls or a test-only band. macOS windows
+set `app_owns_titlebar_drag: true`, disabling AppKit's enlarged native titlebar
+drag band over the toolbar. A left press arms movement only in that blank spacer;
+the following pressed move calls `window.start_window_move()`. Double-click on
+the spacer calls `window.titlebar_double_click()`, honoring macOS's configured
+titlebar double-click behavior (zoom/minimize/none); toolbar controls do neither.
+Windows retains its native Drag hit test on the same blank spacers only.
+
+Empty Home has no + when it cannot open another document. The no-tabs remote
+route retains the folder-dialog action and uses Open Repository's localized
+tooltip/AX name. As with the existing named overflow trigger, the + glyph's
+node is drawn explicitly because the pinned Button derives AX names only from
+visible labels. Cmd+T remains its keyboard route rather than adding a Tab stop.
+`tab_strip_visible` gates both the strip and corresponding TabPanel roles:
+hidden single-document panels are ordinary content. Native regression measures
+production spacer bounds disjoint from every toolbar control, covers both display
+modes ≤54px at 100%, equal Home/workspace heights and empty-Home + absence.
+The original three-tab #961 close/reindex/Enter oracle is retained beside the
+two→one focus-release check.
+
+Review validation: the bounded native selection
+`unified_toolbar,repo_tabs_neutral,keyboard_nav,toolbar_overflow,toolbar_count_scale,workspace_mode_toolbar,home_,repo_tab_panels`
+passes 18/18 scenarios, including all 11 matching Home scenarios. The unified
+matrix now includes Icon and Text and measures the real spacer rather than an
+E2E-only drag proxy. Real AppKit drag/double-click delivery remains Tier B.

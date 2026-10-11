@@ -491,6 +491,43 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         0,
         "the first in front"
     );
+    // #961 retains keyed focus when closing/reindexing still leaves a strip.
+    let reindex_fixture = build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(reindex_fixture.path().to_path_buf(), cx));
+    });
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    keys(cx, window, "right");
+    assert_eq!(strip_focus(cx), Some(1));
+    app.update(cx, |app, cx| app.close_tab(0, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        strip_focus(cx),
+        Some(0),
+        "keyed focus follows second tab into slot zero"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        1,
+        "the third tab stays selected while keyed focus follows the second"
+    );
+    keys(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        0,
+        "Enter activates reindexed focus"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs[0].path.canonicalize().unwrap()),
+        second.path().canonicalize().unwrap()
+    );
+    // Keep the independent two→one hiding oracle below.
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
+    cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
     })
@@ -519,8 +556,8 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     assert_eq!((tabs, active), (1, 0));
     assert_eq!(
         path.map(|p| p.canonicalize().unwrap()),
-        Some(second.path().canonicalize().unwrap()),
-        "the tab left is the one the focus was on"
+        Some(reindex_fixture.path().canonicalize().unwrap()),
+        "the surviving arrow-focused repository remains selected with the strip hidden"
     );
     let third = build_fixture();
     app.update(cx, |app, cx| {

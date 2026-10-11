@@ -321,7 +321,79 @@ pub fn scenario_pr_ref_fetch_restarts_after_revisit(cx: &mut VisualTestAppContex
             .iter()
             .any(|file| file.path.to_string_lossy() == "a.txt"));
     });
+    check_reopened_pr_fetch_latch(cx, &app, &pr, &head);
     unmount(cx, app, window);
+}
+
+/// Replacing a retained PR tab can reuse its fetch generation, but not its visit.
+fn check_reopened_pr_fetch_latch(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    pr: &kagi_domain::github::PullRequest,
+    head: &str,
+) {
+    let starts = || {
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 start")
+            .count()
+    };
+    let completions = || {
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.as_str() == "[kagi] pr-mode: fetch #7 ok")
+            .count()
+    };
+    let before = starts();
+    let previous_completions = completions();
+    let new_visit = app.update(cx, |app, cx| {
+        let owner = app.active_session().unwrap();
+        let old_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        app.pr_mode_close_tab(0, cx);
+        app.pr_mode_open(pr, cx);
+        let old_generation = app.pr_mode().unwrap().tabs[0].local_refs_generation;
+        app.switch_repo(1, cx);
+        app.switch_repo(0, cx);
+        let new_visit = app.app_sessions.attachment(owner).unwrap().visit;
+        assert_ne!(new_visit, old_visit);
+        app.pr_mode_close_tab(0, cx);
+        app.pr_mode_open(pr, cx);
+        let tab = &app.pr_mode().unwrap().tabs[0];
+        assert_eq!(tab.local_refs_generation, old_generation);
+        assert_eq!(tab.local_refs_visit, Some(new_visit));
+        assert!(tab.local_refs_loading);
+        new_visit
+    });
+    // The replacement's fetch waits on the old lease's 200ms retry timer.
+    // Drain the old completion without advancing that timer.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while completions() == previous_completions {
+        cx.run_until_parked();
+        assert!(Instant::now() < deadline, "old PR fetch did not settle");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cx.read(|cx| {
+        let tab = &app.read(cx).pr_mode().unwrap().tabs[0];
+        assert!(
+            tab.local_refs_loading,
+            "old visit cleared the new tab's latch"
+        );
+        assert_eq!(tab.local_refs_visit, Some(new_visit));
+        assert!(
+            tab.head.0.is_empty(),
+            "old visit published into the new tab"
+        );
+    });
+    assert_eq!(starts(), before + 1, "new fetch must still be queued");
+    cx.advance_clock(Duration::from_millis(250));
+    crate::pr_viewed::wait_loaded(cx, app, head);
+    assert_eq!(starts(), before + 2, "replacement must fetch exactly once");
+    cx.read(|cx| {
+        let tab = &app.read(cx).pr_mode().unwrap().tabs[0];
+        assert!(!tab.local_refs_loading);
+        assert_eq!(tab.local_refs_visit, Some(new_visit));
+        assert_eq!(tab.head.0, head);
+    });
 }
 
 pub fn scenario_pr_ref_fetch_panic(cx: &mut VisualTestAppContext) {

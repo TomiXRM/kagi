@@ -35,6 +35,8 @@ pub(crate) fn render_clone_modal(
             .first()
             .map(|blocker| SharedString::from(plan_note_text(blocker))),
     };
+    let available = disabled_reason.is_none() && modal.started.is_none();
+    let title = Msg::CloneTitle.t().replace("{}", modal.listing.name());
     let cancel = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
         app.cancel_clone();
         if let Some(root) = app.root_focus.clone() {
@@ -86,7 +88,7 @@ pub(crate) fn render_clone_modal(
             ));
         }
     }
-    let buttons = div().flex().flex_row().justify_end().gap_2();
+    let buttons = super::button_style::modal_button_row();
     let buttons = if modal.started.is_some() {
         // No cancel in v1 (ADR-0219 decision 6): the card can only step
         // aside; the clone keeps going and its result arrives as usual.
@@ -150,11 +152,15 @@ pub(crate) fn render_clone_modal(
             cx.notify();
         }
     });
-    let base = div().on_key_down(esc);
-    let card = match focus_handle {
-        Some(focus) => base.track_focus(&focus).child(card),
-        None => base.child(card),
-    };
+    let card = super::modal_renderers::input_dialog_frame(
+        "clone-card",
+        &title,
+        available.then_some(Msg::CloneConfirm.t()),
+        card,
+        focus_handle.as_ref(),
+        |frame| frame.on_key_down(esc),
+        cx,
+    );
     modal_overlay(super::e2e::measure_control("active-modal/clone", card)).into_any_element()
 }
 

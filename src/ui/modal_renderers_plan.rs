@@ -436,6 +436,7 @@ pub(crate) fn render_branch_plan_modal(
 
 pub(crate) fn render_set_upstream_modal(
     modal: SetUpstreamModal,
+    focus: Option<&gpui::FocusHandle>,
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -471,12 +472,14 @@ pub(crate) fn render_set_upstream_modal(
         cancel_handler,
         confirm_handler,
         overrides,
+        focus,
         cx,
     )
 }
 
 pub(crate) fn render_rename_branch_modal(
     modal: RenameBranchModal,
+    focus: Option<&gpui::FocusHandle>,
     overrides: &std::collections::HashMap<&'static str, bool>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -513,6 +516,7 @@ pub(crate) fn render_rename_branch_modal(
         cancel_handler,
         confirm_handler,
         overrides,
+        focus,
         cx,
     )
 }

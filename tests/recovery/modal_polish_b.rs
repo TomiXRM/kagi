@@ -277,6 +277,8 @@ pub fn scenario_modal_polish_remote(cx: &mut VisualTestAppContext) {
         });
         paint(cx, window);
         button("remote-connect-go", Msg::RemoteConnect.t(), None, false);
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("remote-browse-dialog").unwrap();
+        assert_eq!(dialog.actions[0].1, Msg::RemoteConnect.t());
         height(window, "remote-connect-go");
         height(window, "remote-connect-cancel");
         app.update(cx, |app, cx| {
@@ -290,6 +292,25 @@ pub fn scenario_modal_polish_remote(cx: &mut VisualTestAppContext) {
             Some(Msg::RemoteRequestBusy.t()),
             true,
         );
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("remote-browse-dialog").unwrap();
+        assert_eq!(dialog.actions.len(), 1, "busy Connect offers only Cancel");
+        app.update(cx, |app, cx| {
+            let modal = app.remote_browse_mut().unwrap();
+            modal.stage = kagi::ui::remote_browse::RemoteBrowseStage::Browse;
+            modal.current_is_repo = true;
+            modal.busy = false;
+            cx.notify();
+        });
+        paint(cx, window);
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("remote-browse-dialog").unwrap();
+        assert_eq!(dialog.actions[0].1, Msg::RemoteOpenRepository.t());
+        app.update(cx, |app, cx| {
+            app.remote_browse_mut().unwrap().busy = true;
+            cx.notify();
+        });
+        paint(cx, window);
+        let dialog = kagi::ui::dialog_a11y::recorded_dialog("remote-browse-dialog").unwrap();
+        assert_eq!(dialog.actions.len(), 1, "busy Browse offers only Cancel");
     }
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS modal_polish_remote");

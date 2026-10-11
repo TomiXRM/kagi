@@ -208,11 +208,7 @@ pub(crate) fn render_stash_push_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "stash-push-cancel",
             Msg::PlanCancel.t(),
@@ -244,14 +240,15 @@ pub(crate) fn render_stash_push_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "stash-push-card",
+        Msg::InputStashTitle.t(),
+        (!has_blockers).then_some(Msg::InputStash.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
@@ -269,7 +266,7 @@ pub(crate) fn render_stash_planning(
 ) -> gpui::AnyElement {
     let card = modal_card(MODAL_W_MD)
         .child(error.unwrap_or_else(|| Msg::EditorWorkspaceLoading.t().into()))
-        .child(modal_button(
+        .child(super::button_style::modal_button_row().child(modal_button(
             "stash-planning-cancel",
             Msg::PlanCancel.t(),
             ModalButtonKind::Cancel,
@@ -279,7 +276,7 @@ pub(crate) fn render_stash_planning(
                 cx.notify();
             }),
             cx,
-        ));
+        )));
     modal_overlay(card).into_any_element()
 }
 
@@ -430,11 +427,7 @@ pub(crate) fn render_stash_apply_modal(
         );
     }
 
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "stash-apply-cancel",
             Msg::PlanCancel.t(),

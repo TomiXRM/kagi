@@ -1256,10 +1256,13 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.button_secondary_foreground = to_hsla(k.text_main);
     gc.colors.button_secondary_hover = to_hsla(k.selected);
     gc.colors.button_secondary_active = to_hsla(k.surface);
+    let danger_foreground = filled_button_foreground(k.color_blocker, k);
+    let (danger_foreground, danger_hover, danger_active) =
+        filled_button_interaction_colors(k.color_blocker, danger_foreground);
     gc.colors.button_danger = to_hsla(k.color_blocker);
-    gc.colors.button_danger_foreground = to_hsla(0xffffff);
-    gc.colors.button_danger_hover = to_hsla(k.color_blocker);
-    gc.colors.button_danger_active = to_hsla(k.color_blocker);
+    gc.colors.button_danger_foreground = to_hsla(danger_foreground);
+    gc.colors.button_danger_hover = danger_hover;
+    gc.colors.button_danger_active = danger_active;
     let warning_foreground = filled_button_foreground(k.color_warning, k);
     gc.colors.button_warning = to_hsla(k.color_warning);
     gc.colors.button_warning_foreground = to_hsla(warning_foreground);
@@ -1619,6 +1622,39 @@ mod tests {
                     t.slug,
                 );
             }
+        }
+    }
+
+    #[test]
+    fn destructive_button_labels_and_interactions_are_readable_in_every_theme() {
+        for t in THEMES {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(t, &mut gc);
+            assert_eq!(gc.colors.button_danger, to_hsla(t.color_blocker));
+            let foreground = u32::from(gc.colors.button_danger_foreground.to_rgb()) >> 8;
+            for (state, background) in [
+                ("rest", gc.colors.button_danger),
+                ("hover", gc.colors.button_danger_hover),
+                ("pressed", gc.colors.button_danger_active),
+            ] {
+                assert!(background.is_opaque(), "{}: {state}", t.slug);
+                let contrast = contrast_ratio(u32::from(background.to_rgb()) >> 8, foreground);
+                assert!(
+                    contrast >= 4.5,
+                    "{}: destructive {state} label is only {contrast:.2}:1",
+                    t.slug
+                );
+            }
+            assert_ne!(
+                gc.colors.button_danger_hover, gc.colors.button_danger,
+                "{}: hover feedback",
+                t.slug
+            );
+            assert_ne!(
+                gc.colors.button_danger_active, gc.colors.button_danger_hover,
+                "{}: pressed feedback",
+                t.slug
+            );
         }
     }
 

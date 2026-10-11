@@ -293,11 +293,7 @@ pub(crate) fn render_cherry_pick_modal(
     }
 
     // The confirm stays visible and explains blocked and failed plans.
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "cherry-pick-cancel",
             Msg::PlanCancel.t(),
@@ -516,11 +512,7 @@ pub(crate) fn render_commit_plan_modal(
         );
     }
 
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "commit-plan-cancel",
             Msg::PlanCancel.t(),

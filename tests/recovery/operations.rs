@@ -3845,6 +3845,34 @@ fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindo
     .unwrap();
 }
 
+fn assert_dialog_pixel(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    x: gpui::Pixels,
+    y: gpui::Pixels,
+    expected: u32,
+) {
+    let actual = cx
+        .update_window(window, |_, window, _| {
+            let image = window.render_to_image().expect("native dialog capture");
+            let scale = window.scale_factor();
+            image
+                .get_pixel((f32::from(x) * scale) as u32, (f32::from(y) * scale) as u32)
+                .0
+        })
+        .unwrap();
+    for (actual, expected) in actual[..3].iter().zip([
+        (expected >> 16) as u8,
+        (expected >> 8) as u8,
+        expected as u8,
+    ]) {
+        assert!(
+            actual.abs_diff(expected) <= 2,
+            "native dialog pixel: {actual}, expected {expected}"
+        );
+    }
+}
+
 /// #354 slice 2: confirmation cards are dialogs for assistive technology.
 /// The AccessKit tree only exists with an AT connected (#840), so the oracle
 /// is what the renderer set: role, name, description, the Confirm/Cancel
@@ -3853,6 +3881,10 @@ fn redraw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindo
 /// card (delete-branch) and a bespoke card (discard).
 pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     use gpui::Role;
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
+    let previous_theme = kagi::ui::theme::theme().slug.to_owned();
+    let previous_lang = kagi::ui::i18n::lang();
+    let previous_zoom = kagi::ui::theme::zoom();
     let fixture = build_fixture();
     let repo = fixture.path();
     git(repo, &["branch", "merged-delete", "HEAD~1"]);
@@ -3862,6 +3894,89 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     git(repo, &["commit", "-q", "-m", "unmerged work"]);
     git(repo, &["checkout", "-q", "main"]);
     let (app, window) = mount(cx, repo);
+    for slug in ["apple-light", "apple-dark"] {
+        for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+            kagi::ui::i18n::set_lang(lang);
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            for zoom in [1., 1.67] {
+                kagi::ui::theme::set_zoom(zoom);
+                let head = CommitId(output(repo, &["rev-parse", "HEAD"]));
+                app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
+                wait_idle(cx, &app);
+                redraw(cx, &app, window);
+                let dialog = kagi::ui::dialog_a11y::recorded_dialog("create-branch-card")
+                    .expect("Create Branch has a named modal task boundary");
+                assert_eq!(dialog.role, Role::Dialog);
+                assert_eq!(dialog.label, kagi::ui::i18n::Msg::InputBranchTitle.t());
+                assert!(
+                    cx.update_window(window, |_, window, cx| {
+                        app.read(cx).modal_focus.as_ref().is_some_and(|focus| {
+                            focus.is_focused(window) || focus.contains_focused(window, cx)
+                        })
+                    })
+                    .unwrap(),
+                    "opening puts focus inside the task"
+                );
+                cx.simulate_keystrokes(window, "f e a t");
+                cx.run_until_parked();
+                wait_painted(cx, &app, window, |app| {
+                    app.create_branch_modal()
+                        .and_then(|modal| modal.plan.plan())
+                        .is_some_and(|plan| plan.blockers.is_empty())
+                });
+                redraw(cx, &app, window);
+                let cancel =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-cancel")
+                        .unwrap();
+                let confirm = kagi::ui::e2e::confirm_bounds(window.window_id()).unwrap();
+                assert_eq!(cancel.size.height, confirm.size.height);
+                assert!(
+                    cancel.right() < confirm.left(),
+                    "Cancel leads the default action"
+                );
+                let t = kagi::ui::theme::theme();
+                let border = if slug == "apple-light" {
+                    0x8e8e8e
+                } else {
+                    t.text_muted
+                };
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    cancel.left() + gpui::px(0.25),
+                    cancel.center().y,
+                    border,
+                );
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    confirm.left() + gpui::px(6.),
+                    confirm.center().y,
+                    t.ui_accent(),
+                );
+                for key in ["tab", "tab", "tab", "shift-tab", "shift-tab", "shift-tab"] {
+                    cx.simulate_keystrokes(window, key);
+                    cx.run_until_parked();
+                    redraw(cx, &app, window);
+                    assert!(
+                        cx.update_window(window, |_, window, cx| {
+                            app.read(cx).modal_focus.as_ref().is_some_and(|focus| {
+                                focus.is_focused(window) || focus.contains_focused(window, cx)
+                            })
+                        })
+                        .unwrap(),
+                        "focus remains in the dialog after {key}"
+                    );
+                }
+                cx.simulate_keystrokes(window, "escape");
+                cx.run_until_parked();
+                assert!(cx.read(|cx| app.read(cx).create_branch_modal().is_none()));
+            }
+        }
+    }
+    kagi::ui::theme::set_zoom(previous_zoom);
+    kagi::ui::i18n::set_lang(previous_lang);
+    app.update(cx, |app, cx| app.set_theme(&previous_theme, cx));
 
     // Two-stage (unmerged): AlertDialog, "needs two confirmations", Confirm
     // named by the visible label, warning row is a Note.
@@ -3968,11 +4083,69 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
             .read(cx)
             .owner
     });
+    for slug in ["apple-light", "apple-dark"] {
+        for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+            kagi::ui::i18n::set_lang(lang);
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            for zoom in [1., 1.67] {
+                kagi::ui::theme::set_zoom(zoom);
+                app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
+                wait_idle(cx, &app);
+                redraw(cx, &app, window);
+                let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").unwrap();
+                assert_eq!(d.role, Role::AlertDialog);
+                assert!(!d.label.is_empty());
+                let cancel =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "discard-cancel").unwrap();
+                let confirm =
+                    kagi::ui::e2e::control_bounds(window.window_id(), "discard-confirm").unwrap();
+                assert_eq!(cancel.size.height, confirm.size.height);
+                assert!(cancel.right() < confirm.left());
+                let t = kagi::ui::theme::theme();
+                let border = if slug == "apple-light" {
+                    0x8e8e8e
+                } else {
+                    t.text_muted
+                };
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    cancel.left() + gpui::px(0.25),
+                    cancel.center().y,
+                    border,
+                );
+                assert_dialog_pixel(
+                    cx,
+                    window,
+                    confirm.left() + gpui::px(6.),
+                    confirm.center().y,
+                    t.color_blocker,
+                );
+                press_key(cx, &app, window, "escape");
+                cx.run_until_parked();
+                assert!(cx.read(|cx| app.read(cx).discard_modal().is_none()));
+            }
+        }
+    }
+    kagi::ui::theme::set_zoom(previous_zoom);
+    kagi::ui::i18n::set_lang(previous_lang);
+    app.update(cx, |app, cx| app.set_theme(&previous_theme, cx));
     app.update(cx, |app, cx| app.open_discard_all_modal(owner, cx));
     wait_idle(cx, &app);
     redraw(cx, &app, window);
     let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("discard card drawn");
     assert_eq!(d.role, Role::AlertDialog);
+    let cancel = kagi::ui::e2e::control_bounds(window.window_id(), "discard-cancel").unwrap();
+    let confirm = kagi::ui::e2e::control_bounds(window.window_id(), "discard-confirm").unwrap();
+    assert_eq!(cancel.size.height, confirm.size.height);
+    assert!(cancel.right() < confirm.left());
+    assert_dialog_pixel(
+        cx,
+        window,
+        confirm.left() + gpui::px(6.),
+        confirm.center().y,
+        kagi::ui::theme::theme().color_blocker,
+    );
     assert_eq!(
         d.actions[0].1,
         kagi_ui_core::i18n::Msg::PlanDiscardConfirm

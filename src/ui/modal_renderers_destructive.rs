@@ -345,11 +345,7 @@ pub(crate) fn render_amend_modal(
     }
 
     // The first press arms history rewriting; only the second is destructive.
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(super::e2e::measure_control(
             "amend-cancel",
             modal_button(
@@ -753,11 +749,7 @@ pub(crate) fn render_discard_modal(
     }
 
     // Both presses discard working-tree content, so both retain danger color.
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(super::e2e::measure_control(
             "discard-cancel",
             modal_button(

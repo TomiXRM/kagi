@@ -995,6 +995,7 @@ pub struct KagiApp {
     pub root_focus: Option<gpui::FocusHandle>,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     pub(crate) window_active: bool,
+    pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
@@ -1148,6 +1149,8 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' single scroll owner survives control updates and redraws.
+    pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
     /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
     /// panel (gpui-component's Root) instead of reaching the terminal or the
@@ -1435,6 +1438,7 @@ impl KagiApp {
             root_focus: None,
             window_activation_subscription: None,
             window_active: true,
+            toolbar_layout: render_header::toolbar_overflow::Layout::default(),
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             view_epoch: 0,
@@ -1482,6 +1486,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,

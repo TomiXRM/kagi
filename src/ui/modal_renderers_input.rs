@@ -166,6 +166,7 @@ pub(crate) fn render_input_plan_modal(
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     overrides: &std::collections::HashMap<&'static str, bool>,
+    focus: Option<&FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let field_reason = match validation.as_ref() {
@@ -200,11 +201,12 @@ pub(crate) fn render_input_plan_modal(
     if chips[0].is_none() {
         chips[0] = Some(std::borrow::Cow::Borrowed(heading_target));
     }
+    let title = SharedString::from(title);
     let card = modal_card(MODAL_W_MD).child(
         render_plan_heading(heading_title, chips, (icon, color), None)
             .id("input-plan-heading")
             .role(Role::Heading)
-            .aria_label(SharedString::from(title)),
+            .aria_label(title.clone()),
     );
     let mut body = modal_scroll_body().child(render_input_modal_field(
         label,
@@ -286,11 +288,7 @@ pub(crate) fn render_input_plan_modal(
         );
     }
 
-    let buttons = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let buttons = super::button_style::modal_button_row()
         .child(modal_button(
             "branch-input-cancel",
             Msg::PlanCancel.t(),
@@ -309,7 +307,16 @@ pub(crate) fn render_input_plan_modal(
         )));
     let card = card.child(body).child(div().flex_shrink_0().child(buttons));
 
-    modal_overlay(card).into_any_element()
+    modal_overlay(super::modal_renderers::input_dialog_frame(
+        "branch-input-card",
+        title.as_ref(),
+        (!has_blockers).then_some(confirm_label),
+        card,
+        focus,
+        |frame| frame,
+        cx,
+    ))
+    .into_any_element()
 }
 
 /// Input-only lock step; the existing plan card owns the final confirmation.
@@ -352,11 +359,8 @@ pub(crate) fn render_worktree_lock_reason_modal(
                 .child(error),
         );
     }
-    let buttons = div()
+    let buttons = super::button_style::modal_button_row()
         .flex_shrink_0()
-        .flex()
-        .gap_2()
-        .justify_end()
         .child(measure_control(
             "worktree-lock-reason-cancel",
             modal_button(
@@ -413,10 +417,14 @@ pub(crate) fn render_worktree_lock_reason_modal(
         cx.stop_propagation();
         cx.notify();
     });
-    let wrapper = div().on_key_down(keys);
-    let wrapper = match focus_handle {
-        Some(focus) => wrapper.track_focus(&focus),
-        None => wrapper,
-    };
-    modal_overlay(wrapper.child(card)).into_any_element()
+    modal_overlay(super::modal_renderers::input_dialog_frame(
+        "worktree-lock-reason-card",
+        Msg::MenuLockWorktree.t(),
+        Some(Msg::WorktreeLockReview.t()),
+        div().on_key_down(keys).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    ))
+    .into_any_element()
 }

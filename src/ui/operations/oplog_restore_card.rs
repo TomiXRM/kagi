@@ -529,26 +529,25 @@ pub(crate) fn render(
                 .child(error.clone()),
         );
     }
-    let mut buttons =
-        div()
-            .flex_shrink_0()
-            .flex()
-            .justify_end()
-            .gap_2()
-            .child(crate::ui::e2e::measure_control(
+    let mut buttons = crate::ui::button_style::modal_button_row()
+        .flex_shrink_0()
+        .child(crate::ui::e2e::measure_control(
+            "plan-cancel",
+            crate::ui::button_style::modal_button(
                 "plan-cancel",
-                Button::new("plan-cancel")
-                    .label(Msg::PlanCancel.t())
-                    .ghost()
-                    .small()
-                    .on_click(move |_, w, a| cancel(w, a)),
-            ));
+                Msg::PlanCancel.t(),
+                crate::ui::button_style::ModalButtonKind::Cancel,
+                None,
+                move |_, w, a| cancel(w, a),
+                cx,
+            ),
+        ));
     if !blocked {
         let button = if modal.confirm_armed {
             KagiButton::styled(
                 "plan-confirm",
                 SharedString::from(label),
-                ButtonRole::Danger,
+                ButtonRole::Destructive,
                 cx,
             )
         } else {

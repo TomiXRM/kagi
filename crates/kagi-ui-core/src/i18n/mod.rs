@@ -908,6 +908,7 @@ pub enum Msg {
     ToolbarTerminal,
     BottomTabOperationLog,
     BottomTabActivity,
+    ToolbarOverflow,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -3276,6 +3277,8 @@ impl Msg {
             (Ja, BottomTabOperationLog) => "操作ログ",
             (En, BottomTabActivity) => "Activity",
             (Ja, BottomTabActivity) => "アクティビティ",
+            (En, ToolbarOverflow) => "More Toolbar Commands",
+            (Ja, ToolbarOverflow) => "その他のツールバーコマンド",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {

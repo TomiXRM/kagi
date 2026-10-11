@@ -477,6 +477,7 @@ impl KagiApp {
                     .when_some(set_upstream_modal.take(), |el, modal| {
                         el.child(render_set_upstream_modal(
                             modal,
+                            modal_focus.as_ref(),
                             &self.modal_section_overrides,
                             cx,
                         ))
@@ -484,6 +485,7 @@ impl KagiApp {
                     .when_some(rename_branch_modal.take(), |el, modal| {
                         el.child(render_rename_branch_modal(
                             modal,
+                            modal_focus.as_ref(),
                             &self.modal_section_overrides,
                             cx,
                         ))

@@ -175,11 +175,7 @@ pub(crate) fn render_create_branch_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(crate::ui::e2e::measure_control(
             "create-branch-cancel",
             modal_button(
@@ -216,14 +212,15 @@ pub(crate) fn render_create_branch_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-branch-card",
+        Msg::InputBranchTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
@@ -384,11 +381,7 @@ pub(crate) fn render_create_worktree_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "create-worktree-cancel",
             Msg::PlanCancel.t(),
@@ -419,14 +412,15 @@ pub(crate) fn render_create_worktree_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-worktree-card",
+        Msg::InputWorktreeTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     // ── Full-screen overlay wrapper (shared chrome, T-SPLIT-HELPERS-001) ──
     modal_overlay(focusable_card)
@@ -548,11 +542,7 @@ pub(crate) fn render_create_tag_modal(
     } else {
         None
     };
-    let button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let button_row = super::button_style::modal_button_row()
         .child(modal_button(
             "create-tag-cancel",
             Msg::PlanCancel.t(),
@@ -584,14 +574,15 @@ pub(crate) fn render_create_tag_modal(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div().on_key_down(esc_cancel);
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "create-tag-card",
+        Msg::InputTagTitle.t(),
+        (!has_blockers).then_some(Msg::InputCreate.t()),
+        div().on_key_down(esc_cancel).child(card),
+        focus_handle.as_ref(),
+        |frame| frame,
+        cx,
+    );
 
     modal_overlay(focusable_card)
 }

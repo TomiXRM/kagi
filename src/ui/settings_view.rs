@@ -132,6 +132,7 @@ pub fn render_settings_overlay(
     // the same reason (no `app.read(cx)` during render). Built lazily via
     // `KagiApp::ensure_analyze_ignore_input` when the overlay opens.
     analyze_ignore_input: Option<Entity<InputState>>,
+    scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
@@ -160,9 +161,10 @@ pub fn render_settings_overlay(
         .overflow_hidden()
         .rounded(px(12.0))
         .border_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
         .bg(rgb(theme().panel))
         .shadow_lg()
+        .child(super::e2e::measure_inside("settings-frame"))
         // swallow clicks inside the panel so they don't dismiss via the scrim
         .on_mouse_down(MouseButton::Left, |_, _w, cx| cx.stop_propagation())
         // ── Title bar ──────────────────────────────────────────────
@@ -175,7 +177,8 @@ pub fn render_settings_overlay(
                 .px_4()
                 .py_3()
                 .border_b_1()
-                .border_color(rgb(theme().selected))
+                .border_color(rgb(theme().surface))
+                .child(super::e2e::measure_inside("settings-titlebar"))
                 .child(
                     div()
                         .text_color(rgb(theme().text_main))
@@ -191,16 +194,17 @@ pub fn render_settings_overlay(
                         .on_click(close_click),
                 )),
         )
-        // ── Scrollable content: Appearance + Language + Smart Commit ─────
-        // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
-        // taller than the panel, so the lower ones (Smart Commit / LLM) must
-        // stay reachable by scrolling rather than being clipped.
-        .child(
+        // One persistent scroll owner for the whole body; the kit owns thumb
+        // drag/visibility state under the stable scrollbar element id.
+        .child(super::render_helpers::with_system_vertical_scrollbar(
+            "settings-scrollbar",
+            &scroll,
             div()
                 .id("settings-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&scroll)
                 .px_5()
                 .py_4()
                 .flex()
@@ -210,7 +214,8 @@ pub fn render_settings_overlay(
                 .child(language_section(&app))
                 .child(smart_commit_section(&app, &smart, &switches, cx))
                 .child(analyze_ignore_section(&app, analyze_ignore_input)),
-        );
+            cx,
+        ));
 
     // Scrim + centred panel.
     div()
@@ -249,14 +254,15 @@ pub fn render_settings_overlay(
 // Section / row helpers
 // ────────────────────────────────────────────────────────────
 
-fn section_header(title: SharedString) -> impl IntoElement {
+fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
     div()
-        .text_sm()
+        .text_size(super::theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme().accent_text_on(theme().panel)))
+        .text_color(rgb(theme().text_sub))
         .pb_1()
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside(name))
         .child(title)
 }
 
@@ -498,9 +504,10 @@ fn appearance_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAppearance.t(),
-        )))
+        .child(section_header(
+            "settings-appearance-heading",
+            SharedString::from(Msg::SettingsAppearance.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
@@ -611,9 +618,10 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsLanguage.t(),
-        )))
+        .child(section_header(
+            "settings-language-heading",
+            SharedString::from(Msg::SettingsLanguage.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
@@ -817,9 +825,10 @@ fn smart_commit_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsSmartCommit.t(),
-        )))
+        .child(section_header(
+            "settings-smart-heading",
+            SharedString::from(Msg::SettingsSmartCommit.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsSmartEnable.t()),
             SharedString::from(Msg::SettingsSmartEnableDesc.t()),
@@ -908,9 +917,10 @@ fn analyze_ignore_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAnalyzeIgnore.t(),
-        )))
+        .child(section_header(
+            "settings-analyze-heading",
+            SharedString::from(Msg::SettingsAnalyzeIgnore.t()),
+        ))
         .child(
             div()
                 .text_sm()

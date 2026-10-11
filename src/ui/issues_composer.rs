@@ -483,6 +483,23 @@ pub(super) fn render_composer(
         disabled,
         cx.listener(move |app, _, _, cx| app.start_issue_write(number, cx)),
     );
+    let focus_label = if editor.focused {
+        Msg::IssueExitFocus.t()
+    } else {
+        Msg::IssueFocusEditor.t()
+    };
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("{id}-focus");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(focus_label),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, None);
+    }
     content = content.child(
         div()
             .flex()
@@ -519,7 +536,8 @@ pub(super) fn render_composer(
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(
+                    .child(super::e2e::measure_control(
+                        format!("{id}-focus"),
                         Button::new(SharedString::from(format!("{id}-focus")))
                             .icon(Icon::empty().path(if editor.focused {
                                 "icons/window-restore.svg"
@@ -527,19 +545,21 @@ pub(super) fn render_composer(
                                 "icons/window-maximize.svg"
                             }))
                             .small()
+                            .tab_stop(true)
+                            .map(|button| {
+                                super::button_style::named_button(button, focus_label, None)
+                            })
                             .tooltip_with_action(
-                                if editor.focused {
-                                    Msg::IssueExitFocus.t()
-                                } else {
-                                    Msg::IssueFocusEditor.t()
-                                },
+                                focus_label,
                                 &FocusIssueEditor,
                                 Some("IssueComposer"),
                             )
                             .on_click(cx.listener(move |app, _, window, cx| {
+                                #[cfg(feature = "gui-e2e")]
+                                super::e2e::pr_detail::record_activation(&format!("{id}-focus"));
                                 app.toggle_issue_focus(number, window, cx)
                             })),
-                    )
+                    ))
                     .child(super::e2e::measure_control(format!("{id}-submit"), submit)),
             ),
     );

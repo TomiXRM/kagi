@@ -7,6 +7,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR detail Overview, Review, Files and Commits use one named keyboard TabList, including Conflicts when available. Arrow/Home/End move focus; Enter/Space activate the existing view path without replacing the composer or its draft. (#1255)
+- PR description, Merge and GitHub header actions expose localized names and keyboard activation. Description exposes its toggle state; conflicting PRs retain access to the guarded merge approval rather than looking disabled. Draft and held merges remain unavailable. (#1256)
+- Review Copy hunk and Apply suggestion use named keyboard-reachable Buttons with larger hit targets. Full-hunk copying and mouse-down selection suppression remain; Apply still opens the existing destructive plan and never writes before confirmation. (#1257)
+- PR and Issues create/reply composer preview and focus icons expose explicit EN/JA accessibility names and state, including the action to return to editing or leave focused mode. Tooltips are no longer the only names; drafts and editor ownership are unchanged. (#1259)
+- Ordinary comment and Issue submission uses the primary accent instead of warning styling. Disabled submit stays neutral and inert; review Request changes keeps its warning meaning. (#1260)
 - Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
 - macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)

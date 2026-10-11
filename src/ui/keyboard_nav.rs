@@ -288,6 +288,14 @@ impl TabFocus {
             .map(|(_, handle)| handle.clone())
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn focused_slot(&self, window: &Window) -> Option<usize> {
+        self.cells
+            .borrow()
+            .iter()
+            .position(|(_, handle)| handle.is_focused(window))
+    }
+
     /// The list is not drawn for now (Home is not in front): a focus on any
     /// of its cells goes to `fallback`.
     pub(crate) fn yield_focus(

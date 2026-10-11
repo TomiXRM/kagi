@@ -7,7 +7,7 @@ thread_local! {
     static ROWS: RefCell<HashMap<(u64, usize), Option<Fill>>> = RefCell::new(HashMap::new());
     static BUTTONS: RefCell<HashMap<usize, (Role, String)>> = RefCell::new(HashMap::new());
     static FOCUS: RefCell<Option<usize>> = const { RefCell::new(None) };
-    static BODY_FOCUS: RefCell<HashMap<u64, bool>> = RefCell::new(HashMap::new());
+    static BODY_FOCUS: RefCell<HashMap<u64, (bool, bool)>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn row(key: u64, index: usize, mut element: Stateful<Div>) -> Stateful<Div> {
@@ -49,10 +49,24 @@ pub fn take_focus() -> Option<usize> {
     FOCUS.with(|focus| focus.borrow_mut().take())
 }
 
-pub(crate) fn note_body_focus(key: u64, focused: bool) {
-    BODY_FOCUS.with(|focus| focus.borrow_mut().insert(key, focused));
+pub(crate) fn note_body_focus(key: u64, focused: bool, ring_visible: bool) {
+    BODY_FOCUS.with(|focus| focus.borrow_mut().insert(key, (focused, ring_visible)));
 }
 
 pub fn body_focused(key: u64) -> bool {
-    BODY_FOCUS.with(|focus| focus.borrow().get(&key).copied().unwrap_or(false))
+    BODY_FOCUS.with(|focus| {
+        focus
+            .borrow()
+            .get(&key)
+            .is_some_and(|(focused, _)| *focused)
+    })
+}
+
+pub fn body_ring_visible(key: u64) -> bool {
+    BODY_FOCUS.with(|focus| {
+        focus
+            .borrow()
+            .get(&key)
+            .is_some_and(|(_, visible)| *visible)
+    })
 }

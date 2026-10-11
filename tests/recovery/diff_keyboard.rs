@@ -82,6 +82,7 @@ fn selection_cell(cx: &mut VisualTestAppContext) {
     keys(cx, window, "up");
     draw(cx, window);
     assert_header_caret(key, true);
+    pointer_ring(cx, window, key);
     range_keys(cx, &app, window);
     assert!(
         cx.read(|cx| app.read(cx).ui().main_diff.is_some()),
@@ -96,6 +97,10 @@ fn tab_to_body(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: u64)
         keys(cx, window, "tab");
         draw(cx, window);
         if e2e::diff_controls::body_focused(key) {
+            assert!(
+                e2e::diff_controls::body_ring_visible(key),
+                "Tab reveals the body ring"
+            );
             return;
         }
     }
@@ -113,6 +118,32 @@ fn assert_header_caret(key: u64, selected: bool) {
         selected,
         "header tint follows the keyboard caret"
     );
+}
+
+fn pointer_ring(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: u64) {
+    let row = e2e::control_bounds(window.window_id(), "main-diff-hunk-row-0").unwrap();
+    cx.simulate_click(
+        window,
+        gpui::point(row.left() + gpui::px(100.), row.center().y),
+        gpui::Modifiers::none(),
+    );
+    draw(cx, window);
+    assert!(
+        e2e::diff_controls::body_focused(key),
+        "click retains body focus"
+    );
+    assert!(
+        !e2e::diff_controls::body_ring_visible(key),
+        "pointer click hides the ring"
+    );
+    assert_header_caret(key, false);
+    keys(cx, window, "down");
+    draw(cx, window);
+    assert!(
+        e2e::diff_controls::body_ring_visible(key),
+        "arrow input reveals the ring"
+    );
+    assert_eq!(selected_rows(key), 1, "caret still responds after a click");
 }
 
 fn range_keys(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {

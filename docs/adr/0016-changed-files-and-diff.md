@@ -20,7 +20,8 @@
   workspace cancellation chain: selection clears before notification dismissal.
   Its FocusHandle and element identity use only the title, independently of the
   row-count-dependent selection token, so same-file reloads retain focus.
-  A 2px accent overlay makes focus visible without resizing the list or rows.
+  A 2px accent overlay makes keyboard focus visible without resizing the list
+  or rows; pointer input suppresses it until the next keyboard input.
 - Keyboard selection reuses `diff_selection`'s single title/count surface token,
   inclusive anchor/cursor range and `selection_overlay` paint. Moving a caret
   without Shift collapses the range to that row; Shift preserves the anchor.

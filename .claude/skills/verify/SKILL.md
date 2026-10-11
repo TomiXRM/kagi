@@ -2891,6 +2891,8 @@ code-only Cmd+C. EN/JA unified/split use real backend rows; changing the row
 count must preserve body focus without another Tab or click. Both ends of a
 201-row diff remain inside the measured native viewport after keyboard
 movement. Neither recorder is native VoiceOver evidence.
+Tab shows the body ring, a measured header click keeps body focus without the
+ring, and subsequent arrow input restores the keyboard-only ring.
 Neighbor filter: `KAGI_GUI_E2E_ONLY='diff_,hunk_,peek_,copy_'`.
 Tier B: Tab into the body and hunk actions; inspect focus, Enter/Space, tooltip
 and live AX role/name, then Shift-arrow / Shift-Cmd-arrow / Cmd+A / Cmd+C /

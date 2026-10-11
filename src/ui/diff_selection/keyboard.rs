@@ -61,14 +61,15 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
             .tab_stop(true);
         let key_focus = focus.clone();
         let is_focused = focus.is_focused(window);
+        let ring_visible = is_focused && window.last_input_was_keyboard();
         #[cfg(feature = "gui-e2e")]
-        super::super::e2e::diff_controls::note_body_focus(self.key, is_focused);
+        super::super::e2e::diff_controls::note_body_focus(self.key, is_focused, ring_visible);
         self.element
             .track_focus(&focus)
             .relative()
             // An inset overlay uses the existing accent/2px ring without
             // changing the list viewport or dense hunk-row geometry.
-            .when(is_focused, |pane| {
+            .when(ring_visible, |pane| {
                 pane.child(
                     gpui::div()
                         .absolute()

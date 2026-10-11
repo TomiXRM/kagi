@@ -173,7 +173,8 @@ impl gpui::Render for RadioProbe {
 }
 
 pub fn scenario_settings_radio_dot(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom"]);
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom", "accent_source", "accent"]);
     let old_theme = theme::theme().slug.to_string();
     let old_zoom = theme::zoom();
     let fixture = build_fixture();
@@ -187,75 +188,105 @@ pub fn scenario_settings_radio_dot(cx: &mut VisualTestAppContext) {
         crate::macos::open_offscreen(cx, gpui::size(gpui::px(160.), gpui::px(100.)), |_, _| root);
     let window: gpui::AnyWindowHandle = window.into();
     for slug in ["apple-light", "apple-dark"] {
-        for zoom in [1.0, 1.67] {
-            app.update(cx, |app, cx| {
-                app.set_theme(slug, cx);
-                theme::set_zoom(zoom);
-                cx.notify();
-            });
-            cx.update_window(window, |_, window, cx| {
-                window.set_rem_size(theme::scaled_px(16.));
-                window.refresh();
-                window.draw(cx).clear();
-            })
-            .unwrap();
-            let checked = e2e::control_bounds(window.window_id(), "radio-selected").unwrap();
-            let empty = e2e::control_bounds(window.window_id(), "radio-empty").unwrap();
-            cx.update_window(window, |_, window, cx| {
-                let image = window.render_to_image().expect("native radio glyph image");
-                let scale = window.scale_factor();
-                let radius = f32::from(theme::scaled_px(8.));
-                let sample = |b: gpui::Bounds<gpui::Pixels>, dx: f32, dy: f32| {
-                    image
-                        .get_pixel(
-                            ((f32::from(b.left()) + radius + dx * zoom) * scale) as u32,
-                            ((f32::from(b.top()) + radius + dy * zoom) * scale) as u32,
-                        )
-                        .0
-                };
-                // A round mark is white symmetrically above/below/left/right;
-                // the old check SVG does not satisfy this oracle.
-                for (x, y) in [(0., 0.), (-1., 0.), (1., 0.), (0., -1.), (0., 1.)] {
-                    let p = sample(checked, x, y);
+        for source in [
+            None,
+            Some(theme::SystemAccent::Blue),
+            Some(theme::SystemAccent::Purple),
+        ] {
+            let _accent =
+                theme::AccentInjection::new(source.unwrap_or(theme::SystemAccent::Blue), None);
+            for zoom in [1.0, 1.67] {
+                app.update(cx, |app, cx| {
+                    app.set_theme(slug, cx);
+                    theme::set_zoom(zoom);
+                    theme::set_follows_system_accent(source.is_some());
+                    theme::sync_gpui_component_theme(cx);
+                    cx.notify();
+                });
+                cx.update_window(window, |_, window, cx| {
+                    window.set_rem_size(theme::scaled_px(16.));
+                    window.refresh();
+                    window.draw(cx).clear();
+                })
+                .unwrap();
+                let checked = e2e::control_bounds(window.window_id(), "radio-selected").unwrap();
+                let empty = e2e::control_bounds(window.window_id(), "radio-empty").unwrap();
+                cx.update_window(window, |_, window, cx| {
+                    let image = window.render_to_image().expect("native radio glyph image");
+                    let scale = window.scale_factor();
+                    let radius = f32::from(theme::scaled_px(8.));
+                    let sample = |b: gpui::Bounds<gpui::Pixels>, dx: f32, dy: f32| {
+                        image
+                            .get_pixel(
+                                ((f32::from(b.left()) + radius + dx * zoom) * scale) as u32,
+                                ((f32::from(b.top()) + radius + dy * zoom) * scale) as u32,
+                            )
+                            .0
+                    };
+                    use gpui_component::ActiveTheme as _;
+                    let foreground: gpui::Rgba = cx.theme().primary_foreground.into();
+                    let dot = [foreground.r, foreground.g, foreground.b]
+                        .map(|c| (c * 255.).round() as u8);
+                    let dot_rgb =
+                        (u32::from(dot[0]) << 16) | (u32::from(dot[1]) << 8) | u32::from(dot[2]);
+                    let (dot_luma, fill_luma) =
+                        (luminance(dot_rgb), luminance(theme::theme().ui_accent()));
                     assert!(
-                        p[..3].iter().all(|c| *c >= 250),
-                        "radio dot ({x},{y}): {p:?}"
+                        (dot_luma.max(fill_luma) + 0.05) / (dot_luma.min(fill_luma) + 0.05) >= 4.5
                     );
-                }
-                for (x, y) in [(-4., 0.), (4., 0.), (0., -4.), (0., 4.)] {
-                    let p = sample(checked, x, y);
-                    let color = theme::theme().ui_accent();
-                    for (got, want) in
-                        p[..3]
-                            .iter()
-                            .zip([(color >> 16) as u8, (color >> 8) as u8, color as u8])
-                    {
+                    if slug == "apple-dark" && source.is_none() {
                         assert!(
-                            got.abs_diff(want) <= 2,
-                            "outside dot must be accent, not check path: {p:?}"
+                            dot.iter().all(|c| *c < 128),
+                            "yellow theme accent requires a dark dot"
                         );
                     }
-                }
-                use gpui_component::ActiveTheme as _;
-                let input: gpui::Rgba = cx.theme().input_background().into();
-                let panel = rgb(theme::theme().panel);
-                let expected = [
-                    input.r * input.a + panel.r * (1. - input.a),
-                    input.g * input.a + panel.g * (1. - input.a),
-                    input.b * input.a + panel.b * (1. - input.a),
-                ];
-                for (x, y) in [(0., 0.), (-3., 0.), (3., 0.), (0., -3.), (0., 3.)] {
-                    let p = sample(empty, x, y);
-                    assert!(
-                        p[..3]
-                            .iter()
-                            .zip(expected)
-                            .all(|(got, want)| got.abs_diff((want * 255.).round() as u8) <= 2),
-                        "unchecked radio retains input background, no mark: {p:?}"
-                    );
-                }
-            })
-            .unwrap();
+                    // A round mark is symmetrical in the contrasting primary foreground;
+                    // the old checkbox SVG and hard-coded white dot both fail this oracle.
+                    for (x, y) in [(0., 0.), (-1., 0.), (1., 0.), (0., -1.), (0., 1.)] {
+                        let p = sample(checked, x, y);
+                        assert!(
+                            p[..3]
+                                .iter()
+                                .zip(dot)
+                                .all(|(got, want)| got.abs_diff(want) <= 2),
+                            "radio dot ({x},{y}): {p:?}, expected {dot:?}"
+                        );
+                    }
+                    for (x, y) in [(-4., 0.), (4., 0.), (0., -4.), (0., 4.)] {
+                        let p = sample(checked, x, y);
+                        let color = theme::theme().ui_accent();
+                        for (got, want) in p[..3].iter().zip([
+                            (color >> 16) as u8,
+                            (color >> 8) as u8,
+                            color as u8,
+                        ]) {
+                            assert!(
+                                got.abs_diff(want) <= 2,
+                                "outside dot must be accent, not check path: {p:?}"
+                            );
+                        }
+                    }
+                    // Unchecked controls retain their independent input-background role.
+                    let input: gpui::Rgba = cx.theme().input_background().into();
+                    let panel = rgb(theme::theme().panel);
+                    let expected = [
+                        input.r * input.a + panel.r * (1. - input.a),
+                        input.g * input.a + panel.g * (1. - input.a),
+                        input.b * input.a + panel.b * (1. - input.a),
+                    ];
+                    for (x, y) in [(0., 0.), (-3., 0.), (3., 0.), (0., -3.), (0., 3.)] {
+                        let p = sample(empty, x, y);
+                        assert!(
+                            p[..3]
+                                .iter()
+                                .zip(expected)
+                                .all(|(got, want)| got.abs_diff((want * 255.).round() as u8) <= 2),
+                            "unchecked radio retains input background, no mark: {p:?}"
+                        );
+                    }
+                })
+                .unwrap();
+            }
         }
     }
     unmount(cx, probe, window.into());

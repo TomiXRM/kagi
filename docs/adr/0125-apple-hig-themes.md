@@ -339,7 +339,7 @@ are literal 1 logical px in `surface`, independent of system accent or zoom.
 Control fills and focus continue through the existing accent/theme bridge.
 
 The pinned gpui-kit Radio previously reused the checkbox check SVG. Its
-selected mark now paints a centered white circle approximately 6px inside a
+selected mark paints a centered contrasting circle approximately 6px inside a
 14px radio, scaled with the control; unchecked radios have no mark. Disabled
 marks retain reduced opacity. Existing RadioGroup selection, focus, keyboard,
 pointer and AX state ownership are unchanged. This is component paint, not a
@@ -356,3 +356,20 @@ empty input fill in both themes/zooms. Fork head
 `13386100eaca38a5759f69fe4596b59f2dff5141` was pushed and matched the remote
 `fix/radio-dot` head before pinning both Cargo patch entries and the lockfile.
 Real pointer/keyboard/VoiceOver delivery remains PM-owned Tier B evidence.
+
+Review correction: the dot uses `primary_foreground` through the theme bridge,
+not hard-coded white: Dark's yellow Theme accent requires a dark dot, as do
+other light fills. The native glyph matrix includes explicit Theme accent and
+blue/purple System accent at both zooms, comparing the foreground pixels and
+requiring ≥4.5:1 contrast. The white-only fork failed with actual
+`[255,255,255,255]` versus expected `[0,0,0]`.
+Fork head `879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b` supersedes `13386100`.
+
+The shared non-E2E `measure_inside` placeholder is absolute and zero-sized,
+so it cannot introduce a third flex item, a gap, or alter `justify_between`.
+The E2E canvas branch is unchanged. A unit test failed on the old placeholder
+(`position: None`, expected `Absolute`) and asserts both position and zero size.
+
+Review validation: the default-build placeholder unit passes (1/1), and the
+scoped native suite `settings_quiet,settings_radio_dot,settings_switches,settings_focus_trap`
+passes (4/4), including settings isolation restoration of `accent_source`.

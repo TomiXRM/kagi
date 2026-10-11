@@ -27,9 +27,40 @@ impl gpui::RenderOnce for SnapshotButton {
     }
 }
 
-/// Fence longer than every literal backtick run, retaining all source bytes.
-/// Prepared once on publication, never reparsed/encoded on ordinary redraws.
+/// Bound each virtualized ListState item; large snapshots skip syntax work.
+/// Fence longer than every literal backtick run, retaining source separators.
 pub(crate) fn literal_source(text: &str, language: &str) -> String {
+    const CHUNK_LINES: usize = 32;
+    const HIGHLIGHT_BYTES: usize = 128 * 1024;
+    const HIGHLIGHT_LINES: usize = 2048;
+    let line_count = text.lines().count();
+    let language = if text.len() <= HIGHLIGHT_BYTES && line_count <= HIGHLIGHT_LINES {
+        language
+    } else {
+        ""
+    };
+    let blocks = line_count.max(1).div_ceil(CHUNK_LINES);
+    let mut source = String::with_capacity(text.len() + blocks * (language.len() + 11));
+    let mut start = 0;
+    let mut lines = 0;
+    for (offset, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            lines += 1;
+            if lines == CHUNK_LINES {
+                append_block(&mut source, &text[start..=offset], language);
+                start = offset + 1;
+                lines = 0;
+            }
+        }
+    }
+    if start < text.len() || source.is_empty() {
+        append_block(&mut source, &text[start..], language);
+    }
+    source
+}
+
+fn append_block(source: &mut String, text: &str, language: &str) {
+    // A long delimiter in one chunk must not amplify every other chunk.
     let mut longest = 0;
     let mut run = 0;
     for byte in text.bytes() {
@@ -37,14 +68,13 @@ pub(crate) fn literal_source(text: &str, language: &str) -> String {
         longest = longest.max(run);
     }
     let fence_len = (longest + 1).max(3);
-    let mut source = String::with_capacity(text.len() + language.len() + 2 * fence_len + 2);
     source.extend(std::iter::repeat_n('`', fence_len));
     source.push_str(language);
     source.push('\n');
-    source.push_str(text);
+    source.push_str(text.strip_suffix('\n').unwrap_or(text));
     source.push('\n');
     source.extend(std::iter::repeat_n('`', fence_len));
-    source
+    source.push_str("\n\n");
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -53,6 +83,7 @@ pub struct SnapshotControl {
     pub role: Role,
     pub name: SharedString,
     pub bounds: gpui::Bounds<gpui::Pixels>,
+    pub tooltip: Option<SharedString>,
 }
 
 fn identity(view: &EditorWorkspaceView) -> SharedString {
@@ -70,11 +101,20 @@ fn identity(view: &EditorWorkspaceView) -> SharedString {
 fn indicator(identity: &SharedString, cx: &mut Context<EditorWorkspaceView>) -> AnyElement {
     let name: SharedString = format!("{} · {}", Msg::EditorSnapshotReadOnly.t(), identity).into();
     let tooltip = name.clone();
+    let role = Role::Label;
+    #[cfg(feature = "gui-e2e")]
+    let recorded_tooltip = tooltip.clone();
+    #[cfg(feature = "gui-e2e")]
+    let tooltip_owner = cx.entity().downgrade();
     let label = div()
         .id("ews-snapshot-readonly")
-        .role(Role::Label)
+        .role(role)
         .aria_label(name.clone())
         .tooltip(move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            let _ = tooltip_owner.update(cx, |view, _| {
+                view.snapshot_tooltip_shown = Some(tooltip.clone());
+            });
             gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
         })
         .min_w(px(0.))
@@ -90,9 +130,10 @@ fn indicator(identity: &SharedString, cx: &mut Context<EditorWorkspaceView>) -> 
                 move |bounds, _, cx| {
                     _ = entity.update(cx, |view, _| {
                         view.snapshot_indicator = Some(SnapshotControl {
-                            role: Role::Label,
+                            role,
                             name: name.clone(),
                             bounds,
+                            tooltip: Some(recorded_tooltip.clone()),
                         })
                     });
                 },
@@ -111,6 +152,7 @@ fn indicator(identity: &SharedString, cx: &mut Context<EditorWorkspaceView>) -> 
 
 fn open_current(cx: &mut Context<EditorWorkspaceView>) -> AnyElement {
     let name: SharedString = Msg::EditorOpenCurrent.t().into();
+    let role = Role::Button;
     let button = Button::new("ews-snapshot-open-current")
         .ghost()
         .small()
@@ -124,9 +166,7 @@ fn open_current(cx: &mut Context<EditorWorkspaceView>) -> AnyElement {
             }
             cx.notify();
         }));
-    let button = SnapshotButton(button)
-        .role(Role::Button)
-        .aria_label(name.clone());
+    let button = SnapshotButton(button).role(role).aria_label(name.clone());
     let button = div().flex_shrink_0().relative().child(button);
     #[cfg(feature = "gui-e2e")]
     let button = {
@@ -136,9 +176,10 @@ fn open_current(cx: &mut Context<EditorWorkspaceView>) -> AnyElement {
                 move |bounds, _, cx| {
                     _ = entity.update(cx, |view, _| {
                         view.snapshot_current = Some(SnapshotControl {
-                            role: Role::Button,
+                            role,
                             name: name.clone(),
                             bounds,
+                            tooltip: None,
                         })
                     });
                 },
@@ -204,7 +245,12 @@ pub(crate) fn text(
     let base = px(theme::rem_size_px() * 0.875);
     let style = gpui_component::text::TextViewStyle {
         heading_base_font_size: base,
-        code_block: gpui::StyleRefinement::default().text_size(base),
+        paragraph_gap: gpui::rems(0.),
+        code_block: gpui::StyleRefinement::default()
+            .text_size(base)
+            .p_0()
+            .px_3()
+            .rounded_none(),
         is_dark: theme().dark,
         highlight_theme: cx.theme().highlight_theme.clone(),
         ..Default::default()

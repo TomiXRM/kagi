@@ -650,7 +650,8 @@ impl KagiApp {
         let Some(ev) = self.ui().editor_workspace.clone() else {
             return;
         };
-        if !ev.read(cx).dirty {
+        let view = ev.read(cx);
+        if view.showing_history_commit() || !view.dirty {
             return;
         }
         ev.update(cx, |v, cx| v.save(cx));

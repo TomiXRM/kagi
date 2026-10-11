@@ -454,6 +454,8 @@ pub struct EditorWorkspaceView {
     pub snapshot_indicator: Option<snapshot::SnapshotControl>,
     #[cfg(feature = "gui-e2e")]
     pub snapshot_current: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_tooltip_shown: Option<SharedString>,
 
     /// The code viewer `InputState`, created lazily on first render (needs a
     /// `Window`, only available there — see `sync_editor`).
@@ -599,6 +601,8 @@ impl EditorWorkspaceView {
             snapshot_indicator: None,
             #[cfg(feature = "gui-e2e")]
             snapshot_current: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_tooltip_shown: None,
             editor: None,
             pushed_sig: 0,
             dirty: false,
@@ -1086,6 +1090,16 @@ impl EditorWorkspaceView {
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
         // preference — not reset here. See `select_history_commit`.
         self.clear_selected_commit_views();
+    }
+
+    /// Historical content remains read-only regardless of root/header focus.
+    pub fn showing_history_commit(&self) -> bool {
+        self.right_tab == RightPaneTab::History && self.selected_history_commit.is_some()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn snapshot_text_state(&self) -> Option<Entity<gpui_component::text::TextViewState>> {
+        self.snapshot_text.clone()
     }
 
     /// Drop the selected commit's Diff/Snapshot content **and** whatever load

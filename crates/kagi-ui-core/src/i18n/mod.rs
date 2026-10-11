@@ -3882,7 +3882,7 @@ impl Msg {
             (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
             (Ja, EditorSnapshotUnavailable) => "この commit 時点のコンテンツは取得できません。",
             (En, EditorSnapshotReadOnly) => "Snapshot — read only",
-            (Ja, EditorSnapshotReadOnly) => "Snapshot — 読み取り専用",
+            (Ja, EditorSnapshotReadOnly) => "スナップショット — 読み取り専用",
             (En, EditorOpenCurrent) => "Open current",
             (Ja, EditorOpenCurrent) => "現在のファイルを開く",
 

@@ -3,6 +3,7 @@ use crate::macos::{build_fixture, git, unmount};
 use crate::pr_viewed::paint;
 use gpui::{point, px, size, Entity, Modifiers, Role, VisualTestAppContext};
 use kagi::ui::{e2e, KagiApp};
+use kagi_git::{CommitId, OperationKind};
 use kagi_ui_core::{
     i18n::{self, Lang, Msg},
     theme,
@@ -12,6 +13,71 @@ use std::{cell::RefCell, rc::Rc};
 
 const FILE: &str = "snapshot.rs";
 const CURRENT: &str = "let current = \"editable working tree\";\n";
+const DIRTY: &str = "w";
+
+#[path = "../support/git_fixture.rs"]
+mod git_fixture;
+
+fn dirty_live(
+    cx: &mut VisualTestAppContext,
+    live: &Entity<gpui_component::input::InputState>,
+    window: gpui::AnyWindowHandle,
+) {
+    use gpui::Focusable;
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&live.read(cx).focus_handle(cx), cx)
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "cmd-a");
+    cx.simulate_keystrokes(window, DIRTY);
+    paint(cx, window);
+    assert_eq!(cx.read(|cx| live.read(cx).value().to_string()), DIRTY);
+}
+
+fn seed_undo(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: &std::path::Path) {
+    let before = git_fixture::git_output(repo, &["rev-parse", "HEAD~1"]);
+    let after = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    app.update(cx, |app, _| {
+        app.record_history(
+            OperationKind::Commit,
+            "main",
+            CommitId(before),
+            CommitId(after),
+            "historical snapshot fixture",
+        );
+        app.ui_mut().unwrap().history_seed_attempted = true;
+        assert!(app.ui().operation_history.can_undo());
+    });
+}
+
+fn assert_shortcuts(cx: &mut VisualTestAppContext, mounted: &Mounted) {
+    for key in ["cmd-s", "cmd-z", "cmd-shift-z"] {
+        cx.simulate_keystrokes(mounted.window, key);
+        paint(cx, mounted.window);
+        cx.read(|cx| {
+            let app = mounted.app.read(cx);
+            assert!(
+                app.active_modal.is_none(),
+                "Historical shortcut opened a modal: {key}"
+            );
+            assert!(
+                app.ui().operation_history.can_undo(),
+                "real undo entry remains available"
+            );
+            let view = mounted.editor.read(cx);
+            assert!(
+                view.dirty,
+                "Historical Save cleared live dirty state: {key}"
+            );
+            assert_eq!(mounted.live.read(cx).value().as_ref(), DIRTY);
+            assert_eq!(
+                std::fs::read_to_string(view.repo_path.join(FILE)).unwrap(),
+                CURRENT,
+                "Historical Save wrote the hidden buffer: {key}"
+            );
+        });
+    }
+}
 
 #[derive(Debug)]
 struct Case {
@@ -132,6 +198,8 @@ fn setup(cx: &mut VisualTestAppContext, repo: &std::path::Path, case: &Case) -> 
     });
     let live = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
     assert_eq!(cx.read(|cx| live.read(cx).value().to_string()), CURRENT);
+    dirty_live(cx, &live, window);
+    seed_undo(cx, &app, repo);
     let hash = select_snapshot(cx, &editor, window);
     // PM-approved compact leg: Toggle Sidebar only while #1262's shared
     // Editor width clamp is absent. After integration the natural layout is
@@ -173,6 +241,32 @@ fn assert_header(cx: &mut VisualTestAppContext, mounted: &Mounted) -> gpui::Boun
     assert_eq!(indicator.role, Role::Label);
     assert!(indicator.name.contains(Msg::EditorSnapshotReadOnly.t()));
     assert!(indicator.name.contains(FILE) && indicator.name.contains(&mounted.hash));
+    assert_eq!(indicator.tooltip.as_ref(), Some(&indicator.name));
+    cx.simulate_mouse_move(
+        mounted.window,
+        indicator.bounds.center(),
+        None,
+        Modifiers::none(),
+    );
+    paint(cx, mounted.window);
+    cx.advance_clock(std::time::Duration::from_millis(700));
+    cx.run_until_parked();
+    paint(cx, mounted.window);
+    wait_view(cx, &mounted.editor, mounted.window, |view| {
+        view.snapshot_tooltip_shown.is_some()
+    });
+    assert_eq!(
+        cx.read(|cx| mounted.editor.read(cx).snapshot_tooltip_shown.clone()),
+        Some(indicator.name.clone()),
+        "the real tooltip builder exposes complete identity"
+    );
+    cx.simulate_mouse_move(
+        mounted.window,
+        bounds.origin + point(px(2.), px(2.)),
+        None,
+        Modifiers::none(),
+    );
+    paint(cx, mounted.window);
     assert_eq!(current.role, Role::Button);
     assert_eq!(current.name.as_ref(), Msg::EditorOpenCurrent.t());
     assert!(indicator.bounds.size.height > px(0.) && current.bounds.size.height > px(0.));
@@ -223,12 +317,12 @@ fn assert_mutations(cx: &mut VisualTestAppContext, mounted: &Mounted, original: 
                 view.snapshot.as_ref().unwrap().content.as_deref(),
                 Some(original)
             );
-            assert!(!view.dirty);
+            assert!(view.dirty);
             assert_eq!(
                 view.editor.as_ref().unwrap().entity_id(),
                 mounted.live.entity_id()
             );
-            assert_eq!(mounted.live.read(cx).value().as_ref(), CURRENT);
+            assert_eq!(mounted.live.read(cx).value().as_ref(), DIRTY);
             assert_eq!(
                 std::fs::read_to_string(view.repo_path.join(FILE)).unwrap(),
                 CURRENT
@@ -252,6 +346,11 @@ fn return_current(cx: &mut VisualTestAppContext, mounted: &Mounted) {
         );
         assert!(view.selected_history_commit.is_none());
         assert_eq!(
+            mounted.live.read(cx).value().as_ref(),
+            DIRTY,
+            "Open current preserves unsaved text"
+        );
+        assert_eq!(
             view.editor.as_ref().unwrap().entity_id(),
             mounted.live.entity_id()
         );
@@ -259,7 +358,7 @@ fn return_current(cx: &mut VisualTestAppContext, mounted: &Mounted) {
     cx.simulate_keystrokes(mounted.window, "x");
     assert_ne!(
         cx.read(|cx| mounted.live.read(cx).value().to_string()),
-        CURRENT,
+        DIRTY,
         "Open current restores an editable buffer"
     );
     assert!(cx.read(|cx| mounted.editor.read(cx).dirty));
@@ -268,6 +367,7 @@ fn return_current(cx: &mut VisualTestAppContext, mounted: &Mounted) {
 fn exercise(cx: &mut VisualTestAppContext, repo: &std::path::Path, original: &str, case: &Case) {
     eprintln!("[gui-e2e] snapshot case: {case:?}");
     let mounted = setup(cx, repo, case);
+    assert_shortcuts(cx, &mounted); // commit selection left root focus; no body click yet.
     let bounds = assert_header(cx, &mounted);
     cx.simulate_click(
         mounted.window,
@@ -278,6 +378,7 @@ fn exercise(cx: &mut VisualTestAppContext, repo: &std::path::Path, original: &st
             ),
         Modifiers::none(),
     );
+    assert_shortcuts(cx, &mounted); // focused reader must protect the same dirty owner.
     let before = assert_mutations(cx, &mounted, original);
     cx.simulate_event(
         mounted.window,
@@ -305,6 +406,78 @@ fn exercise(cx: &mut VisualTestAppContext, repo: &std::path::Path, original: &st
     drop(live);
     drop(editor);
     unmount(cx, app, window);
+}
+
+fn warm_draw(cx: &mut VisualTestAppContext, mounted: &Mounted) -> std::time::Duration {
+    let state = cx.read(|cx| mounted.editor.read(cx).snapshot_text_state().unwrap());
+    let mut samples = Vec::with_capacity(7);
+    for _ in 0..7 {
+        state.update(cx, |_, cx| cx.notify());
+        let started = std::time::Instant::now();
+        cx.update_window(mounted.window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        samples.push(started.elapsed());
+    }
+    samples.sort_unstable();
+    samples[3]
+}
+
+fn measure_snapshot(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+    original: &str,
+) -> std::time::Duration {
+    let case = Case {
+        preset: "apple-light",
+        lang: Lang::En,
+        zoom: 1.,
+        dimensions: (1392., 883.),
+    };
+    let mounted = setup(cx, repo, &case);
+    let bounds = cx.read(|cx| mounted.editor.read(cx).snapshot_bounds.unwrap());
+    let position = bounds.origin + point(px(24.), px(24.));
+    cx.simulate_click(mounted.window, position, Modifiers::none());
+    let copied = copy(cx, mounted.window);
+    assert!(
+        copied == original.trim(),
+        "chunked whole-document selection must preserve source: copied {} bytes, expected {}",
+        copied.len(),
+        original.trim().len()
+    );
+    cx.simulate_click(mounted.window, position, Modifiers::none());
+    paint(cx, mounted.window);
+    // Initial parse/measure and selection are settled before forced warm draws.
+    let elapsed = warm_draw(cx, &mounted);
+    let Mounted {
+        app,
+        editor,
+        live,
+        window,
+        ..
+    } = mounted;
+    drop(live);
+    drop(editor);
+    unmount(cx, app, window);
+    elapsed
+}
+
+fn large_snapshot(cx: &mut VisualTestAppContext, repo: &std::path::Path, small: &str) {
+    let small_time = measure_snapshot(cx, repo, small);
+    let mut large = String::with_capacity(900_000);
+    for line in 0..20_000 {
+        large.push_str(&format!("let historical_line_{line} = {line}; // 日本語\n"));
+    }
+    std::fs::write(repo.join(FILE), &large).unwrap();
+    git(repo, &["add", FILE]);
+    git(
+        repo,
+        &["commit", "-q", "-m", "20,000-line historical snapshot"],
+    );
+    std::fs::write(repo.join(FILE), CURRENT).unwrap();
+    let large_time = measure_snapshot(cx, repo, &large);
+    let limit = small_time * 8 + std::time::Duration::from_millis(15);
+    assert!(large_time <= limit, "196× source growth must not make warm redraw linear: small={small_time:?}, 20k={large_time:?}, limit={limit:?}");
+    eprintln!("[gui-e2e] snapshot warm redraw median/7 forced TextView draws: 102 lines={small_time:?}, 20,000 lines={large_time:?}, limit={limit:?}; full-document copy preserved");
 }
 
 pub fn scenario(cx: &mut VisualTestAppContext) {
@@ -340,5 +513,6 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             }
         }
     }
+    large_snapshot(cx, fixture.path(), &original);
     eprintln!("[gui-e2e] PASS editor_snapshot_readonly EN/JA × 100/167% × Apple Light/Dark × 940×660/1392×883; actual History loads, selection/copy, mutation refusal, Open current");
 }

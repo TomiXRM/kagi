@@ -192,8 +192,29 @@ selection owner is introduced. Native coverage checks the copied literal code
 before and after editing attempts and separately compares the complete raw
 snapshot content.
 
-The focused snapshot body has an `EditorSnapshot` key context. Application
-Save and repository Undo/Redo bindings exclude this context: a historical
-reader must not save a hidden live buffer or reinterpret text undo as a
-repository operation. Selection/copy and scroll retain the component's normal
-bindings; Open current leaves that context with the live Input focused.
+The snapshot body additionally has an `EditorSnapshot` key context, but key
+predicates alone are not a safety boundary: selecting a revision leaves root
+focus, and its header Button is outside the body. Save and repository Undo/Redo
+handlers therefore also check `showing_history_commit()` (History right pane
+with a selected commit), independent of focus. A dirty live buffer must remain
+dirty and unchanged on disk before and after clicking the reader. Native
+coverage retains a real undo-capable history entry and verifies no modal opens.
+Open current leaves historical state with the same live Input focused.
+
+Each literal block contains at most 32 source lines so TextView's existing
+`ListState` virtualizes chunks rather than laying out the whole file on every
+frame. Syntax highlighting is disabled above 128 KiB or 2,048 lines; initial
+parsing/measurement is still proportional to source size. Native coverage
+copies the complete 20,000-line fixture, then compares median warm forced
+TextView redraws against a 102-line fixture (8× plus 15 ms allowance, not the
+196× source growth).
+Small-file highlighting follows the kit's block-local behavior; multiline syntax
+context is not carried across chunk boundaries.
+
+Accepted presentation trade-off: this pinned selectable reader loses the former
+CodeEditor's line-number gutter and horizontal no-wrap scrolling; long lines
+wrap. Genuine immutability and the shared selection/copy owner take precedence
+over an editable-looking viewer or a fork. [#1275](https://github.com/TomiXRM/kagi/issues/1275)
+tracks restoring these capabilities, preferably by aligning a line-number
+column with source rows/chunks in the same `ListState`, never an independent
+scroll or selection owner.

@@ -77,6 +77,8 @@ ref の移動として追える**。これを使えば「突然開いたリポ�
 ## Amendment — 2026-10-12: historical text is not repository history (#1264)
 
 `EditorSnapshot` joins `Input` and `Terminal` in the application Undo/Redo
-binding exclusion. The immutable selectable viewer has no input Undo handler,
-but text undo there must not plan a repository history move. Normal graph
-Undo/Redo and the explicit toolbar actions are unchanged.
+binding exclusion. Predicates alone cannot protect root/header focus after
+revision selection, so HistoryUndo/HistoryRedo handlers additionally return
+without action while the Editor shows a selected History commit. The immutable
+reader has no input Undo handler; text undo must not plan a repository move.
+Normal graph Undo/Redo outside this historical Editor state remains unchanged.

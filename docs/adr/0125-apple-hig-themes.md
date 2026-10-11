@@ -565,8 +565,10 @@ Enter/Space activation and the existing fixed accent focus-visible ring.
 Localized stable Button names and state-dependent Show/Hide tooltips are
 provided in EN/JA. `aria_toggled` maps Button's pressed state through the
 pinned GPUI/AccessKit API, which has no `aria_pressed` setter.
-Terminal advertises its existing Cmd+J shortcut; Operation Log advertises
-focused Enter/Space because no dedicated shortcut exists.
+Terminal's Hide tooltip advertises Cmd+J only while Terminal is active:
+the shortcut toggles the panel without selecting a tab or starting Terminal,
+so Show has no Cmd+J hint. Operation Log advertises focused Enter/Space
+because no dedicated shortcut exists. The existing Cmd+J binding is unchanged.
 
 The footer keeps its 22-reference-px height, with centered 16-reference-px
 icons in 24-reference-px-wide targets and neutral `surface` hover. Resting
@@ -580,8 +582,10 @@ keyboard assertions are not live VoiceOver or Tier B evidence.
 Native `status_controls` failed before the fix with no recorded Terminal AX
 name (`None`, expected `Terminal`). It now passes Apple Light/Dark × EN/JA ×
 100%/167% at 600×660: named Button/pressed attribute inputs, state-dependent
-tooltips, measured content-box containment in the footer, consecutive Tab
-stops and Enter/Space opening/closing the corresponding panel exactly once.
+tooltips, measured content-box containment in the footer, adjacent forward
+Tab stops and symmetric reverse traversal, Enter/Space opening/closing the
+corresponding panel exactly once, and pointer Terminal activation giving the
+terminal view's focus handle the focus.
 The bounds oracle accounts for the fixed 2px ring and native half-pixel
 snapping. The shared presentation Drop guard restores disk keys and in-memory
 language/zoom/theme/kit palette even on unwind; toolbar display is untouched.

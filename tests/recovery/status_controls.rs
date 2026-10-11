@@ -66,25 +66,39 @@ pub fn scenario_status_controls(cx: &mut VisualTestAppContext) {
                         bounds.size.height
                     );
                     let tip = e2e::toolbar_caption_and_tooltip(id).1.unwrap();
-                    assert!(tip.contains(if id == "status-icon-terminal" {
-                        "⌘J"
+                    if id == "status-icon-terminal" {
+                        let active = e2e::status_control(id).unwrap().2 == Toggled::True;
+                        assert_eq!(
+                            tip.contains("⌘J"),
+                            active,
+                            "Cmd+J only promises hiding the active panel"
+                        );
                     } else {
-                        "↵ / Space"
-                    }));
+                        assert!(tip.contains("↵ / Space"));
+                    }
                 }
                 let mut reached = Vec::new();
+                let mut focus_steps = Vec::new();
+                let mut status_steps = Vec::new();
                 for _ in 0..120 {
                     cx.update_window(win, |_, window, cx| {
                         window.focus_next(cx);
                         window.draw(cx).clear();
                     })
                     .unwrap();
+                    focus_steps.push(
+                        cx.update_window(win, |_, window, cx| {
+                            window.focused(cx).expect("Tab focus")
+                        })
+                        .unwrap(),
+                    );
                     let _ = e2e::take_focus_probe();
                     cx.simulate_keystrokes(win, "f19");
                     if let Some(id @ ("status-icon-terminal" | "status-icon-oplog")) =
                         e2e::take_focus_probe()
                     {
                         reached.push(id);
+                        status_steps.push(focus_steps.len() - 1);
                         let tab = if id == "status-icon-terminal" {
                             BottomTab::Terminal
                         } else {
@@ -117,6 +131,15 @@ pub fn scenario_status_controls(cx: &mut VisualTestAppContext) {
                                 before_tip,
                                 "show/hide tooltip flips with state"
                             );
+                            if id == "status-icon-terminal" {
+                                assert_eq!(
+                                    e2e::toolbar_caption_and_tooltip(id)
+                                        .1
+                                        .unwrap()
+                                        .contains("⌘J"),
+                                    !was_open
+                                );
+                            }
                         }
                         if reached.len() == 2 {
                             break;
@@ -127,6 +150,37 @@ pub fn scenario_status_controls(cx: &mut VisualTestAppContext) {
                     reached,
                     ["status-icon-terminal", "status-icon-oplog"],
                     "status buttons follow content in Tab order"
+                );
+                assert_eq!(
+                    status_steps[1],
+                    status_steps[0] + 1,
+                    "status buttons are adjacent Tab stops"
+                );
+                cx.update_window(win, |_, window, cx| {
+                    assert!(focus_steps[status_steps[1]].is_focused(window));
+                    window.focus_prev(cx);
+                    window.draw(cx).clear();
+                    assert!(
+                        focus_steps[status_steps[0]].is_focused(window),
+                        "Shift+Tab returns directly to Terminal"
+                    );
+                    window.focus_next(cx);
+                    window.draw(cx).clear();
+                    assert!(
+                        focus_steps[status_steps[1]].is_focused(window),
+                        "Tab returns directly to Operation Log"
+                    );
+                })
+                .unwrap();
+                crate::app_conflict::click_control(cx, win, "status-icon-terminal");
+                cx.run_until_parked();
+                draw(cx);
+                assert!(
+                    cx.update_window(win, |_, window, cx| {
+                        app.read(cx).terminal_focused_for_e2e(window, cx)
+                    })
+                    .unwrap(),
+                    "pointer Terminal activation gives the PTY focus"
                 );
                 unmount(cx, app, win);
             }

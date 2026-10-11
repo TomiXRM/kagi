@@ -704,6 +704,7 @@ impl KagiApp {
     /// as a virtualized list filling the rest of the column.
     pub(crate) fn render_home_github(
         &mut self,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -716,6 +717,7 @@ impl KagiApp {
         let header = div()
             .flex()
             .flex_row()
+            .min_w(px(0.))
             .items_center()
             .gap_2()
             .flex_shrink_0()
@@ -741,11 +743,12 @@ impl KagiApp {
                     ))
                 },
             )
-            .child(div().flex_1())
+            .child(div().flex_1().min_w(px(0.)))
             .child(super::e2e::measure_control(
                 "home-github-refresh",
                 Button::new("home-github-refresh")
                     .ghost()
+                    .flex_shrink_0()
                     .small()
                     .label(Msg::HomeGithubRefresh.t())
                     .disabled(reading)
@@ -769,7 +772,7 @@ impl KagiApp {
         }
         let body = match (&self.home_github.repos, self.home_github.work.pane) {
             (_, super::home_work::HomePane::Prs | super::home_work::HomePane::Issues) => {
-                self.render_github_list(query, window, cx)
+                self.render_github_list(query, compact, window, cx)
             }
             (GithubRepos::NotLoaded | GithubRepos::Loading, _) => div()
                 .flex()
@@ -797,7 +800,7 @@ impl KagiApp {
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),
-            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, window, cx),
+            (GithubRepos::Loaded { .. }, _) => self.render_github_list(query, compact, window, cx),
         };
         div()
             .flex()

@@ -73,6 +73,7 @@ impl KagiApp {
     pub(super) fn render_github_list(
         &mut self,
         query: String,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -216,7 +217,7 @@ impl KagiApp {
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(
                     listing.clone(),
-                    state,
+                    (state, compact),
                     &rows,
                     positions[i].unwrap_or(0),
                     &app,
@@ -386,6 +387,8 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
     // its `size_full` did not resolve, leaving the text area zero-wide —
     // typed characters and the placeholder were drawn into nothing.
     div()
+        .relative()
+        .child(super::e2e::measure_inside("home-search"))
         .flex()
         .flex_row()
         .items_center()
@@ -480,16 +483,18 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 /// stop.
 fn github_row(
     listing: Rc<RepoListing>,
-    state: &'static str,
+    presentation: (&'static str, bool),
     rows: &super::keyboard_nav::RowList,
     at: usize,
     app: &Entity<KagiApp>,
     full_description: SharedString,
     cx: &gpui::App,
 ) -> AnyElement {
+    let (state, compact) = presentation;
     let chip = |text: &str| {
         div()
-            .flex_shrink_0()
+            .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
+            .when(!compact, |el| el.flex_shrink_0())
             .px_2()
             .rounded_md()
             .bg(rgb(theme().surface))
@@ -502,11 +507,15 @@ fn github_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .flex_shrink_0();
+        .when(compact, |el| {
+            el.min_w(px(0.)).flex_shrink(1.).max_w(gpui::relative(0.5))
+        })
+        .when(!compact, |el| el.flex_shrink_0());
     if let Some(day) = listing.updated_at.get(..10) {
         meta = meta.child(
             div()
                 .text_sm()
+                .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(day.to_string())),
         );
@@ -534,6 +543,7 @@ fn github_row(
         )
         .small()
         .h(super::theme::scaled_px(22.))
+        .flex_shrink_0()
         .tab_stop(false)
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
@@ -571,6 +581,10 @@ fn github_row(
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
+    #[cfg(feature = "gui-e2e")]
+    let column_id = format!("home-gh-{}-name-column", listing.name_with_owner);
+    #[cfg(not(feature = "gui-e2e"))]
+    let column_id = "home-repository-name-column";
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
     rows.row(
@@ -600,6 +614,9 @@ fn github_row(
             .flex_col()
             .flex_1()
             .min_w(px(0.))
+            .when(compact, |el| el.min_w(gpui::relative(0.45)))
+            .relative()
+            .child(super::e2e::measure_inside(column_id))
             .child(
                 div()
                     .text_base()

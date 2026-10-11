@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Home caps its centered content column to the remaining window width, narrows Recent when the shared PR-reader minimum cannot fit, wraps folder/SSH actions in order, and ellipsizes pane labels before clipping. Compact repository rows reserve at least 40% for the name while keeping the trailing Clone/Open action visible; wide layout geometry is retained. (#1212)
+- Home narrow-layout review: the shared compact threshold uses the same scaled horizontal padding as the column and its actual sidebar width; repository dates ellipsize before pushing Clone out of a narrower row, and Recent exposes full paths through tooltips and accessibility descriptions. (#1212 review)
 - Status-bar Terminal and Operation Log controls expose localized names, show/hide tooltips, toggle state and individual keyboard Tab stops with focus-visible rings. Enter/Space reuse their existing callbacks; compact 16px glyphs and neutral hover affordances remain inside the footer. (#1207)
   - Review: Cmd+J appears only on Terminal's active Hide tooltip; Show does not imply the panel shortcut selects or starts Terminal. Native coverage checks adjacent forward/reverse focus stops and pointer activation's PTY focus.
 - Toolbar overflow reserves its first-line shortcut column, bounds secondary unavailable reasons to the label column and caps the menu to the viewport. Japanese unavailable reasons no longer mix English prose, and the » tooltip is suppressed while its menu is open. (#1217)

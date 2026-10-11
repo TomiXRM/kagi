@@ -78,6 +78,10 @@ mod system_accent;
 mod settings_quiet;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_window.rs"]
+mod settings_window;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -119,6 +123,10 @@ mod side_panel_motion;
 #[cfg(target_os = "macos")]
 #[path = "recovery/hunk_staging.rs"]
 mod hunk_staging;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/diff_keyboard.rs"]
+mod diff_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/reconcile_unobservable.rs"]
@@ -315,6 +323,10 @@ mod recovery_layout;
 mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_presentation.rs"]
+mod recovery_diff_presentation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_viewport.rs"]
 mod recovery_commit_panel_viewport;
 
@@ -497,6 +509,10 @@ mod pr_pagination;
 #[cfg(target_os = "macos")]
 #[path = "perf/oplog_detail.rs"]
 mod perf_oplog_detail;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_metadata.rs"]
+mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
 #[path = "perf/inspector_derived.rs"]
@@ -1162,6 +1178,34 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "settings_window_open_raise",
+                Box::new(crate::settings_window::scenario_settings_window_open_raise),
+            ),
+            (
+                "settings_window_close_keeps_repo",
+                Box::new(crate::settings_window::scenario_settings_window_close_keeps_repo),
+            ),
+            (
+                "settings_window_live_apply",
+                Box::new(crate::settings_window::scenario_settings_window_live_apply),
+            ),
+            (
+                "settings_window_owner_release",
+                Box::new(crate::settings_window::scenario_settings_window_owner_release),
+            ),
+            (
+                "settings_window_position_restore",
+                Box::new(crate::settings_window::scenario_settings_window_position_restore),
+            ),
+            (
+                "settings_window_dock_reopen",
+                Box::new(crate::settings_window::scenario_settings_window_dock_reopen),
+            ),
+            (
+                "settings_window_host_isolation",
+                Box::new(crate::settings_window::scenario_settings_window_host_isolation),
             ),
             (
                 "settings_quiet",
@@ -2236,6 +2280,14 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "diff_mode_segment",
+                Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
+            ),
+            (
+                "diff_binary_states",
+                Box::new(crate::recovery_diff_presentation::scenario_diff_binary_states),
+            ),
+            (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
@@ -2634,6 +2686,14 @@ mod macos {
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
             ),
             (
+                "diff_hunk_buttons",
+                Box::new(crate::diff_keyboard::scenario_diff_hunk_buttons),
+            ),
+            (
+                "diff_keyboard_selection",
+                Box::new(crate::diff_keyboard::scenario_diff_keyboard_selection),
+            ),
+            (
                 "hunk_staging_content_identity",
                 Box::new(crate::hunk_staging::scenario_hunk_staging_content_identity),
             ),
@@ -2950,6 +3010,10 @@ mod macos {
             (
                 "oplog_detail_draw",
                 Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
+            ),
+            (
+                "inspector_metadata_a11y",
+                Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
             ),
             (
                 "inspector_derived",

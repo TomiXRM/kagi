@@ -208,10 +208,16 @@ pub enum Msg {
     NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
-    /// ADR-0124: diff-header toggle tooltip → switch to side-by-side.
+    /// ADR-0124: diff-header selected mode segments.
     DiffViewSplit,
-    /// ADR-0124: diff-header toggle tooltip → switch back to unified.
     DiffViewUnified,
+    DiffBinaryNoText,
+    DiffImageAdded,
+    DiffImageModified,
+    DiffImageDeleted,
+    DiffImageBefore,
+    DiffImageAfter,
+    DiffImagePreviewUnavailable,
     /// `kagi_ui_core::commit_header::render_commit_header`'s placeholder
     /// before any commit is selected — shared by the Editor Workspace's
     /// History pane and File History's detail pane.
@@ -455,7 +461,6 @@ pub enum Msg {
     // ── #321: binary / symlink / submodule side viewer ──
     ConflictSymlinkTarget,
     ConflictOpenBothExternal,
-    ConflictBinaryCompareHint,
     ConflictImageTooLarge,
     ConflictSubmoduleCommit,
     // ── W32-CONFLICT-EDITOR: hunk-level Conflict Editor ──────
@@ -844,6 +849,10 @@ pub enum Msg {
     //    domain word "graph" stays English per ADR-0048) ──────────────────
     /// Settings window title.
     SettingsTitle,
+    /// Settings pane containing appearance and general application preferences.
+    SettingsGeneral,
+    /// The native settings host could not be opened.
+    SettingsWindowFailed,
     /// Settings sidebar: Appearance page title.
     SettingsAppearance,
     /// Semantic grouped-form headings (#1200).
@@ -2212,10 +2221,22 @@ impl Msg {
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",
             (Ja, DiffNotOpen) => "diff が開かれていません",
-            (En, DiffViewSplit) => "Side-by-side view",
-            (Ja, DiffViewSplit) => "横並びで表示",
-            (En, DiffViewUnified) => "Unified view",
-            (Ja, DiffViewUnified) => "1カラムで表示",
+            (En | Ja, DiffViewSplit) => "Split",
+            (En | Ja, DiffViewUnified) => "Unified",
+            (En, DiffBinaryNoText) => "Binary file — no text diff. Open in external editor to compare.",
+            (Ja, DiffBinaryNoText) => "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。",
+            (En, DiffImageAdded) => "Added image (no previous version)",
+            (Ja, DiffImageAdded) => "追加された画像（以前のバージョンはありません）",
+            (En, DiffImageModified) => "Modified image: before → after",
+            (Ja, DiffImageModified) => "変更された画像：変更前 → 変更後",
+            (En, DiffImageDeleted) => "Deleted image",
+            (Ja, DiffImageDeleted) => "削除された画像",
+            (En, DiffImageBefore) => "Before",
+            (Ja, DiffImageBefore) => "変更前",
+            (En, DiffImageAfter) => "After",
+            (Ja, DiffImageAfter) => "変更後",
+            (En, DiffImagePreviewUnavailable) => "Preview not available for this version.",
+            (Ja, DiffImagePreviewUnavailable) => "このバージョンはプレビューできません。",
             (En, CommitHeaderSelectPrompt) => "Select a commit to see its details.",
             (Ja, CommitHeaderSelectPrompt) => "commit を選択すると詳細が表示されます。",
 
@@ -2575,12 +2596,6 @@ impl Msg {
             (Ja, ConflictSymlinkTarget) => "シンボリックリンクの参照先",
             (En, ConflictOpenBothExternal) => "Open both sides in external editor",
             (Ja, ConflictOpenBothExternal) => "両方の側を外部エディタで開く",
-            (En, ConflictBinaryCompareHint) => {
-                "Binary file — no inline preview. Open both sides to compare."
-            }
-            (Ja, ConflictBinaryCompareHint) => {
-                "binary ファイル — インラインプレビューはありません。両方の側を開いて比較してください。"
-            }
             (En, ConflictImageTooLarge) => "Image too large to preview inline.",
             (Ja, ConflictImageTooLarge) => "画像が大きすぎてインラインプレビューできません。",
             (En, ConflictSubmoduleCommit) => "Submodule commit",
@@ -3210,6 +3225,10 @@ impl Msg {
             // ── T-SETTINGS-001: Settings window ──────────────────────
             (En, SettingsTitle) => "Settings",
             (Ja, SettingsTitle) => "設定",
+            (En, SettingsGeneral) => "General",
+            (Ja, SettingsGeneral) => "一般",
+            (En, SettingsWindowFailed) => "Could not open Settings",
+            (Ja, SettingsWindowFailed) => "設定ウィンドウを開けませんでした",
             (En, SettingsAppearance) => "Appearance",
             (Ja, SettingsAppearance) => "外観",
             (En, SettingsGraph) | (Ja, SettingsGraph) => "Graph",
@@ -4346,6 +4365,14 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
         CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
         CreateLeadingDash(name) => branch_leading_dash_fmt(name),
         CreateExists(name) => branch_exists_fmt(name),
+    }
+}
+
+/// Accessible action name for the Inspector's short SHA chip.
+pub fn inspector_copy_hash(short_sha: &str) -> String {
+    match lang() {
+        Lang::En => format!("Copy commit hash {short_sha}"),
+        Lang::Ja => format!("commit hash {short_sha} をコピー"),
     }
 }
 

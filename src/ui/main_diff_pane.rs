@@ -61,6 +61,20 @@ impl MainDiffPane {
             fit: HeaderFit::default(),
         }
     }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn diff_row_bounds_for_e2e(
+        &self,
+        index: usize,
+    ) -> (
+        gpui::Bounds<gpui::Pixels>,
+        Option<gpui::Bounds<gpui::Pixels>>,
+    ) {
+        (
+            self.scroll.viewport_bounds(),
+            self.scroll.bounds_for_item(index),
+        )
+    }
 }
 
 impl DiffHighlightHost for MainDiffPane {

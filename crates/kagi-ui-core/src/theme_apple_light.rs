@@ -24,6 +24,8 @@ pub(crate) const SYSTEM_SELECTIONS: [u32; 8] = {
     }
     result
 };
+/// Identifying input/unchecked-checkbox boundary: 3:1 on white and panel grey.
+pub const INPUT_BORDER: u32 = 0x8e8e8e;
 
 pub const APPLE_LIGHT: Theme = Theme {
     slug: Cow::Borrowed("apple-light"),

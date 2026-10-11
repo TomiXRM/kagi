@@ -16,6 +16,15 @@ following the Mac accent. Across every theme, small accent-as-text uses
 `accent_text_on` on its actual background; it may become darker or lighter for
 at least 4.5:1 contrast. Filled labels use the contrast-aware primary helper.
 
+Apple Light's built-in resting input and unchecked-checkbox boundary is a
+dedicated neutral `#8e8e8e`, not its readable `text_muted` label colour. Focus
+continues to use the accent ring. Other built-ins and custom themes retain the
+`text_muted` input-boundary mapping; `surface` supplies decorative chrome
+separators, and the stronger markdown-table border bridge is unchanged.
+The same `colors.input` boundary colours Default-outline buttons (modal
+Secondary and inspector/oplog/conflict actions), Radio, Select, Combobox,
+NumberInput and DatePicker; these are not separate token overrides.
+
 ## Where theme files live
 
 | Situation | Folder |
@@ -276,6 +285,19 @@ explicit custom colours are not silently corrected. Underlining, activation,
 selection tint, typography and geometry are unchanged. Reference: macOS body
 links, not filled ref chips; required rest/selection states keep the existing
 TextView behavior (no separate button/loading state).
+
+## Pane separators
+
+Resize targets retain scaled 4px geometry, independently of their resting paint.
+Converted boundaries are Graph sidebar sections, sidebar/content, the shared
+commit-panel/inspector boundary, bottom panel, inspector message/files split,
+PR navigator and swimlane, Conflict A/B and Result, Editor tree and hunks,
+and File History detail and rows/diff. All paint centered 1 logical-pixel
+`surface` hairlines over their adjacent `sidebar`, `panel` or `bg_base` token.
+PR navigator uses `sidebar`; its swimlane and Conflict use `bg_base`.
+Hover and same-kind drag-over paint both target and line in `color_branch`.
+The line does not scale with UI zoom; the hit region does. Apple Light uses its
+neutral `#e5e5e5` surface; Apple Dark and custom themes keep their own tokens.
 
 ## Token reference
 

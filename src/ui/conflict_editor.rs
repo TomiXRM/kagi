@@ -1548,11 +1548,32 @@ where
 fn vertical_divider() -> gpui::Stateful<gpui::Div> {
     div()
         .id("conflict-divider-ab")
+        .group("conflict-divider-ab")
         .w(theme::scaled_px(4.))
         .h_full()
-        .bg(rgb(theme().selected))
+        .bg(rgb(theme().bg_base))
+        .flex()
+        .justify_center()
+        .child(
+            div()
+                .w(px(1.))
+                .h_full()
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("conflict-divider-ab", |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>("conflict-divider-ab", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
         .cursor_col_resize()
         .hover(|s| s.bg(rgb(theme().ui_accent())))
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::ConflictAB {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictAB,
@@ -1566,11 +1587,35 @@ fn vertical_divider() -> gpui::Stateful<gpui::Div> {
 fn horizontal_divider() -> gpui::Stateful<gpui::Div> {
     div()
         .id("conflict-divider-result")
+        .group("conflict-divider-result")
         .w_full()
         .h(theme::scaled_px(4.))
-        .bg(rgb(theme().selected))
+        .bg(rgb(theme().bg_base))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("conflict-divider-result", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                })
+                .group_drag_over::<DividerDrag>("conflict-divider-result", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
         .cursor_row_resize()
         .hover(|s| s.bg(rgb(theme().ui_accent())))
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::ConflictResult {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .on_drag(
             DividerDrag {
                 kind: DividerKind::ConflictResult,

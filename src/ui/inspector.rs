@@ -951,11 +951,35 @@ pub(super) fn render_inspector(
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()
         .id("inspector-split-divider")
+        .group("inspector-split-divider")
         .h(theme::scaled_px(INSPECTOR_SPLIT_DIVIDER_H))
         .flex_shrink_0()
         .w_full()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().panel))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .group_hover("inspector-split-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                })
+                .group_drag_over::<DividerDrag>("inspector-split-divider", |s| {
+                    s.bg(rgb(theme().ui_accent()))
+                }),
+        )
         .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
+        .drag_over::<DividerDrag>(|style, drag, _, _| {
+            if drag.kind == DividerKind::InspectorSplit {
+                style.bg(rgb(theme().ui_accent()))
+            } else {
+                style
+            }
+        })
         .cursor_row_resize()
         .on_drag(
             DividerDrag {

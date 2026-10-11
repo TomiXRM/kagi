@@ -56,6 +56,27 @@ thread_local! {
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
+    static CHROME_BORDERS: RefCell<std::collections::HashMap<&'static str, gpui::Hsla>> = RefCell::new(Default::default());
+}
+
+/// Read the actual rendered element's explicit boundary role, not a theme prediction.
+#[cfg(feature = "gui-e2e")]
+pub fn chrome_border(name: &'static str) -> Option<gpui::Hsla> {
+    CHROME_BORDERS.with(|map| map.borrow().get(name).copied())
+}
+
+pub(crate) fn probe_chrome_border<E: gpui::Styled>(name: &'static str, mut element: E) -> E {
+    #[cfg(feature = "gui-e2e")]
+    if let Some(color) = element.style().border_color {
+        CHROME_BORDERS.with(|map| map.borrow_mut().insert(name, color));
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = (name, &mut element);
+    element
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
     static PR_MENU_COPY_HOVERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

@@ -44,6 +44,12 @@ const PANE_DIVIDER_IDS: [&str; 4] = [
     "sidebar-worktrees-divider",
     "sidebar-tags-divider",
 ];
+const PANE_LINE_IDS: [&str; 4] = [
+    "sidebar-local-divider-line",
+    "sidebar-remote-divider-line",
+    "sidebar-worktrees-divider-line",
+    "sidebar-tags-divider-line",
+];
 const PANE_LABELS: [Msg; 5] = [
     Msg::A11ySidebarLocal,
     Msg::A11ySidebarRemote,
@@ -282,15 +288,43 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
             .any(|key| !app.sidebar.collapsed.contains(key));
     div()
         .id(("sidebar-pane-divider", index))
+        .group(PANE_DIVIDER_IDS[index])
         .relative()
         .child(super::e2e::measure_inside(PANE_DIVIDER_IDS[index]))
         .w_full()
         .h(theme::scaled_px(4.))
         .flex_shrink_0()
-        .bg(rgb(theme().surface))
+        .bg(rgb(theme().sidebar))
+        .flex()
+        .flex_col()
+        .justify_center()
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(1.))
+                .flex_shrink_0()
+                .bg(rgb(theme().surface))
+                .when(active, |line| {
+                    line.group_hover(PANE_DIVIDER_IDS[index], |s| s.bg(rgb(theme().ui_accent())))
+                        .group_drag_over::<DividerDrag>(PANE_DIVIDER_IDS[index], |s| {
+                            s.bg(rgb(theme().ui_accent()))
+                        })
+                })
+                .when(cfg!(feature = "gui-e2e"), |line| {
+                    line.child(super::e2e::measure_inside(PANE_LINE_IDS[index]))
+                }),
+        )
         .when(active, |el| {
             el.cursor_row_resize()
                 .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
+                .drag_over::<DividerDrag>(move |style, drag, _, _| {
+                    if drag.kind == DividerKind::SidebarPane(index as u8) {
+                        style.bg(rgb(theme().ui_accent()))
+                    } else {
+                        style
+                    }
+                })
                 .on_drag(
                     DividerDrag {
                         kind: DividerKind::SidebarPane(index as u8),

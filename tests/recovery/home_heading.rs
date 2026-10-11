@@ -45,10 +45,22 @@ pub fn scenario_home_heading(cx: &mut VisualTestAppContext) {
                             && heading.bounds.right() <= sidebar.right(),
                         "heading bounds must stay within the sidebar: {heading:?} / {sidebar:?}"
                     );
+                    let line =
+                        e2e::control_paint(window.window_id(), "home-recent-heading-line").unwrap();
+                    assert!(
+                        (f32::from(line.bounds.size.height) - 12. * 0.9 * zoom).abs() <= 1.,
+                        "heading line keeps the section-header line height: {line:?}"
+                    );
+                    assert!(
+                        line.bounds.top() >= line.mask.top() + gpui::px(1.)
+                            && line.bounds.bottom() + gpui::px(1.) <= line.mask.bottom(),
+                        "heading line box and descender clearance must fit its paint-stage mask: {line:?}"
+                    );
                     let natural_width = cx
                         .update_window(window, |_, window, _| {
                             let text = Msg::HomeRecent.t();
                             let mut style = window.text_style();
+                            style.font_family = theme::UI_FONT.into();
                             style.font_weight = heading.font_weight;
                             window
                                 .text_system()
@@ -61,8 +73,7 @@ pub fn scenario_home_heading(cx: &mut VisualTestAppContext) {
                                 .width
                         })
                         .unwrap();
-                    let available = heading.bounds.size.width - gpui::px(16. * 0.9 * zoom);
-                    assert!(natural_width <= available || heading.ellipsis, "Home heading is hard-clipped at production/narrow width: natural={natural_width:?}, available={available:?}, {preset} {lang:?} {zoom} width={width:?}");
+                    let available = line.bounds.size.width;
                     assert!(
                         heading.ellipsis,
                         "Home heading must use native text ellipsis, not overflow clipping"

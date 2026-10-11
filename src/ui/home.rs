@@ -292,17 +292,26 @@ impl KagiApp {
                     .relative()
                     .child(super::e2e::measure_inside("home-recent-heading"))
                     .px_2()
+                    .py(theme::scaled_px(8.))
                     .w_full()
                     .min_w(px(0.))
                     .text_size(theme::scaled_px(12.))
                     .line_height(theme::scaled_px(12.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(theme().text_sub))
-                    .truncate()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .tooltip(|window, cx| {
                         gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t()).build(window, cx)
                     })
-                    .child(SharedString::from(Msg::HomeRecent.t())),
+                    .child(
+                        div()
+                            .relative()
+                            .h(theme::scaled_px(12.))
+                            .child(super::e2e::measure_inside("home-recent-heading-line"))
+                            .child(SharedString::from(Msg::HomeRecent.t())),
+                    ),
             )
             .child(list)
             .into_any_element()

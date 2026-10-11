@@ -69,6 +69,29 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
+six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
+cleanup. Owner-release coverage starts a real fetch ticker, closes its repository
+root and asserts the entity is released and Settings closes while another
+repository stays usable. Position coverage reopens three times and exercises
+repository Cmd-Q with Settings still open, quit-time flush and root recreation
+without a Settings-close save. Dock coverage uses the production typed-root
+decision and saved-session restore with only Settings remaining.
+Existing `settings_*`, `platform_menu_*` and
+`filter_menu_then_settings` scenarios deliberately select the portable overlay
+host; none of their assertions are removed. An RAII host guard restores the
+selection even on panic; ordinary launches always use the native macOS host.
+Pair native geometry coverage with `cargo test -p kagi-ui-core settings_window_`.
+The existing isolated-child store harness checks 100 production frame writes
+cost at most two successful commits, preserve the final "x,y,height" value, and
+migrate/remove the obsolete position/height pair exactly once.
+Tier B must list **both** CGWindow IDs for the PID it launched and capture the
+Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
+repository rather than Settings. Check Cmd-comma raise, Cmd-W independent
+closure, native traffic lights, restored position/pane/height (also after app
+quit while Settings remains open) and live preferences.
+Escape is deliberately not a window-dismiss command; check editing-field/IME
+behavior separately. Native hidden-window assertions do not prove OS activation.
 For #1227 use `KAGI_GUI_E2E_ONLY='commit_panel_i18n,commit_panel_viewport,commit_row_layout'`.
 `commit_panel_i18n` draws Apple Light/Dark at 1392×883/100% and 940×660/167%,
 changes JA→EN→JA→EN on the same panel, compares renderer-fed captions plus AX

@@ -20,8 +20,8 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
         .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| Msg::SettingsThemesFolderUnavailable.t().to_string());
-    let app_open = app.clone();
-    let app_reload = app.clone();
+    let app_open = app.downgrade();
+    let app_reload = app.downgrade();
     div()
         .w_full()
         .min_w_0()
@@ -83,7 +83,7 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                         .small()
                         .disabled(dir.is_none())
                         .on_click(move |_, _, cx| {
-                            app_open.update(cx, |app, cx| app.open_themes_folder(cx));
+                            let _ = app_open.update(cx, |app, cx| app.open_themes_folder(cx));
                         }),
                 ))
                 .child(e2e::measure_control(
@@ -93,7 +93,7 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                         .outline()
                         .small()
                         .on_click(move |_, window, cx| {
-                            app_reload.update(cx, |app, cx| app.reload_themes(window, cx));
+                            let _ = app_reload.update(cx, |app, cx| app.reload_themes(window, cx));
                         }),
                 ))
                 .child(e2e::measure_control(

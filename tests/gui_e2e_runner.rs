@@ -78,6 +78,10 @@ mod system_accent;
 mod settings_quiet;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_window.rs"]
+mod settings_window;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -1158,6 +1162,34 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "settings_window_open_raise",
+                Box::new(crate::settings_window::scenario_settings_window_open_raise),
+            ),
+            (
+                "settings_window_close_keeps_repo",
+                Box::new(crate::settings_window::scenario_settings_window_close_keeps_repo),
+            ),
+            (
+                "settings_window_live_apply",
+                Box::new(crate::settings_window::scenario_settings_window_live_apply),
+            ),
+            (
+                "settings_window_owner_release",
+                Box::new(crate::settings_window::scenario_settings_window_owner_release),
+            ),
+            (
+                "settings_window_position_restore",
+                Box::new(crate::settings_window::scenario_settings_window_position_restore),
+            ),
+            (
+                "settings_window_dock_reopen",
+                Box::new(crate::settings_window::scenario_settings_window_dock_reopen),
+            ),
+            (
+                "settings_window_host_isolation",
+                Box::new(crate::settings_window::scenario_settings_window_host_isolation),
             ),
             (
                 "settings_quiet",

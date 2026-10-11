@@ -256,6 +256,9 @@ mod sidebar_rows;
 mod tab_panels;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/status_controls.rs"]
+mod status_controls;
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_overflow.rs"]
 mod toolbar_overflow;
 
@@ -1195,6 +1198,10 @@ mod macos {
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
             ),
             (
+                "home_repository_affordances",
+                Box::new(crate::home_rows::scenario_home_repository_affordances),
+            ),
+            (
                 "home_tab",
                 Box::new(crate::home_tab::scenario_home_tab),
             ),
@@ -2031,6 +2038,7 @@ mod macos {
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
+            ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
                 "pr_threads_via_gh",
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),

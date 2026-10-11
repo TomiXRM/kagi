@@ -25,9 +25,17 @@
 mod blame;
 mod bottom_panel;
 pub mod markdown;
+mod pane_selectors;
 mod panes;
+pub use pane_selectors::EditorPaneSelectors;
+#[cfg(feature = "gui-e2e")]
+mod tab_probes;
+#[cfg(feature = "gui-e2e")]
+pub use tab_probes::EditorTabProbe;
 mod save_binding;
 mod snapshot;
+mod tabs;
+use tabs::render_tab_strip;
 mod tree_layout;
 mod watcher;
 
@@ -134,6 +142,7 @@ pub struct EditorHooks {
     /// `render_hunks`, over a second opaque field so the WIP hunks diff and
     /// the History diff never clobber each other.
     pub render_history_diff: RenderHunksFn,
+    pub pane_selectors: Box<dyn EditorPaneSelectors>,
 }
 
 /// Boxed diff-pane renderer (see [`EditorHooks::render_hunks`] /
@@ -306,7 +315,7 @@ pub struct EditorWorkspaceView {
     /// arrow-key stepping (bug report) the moment a user had clicked into the
     /// text pane even once. `set_right_tab` / `select_history_commit`
     /// reclaim it explicitly.
-    root_focus: gpui::FocusHandle,
+    pub root_focus: gpui::FocusHandle,
 
     /// Which files `files`/`tree` are currently listing (T-WS-EDITOR-004).
     pub source: TreeSource,
@@ -354,6 +363,10 @@ pub struct EditorWorkspaceView {
     /// active+cache swap pattern as `KagiApp.active_view`/`tab_cache`
     /// (ADR-0075), so the render/loader code keeps reading the flat fields.
     pub open_tabs: Vec<PathBuf>,
+    tab_scroll: gpui::ScrollHandle,
+    tab_presentation: tabs::TabPresentation,
+    #[cfg(feature = "gui-e2e")]
+    tab_probes: tab_probes::TabProbes,
     /// Stashed per-file state for the INACTIVE tabs, keyed by path.
     tab_cache: HashMap<PathBuf, EditorBufferState>,
     /// `true` while the selected file's content + diff load is in flight.
@@ -569,6 +582,10 @@ impl EditorWorkspaceView {
             selected: None,
             open_path: None,
             open_tabs: Vec::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_presentation: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            tab_probes: Default::default(),
             tab_cache: HashMap::new(),
             file_loading: false,
             content: None,
@@ -2246,6 +2263,7 @@ impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
         self.sync_snapshot_text(cx);
+        self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {
             self.refresh_tree_layout();
         }
@@ -2335,6 +2353,7 @@ fn render_editor_workspace(
     let tree_divider = div()
         .id("ews-divider-tree")
         .group("ews-divider-tree")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2366,10 +2385,16 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorTree,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, true));
+            el
+        });
     let hunks_divider = div()
         .id("ews-divider-hunks")
         .group("ews-divider-hunks")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2401,18 +2426,25 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorHunks,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, false));
+            el
+        });
 
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —
     // View → Toggle Sidebar now actually hides the file tree in Editor mode.
+    let (tree_width, hunks_width) = tabs::pane_widths(view, window.viewport_size().width);
     let body = div()
         .flex()
         .flex_row()
         .flex_1()
         .min_h(px(0.))
         .when(view.show_tree, |el| {
-            el.child(render_tree_pane(view, cx)).child(tree_divider)
+            el.child(render_tree_pane(view, tree_width, cx))
+                .child(tree_divider)
         })
         .child(
             div()
@@ -2425,7 +2457,7 @@ fn render_editor_workspace(
                 .children(bottom_panel),
         )
         .child(hunks_divider)
-        .child(render_hunks_pane(view, cx));
+        .child(render_hunks_pane(view, hunks_width, cx));
 
     div()
         .id("editor-workspace")
@@ -2559,6 +2591,7 @@ fn render_source_chips(
 /// working-tree file tree.
 fn render_tree_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
@@ -2569,7 +2602,7 @@ fn render_tree_pane(
         this.open_tree_menu(TreeMenuTarget::Root, e.position, cx);
     });
     let mut pane = div()
-        .w(theme::scaled_px(view.tree_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -2824,103 +2857,6 @@ fn render_tree_row(
             )
         }
     }
-}
-
-/// Center pane: the selected file's editable code viewer, or a placeholder.
-/// The editor tab strip (user request): one chip per open buffer — file
-/// name, `●` when dirty, and a × close button (dirty close routes through
-/// the unsaved-changes guard). `None` when no tabs are open.
-///
-/// ponytail: no horizontal scrolling — many tabs just shrink/truncate.
-/// Add an overflow scroll if real usage ever opens that many.
-fn render_tab_strip(
-    view: &EditorWorkspaceView,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> Option<gpui::AnyElement> {
-    if view.open_tabs.is_empty() {
-        return None;
-    }
-    let mut strip = div()
-        .id("ews-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .w_full()
-        .bg(rgb(theme().panel));
-    for (i, path) in view.open_tabs.iter().enumerate() {
-        let is_active = view.open_path.as_ref() == Some(path);
-        let dirty = view.tab_dirty(path);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let activate_path = path.clone();
-        let close_path = path.clone();
-        let activate = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            this.activate_tab(activate_path.clone(), cx);
-        });
-        let close = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            // Don't also fire the chip's activate handler underneath.
-            cx.stop_propagation();
-            this.request_close_tab(close_path.clone(), cx);
-        });
-        strip = strip.child(
-            div()
-                .id(("ews-tab", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .py_px()
-                .max_w(theme::scaled_px(180.))
-                .min_w(px(0.))
-                .cursor_pointer()
-                .text_xs()
-                .bg(rgb(if is_active {
-                    theme().bg_base
-                } else {
-                    theme().panel
-                }))
-                .when(!is_active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-                .on_click(activate)
-                .when(dirty, |el| {
-                    el.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(theme().color_warning))
-                            .child(SharedString::from("\u{25cf}")),
-                    )
-                })
-                .child(
-                    div()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(if is_active {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(SharedString::from(name)),
-                )
-                .child(
-                    div()
-                        .id(("ews-tab-x", i))
-                        .flex_shrink_0()
-                        .px_1()
-                        .rounded_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| {
-                            s.bg(rgb(theme().selected))
-                                .text_color(rgb(theme().text_main))
-                        })
-                        .on_click(close)
-                        .child(SharedString::from("\u{00d7}")),
-                ),
-        );
-    }
-    Some(strip.into_any_element())
 }
 
 fn render_center_pane(
@@ -3213,10 +3149,11 @@ fn render_center_pane(
 /// selected file's WIP hunks (unchanged v1 behaviour) or its commit history.
 fn render_hunks_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
-        .w(theme::scaled_px(view.hunks_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()

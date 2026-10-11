@@ -161,6 +161,13 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
             e2e::control_bounds(window.window_id(), "app-notice-release-warning").is_some(),
             "first release click must draw the final warning"
         );
+        // #1270: root Return on the armed danger state cancels the arm,
+        // without persisting a release or admitting another writer.
+        press_key(cx, &view, window, "enter");
+        paint(cx, window);
+        assert_blocked(cx, &view, &repo, id);
+        assert!(!cx.read(|cx| view.read(cx).app_notice().unwrap().release_armed));
+        click_confirm(cx, window); // Explicitly arm again before testing Escape.
         press_key(cx, &view, window, "escape");
         paint(cx, window);
         assert_blocked(cx, &view, &repo, id);
@@ -209,7 +216,8 @@ pub fn scenario_reconcile_unobservable_release(cx: &mut VisualTestAppContext) {
         });
         click_confirm(cx, window); // The retry arms from scratch.
         assert_blocked(cx, &view, &repo, id);
-        click_confirm(cx, window); // Explicit final confirmation persists then releases.
+        crate::destructive_modal_return::focused_confirm(cx, &view, window, "app-notice-dismiss");
+        paint(cx, window); // Tab + Enter explicitly persists the final release.
         view.update(cx, |view, _| {
             assert!(
                 !view.app_sessions.needs_reconcile(id),

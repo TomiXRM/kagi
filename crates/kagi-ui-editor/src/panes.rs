@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context, SharedString, Window};
+use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context};
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
@@ -22,114 +22,22 @@ use kagi_ui_core::theme::theme;
 /// `InspectorSplit`-style divider, at least not in this v1).
 const HISTORY_HEADER_RATIO: f32 = 0.3;
 
-use crate::{
-    placeholder_text, with_vertical_scrollbar, EditorWorkspaceView, MiddlePaneTab, RightPaneTab,
-};
+use crate::{placeholder_text, with_vertical_scrollbar, EditorWorkspaceView};
 
-/// One tab chip, shared visual style between the right-pane and center-pane
-/// switchers — mirrors `render_source_chip`'s look (see `lib.rs`) with a
-/// generic click callback since each switcher dispatches to a different
-/// setter (`set_right_tab` / `set_middle_tab`).
-fn render_tab_chip(
-    id: (&'static str, usize),
-    label: SharedString,
-    active: bool,
-    on_click: impl Fn(&mut EditorWorkspaceView, &mut Window, &mut Context<EditorWorkspaceView>)
-        + 'static,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> AnyElement {
-    let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-        on_click(this, window, cx);
-    });
-    div()
-        .id(id)
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_px()
-        .rounded_sm()
-        .cursor_pointer()
-        .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
-        } else {
-            theme().text_muted
-        }))
-        .bg(rgb(if active {
-            theme().selected
-        } else {
-            theme().panel
-        }))
-        .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        .on_click(click)
-        .child(label)
-        .into_any_element()
-}
-
-/// Right pane's Diff/History tab strip.
+/// Right pane's Diff/History selector, using the host's shared keyboard owner.
 pub(crate) fn render_right_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-right-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-right-tab", 0),
-            Msg::EditorRightTabDiff.t().into(),
-            view.right_tab == RightPaneTab::Diff,
-            |this, window, cx| this.set_right_tab(RightPaneTab::Diff, window, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-right-tab", 1),
-            Msg::EditorRightTabHistory.t().into(),
-            view.right_tab == RightPaneTab::History,
-            |this, window, cx| this.set_right_tab(RightPaneTab::History, window, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, false, cx)
 }
 
-/// Center pane's Diff/Snapshot tab strip (only rendered once a History row
-/// is selected — see the early-return branch in `render_center_pane`).
+/// Center pane's Diff/Snapshot selector for the selected historical commit.
 pub(crate) fn render_middle_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-middle-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 0),
-            Msg::EditorMiddleTabDiff.t().into(),
-            view.middle_tab == MiddlePaneTab::Diff,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Diff, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 1),
-            Msg::EditorMiddleTabSnapshot.t().into(),
-            view.middle_tab == MiddlePaneTab::Snapshot,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Snapshot, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, true, cx)
 }
 
 /// Right pane's History tab body: a virtualized, clickable commit list for

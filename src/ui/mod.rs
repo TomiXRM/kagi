@@ -42,6 +42,7 @@ mod env_tests;
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
+mod editor_pane_selectors;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 mod external_editor;
@@ -1183,6 +1184,9 @@ pub struct KagiApp {
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
+    /// #1271: last pointer coordinates, not a second hover/selection owner.
+    /// Ignore GPUI's stationary move replay when results scroll underneath it.
+    pub(crate) command_palette_pointer: Option<gpui::Point<gpui::Pixels>>,
     /// #1069: lazily created list scroll, retained across redraws and reset on
     /// open. Child-bound reveals keep variable-height disabled reasons intact.
     pub(crate) command_palette_scroll: Option<gpui::ScrollHandle>,
@@ -1502,6 +1506,7 @@ impl KagiApp {
             pr_fields_generation: 0,
             pr_fields_input: None,
             command_palette_selected: 0,
+            command_palette_pointer: None,
             command_palette_scroll: None,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
@@ -2966,11 +2971,11 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Enter while a modal is open: confirm/approve the active modal. Returns
-    /// `true` if a modal was open — the caller consumes Enter and does NOT fall
-    /// through to commit checkout. Each confirm method self-guards on blockers
-    /// and on its own two-stage arming, so Enter can neither execute a blocked
-    /// plan nor skip a stage. View-only/multi-choice overlays (update,
+    /// Explicit approval of the active modal. The root keyboard router selects
+    /// Cancel instead for destructive defaults. Returns `true` if a modal was
+    /// open, preventing fall-through to commit checkout. Each confirm method
+    /// self-guards on blockers and its own two-stage arming; approval can
+    /// neither execute a blocked plan nor skip a stage. View-only/multi-choice overlays (update,
     /// menu/settings) are consumed but not actioned.
     ///
     /// #492: the `match` over [`ActiveModal`] is **exhaustive** — a new variant

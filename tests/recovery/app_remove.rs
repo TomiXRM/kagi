@@ -92,7 +92,7 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
                 "confirm click must consume this window's remove modal"
             );
         } else {
-            cx.simulate_keystrokes(window, "enter");
+            crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
         }
         wait_idle(cx, &app);
         assert!(!linked.exists(), "input must reach real remove executor");
@@ -241,7 +241,8 @@ fn refuse_remove_from_own_tab(cx: &mut VisualTestAppContext) {
         window.draw(cx).clear();
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "enter");
+    // A blocked destructive dialog has no keyboard-confirmable button.
+    app.update(cx, |app, cx| app.confirm_remove_worktree(cx));
     wait_idle(cx, &app);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -340,7 +341,8 @@ fn refused_locked_remove(cx: &mut VisualTestAppContext) {
         window.draw(cx).clear();
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "enter");
+    // Keep the explicit confirmation guard/receipt oracle, not root Return.
+    app.update(cx, |app, cx| app.confirm_remove_worktree(cx));
     wait_idle(cx, &app);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
@@ -457,7 +459,7 @@ fn partial_submodule_refusal_toast(cx: &mut VisualTestAppContext) {
         window.draw(cx).clear();
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "enter");
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     wait_idle(cx, &app);
 
     let expected = match i18n::lang() {

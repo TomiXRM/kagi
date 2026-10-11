@@ -201,22 +201,15 @@ fn setup(cx: &mut VisualTestAppContext, repo: &std::path::Path, case: &Case) -> 
     dirty_live(cx, &live, window);
     seed_undo(cx, &app, repo);
     let hash = select_snapshot(cx, &editor, window);
-    // PM-approved compact leg: Toggle Sidebar only while #1262's shared
-    // Editor width clamp is absent. After integration the natural layout is
-    // checked instead. In either case the History pane stays visible.
-    if case.zoom > 1.
-        && case.dimensions.0 == 940.
-        && cx.read(|cx| editor.read(cx).snapshot_bounds.unwrap().size.width < px(60.))
-    {
-        cx.simulate_keystrokes(window, "cmd-b");
-        paint(cx, window);
-        assert!(cx.read(|cx| !editor.read(cx).show_tree));
-        assert_eq!(
-            cx.read(|cx| editor.read(cx).right_tab),
-            RightPaneTab::History
-        );
-    }
     paint(cx, window);
+    assert!(
+        cx.read(|cx| editor.read(cx).show_tree),
+        "natural compact layout retains the Sidebar"
+    );
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).right_tab),
+        RightPaneTab::History
+    );
     assert_eq!(theme::theme().slug.as_ref(), case.preset);
     assert_eq!(i18n::lang(), case.lang);
     assert!((theme::zoom() - case.zoom).abs() < 0.001);

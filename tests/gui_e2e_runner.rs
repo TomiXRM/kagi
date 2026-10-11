@@ -234,6 +234,10 @@ mod repo_health;
 mod modal_polish_b;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/destructive_modal_return.rs"]
+mod destructive_modal_return;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/inventory/mod.rs"]
 mod inventory;
 
@@ -260,6 +264,9 @@ mod remote_browse_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
+#[cfg(target_os = "macos")]
+#[path = "recovery/palette_polish.rs"]
+mod palette_polish;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
@@ -308,6 +315,10 @@ mod pr_diff_extent_same_selection;
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_diff_extent_reload.rs"]
 mod editor_diff_extent_reload;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_tabs.rs"]
+mod editor_tabs;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
@@ -552,6 +563,10 @@ mod macos {
     extern "C" {
         fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
         fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+        fn objc_getClass(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn object_getClass(object: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
     }
 
     /// The offscreen runner has no AppKit event loop to drain native windows.
@@ -586,6 +601,91 @@ mod macos {
         // MacWindow closes on MacPlatform's native executor, not TestDispatcher.
         unsafe {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, 0);
+        }
+    }
+
+    /// Supply a native frame tick for one hidden test window. AppKit stops its
+    /// display link while occluded, so draining the runloop alone cannot execute
+    /// GPUI's on_next_frame callbacks. GPUIView::displayLayer enters the same
+    /// request-frame callback with default options: it does not invalidate the
+    /// window or force rendering. In particular, a prepaint refresh ignored by
+    /// GPUI stays ignored; only a genuinely scheduled refresh draws another frame.
+    pub(crate) fn request_native_frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+        let title = format!("Kagi native-frame test {:?}", window.window_id());
+        cx.update_window(window, |_, window, _| {
+            if window.window_title() != title {
+                window.set_window_title(&title);
+            }
+        })
+        .expect("native frame target still mounted");
+        // Do not hold the GPUI App borrow here: displayLayer re-enters its
+        // request-frame callback, which updates that same App.
+        unsafe {
+            type Object = *mut std::ffi::c_void;
+            let send: unsafe extern "C" fn(Object, Object) -> Object =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let index: unsafe extern "C" fn(Object, Object, usize) -> Object =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let count_windows: unsafe extern "C" fn(Object, Object) -> usize =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let frame: unsafe extern "C" fn(Object, Object, Object) =
+                std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+            let application = send(
+                objc_getClass(c"NSApplication".as_ptr()),
+                sel_registerName(c"sharedApplication".as_ptr()),
+            );
+            assert!(!application.is_null(), "runner owns native NSApplication");
+            let windows = send(application, sel_registerName(c"windows".as_ptr()));
+            let count = count_windows(windows, sel_registerName(c"count".as_ptr()));
+            let mut target: Object = std::ptr::null_mut();
+            for position in 0..count {
+                let candidate = index(
+                    windows,
+                    sel_registerName(c"objectAtIndex:".as_ptr()),
+                    position,
+                );
+                let name = send(candidate, sel_registerName(c"title".as_ptr()));
+                let utf8 = send(name, sel_registerName(c"UTF8String".as_ptr()));
+                if !utf8.is_null()
+                    && std::ffi::CStr::from_ptr(utf8.cast()).to_bytes() == title.as_bytes()
+                {
+                    assert!(target.is_null(), "native frame title identifies one window");
+                    // Pinned MacWindow embeds GPUIView directly under AppKit's
+                    // contentView, alongside any separate blurred background.
+                    let content = send(candidate, sel_registerName(c"contentView".as_ptr()));
+                    let children = send(content, sel_registerName(c"subviews".as_ptr()));
+                    let count = count_windows(children, sel_registerName(c"count".as_ptr()));
+                    for child in 0..count {
+                        let view = index(
+                            children,
+                            sel_registerName(c"objectAtIndex:".as_ptr()),
+                            child,
+                        );
+                        if object_getClass(view) == objc_getClass(c"GPUIView".as_ptr()) {
+                            assert!(target.is_null(), "target window contains one GPUIView");
+                            target = view;
+                        }
+                    }
+                    assert!(
+                        !target.is_null(),
+                        "target window embeds its pinned GPUIView"
+                    );
+                }
+            }
+            assert!(
+                !target.is_null(),
+                "specific hidden native frame view exists"
+            );
+            assert_eq!(
+                object_getClass(target),
+                objc_getClass(c"GPUIView".as_ptr()),
+                "only the pinned GPUI native view receives the frame tick"
+            );
+            frame(
+                target,
+                sel_registerName(c"displayLayer:".as_ptr()),
+                std::ptr::null_mut(),
+            );
         }
     }
 
@@ -1237,6 +1337,10 @@ mod macos {
             (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
+            ),
+            (
+                "destructive_modal_return",
+                Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
             ),
             (
                 "sync_to_remote_armed",
@@ -2009,6 +2113,14 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),
             (
+                "palette_highlight",
+                Box::new(crate::palette_polish::scenario_palette_highlight),
+            ),
+            (
+                "palette_shortcut_glyphs",
+                Box::new(crate::palette_polish::scenario_palette_shortcut_glyphs),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
@@ -2117,7 +2229,16 @@ mod macos {
                 "editor_diff_extent_unchanged_reload",
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
+            (
+                "editor_tab_overflow",
+                Box::new(crate::editor_tabs::scenario_editor_tab_overflow),
+            ),
+            (
+                "editor_toggle_keys",
+                Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
+            ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
@@ -3149,6 +3270,9 @@ mod macos {
 
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        // Effective bindings are cached at startup, exactly as in the product.
+        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
+            .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

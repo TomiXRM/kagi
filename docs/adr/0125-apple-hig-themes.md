@@ -600,3 +600,34 @@ push a shortcut 2px outside the measured 500px menu. The strengthened native
 scenario failed on that containment and the 480px shrink cap before these
 corrections, and passes with both applied. Closed hover records a tooltip;
 open hover records none in both languages and presentation modes.
+## Amendment — 2026-10-11: Home repository reveal and actions (#1203, #1204)
+
+Home remains an open-density list with single-line ellipsized descriptions.
+The cached entry owns sanitized SharedString text reused by the visible label,
+full-text Tooltip and row `aria_description`, preserving Japanese and literal
+braces without converting descriptions on every repaint.
+
+Clone/Open use the shared `KagiButton` Secondary (Default-outline) at 22
+reference px, following macOS small-push-button density rather than the quiet
+metadata chip. Its visible localized EN/JA label also names its Button AX node.
+Private/Fork metadata remains `text_sub` on `surface`; no palette changes.
+gpui-kit owns border, hover and pressed styles; RowList owns keyboard focus,
+Enter/Space and the single list Tab stop. The button is not another Tab stop,
+and child clicks stop propagation before invoking the existing pick once.
+Loading/cloning continues through that existing pick/card owner; no Git-write,
+logging or confirmation path changes. This is control hierarchy, not AppKit
+material parity. Native renderer/recorder coverage and Tier B are distinct.
+
+Native `home_repository_affordances` restores in-memory presentation via the
+shared Drop guard and `GlobalSettings::capture()`. Restoring the old action chip
+failed its measured height (17.5px versus 22px at 100%); removing the description
+reveal and its observation failed with no recorded description. The description helper
+sets `aria_description` and records that same argument on one call path; this is
+an assignment-path assertion, not readback of GPUI's accessibility tree. Each
+matrix cell clears old observations and consumes freshly built tooltip text.
+The fixed matrix checks full EN/JA/braces text supplied on native hover,
+constructor-supplied Button role/name, scaled height, rendered border distinct
+from fill and metadata, and focused-row Space opening the existing clone card.
+Attribute recorders do
+not establish live VoiceOver delivery. Tier B: Home Repositories, Apple Light EN,
+hover a truncated description and inspect the trailing action.

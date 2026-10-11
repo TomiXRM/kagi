@@ -17,10 +17,14 @@
 use super::commit_panel::CommitPanelView;
 use super::render_helpers::*;
 use super::*;
-use crate::ui::button_style::{ButtonRole, KagiButton};
 use gpui::Focusable as _;
 use gpui_component::ActiveTheme as _;
-use gpui_component::Disableable as _;
+
+#[path = "commit_panel_controls.rs"]
+mod controls;
+#[path = "commit_panel_rows.rs"]
+mod rows;
+use rows::*;
 
 // ──────────────────────────────────────────────────────────────
 // Commit Panel — virtualized per-row builders (PERF)
@@ -31,751 +35,6 @@ use gpui_component::Disableable as _;
 // from the `uniform_list` processors below for only the visible `range`, so the
 // commit panel costs O(visible rows) per frame instead of O(all files).
 
-/// Where a tree-view row sits in its section's `Tree` (#354): the tree id, the
-/// flattened row index, its 1-based level and 1-based sibling position/size.
-/// Flat view passes `None` and stays a plain run of rows.
-#[derive(Clone, Copy)]
-pub(crate) struct CpTreeSlot {
-    tree: &'static str,
-    index: usize,
-    level: usize,
-    position: (usize, usize),
-}
-
-/// Mark `el` as the `TreeItem` at `slot` (tree view only). The name is built
-/// lazily so flat view never allocates it.
-fn cp_tree_item(
-    el: gpui::Stateful<gpui::Div>,
-    slot: Option<CpTreeSlot>,
-    label: impl FnOnce() -> String,
-    expanded: Option<bool>,
-    selected: Option<bool>,
-) -> gpui::Stateful<gpui::Div> {
-    match slot {
-        Some(s) => kagi_ui_core::tree_a11y::tree_item(
-            s.tree,
-            el,
-            s.index,
-            &label(),
-            s.level,
-            expanded,
-            selected,
-            s.position,
-        ),
-        None => el,
-    }
-}
-
-/// Accessible name of a file tree row: its base name (plus the convention
-/// badge when shown) and its localized status. Filled by splitting the
-/// template so a `{}` inside a file name is never taken for a placeholder.
-fn cp_file_label(
-    name: &str,
-    change: Option<&kagi_git::ChangeKind>,
-    is_conflicted: bool,
-    convention: bool,
-) -> String {
-    let status = kagi_ui_core::tree_a11y::file_status(change, is_conflicted);
-    let mut parts = Msg::A11yFileTreeFile.t().splitn(3, "{}");
-    let mut s = String::from(parts.next().unwrap_or_default());
-    s.push_str(name);
-    if convention {
-        s.push_str(" (");
-        s.push_str(Msg::AgentConventionBadge.t());
-        s.push(')');
-    }
-    s.push_str(parts.next().unwrap_or_default());
-    s.push_str(status);
-    s.push_str(parts.next().unwrap_or_default());
-    s
-}
-
-/// Level and sibling position/size of every tree-view row of a section, in
-/// display order (#354): the pruned file tree at depth + 1, then each
-/// non-empty fold ("Generated", "Agent artifacts") as a top-level item with
-/// its expanded files one level below. Linear; rebuilt on status changes or
-/// fold toggles, never by the virtual list's per-scroll processor.
-fn cp_tree_layout(
-    panel: &super::commit_panel::CommitPanelState,
-    staged: bool,
-) -> Vec<(usize, (usize, usize))> {
-    let tree = if staged {
-        &panel.staged_tree
-    } else {
-        &panel.unstaged_tree
-    };
-    let mut levels: Vec<usize> = tree
-        .iter()
-        .map(|row| match row {
-            file_tree::TreeRow::Dir { depth, .. } | file_tree::TreeRow::File { depth, .. } => {
-                depth + 1
-            }
-        })
-        .collect();
-    for extra in [
-        panel.generated_extra_rows(staged),
-        panel.agent_extra_rows(staged),
-    ] {
-        if extra > 0 {
-            levels.push(1);
-            levels.extend(std::iter::repeat_n(2, extra - 1));
-        }
-    }
-    let positions = kagi_ui_core::tree_a11y::sibling_positions(&levels);
-    levels.into_iter().zip(positions).collect()
-}
-
-/// The slot of display row `index` in a section laid out by [`cp_tree_layout`].
-fn cp_tree_slot(
-    layout: &[(usize, (usize, usize))],
-    tree: &'static str,
-    index: usize,
-) -> Option<CpTreeSlot> {
-    let &(level, position) = layout.get(index)?;
-    Some(CpTreeSlot {
-        tree,
-        index,
-        level,
-        position,
-    })
-}
-
-/// The four Commit Panel file rows (unstaged/staged × flat/tree) differ only in
-/// data lookup, padding, action button and the discard menu — ADR-0132's lesson
-/// applied to this panel: one renderer, four thin callers.
-///
-/// Returns a `Stateful<Div>` (like `kagi_ui_core::commit_row::render_commit_row`)
-/// so a caller can still attach its own interactions on top.
-///
-/// Per-variant differences kept deliberately:
-/// * `tree` rows are indented (`pl(8+indent)` / `pr(2)`) where flat rows use `px_2`.
-/// * staged rows get an **Unstage** button, unstaged rows a **Stage** button.
-/// * only unstaged rows get the right-click file menu (Discard lives there,
-///   W17-DISCARD / ADR-0083) and the conflicted treatment.
-/// * element ids keep their per-variant prefixes, and the staged diffstat keeps
-///   its `fi + 100_000` id seed so the two lists never collide.
-fn render_cp_file_row(
-    view: &CommitPanelView,
-    staged: bool,
-    tree: bool,
-    fi: usize,
-    name: SharedString,
-    change: Option<&kagi_git::ChangeKind>,
-    is_conflicted: bool,
-    is_sel: bool,
-    wip_hit: bool,
-    window_active: bool,
-    indent: f32,
-    stat: Option<&kagi_git::FileDiffStat>,
-    convention: bool,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> gpui::Stateful<gpui::Div> {
-    let (row_id, btn_id, conflict_id) = match (staged, tree) {
-        (false, false) => (
-            "cp-us-flat-file",
-            "cp-us-flat-stage-btn",
-            "cp-us-flat-conflict-badge",
-        ),
-        (false, true) => ("cp-us-file", "cp-us-stage-btn", "cp-us-conflict-badge"),
-        (true, false) => ("cp-st-flat-file", "cp-st-flat-unstage-btn", ""),
-        (true, true) => ("cp-st-file", "cp-st-unstage-btn", ""),
-    };
-    let (badge, badge_color, _) = status_badge(change, is_conflicted);
-    let state = &view.state;
-    let file = if staged {
-        &state.staged[fi]
-    } else {
-        &state.unstaged[fi]
-    };
-    let full_path = SharedString::from(file.path.to_string_lossy().into_owned());
-    let file_ref = if staged {
-        CommitPanelFileRef::Staged { index: fi }
-    } else {
-        CommitPanelFileRef::Unstaged { index: fi }
-    };
-    let file_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
-        view.defer_select_file(file_ref.clone(), window, cx);
-    });
-    // Row background: conflicted files get red tint
-    let row_bg = if is_conflicted {
-        rgb(theme().diff_removed_bg).into()
-    } else if is_sel || wip_hit {
-        theme().selected_for_window(window_active)
-    } else {
-        rgb(theme().panel).into()
-    };
-    let mut file_row = div()
-        .id((row_id, fi))
-        .map(|el| {
-            cp_tree_item(
-                el,
-                slot,
-                || cp_file_label(&name, change, is_conflicted, convention),
-                None,
-                Some(is_sel),
-            )
-        })
-        .aria_description(full_path.clone())
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .map(|el| {
-            if tree {
-                el.pl(theme::scaled_px(8.0 + indent))
-                    .pr(theme::scaled_px(2.0))
-            } else {
-                el.px_2()
-            }
-        })
-        .py_px()
-        .bg(row_bg)
-        .relative()
-        .child(super::e2e::measure_inside(if staged {
-            "cp-selected-staged-row"
-        } else {
-            "cp-selected-unstaged-row"
-        }))
-        .when(!is_sel && !wip_hit && !is_conflicted, |el| {
-            el.hover(|s| s.bg(rgb(theme().surface)))
-        })
-        .on_click(file_click)
-        .child(
-            div()
-                .w(theme::scaled_px(12.))
-                .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(badge_color))
-                .child(SharedString::from(badge)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
-                .aria_label(full_path.clone())
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
-                })
-                .text_xs()
-                .text_color(rgb(theme().text_main))
-                .overflow_hidden()
-                .truncate()
-                .child(name),
-        )
-        .when(convention, |el| {
-            // issue #338: emphasis badge on a convention-body file — these steer
-            // agent behaviour, so they are highlighted, never folded.
-            el.child(
-                div()
-                    .ml_1()
-                    .mr_2()
-                    .px(px(3.))
-                    .rounded_sm()
-                    .flex_shrink_0()
-                    .bg(rgb(theme().color_warning))
-                    .text_size(px(9.))
-                    .line_height(px(14.))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(theme().bg_base))
-                    .child(SharedString::from(Msg::AgentConventionBadge.t())),
-            )
-        })
-        .child(diffstat_bar::diffstat_unit(
-            if staged { fi + 100_000 } else { fi },
-            stat,
-        ));
-    if is_conflicted {
-        // Conflicted rows can be neither staged nor discarded from here.
-        return file_row.child(
-            div()
-                .id((conflict_id, fi))
-                .ml_2()
-                .px_1()
-                .py_px()
-                .rounded_sm()
-                .flex_shrink_0()
-                .bg(rgb(theme().color_blocker)) // red
-                .text_xs()
-                .text_color(rgb(theme().bg_base))
-                .child(SharedString::from(Msg::CommitPanelConflict.t())),
-        );
-    }
-    // #476 slice 3: offered on a linked worktree's panel too — Discard resolves
-    // the panel's own repository now, and its confirm names that worktree.
-    if !staged {
-        // W17-DISCARD / ADR-0083: right-click opens the file context menu
-        // (Discard lives there). Tracked rows are restored from the index;
-        // untracked rows are deleted (after an ODB backup).
-        let menu_click = cx.listener(move |view, e: &gpui::MouseDownEvent, window, cx| {
-            cx.stop_propagation();
-            view.defer_open_file_menu(fi, e.position, window, cx);
-        });
-        file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
-    }
-    let (label, role) = if staged {
-        (Msg::CommitPanelUnstage.t(), ButtonRole::Warning)
-    } else {
-        (Msg::CommitPanelStage.t(), ButtonRole::Success)
-    };
-    let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
-        if staged {
-            view.defer_unstage_file(fi, window, cx);
-        } else {
-            view.defer_stage_file(fi, window, cx);
-        }
-    });
-    file_row.child(
-        KagiButton::styled(
-            (btn_id, fi),
-            super::e2e::commit_panel_labels::caption(
-                if staged {
-                    "cp-row-unstage"
-                } else {
-                    "cp-row-stage"
-                },
-                label,
-            ),
-            role,
-            cx,
-        )
-        .xsmall()
-        .min_h(px(20.))
-        .ml_2()
-        .flex_shrink_0()
-        .relative()
-        .child(super::e2e::measure_inside(if staged {
-            "cp-row-unstage"
-        } else {
-            "cp-row-stage"
-        }))
-        .on_click(action_click),
-    )
-}
-
-/// A directory row in either tree list (`prefix` is the id namespace). Commit
-/// panel directories do not collapse, so the item carries no expanded state.
-fn render_cp_dir_row(
-    prefix: &str,
-    depth: usize,
-    name: &SharedString,
-    slot: Option<CpTreeSlot>,
-) -> gpui::AnyElement {
-    div()
-        .id(SharedString::from(format!("{}-{}", prefix, name.as_ref())))
-        .map(|el| {
-            cp_tree_item(
-                el,
-                slot,
-                || Msg::A11yFileTreeDir.t().replacen("{}", name, 1),
-                None,
-                None,
-            )
-        })
-        .pl(theme::scaled_px(8.0 + (depth as f32) * 12.0))
-        .py_px()
-        .text_xs()
-        .text_color(rgb(theme().change_dir))
-        .child(name.clone())
-        .into_any_element()
-}
-
-/// issue #348: the collapsible "Generated (N)" disclosure header row for a
-/// section. Clicking it toggles `generated_expanded` (shared by both sections).
-fn render_cp_generated_header(
-    staged: bool,
-    count: usize,
-    expanded: bool,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> gpui::AnyElement {
-    let id = if staged {
-        "cp-st-generated-header"
-    } else {
-        "cp-us-generated-header"
-    };
-    render_cp_fold_header(
-        id,
-        i18n::Msg::GeneratedFilesSection.t(),
-        count,
-        expanded,
-        false,
-        slot,
-        cx,
-    )
-}
-
-/// issue #338: the collapsible "Agent artifacts (N)" disclosure header row.
-/// Clicking it toggles `agent_expanded` (shared by both sections).
-fn render_cp_agent_header(
-    staged: bool,
-    count: usize,
-    expanded: bool,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> gpui::AnyElement {
-    let id = if staged {
-        "cp-st-agent-header"
-    } else {
-        "cp-us-agent-header"
-    };
-    render_cp_fold_header(
-        id,
-        i18n::Msg::AgentArtifactsSection.t(),
-        count,
-        expanded,
-        true,
-        slot,
-        cx,
-    )
-}
-
-/// Shared collapsible fold header (issue #348 generated + #338 agent). `agent`
-/// selects which expansion flag the click toggles. In tree view it is a
-/// top-level, expandable `TreeItem` named without the disclosure arrow.
-fn render_cp_fold_header(
-    id: &'static str,
-    section_label: &str,
-    count: usize,
-    expanded: bool,
-    agent: bool,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> gpui::AnyElement {
-    let arrow = if expanded { "▾" } else { "▸" };
-    let label = format!("{arrow} {section_label} ({count})");
-    let toggle = cx.listener(
-        move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _window, cx| {
-            if agent {
-                view.state.agent_expanded = !view.state.agent_expanded;
-            } else {
-                view.state.generated_expanded = !view.state.generated_expanded;
-            }
-            cx.notify();
-        },
-    );
-    div()
-        .id(id)
-        .map(|el| {
-            cp_tree_item(
-                el,
-                slot,
-                || format!("{section_label} ({count})"),
-                Some(expanded),
-                None,
-            )
-        })
-        .w_full()
-        .flex()
-        .flex_row()
-        .items_center()
-        .px_2()
-        .py_px()
-        .hover(|s| s.bg(rgb(theme().surface)).cursor_default())
-        .on_click(toggle)
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .text_xs()
-                .text_color(rgb(theme().text_label))
-                .truncate()
-                .child(SharedString::from(label)),
-        )
-        .into_any_element()
-}
-
-/// issue #338: whether `path` is an agent convention body (badge, never folded).
-fn is_convention(path: &std::path::Path) -> bool {
-    use kagi_domain::agent_artifacts::{classify_agent_artifact, AgentArtifactKind};
-    classify_agent_artifact(&path.to_string_lossy()) == AgentArtifactKind::ConventionBody
-}
-
-/// One unstaged file row (flat style) by index `fi` into `unstaged`. Shared by
-/// the flat list, the tree list's folded section, and the folded "Generated"
-/// rows (issue #348).
-fn cp_unstaged_file_element(
-    view: &CommitPanelView,
-    fi: usize,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let f = panel.unstaged.get(fi)?;
-    let name = f
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-    let wip_hit = view
-        .active_wip
-        .as_ref()
-        .is_some_and(|(st, p)| !*st && &f.path == p);
-    Some(
-        render_cp_file_row(
-            view,
-            false,
-            false,
-            fi,
-            SharedString::from(name),
-            Some(&f.change),
-            panel.is_conflicted(&f.path),
-            panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
-            wip_hit,
-            view.window_active,
-            0.0,
-            panel.unstaged_stat(&f.path),
-            is_convention(&f.path),
-            slot,
-            cx,
-        )
-        .into_any_element(),
-    )
-}
-
-/// One staged file row (flat style) by index `fi` into `staged` (issue #348).
-fn cp_staged_file_element(
-    view: &CommitPanelView,
-    fi: usize,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let f = panel.staged.get(fi)?;
-    let name = f
-        .path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| f.path.to_string_lossy().into_owned());
-    let wip_hit = view
-        .active_wip
-        .as_ref()
-        .is_some_and(|(st, p)| *st && &f.path == p);
-    Some(
-        render_cp_file_row(
-            view,
-            true,
-            false,
-            fi,
-            SharedString::from(name),
-            Some(&f.change),
-            false,
-            panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
-            wip_hit,
-            view.window_active,
-            0.0,
-            panel.staged_stat(&f.path),
-            is_convention(&f.path),
-            slot,
-            cx,
-        )
-        .into_any_element(),
-    )
-}
-
-/// One file row (flat style) for either side, dispatched by `staged`.
-fn cp_file_element(
-    view: &CommitPanelView,
-    staged: bool,
-    fi: usize,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    if staged {
-        cp_staged_file_element(view, fi, slot, cx)
-    } else {
-        cp_unstaged_file_element(view, fi, slot, cx)
-    }
-}
-
-/// The two trailing fold regions of a section, after the base (normal/tree)
-/// rows: first "Generated (N)" (issue #348), then "Agent artifacts (N)"
-/// (issue #338). `j` is the display-row offset past the base region; `slot`
-/// is the row's tree position in tree view.
-fn render_cp_fold_regions(
-    view: &CommitPanelView,
-    j: usize,
-    staged: bool,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let (gen_files, art_files) = if staged {
-        (&panel.staged_gen_files, &panel.staged_artifact_files)
-    } else {
-        (&panel.unstaged_gen_files, &panel.unstaged_artifact_files)
-    };
-    let gen_extra = panel.generated_extra_rows(staged);
-    if j < gen_extra {
-        if j == 0 {
-            return Some(render_cp_generated_header(
-                staged,
-                gen_files.len(),
-                panel.generated_expanded,
-                slot,
-                cx,
-            ));
-        }
-        let fi = *gen_files.get(j - 1)?;
-        return cp_file_element(view, staged, fi, slot, cx);
-    }
-    // Agent-artifacts fold, immediately after the generated region.
-    let k = j - gen_extra;
-    if k == 0 {
-        return Some(render_cp_agent_header(
-            staged,
-            art_files.len(),
-            panel.agent_expanded,
-            slot,
-            cx,
-        ));
-    }
-    let fi = *art_files.get(k - 1)?;
-    cp_file_element(view, staged, fi, slot, cx)
-}
-
-/// PERF: build one unstaged row in flat view. `i` is a display-row index:
-/// normal files first, then the "Generated" / "Agent artifacts" folds.
-pub(crate) fn render_unstaged_flat_row(
-    view: &CommitPanelView,
-    i: usize,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let normal = &panel.unstaged_normal_files;
-    if i < normal.len() {
-        return cp_unstaged_file_element(view, normal[i], None, cx);
-    }
-    render_cp_fold_regions(view, i - normal.len(), false, None, cx)
-}
-
-/// PERF: build one unstaged tree row. `i` indexes the pruned tree first, then
-/// the "Generated (N)" fold (issue #348). `slot` is its place in the
-/// `cp-unstaged-tree` (#354).
-pub(crate) fn render_unstaged_tree_row(
-    view: &CommitPanelView,
-    i: usize,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let tree_len = panel.unstaged_tree.len();
-    if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, false, slot, cx);
-    }
-    match panel.unstaged_tree.get(i)? {
-        file_tree::TreeRow::Dir { depth, name } => {
-            Some(render_cp_dir_row("cp-us-dir", *depth, name, slot))
-        }
-        file_tree::TreeRow::File {
-            depth,
-            name,
-            file_index,
-            change,
-        } => {
-            let fi = *file_index;
-            // Look up the original path to check if conflicted
-            let path = panel.unstaged.get(fi).map(|f| &f.path);
-            let wip_hit = view
-                .active_wip
-                .as_ref()
-                .zip(path)
-                .is_some_and(|((st, p), fp)| !*st && fp == p);
-            Some(
-                render_cp_file_row(
-                    view,
-                    false,
-                    true,
-                    fi,
-                    name.clone(),
-                    change.as_ref(),
-                    path.map(|p| panel.is_conflicted(p)).unwrap_or(false),
-                    panel.selected_file == Some(CommitPanelFileRef::Unstaged { index: fi }),
-                    wip_hit,
-                    view.window_active,
-                    (*depth as f32) * 12.0,
-                    path.and_then(|p| panel.unstaged_stat(p)),
-                    path.map(|p| is_convention(p)).unwrap_or(false),
-                    slot,
-                    cx,
-                )
-                .into_any_element(),
-            )
-        }
-    }
-}
-
-/// PERF: build one staged row in flat view. `i` is a display-row index:
-/// normal files first, then the "Generated (N)" fold (issue #348).
-pub(crate) fn render_staged_flat_row(
-    view: &CommitPanelView,
-    i: usize,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let normal = &panel.staged_normal_files;
-    if i < normal.len() {
-        return cp_staged_file_element(view, normal[i], None, cx);
-    }
-    render_cp_fold_regions(view, i - normal.len(), true, None, cx)
-}
-
-/// PERF: build one staged tree row. `i` indexes the pruned tree first, then the
-/// "Generated (N)" fold (issue #348). `slot` is its place in the
-/// `cp-staged-tree` (#354).
-pub(crate) fn render_staged_tree_row(
-    view: &CommitPanelView,
-    i: usize,
-    slot: Option<CpTreeSlot>,
-    cx: &mut Context<CommitPanelView>,
-) -> Option<gpui::AnyElement> {
-    let panel = &view.state;
-    let tree_len = panel.staged_tree.len();
-    if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, true, slot, cx);
-    }
-    match panel.staged_tree.get(i)? {
-        file_tree::TreeRow::Dir { depth, name } => {
-            Some(render_cp_dir_row("cp-st-dir", *depth, name, slot))
-        }
-        file_tree::TreeRow::File {
-            depth,
-            name,
-            file_index,
-            change,
-        } => {
-            let fi = *file_index;
-            let path = panel.staged.get(fi).map(|f| &f.path);
-            let wip_hit = view
-                .active_wip
-                .as_ref()
-                .zip(path)
-                .is_some_and(|((st, p), fp)| *st && fp == p);
-            Some(
-                render_cp_file_row(
-                    view,
-                    true,
-                    true,
-                    fi,
-                    name.clone(),
-                    change.as_ref(),
-                    false,
-                    panel.selected_file == Some(CommitPanelFileRef::Staged { index: fi }),
-                    wip_hit,
-                    view.window_active,
-                    (*depth as f32) * 12.0,
-                    path.and_then(|p| panel.staged_stat(p)),
-                    path.map(|p| is_convention(p)).unwrap_or(false),
-                    slot,
-                    cx,
-                )
-                .into_any_element(),
-            )
-        }
-    }
-}
-
 /// The co-author popover, or `None` when the picker is closed.
 ///
 /// Anchored above the icon row (the footer sits at the bottom of the panel, so
@@ -783,83 +42,54 @@ pub(crate) fn render_staged_tree_row(
 /// paints after all of its ancestors. Without that the body box's own border is
 /// drawn over the menu, which overflows that box (user report).
 fn render_coauthor_menu(
-    candidates: Option<&[kagi_git::AuthorCandidate]>,
+    view: &CommitPanelView,
+    window: &Window,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
-    let candidates = candidates?;
-    let mut menu = div()
-        .absolute()
-        .bottom(theme::scaled_px(26.0))
-        // Anchored to the RIGHT edge so the menu grows leftward: the commit
-        // panel is the right-most pane, and a left-anchored 260px menu opened
-        // past the window edge (user report).
-        .right_0()
-        .w(theme::scaled_px(260.0))
-        .id("cp-coauthor-menu")
-        .max_h(theme::scaled_px(220.0))
-        .overflow_y_scroll()
+    let candidates = view.coauthor_menu.as_deref()?;
+    let viewport = window.viewport_size();
+    let width = theme::scaled_px(260.).min((viewport.width - px(16.)).max(px(0.)));
+    let height = theme::scaled_px(
+        (candidates.len().max(1) as f32 * super::commit_panel_coauthor::ROW_HEIGHT).min(220.),
+    )
+    .min((viewport.height - px(20.)).max(px(0.)));
+    let content = super::commit_panel_coauthor::render_content(view, height, window, cx)?;
+    let menu = div()
+        .w(width)
         .rounded_sm()
         .border_1()
         .border_color(rgb(theme().selected))
         .bg(rgb(theme().panel))
         .flex()
         .flex_col()
-        .py_1()
+        .occlude()
         .on_mouse_down_out(cx.listener(
-            |view: &mut CommitPanelView, _e: &gpui::MouseDownEvent, _w, cx| {
+            |view: &mut CommitPanelView, _event: &gpui::MouseDownEvent, window, cx| {
                 view.coauthor_menu = None;
+                view.reconcile_coauthor_menu(window, cx);
                 cx.notify();
             },
-        ));
-
-    if candidates.is_empty() {
-        return Some(
-            gpui::deferred(
-                menu.child(
-                    div()
-                        .px_2()
-                        .py_1()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(Msg::NoRecentAuthors.t())),
-                ),
-            )
-            .into_any_element(),
-        );
-    }
-
-    for (i, c) in candidates.iter().enumerate() {
-        let candidate = c.clone();
-        menu = menu.child(
+        ))
+        .child(content);
+    Some(
+        gpui::deferred(
             div()
-                .id(("cp-coauthor-row", i))
-                .px_2()
-                .py_1()
-                .flex()
-                .flex_col()
-                .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
-                .on_click(cx.listener(
-                    move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.add_coauthor(&candidate, window, cx);
-                        view.coauthor_menu = None;
-                        cx.notify();
-                    },
-                ))
+                .absolute()
+                .bottom(theme::scaled_px(26.))
+                .right_0()
+                .w_0()
+                .h_0()
                 .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_main))
-                        .child(SharedString::from(c.name.clone())),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(c.email.clone())),
+                    gpui::anchored()
+                        .position_mode(gpui::AnchoredPositionMode::Local)
+                        .position(gpui::point(px(0.), px(0.)))
+                        .anchor(gpui::Anchor::BottomRight)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(menu),
                 ),
-        );
-    }
-    Some(gpui::deferred(menu).into_any_element())
+        )
+        .into_any_element(),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -1002,6 +232,8 @@ impl Render for CommitPanelView {
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
         self.sync_inputs(window, cx);
+        self.reconcile_coauthor_menu(window, cx);
+        controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, window, cx)
@@ -1044,13 +276,7 @@ impl CommitPanelView {
         let panel = &self.state;
         let title_input = self.title_input.clone();
         let body_input = self.body_input.clone();
-        let coauthor_menu = if self.coauthor_menu_visible() {
-            self.coauthor_menu.clone()
-        } else {
-            None
-        };
-        let smart = self.smart_snapshot.clone();
-        let smart_ui = (self.smart_generating, self.smart_status.clone());
+        let smart_status = self.smart_status.clone();
         let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
         let staged_scroll_handle = self.staged_scroll_handle.clone();
         // #476 slice 3: every commit-panel write — stage, commit, amend,
@@ -1061,16 +287,6 @@ impl CommitPanelView {
         let tree_view = panel.tree_view;
         let unstaged_count = panel.unstaged.len();
         let staged_count = panel.staged.len();
-        // W17-DISCARD: count discard-eligible unstaged files (exclude untracked,
-        // which the panel surfaces as `Added` rows, and conflicted files).
-        // ADR-0083: untracked (`Added`) rows ARE discardable (deleted with backup),
-        // so they count toward enabling "Discard all" — only conflicted rows are
-        // excluded. Must mirror `discard_partition`.
-        let discard_eligible_count = panel
-            .unstaged
-            .iter()
-            .filter(|f| !panel.is_conflicted(&f.path))
-            .count();
         // T026: the subject line alone decides whether there is a message —
         // a body without a subject is not a commit.
         let input_msg_nonempty = title_input
@@ -1082,59 +298,6 @@ impl CommitPanelView {
         // PERF: selected_file is read per visible row from the entity inside the
         // uniform_list processors, not captured here.
 
-        // ── View switch: segmented [List | Tree] (T-UI-002) ──────
-        let list_click = cx.listener(
-            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                view.state.tree_view = false;
-                cx.notify();
-            },
-        );
-        let tree_click = cx.listener(
-            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                view.state.tree_view = true;
-                cx.notify();
-            },
-        );
-        let seg = |id: &'static str, label: &'static str, active: bool| {
-            div()
-                .id(id)
-                .min_h(px(20.))
-                .flex_shrink_0()
-                .relative()
-                .child(super::e2e::measure_inside(id))
-                .px_1p5()
-                .py_px()
-                .text_xs()
-                .bg(if active {
-                    theme().selected_for_window(self.window_active)
-                } else {
-                    rgb(theme().surface).into()
-                })
-                .text_color(rgb(if active {
-                    theme().text_main
-                } else {
-                    theme().text_muted
-                }))
-                .hover(|st| st.text_color(rgb(theme().text_main)).cursor_default())
-                .role(super::e2e::commit_panel_labels::role(
-                    id,
-                    gpui::Role::Button,
-                ))
-                .aria_selected(super::e2e::commit_panel_labels::selected(id, active))
-                .aria_label(super::e2e::commit_panel_labels::name(id, label))
-                .child(super::e2e::commit_panel_labels::caption(id, label))
-        };
-        let toggle_btn = div()
-            .flex()
-            .flex_row()
-            .flex_shrink_0()
-            .rounded_sm()
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(theme().surface))
-            .child(seg("cp-view-list", Msg::CommitPanelList.t(), !tree_view).on_click(list_click))
-            .child(seg("cp-view-tree", Msg::CommitPanelTree.t(), tree_view).on_click(tree_click));
-
         // ── Helper: build file rows for a section ────────────────
         // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
         // We render inline to avoid capture issues.
@@ -1142,110 +305,7 @@ impl CommitPanelView {
         // ── Unstaged section ─────────────────────────────────────
         // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
 
-        // Unstaged ヘッダ行 (固定 — flex_shrink_0 で高さを保持)
-        let unstaged_header = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_grow(1.)
-                    .flex_shrink_0()
-                    .relative()
-                    .child(super::e2e::measure_inside("cp-unstaged-heading"))
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .child(super::e2e::commit_panel_labels::caption(
-                        "cp-unstaged-heading",
-                        i18n::commit_panel_section(false, unstaged_count),
-                    )),
-            )
-            // #476: live on a worktree panel too — it stages into the worktree.
-            .when(unstaged_count > 0, |el| {
-                let stage_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_stage_all(window, cx);
-                    },
-                );
-                el.child(
-                    div()
-                        .id("cp-stage-all")
-                        .relative()
-                        .min_h(px(20.))
-                        .flex_shrink_0()
-                        .mr_2()
-                        .px_1p5()
-                        .py_px()
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .text_xs()
-                        .text_color(rgb(theme().color_success))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
-                        .on_click(stage_all_click)
-                        .role(super::e2e::commit_panel_labels::role(
-                            "cp-stage-all",
-                            gpui::Role::Button,
-                        ))
-                        .aria_label(super::e2e::commit_panel_labels::name(
-                            "cp-stage-all",
-                            Msg::CommitPanelStageAll.t(),
-                        ))
-                        .child(super::e2e::measure_inside("cp-stage-all"))
-                        .child(super::e2e::commit_panel_labels::caption(
-                            "cp-stage-all",
-                            Msg::CommitPanelStageAll.t(),
-                        )),
-                )
-            })
-            // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
-            .when(unstaged_count > 0, |el| {
-                let discard_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_open_discard_all(window, cx);
-                    },
-                );
-                let enabled = discard_eligible_count > 0;
-                let mut btn = div()
-                    .id("cp-discard-all")
-                    .min_h(px(20.))
-                    .flex_shrink_0()
-                    .mr_2()
-                    .px_1p5()
-                    .py_px()
-                    .rounded_sm()
-                    .bg(rgb(theme().surface))
-                    .text_xs()
-                    .role(super::e2e::commit_panel_labels::role(
-                        "cp-discard-all",
-                        gpui::Role::Button,
-                    ))
-                    .aria_label(super::e2e::commit_panel_labels::name(
-                        "cp-discard-all",
-                        Msg::CommitPanelDiscardAll.t(),
-                    ))
-                    .child(super::e2e::commit_panel_labels::caption(
-                        "cp-discard-all",
-                        Msg::CommitPanelDiscardAll.t(),
-                    ));
-                if enabled {
-                    btn = btn
-                        .text_color(rgb(theme().color_blocker))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
-                        .on_click(discard_all_click);
-                } else {
-                    btn = btn.text_color(rgb(theme().text_muted));
-                }
-                #[cfg(feature = "gui-e2e")]
-                let btn = btn
-                    .relative()
-                    .child(super::e2e::measure_inside("cp-discard-all"));
-                el.child(btn)
-            })
-            .child(toggle_btn);
+        let unstaged_header = controls::unstaged_header(self, cx);
 
         // PERF: unstaged file rows are virtualized via `uniform_list` (built from
         // free row functions reading the entity), not a prebuilt div.
@@ -1259,64 +319,7 @@ impl CommitPanelView {
         // ── Staged section ───────────────────────────────────────
         // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
 
-        // Staged ヘッダ行 (固定)
-        let staged_header = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_grow(1.)
-                    .flex_shrink_0()
-                    .relative()
-                    .child(super::e2e::measure_inside("cp-staged-heading"))
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .child(super::e2e::commit_panel_labels::caption(
-                        "cp-staged-heading",
-                        i18n::commit_panel_section(true, staged_count),
-                    )),
-            )
-            // #476: live on a worktree panel too — see "Stage all" above.
-            .when(staged_count > 0, |el| {
-                let unstage_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_unstage_all(window, cx);
-                    },
-                );
-                el.child(
-                    div()
-                        .id("cp-unstage-all")
-                        .relative()
-                        .min_h(px(20.))
-                        .flex_shrink_0()
-                        .px_1p5()
-                        .py_px()
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .text_xs()
-                        .text_color(rgb(theme().color_warning))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_default())
-                        .on_click(unstage_all_click)
-                        .role(super::e2e::commit_panel_labels::role(
-                            "cp-unstage-all",
-                            gpui::Role::Button,
-                        ))
-                        .aria_label(super::e2e::commit_panel_labels::name(
-                            "cp-unstage-all",
-                            Msg::CommitPanelUnstageAll.t(),
-                        ))
-                        .child(super::e2e::measure_inside("cp-unstage-all"))
-                        .child(super::e2e::commit_panel_labels::caption(
-                            "cp-unstage-all",
-                            Msg::CommitPanelUnstageAll.t(),
-                        )),
-                )
-            });
+        let staged_header = controls::staged_header(self, cx);
 
         // PERF: staged file rows are virtualized via `uniform_list` (built from
         // free row functions reading the entity), not a prebuilt div.
@@ -1327,216 +330,16 @@ impl CommitPanelView {
         } + panel.generated_extra_rows(true)
             + panel.agent_extra_rows(true);
 
-        // ── Commit button ─────────────────────────────────────────
-        // No destination branch in the label: ADR-0134 put it here as "one
-        // place to look", but a real branch name overflows the button. The
-        // header shows the branch at all times and has room for a long one.
-        let commit_label = SharedString::from(i18n::commit_button());
-        let commit_click = cx.listener(
-            |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
-                view.defer_open_commit_plan_modal(window, cx);
-            },
-        );
-        // One Button in both states (`.disabled`), so enabling it does not change
-        // the footer's height, and the disabled form still reads as a button
-        // rather than blending into the footer background.
-        let commit_btn = KagiButton::styled("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
-            .small()
-            .mt_1()
-            .w_full()
-            .disabled(!can_commit)
-            .when(can_commit, |b| b.on_click(commit_click))
-            .into_any_element();
-        let commit_btn = div()
+        let commit_btn = controls::commit_button(self, can_commit, cx);
+        let icon_row = div()
             .relative()
-            .flex_shrink_0()
-            .child(commit_btn)
-            .child(super::e2e::measure_inside("cp-commit-action"));
-
-        // ── Footer icon row (ADR-0134) ────────────────────────────
-        // Three icon actions replace the old pill toolbar + full-width Amend
-        // button: sparkles = generate a message, person+ = add a co-author,
-        // undo = amend the previous commit.
-        let staged_empty = panel.staged.is_empty();
-        let icon_row = {
-            let icon_btn =
-                |id: &'static str, path: &'static str, tip: String, enabled: bool, accent: u32| {
-                    let mut b = div()
-                        .id(id)
-                        .p_1()
-                        .rounded_sm()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .relative()
-                        .child(super::e2e::measure_inside(id))
-                        .tooltip(move |_w, cx| {
-                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx)
-                        })
-                        .child(
-                            gpui::svg()
-                                .path(path)
-                                .w(theme::scaled_px(16.0))
-                                .h(theme::scaled_px(16.0))
-                                .text_color(rgb(if enabled { accent } else { theme().text_muted })),
-                        );
-                    if enabled {
-                        b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_default());
-                    }
-                    b
-                };
-
-            // Sparkles — generate a commit message. Uses the local LLM when it is
-            // usable (green), otherwise the rule-based draft.
-            let llm_on = smart.llm_offered();
-            let suggest_enabled = !staged_empty && !smart_ui.0;
-            let suggest_color = if llm_on {
-                theme().color_success
-            } else {
-                theme().accent_text_on(theme().panel)
-            };
-            let suggest_btn: gpui::AnyElement = if smart_ui.0 {
-                // Spin the same icon rather than swapping in a text spinner, so
-                // the row does not change width mid-generation.
-                use gpui::AnimationExt as _;
-                let spinner_base = gpui::svg()
-                    .path("icons/loader-circle.svg")
-                    .w(theme::scaled_px(16.0))
-                    .h(theme::scaled_px(16.0))
-                    .text_color(rgb(suggest_color));
-                // Reduce motion: static loader glyph, no per-frame rotation tick.
-                let spinner: gpui::AnyElement = if theme::reduce_motion() {
-                    spinner_base.into_any_element()
-                } else {
-                    spinner_base
-                        .with_animation(
-                            "cp-smart-spinner",
-                            gpui::Animation::new(Duration::from_millis(900)).repeat(),
-                            |svg, delta| {
-                                svg.with_transformation(gpui::Transformation::rotate(
-                                    gpui::radians(delta * std::f32::consts::TAU),
-                                ))
-                            },
-                        )
-                        .into_any_element()
-                };
-                div()
-                    .id("cp-smart-suggest")
-                    .p_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(spinner)
-                    .into_any_element()
-            } else {
-                let mut b = icon_btn(
-                    "cp-smart-suggest",
-                    "icons/sparkles.svg",
-                    Msg::GenerateMessage.t().to_string(),
-                    suggest_enabled,
-                    suggest_color,
-                );
-                if suggest_enabled {
-                    b = b.on_click(cx.listener(
-                        move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                            if llm_on {
-                                view.defer_smart_generate(window, cx);
-                            } else {
-                                view.defer_smart_suggest(window, cx);
-                            }
-                        },
-                    ));
-                }
-                b.into_any_element()
-            };
-
-            // Person+ — co-author picker.
-            let coauthor_btn = icon_btn(
-                "cp-coauthor",
-                "icons/user-plus.svg",
-                Msg::AddCoAuthor.t().to_string(),
-                true,
-                theme().text_main,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                    view.toggle_coauthor_menu(cx);
-                },
-            ));
-
-            // Undo — amend the previous commit (the plan still blocks pushed
-            // commits; this only opens the modal).
-            let amend_btn = icon_btn(
-                "cp-amend-btn",
-                "icons/undo-2.svg",
-                Msg::AmendLastCommit.t().to_string(),
-                true,
-                theme().color_warning,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                    view.defer_amend(window, cx);
-                },
-            ));
-
-            let row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .child(suggest_btn)
-                .child(coauthor_btn)
-                // #476 slice 3: amend resolves the panel's repository, so it is
-                // offered on a worktree panel too — the confirm names it.
-                .child(amend_btn);
-
-            div()
-                .relative()
-                .child(row)
-                .children(render_coauthor_menu(coauthor_menu.as_deref(), cx))
-        };
+            .child(controls::icon_row(self, cx))
+            .children(render_coauthor_menu(self, window, cx));
 
         // The radius `Input` gives itself, read once so both boxes match.
         let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
 
-        // ── commit.template toggle (bottom-left of the body box) ──────
-        // Only offered when the user actually has a `commit.template`; without
-        // one the control would toggle nothing.
-        let template_toggle: gpui::AnyElement = if self.commit_template.is_some() {
-            let on = self.template_active(cx);
-            div()
-                .id("cp-template-toggle")
-                .px_1p5()
-                .py_px()
-                .rounded_sm()
-                .text_xs()
-                .text_color(rgb(if on {
-                    theme().accent_text_on(theme().panel)
-                } else {
-                    theme().text_muted
-                }))
-                .hover(|s| {
-                    let s = s.bg(rgb(theme().selected)).cursor_default();
-                    if on {
-                        s.text_color(rgb(theme().accent_text_on(theme().selected)))
-                    } else {
-                        s
-                    }
-                })
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
-                        .build(w, cx)
-                })
-                .on_click(cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.toggle_template(window, cx);
-                    },
-                ))
-                .child(SharedString::from(Msg::Template.t()))
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        };
+        let template_toggle = controls::template_toggle(self, cx);
 
         // ── Commit message: subject + body (ADR-0134) ─────────────────
         // Two inputs mirroring git's own shape, replacing the single field and
@@ -1567,6 +370,20 @@ impl CommitPanelView {
                     div()
                         .flex()
                         .flex_col()
+                        // As in Issues composer: Tab traverses controls, while
+                        // Cmd+] / Cmd+[ retain the editor's explicit indentation.
+                        .capture_action(cx.listener(
+                            |_, _: &gpui_component::input::IndentInline, window, cx| {
+                                window.focus_next(cx);
+                                cx.stop_propagation();
+                            },
+                        ))
+                        .capture_action(cx.listener(
+                            |_, _: &gpui_component::input::OutdentInline, window, cx| {
+                                window.focus_prev(cx);
+                                cx.stop_propagation();
+                            },
+                        ))
                         // Icon, its p_1, row pb_1, and the body's two borders.
                         .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
                         .flex_shrink(1.)
@@ -1598,6 +415,8 @@ impl CommitPanelView {
                                 .flex_shrink_0()
                                 .px_1()
                                 .pb_1()
+                                .relative()
+                                .child(super::e2e::measure_inside("cp-footer-tools"))
                                 .child(template_toggle)
                                 .child(icon_row),
                         ),
@@ -1822,10 +641,12 @@ impl CommitPanelView {
                     .bg(rgb(theme().surface))
                     // Subject + body (the icon actions live inside the body box)
                     .child(msg_inputs)
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-footer"))
                     // Transient smart-commit status. Its own full-width line:
                     // inside the right-aligned icon group it pushed the icons
                     // sideways as the text appeared (user report).
-                    .when_some(smart_ui.1, |el, status| {
+                    .when_some(smart_status, |el, status| {
                         el.child(
                             div()
                                 .text_xs()

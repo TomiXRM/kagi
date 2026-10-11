@@ -166,6 +166,7 @@ impl KagiApp {
             (
                 cx.new(|_| {
                     let mut v = CommitPanelView::new(panel, weak_app, repo_path.clone(), owner);
+                    v.pointer_root_focus = self.root_focus.clone();
                     v.foreign = foreign;
                     v
                 }),

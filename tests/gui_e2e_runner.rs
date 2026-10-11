@@ -66,6 +66,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toast_dismiss.rs"]
+mod toast_dismiss;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
 mod system_accent;
 
@@ -1782,6 +1786,10 @@ mod macos {
             (
                 "worktree_size_not_explained",
                 Box::new(crate::slow_read::scenario_worktree_size_not_explained),
+            ),
+            (
+                "toast_dismiss",
+                Box::new(crate::toast_dismiss::scenario_toast_dismiss),
             ),
             (
                 "fetch_failure_oplog",

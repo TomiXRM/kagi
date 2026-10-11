@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Error notifications now remain until explicitly dismissed, wrap to three lines, and preserve errors before routine notifications when the four-card stack fills. Routine notifications pause their four-second timer on hover. Named EN/JA ghost close Buttons and Escape provide keyboard dismissal without overriding modal/menu cancellation. (#1240)
+  - Review: cap eviction always admits the new notification; stored previews are bounded to three lines/768 characters. Removal repairs orphaned keyboard focus; diff selection and PR drawers retain Escape priority. Native coverage uses production Button geometry, routine hover timing, keyboard activation and overflow inputs.
 - Apple Dark readable secondary labels, counts, captions, timestamps and Commit Panel section headers now reuse `#98989f`, meeting 4.5:1 WCAG contrast on both panel and content backgrounds. Apple Light is unchanged; disabled controls retain their existing opacity behavior. (#1239)
   - Review: Dark input/composer boundaries use quiet `#67676a` (≥3:1) rather than readable secondary text; generic borders derive from this neutral at 85% alpha. Scrollbar hover/drag and active line numbers remain distinct when secondary text roles coincide; Apple Light paint mappings remain unchanged.
 - Commit Panel selected file rows retain their window-aware selection fill while hovered; conflicted rows retain their diagnostic tint. (#1228)

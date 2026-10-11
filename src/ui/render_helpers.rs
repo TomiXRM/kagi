@@ -656,8 +656,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
             // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
             let scrollbar_handle = scroll_handle.clone();
-            // User report: diff text rendered in the UI font (the root div's
-            // `UI_FONT`), which is proportional — wrong for code, and it also
+            // User report: diff text inherited the proportional root UI font,
+            // which is wrong for code, and it also
             // broke the `format!("{:5}", n)` line-number gutters, which only
             // line up in a monospace face. Set once here on the list BODY
             // (GPUI text styles cascade, so every row and both render modes

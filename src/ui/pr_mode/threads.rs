@@ -219,7 +219,7 @@ fn thread_card(
         .border_1()
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().bg_base))
-        .font_family(crate::ui::UI_FONT)
+        .font_family(crate::ui::theme::ui_font_family())
         .when(is_outdated, |el| el.opacity(0.55))
         .child(
             div()

@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- macOS Apple Light/Dark use the native system UI font by default, with a live System/Bundled choice in Appearance (`ui_font_source: system|bundled`). Other platforms and presets retain Inter; Noto Sans JP fallback and JetBrains Mono code text remain unchanged. Native coverage compares dense surface heights at 100%/167% without changing layout constants. (#1068)
+  - Review: font-stack unit coverage shares the active-theme test lock; native coverage requires distinct normal/semibold/bold system faces and distinct regular/bold bundled faces, rather than accepting family-name equality alone.
 - Window chrome now unifies native macOS traffic lights, repository/branch identity, toolbar actions, overflow and workspace controls in one frame across every theme. Repository/Home document tabs appear below it only with multiple documents; the trailing +, Cmd+T/Cmd+W and File menu remain available with the strip hidden. Icon Only uses a 52-reference-px frame (46.8 logical px at 100%); Icon and Text remains available in a taller 60px frame (54 logical px). (#1179)
   - Review: only real blank spacers own drag hit targets; macOS app-owned press/move and double-click preserve system titlebar behavior without covering buttons. Home shares both frame heights, hides its inert + without repositories, and TabPanel roles appear only with a visible TabList. The three-tab keyed-focus reindexing regression remains independent of single-tab hiding.
   - Integration: updated the recorded 1392×883 desktop Commit Panel file-list height from 411.5 to 440.5 logical px for the space reclaimed by single-document unified chrome; composer and primary-action heights remain unchanged.

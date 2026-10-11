@@ -320,7 +320,7 @@ impl Render for KagiApp {
                     .items_center()
                     .justify_center()
                     .size_full()
-                    .font_family(UI_FONT)
+                    .font_family(theme::ui_font_family())
                     .bg(rgb(theme().bg_base))
                     .child(
                         div()
@@ -609,7 +609,7 @@ impl Render for KagiApp {
             .flex()
             .flex_col()
             .size_full()
-            .font_family(UI_FONT)
+            .font_family(theme::ui_font_family())
             .bg(rgb(theme().bg_base))
             // Tier A probe: counts wheel events that reach the workspace
             // behind every overlay, whichever pane is showing.

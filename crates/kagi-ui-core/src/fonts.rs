@@ -1,21 +1,48 @@
-//! Bundled font families and the deterministic UI fallback stack.
+//! UI font selection and the deterministic Japanese fallback stack.
 
 use gpui::{font, Font, FontFallbacks};
 
-/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`, so the
-/// UI looks identical on every OS instead of relying on the platform default.
+/// Bundled UI sans family (OFL Inter), loaded at startup via `add_fonts`.
 pub const UI_FONT: &str = "Inter";
+
+/// GPUI's macOS CoreText system UI family; never bundled.
+pub const SYSTEM_UI_FONT: &str = ".AppleSystemUIFont";
+
+/// Resolve policy independently of host so Linux/non-Apple behavior is testable.
+pub fn ui_font_family_for(
+    source: crate::settings::UiFontSource,
+    theme_slug: &str,
+    macos: bool,
+) -> &'static str {
+    if macos
+        && matches!(theme_slug, "apple-light" | "apple-dark")
+        && source == crate::settings::UiFontSource::System
+    {
+        SYSTEM_UI_FONT
+    } else {
+        UI_FONT
+    }
+}
+
+/// Active family, read without settings I/O on the render path.
+pub fn ui_font_family() -> &'static str {
+    ui_font_family_for(
+        crate::settings::ui_font_source(),
+        &crate::theme::theme().slug,
+        cfg!(target_os = "macos"),
+    )
+}
 
 /// Bundled monospace family (OFL JetBrains Mono) for the terminal / conflict
 /// editor / code — replaces the macOS-only "Menlo" fallback.
 pub const MONO_FONT: &str = "JetBrains Mono";
 
-/// Bundled Japanese fallback used when Inter does not contain a glyph.
+/// Bundled Japanese fallback used when the primary family lacks a glyph.
 pub const CJK_FONT: &str = "Noto Sans JP";
 
-/// The deterministic UI font stack used by the gpui-component window root.
+/// Shared UI font stack used by the gpui-component window root.
 pub fn ui_font() -> Font {
-    let mut ui = font(UI_FONT);
+    let mut ui = font(ui_font_family());
     ui.fallbacks = Some(FontFallbacks::from_fonts(vec![CJK_FONT.to_string()]));
     ui
 }
@@ -25,9 +52,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn system_font_is_scoped_to_macos_apple_presets() {
+        use crate::settings::UiFontSource::{Bundled, System};
+        for slug in ["apple-light", "apple-dark", "one-dark", "custom-apple"] {
+            for macos in [false, true] {
+                let expected = if macos && matches!(slug, "apple-light" | "apple-dark") {
+                    SYSTEM_UI_FONT
+                } else {
+                    UI_FONT
+                };
+                assert_eq!(ui_font_family_for(System, slug, macos), expected);
+                assert_eq!(ui_font_family_for(Bundled, slug, macos), UI_FONT);
+            }
+        }
+    }
+    #[test]
     fn ui_font_has_bundled_japanese_fallback() {
+        let _guard = crate::theme::ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let font = ui_font();
-        assert_eq!(font.family.as_ref(), UI_FONT);
+        assert_eq!(font.family.as_ref(), ui_font_family());
         assert_eq!(
             font.fallbacks
                 .expect("UI font must carry a fallback")

@@ -80,3 +80,70 @@ Amended decision:
 - Other CJK locales intentionally receive the Japanese glyph variant in Kagi's
   UI. A future locale-aware fallback list may add dedicated KR/SC/TC families
   if Kagi adds those interface languages.
+
+## Amendment (2026-10-11): macOS Apple-preset UI font comparison (#1068)
+
+The primary UI family is platform typography, not a Git semantic token.
+Apple Light and Apple Dark on macOS default to `.AppleSystemUIFont`;
+`ui_font_source: bundled` restores Inter, and `ui_font_source: system` selects
+the system face only in those two presets on macOS. Missing/unrecognized values
+follow the platform/preset default. Linux, Windows and non-Apple/custom presets
+retain Inter even with an explicit System preference. The typed preference is
+owned by UI-core settings and persisted as a flat string through the existing
+ADR-0191 store. Appearance reuses the pinned RadioGroup with EN/JA labels.
+
+One UI-core family resolver supplies both Kagi elements and the component theme
+bridge. The toolbar's natural-width cache includes the family so a live switch
+remeasures text. Noto Sans JP remains the explicit first fallback, and bundled
+JetBrains Mono remains the code/editor/terminal face. System fonts are never
+copied into assets or bundled.
+
+### Resolution evidence
+
+Pinned GPUI `TomiXRM/zed` revision
+`caf5007618c309a8ea66002d44a9c9ab629a2d35` maps `.SystemUIFont` to
+`.AppleSystemUIFont` in `gpui_macos/src/text_system.rs::load_family`, then asks
+font-kit's CoreText source for that family. Pinned font-kit `94b0f28` builds an
+`NSFontFamilyAttribute` descriptor and a matching CoreText collection; it keeps
+native handles rather than requiring a bundled font path.
+
+A throwaway Swift probe on macOS 25.6 duplicated that descriptor/collection
+lookup. AppKit's `NSFont.systemFont(ofSize: 13)` reported family/PostScript
+`.AppleSystemUIFont`. `.AppleSystemUIFont` matched 29 descriptors, including
+`.SFNS-Regular`, `.SFNS-RegularItalic` and `.SFNS-Ultralight`. `.SF NS`,
+`system-ui` and `SF Pro Text` each matched zero. Use the GPUI-supported family,
+not guessed aliases or a developer-installed SF Pro package.
+
+### Comparison contract
+
+The native `system_font` scenario compares measured toolbar, sidebar body/header,
+graph row and Commit Panel heights with Inter and System at 100% and 167%, in
+Apple Light/Dark and EN/JA. Every height delta must be at most one logical pixel;
+layout constants and existing geometry oracles remain unchanged. Font-size
+adjustments, if necessary, must be justified by this measurement, not guessed.
+The startup contract is `[kagi] ui_font: <family>`.
+
+Review validation also requires distinct native FontIds for System normal,
+semibold and bold, and distinct normal/bold IDs for bundled Inter (which ships
+only Regular/Bold). GPUI's public `get_font_for_id` returns the cached requested
+Font, not the native face's weight property; request weight alone is therefore
+not evidence of the selected face. The font-stack unit test holds the existing
+active-theme test mutex so its two policy reads cannot straddle another test's
+Apple/non-Apple theme switch.
+
+Measured on the native hidden 1440×900 fixture: all 128 height comparisons had
+**0px delta**, including both toolbar modes. At 100%/167%, Icon Only toolbar
+heights were 47/78px, captions 54/90px, sidebar body rows 18/30px, headers
+25/42px, graph rows 26/43.5px and Commit action 25/42px. Composer heights were
+95/148px in the empty-draft fixture. No font-size adjustment or layout-constant
+change was needed. Existing `sidebar_panes`, `toolbar_overflow`, `header_fit`,
+`commit_panel_viewport` and `toolbar_count_scale` passed unchanged alongside
+`system_font`. These are logical bounds, not glyph ink or Tier B photographs.
+
+Tier B is integration-owner evidence: launch the same fixture/viewport/language
+with `theme: apple-light` (repeat `apple-dark`), `ui_scale_base: v2`,
+`ui_zoom: 1000` or `1670`, and switch `ui_font_source: bundled` / `system`.
+Compare Finder/AppKit with mixed Japanese/Latin, normal/bold, small labels,
+Inputs and Tooltips. Settings → Appearance applies the same choice live.
+The user decides adoption from those images; native geometry alone does not
+prove visual preference, IME delivery or VoiceOver behavior.

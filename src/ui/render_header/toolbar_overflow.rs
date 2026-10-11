@@ -26,7 +26,7 @@ pub(super) const IDS: [&str; 14] = [
     "tb-update",
 ];
 
-pub(super) type StyleKey = (bool, i18n::Lang, u32);
+pub(super) type StyleKey = (bool, i18n::Lang, u32, &'static str);
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn toolbar_overflow_keeps_fit_while_new_style_is_measuring() {
-        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let key = (true, i18n::Lang::En, 1_f32.to_bits(), "Inter");
         let mut layout = Layout::default();
         layout.measure(None, 500., key);
         for index in 0..IDS.len() {
@@ -612,7 +612,9 @@ mod tests {
         let present = 0x1fff;
         let hidden = layout.hidden(present, 8, key);
         assert_ne!(hidden, 0);
-        let next = (false, i18n::Lang::Ja, 1_f32.to_bits());
+        let font_change = (true, i18n::Lang::En, 1_f32.to_bits(), ".AppleSystemUIFont");
+        assert_eq!(layout.pending(present, font_change), present);
+        let next = (false, i18n::Lang::Ja, 1_f32.to_bits(), "Inter");
         assert_eq!(
             layout.hidden(present, 8, next),
             hidden,

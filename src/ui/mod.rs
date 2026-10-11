@@ -344,9 +344,8 @@ fn validate_merge_into_from_drag(
     Ok(())
 }
 
-// UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
-// here so `super::UI_FONT` call sites keep working.
-pub use kagi_ui_core::theme::{CJK_FONT, MONO_FONT, UI_FONT};
+// Shared bundled fallback/code font families.
+pub use kagi_ui_core::theme::{CJK_FONT, MONO_FONT};
 
 /// Live window size in whole px (w, h), updated each frame while the window
 /// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and

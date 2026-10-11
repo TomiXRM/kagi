@@ -43,8 +43,8 @@ pub use crate::system_accent::{
 };
 pub use crate::theme_custom::{themes_dir, ThemeLoadError};
 
-// Compatibility re-export: font constants historically lived in `theme`.
-pub use crate::fonts::{ui_font, CJK_FONT, MONO_FONT, UI_FONT};
+// Shared UI typography and bundled fallback/code families.
+pub use crate::fonts::{ui_font, ui_font_family, CJK_FONT, MONO_FONT};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Theme struct
@@ -1296,14 +1296,10 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.drag_border = to_hsla(k.ui_accent());
 
     // ── Fonts ───────────────────────────────────────────────────
-    // gpui-component's default theme uses `.SystemUIFont` (a macOS alias) for
-    // `font_family` and a platform mono for `mono_font_family`. On Linux
-    // `.SystemUIFont` doesn't resolve, so gpui-component widgets (Button, Input,
-    // Tooltip, the commit-message editor, …) fell back to a system font while
-    // kagi's own `UI_FONT` text rendered in the bundled Inter — buttons/commit
-    // text looked like a different font (user-reported). Point gpui-component at
-    // the same bundled families kagi loads via `add_fonts` (UI_FONT / MONO_FONT).
-    gc.font_family = UI_FONT.into();
+    // Keep Kagi elements and adopted components on the same resolved UI family.
+    // Only macOS Apple presets may use the native face; other platforms/presets
+    // retain bundled Inter. The Root retains the explicit Noto Sans JP fallback.
+    gc.font_family = ui_font_family().into();
     gc.mono_font_family = MONO_FONT.into();
 
     // ── Mode (drives dark/light-conditional logic inside gpui-component) ──

@@ -25,6 +25,7 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+pub(crate) mod diff_state;
 mod metadata;
 pub(crate) mod row_overlay;
 
@@ -578,45 +579,6 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
 
     let header = header.render(title, stats, cx);
 
-    // W-IMG: one labelled image column ("Before"/"After"); either side of the
-    // pair may be missing for added/deleted files.
-    let image_col = |label: &'static str, img: std::sync::Arc<gpui::Image>| {
-        // The column stretches to the panel height and the image fills what the
-        // label leaves, contained. `max_h_full` on the img had no definite
-        // height to resolve against, so a portrait image overflowed and the
-        // centred panel clipped its top and bottom (user report). The img is
-        // absolutely placed: percent sizes on in-flow children of a
-        // flex_basis(0) column can resolve to 0 (#362).
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .self_stretch()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(label)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .self_stretch()
-                    .child(
-                        gpui::img(gpui::ImageSource::Image(img))
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
-            )
-    };
-
     div()
         .flex_1()
         // Allow the center diff column to shrink below its content's intrinsic
@@ -636,22 +598,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
         .child(if let Some(pair) = images {
-            // W-IMG: binary image file — render before/after panels instead of
-            // the (empty) text-diff list.
-            div()
-                .id("main-diff-image-panel")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_hidden()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .p_4()
-                .children(pair.old.map(|img| image_col("Before", img)))
-                .children(pair.new.map(|img| image_col("After", img)))
-                .into_any_element()
+            diff_state::image_panel(pair)
         } else {
             // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
             // gpui-component 0.5.1 implements `ScrollbarHandle` directly for

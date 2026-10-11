@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Diff headers show Unified and Split as explicit selected segments, retaining icon-only collapse in narrow panes. (#1235)
+- Binary diffs explain the absence of a text diff and the external-editor comparison action in EN/JA; image diffs name added, modified and deleted states instead of leaving a missing side unexplained. Binary conflicts reuse the same explanation. (#1236)
+  - Review: image state follows blob existence rather than preview support. Modified files with only one supported image encoding retain both Before/After sides and explicitly mark the unavailable preview; native EN/JA coverage includes deleted images and binary conflicts.
 - Diff hunk actions use named EN/JA keyboard-reachable ghost Buttons and tooltips; Enter/Space preserve the displayed hunk approval and existing staging pipeline. The dense header geometry is retained. (#1233)
 - Focused diff panes support caret arrows, Shift-arrow range extension, Shift-Cmd-arrow start/end extension and Cmd+A; the caret scrolls into view, Cmd+C still copies code only, and Escape clears selection before notifications. Mouse selection remains unchanged. (#1234)
   - Review: the body is a real Tab stop with a layout-neutral, keyboard-only accent focus ring; focus identity follows the title across row-count reloads, while selection remains content-keyed. Header caret paint is measured after styling. Existing std Mutex poison recovery avoids adding a dependency.

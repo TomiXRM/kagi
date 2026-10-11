@@ -323,6 +323,10 @@ mod recovery_layout;
 mod recovery_header_fit;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/diff_presentation.rs"]
+mod recovery_diff_presentation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_viewport.rs"]
 mod recovery_commit_panel_viewport;
 
@@ -2270,6 +2274,14 @@ mod macos {
             (
                 "header_fit",
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
+            ),
+            (
+                "diff_mode_segment",
+                Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
+            ),
+            (
+                "diff_binary_states",
+                Box::new(crate::recovery_diff_presentation::scenario_diff_binary_states),
             ),
             (
                 "commit_panel_viewport",

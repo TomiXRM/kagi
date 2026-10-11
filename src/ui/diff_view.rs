@@ -224,6 +224,9 @@ pub struct MainDiffView {
 /// added or deleted files have only one).
 #[derive(Clone)]
 pub struct DiffImagePair {
+    /// Blob existence is independent of whether its encoding is previewable.
+    pub old_exists: bool,
+    pub new_exists: bool,
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
 }
@@ -712,14 +715,11 @@ pub(crate) fn render_main_diff_row(
                 )
                 .into_any()
         }
-        DiffRow::Binary => div()
+        DiffRow::Binary => super::render_helpers::diff_state::caption(Msg::DiffBinaryNoText)
             .id(("main-diff-binary", i))
             .w_full()
             .px_2()
             .py_1()
-            .text_sm()
-            .text_color(rgb(theme::theme().text_muted))
-            .child(SharedString::from("Binary file (no diff)"))
             .into_any(),
     }
 }

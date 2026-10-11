@@ -370,7 +370,7 @@ where
     };
     let row = if enabled {
         row.on_click(click)
-            .hover(|style| style.bg(rgb(theme().selected)).cursor_pointer())
+            .hover(|style| style.bg(rgb(theme().selected)).cursor_default())
     } else {
         // gpui has no aria_disabled setter; the node's own builder has one.
         row.hover(|style| style.bg(rgb(theme().surface)))

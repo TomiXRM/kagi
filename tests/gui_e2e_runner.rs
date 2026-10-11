@@ -160,6 +160,9 @@ mod app_writer_admission;
 mod app_conflict;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_heading.rs"]
+mod home_heading;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_tab.rs"]
 mod home_tab;
 
@@ -1178,6 +1181,10 @@ mod macos {
             (
                 "home_tab",
                 Box::new(crate::home_tab::scenario_home_tab),
+            ),
+            (
+                "home_heading",
+                Box::new(crate::home_heading::scenario_home_heading),
             ),
             (
                 "home_github",

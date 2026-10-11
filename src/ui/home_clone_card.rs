@@ -156,8 +156,9 @@ pub(crate) fn render_clone_modal(
         "clone-card",
         &title,
         available.then_some(Msg::CloneConfirm.t()),
-        div().on_key_down(esc).child(card),
+        card,
         focus_handle.as_ref(),
+        |frame| frame.on_key_down(esc),
         cx,
     );
     modal_overlay(super::e2e::measure_control("active-modal/clone", card)).into_any_element()

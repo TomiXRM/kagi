@@ -587,6 +587,7 @@ impl KagiApp {
     /// (its row reads "Cloning…", and its result arrives as usual).
     pub fn cancel_clone(&mut self) {
         self.clear_clone_modal();
+        self.focus_root_for_modal();
     }
 
     /// Confirm the card: run the planned clone in the background. Refused on

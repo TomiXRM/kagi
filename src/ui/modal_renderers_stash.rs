@@ -246,6 +246,7 @@ pub(crate) fn render_stash_push_modal(
         (!has_blockers).then_some(Msg::InputStash.t()),
         div().on_key_down(esc_cancel).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 

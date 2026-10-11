@@ -387,6 +387,14 @@ pub(crate) fn render_remote_browse(
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let busy = modal.busy;
+    // Advertise exactly the default action currently available in this task.
+    let dialog_confirm = match &modal.stage {
+        RemoteBrowseStage::Connect if !busy => Some(Msg::RemoteConnect.t()),
+        RemoteBrowseStage::Browse if modal.current_is_repo && !busy => {
+            Some(Msg::RemoteOpenRepository.t())
+        }
+        _ => None,
+    };
     let dialog_title = match &modal.stage {
         RemoteBrowseStage::Connect => Msg::RemoteConnectTitle.t().to_owned(),
         RemoteBrowseStage::Browse => modal
@@ -697,13 +705,14 @@ pub(crate) fn render_remote_browse(
     let focusable_card = super::modal_renderers::input_dialog_frame(
         "remote-browse-dialog",
         &dialog_title,
-        None,
+        dialog_confirm,
         div()
             .relative()
             .on_key_down(esc_cancel)
             .child(super::e2e::measure_inside("remote-browse-card"))
             .child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 

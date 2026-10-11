@@ -406,6 +406,7 @@ pub(crate) fn render_pr_fields_modal(
         (!loading && changed).then_some(Msg::PrFieldsApply.t()),
         card,
         app.modal_focus.as_ref(),
+        |frame| frame,
         cx,
     ))
     .into_any_element()

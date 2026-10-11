@@ -218,6 +218,7 @@ pub(crate) fn render_create_branch_modal(
         (!has_blockers).then_some(Msg::InputCreate.t()),
         div().on_key_down(esc_cancel).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 
@@ -417,6 +418,7 @@ pub(crate) fn render_create_worktree_modal(
         (!has_blockers).then_some(Msg::InputCreate.t()),
         div().on_key_down(esc_cancel).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 
@@ -578,6 +580,7 @@ pub(crate) fn render_create_tag_modal(
         (!has_blockers).then_some(Msg::InputCreate.t()),
         div().on_key_down(esc_cancel).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 

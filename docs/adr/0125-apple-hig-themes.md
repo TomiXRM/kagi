@@ -361,3 +361,16 @@ scenarios also pass, including marked-text Enter, rejected replan, queue release
 Editor/Remote/PR focus and Operation Log restoration.
 These are native renderer/attribute-recorder assertions; live VoiceOver and
 Tier B comparison remain the integration owner's responsibility.
+
+Review correction: the filled danger family now shares Primary's
+`filled_button_foreground` and `filled_button_interaction_colors` derivation,
+preserving the resting blocker fill while ensuring label contrast ≥4.5:1 in
+every state and distinct hover/pressed feedback across all 13 built-in themes
+(including Color Vision). The regression failed before correction on Mocha's
+2.32:1 fixed-white label; UI-core tests pass afterward.
+Clone Escape is attached to the actual outer task focus owner, not a child
+wrapper, and all clone cancellation paths schedule root-focus restoration.
+Remote Browse's custom default action is Connect when idle in Connect, or
+Open Repository when idle on a repository in Browse; busy tasks offer only
+Cancel. The native tests retain raw Escape from clone-owner focus and check
+the EN/JA Remote action availability.

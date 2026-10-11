@@ -145,6 +145,7 @@ pub(crate) fn render_editor_fs_prompt_modal(
         available.then_some(confirm_label),
         div().on_key_down(esc_cancel).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     );
 

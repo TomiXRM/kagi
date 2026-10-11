@@ -313,6 +313,7 @@ pub(crate) fn render_input_plan_modal(
         (!has_blockers).then_some(confirm_label),
         card,
         focus,
+        |frame| frame,
         cx,
     ))
     .into_any_element()
@@ -422,6 +423,7 @@ pub(crate) fn render_worktree_lock_reason_modal(
         Some(Msg::WorktreeLockReview.t()),
         div().on_key_down(keys).child(card),
         focus_handle.as_ref(),
+        |frame| frame,
         cx,
     ))
     .into_any_element()

@@ -136,6 +136,7 @@ pub(crate) fn input_dialog_frame(
     confirm: Option<&'static str>,
     card: impl IntoElement,
     focus: Option<&gpui::FocusHandle>,
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let entity = cx.entity();
@@ -166,8 +167,8 @@ pub(crate) fn input_dialog_frame(
         spec,
         confirm.map(|_| on_confirm),
         on_cancel,
-    )
-    .child(card);
+    );
+    let frame = configure(frame).child(card);
     match focus {
         Some(focus) => frame.focus_trap(id, focus).into_any_element(),
         None => frame.into_any_element(),

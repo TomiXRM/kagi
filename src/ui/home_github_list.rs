@@ -217,8 +217,7 @@ impl KagiApp {
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(
                     listing.clone(),
-                    state,
-                    compact,
+                    (state, compact),
                     &rows,
                     positions[i].unwrap_or(0),
                     &app,
@@ -484,14 +483,14 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 /// stop.
 fn github_row(
     listing: Rc<RepoListing>,
-    state: &'static str,
-    compact: bool,
+    presentation: (&'static str, bool),
     rows: &super::keyboard_nav::RowList,
     at: usize,
     app: &Entity<KagiApp>,
     full_description: SharedString,
     cx: &gpui::App,
 ) -> AnyElement {
+    let (state, compact) = presentation;
     let chip = |text: &str| {
         div()
             .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())

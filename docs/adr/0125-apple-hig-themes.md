@@ -719,3 +719,9 @@ from fill and metadata, and focused-row Space opening the existing clone card.
 Attribute recorders do
 not establish live VoiceOver delivery. Tier B: Home Repositories, Apple Light EN,
 hover a truncated description and inspect the trailing action.
+
+Integration with #1203/#1204 retains cached `Rc<RepoListing>` descriptions and
+the nonshrinking Secondary action. Repository row state/compact presentation
+are grouped at the renderer boundary, following the existing pane-cell tuple
+convention rather than adding a Clippy suppression. The merged scoped `home_`
+suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.

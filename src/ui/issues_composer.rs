@@ -418,7 +418,9 @@ pub(super) fn render_composer(
     } else {
         let paste_input = input.clone();
         div()
-            .h(px(if editor.focused {
+            .relative()
+            .child(super::e2e::measure_inside("issue-composer-body"))
+            .h(theme::scaled_px(if editor.focused {
                 420.
             } else if editor.draft.body.lines().count() > 3 || editor.draft.body.contains("```") {
                 220.

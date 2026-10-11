@@ -68,7 +68,7 @@ fn counts(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> (usize, usize
 
 /// A repo whose PR #7 (a real `refs/pull/7/head` behind `insteadOf`) rewrites
 /// line 2 of `c.txt`. Returns (repo dir guard, repo, remote dir guard, head).
-fn c_txt_pr() -> (
+pub(crate) fn c_txt_pr() -> (
     tempfile::TempDir,
     std::path::PathBuf,
     tempfile::TempDir,

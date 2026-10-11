@@ -140,6 +140,8 @@ pub struct Toast {
     pub message: SharedString,
     /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
+    /// Hover pause began here; elapsed hover time is excluded from the timer.
+    pub paused_at: Option<std::time::Instant>,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot
@@ -148,17 +150,18 @@ pub struct Toast {
 }
 
 impl Toast {
-    /// Auto-dismiss lifetime by kind (errors stay longer).
+    /// Success/info/sync previews expire after four seconds of unhovered time.
+    /// Errors require explicit dismissal, giving readers an unlimited interval.
     fn lifetime(&self) -> Duration {
-        match self.kind {
-            ToastKind::Error => Duration::from_secs(8),
-            _ => Duration::from_secs(4),
-        }
+        crate::ui::toast_stack::TOAST_ROUTINE_LIFETIME
     }
 
     /// The toast has been visible long enough to start sliding out (and is not
     /// already doing so).
     pub(crate) fn should_start_exit(&self) -> bool {
-        self.dismissing.is_none() && self.born.elapsed() >= self.lifetime()
+        self.kind != ToastKind::Error
+            && self.paused_at.is_none()
+            && self.dismissing.is_none()
+            && self.born.elapsed() >= self.lifetime()
     }
 }

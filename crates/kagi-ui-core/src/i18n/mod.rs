@@ -171,6 +171,7 @@ pub enum Msg {
     MenuShowAll,
     MenuServices,
     AppNoticeDismiss,
+    ToastDismiss,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -2125,6 +2126,8 @@ impl Msg {
 
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
+            (En, ToastDismiss) => "Dismiss notification",
+            (Ja, ToastDismiss) => "通知を閉じる",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",

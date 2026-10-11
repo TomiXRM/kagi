@@ -79,7 +79,17 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let escape = cx.listener(move |this, _: &CloseMainDiff, window, cx| {
-            if !this.cancel_active_modal(cx) && workspace_fallbacks {
+            if this.cancel_active_modal(cx) {
+                return;
+            }
+            if this
+                .toast_stack
+                .clone()
+                .is_some_and(|stack| stack.update(cx, |stack, cx| stack.dismiss_newest(cx)))
+            {
+                return;
+            }
+            if workspace_fallbacks {
                 this.cancel_workspace_key_target(window, cx);
             }
         });

@@ -18,10 +18,33 @@ use gpui::{Context, SharedString};
 use crate::ui::types::{Toast, ToastKind};
 use crate::ui::view_models::status_bar::footer_line;
 
-/// Maximum simultaneous toasts; oldest is dropped beyond this.
+/// Maximum simultaneous toasts; discard the oldest non-error first.
 pub const TOASTS_MAX: usize = 4;
 /// Slide-out animation duration before final removal (ms).
 pub const TOAST_REMOVE_MS: u64 = 300;
+/// Short routine feedback remains for four seconds, excluding hover pauses.
+/// Errors have no expiry; explicit dismissal provides unlimited reading time.
+pub const TOAST_ROUTINE_LIFETIME: Duration = Duration::from_secs(4);
+
+/// The pinned Button has keyboard focus and a Button role, but exposes its AX
+/// name only through a visible label. This adapter adds GPUI's stateful naming
+/// API to the existing Button's interactivity; it does not build another control.
+#[derive(gpui::IntoElement)]
+pub(super) struct ToastCloseButton(pub gpui_component::button::Button);
+
+impl gpui::InteractiveElement for ToastCloseButton {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+
+impl gpui::StatefulInteractiveElement for ToastCloseButton {}
+
+impl gpui::RenderOnce for ToastCloseButton {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        self.0.render(window, cx)
+    }
+}
 
 /// Self-contained toast stack. All toast lifecycle logic lives here.
 pub struct ToastStack {
@@ -49,13 +72,24 @@ impl ToastStack {
         self.toasts.is_empty()
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn advance_age_for_e2e(&mut self, duration: Duration) {
+        for toast in &mut self.toasts {
+            toast.born -= duration;
+        }
+    }
+
     /// Push a new toast. If over `TOASTS_MAX`, the oldest is dropped.
     pub fn push(&mut self, kind: ToastKind, message: impl Into<SharedString>) {
         // A toast is only the transient summary. The complete operation result
         // lives in Operation Log, so never let raw multi-line stderr turn the
         // overlay into a screen-sized card.
         let message = message.into();
-        let message = SharedString::from(footer_line(message.as_ref()));
+        let message = if kind == ToastKind::Error {
+            message
+        } else {
+            SharedString::from(footer_line(message.as_ref()))
+        };
         let id = self.next_id;
         self.next_id += 1;
         self.toasts.push(Toast {
@@ -63,10 +97,16 @@ impl ToastStack {
             kind,
             message,
             born: Instant::now(),
+            paused_at: None,
             dismissing: None,
         });
         if self.toasts.len() > TOASTS_MAX {
-            self.toasts.remove(0);
+            let oldest = self
+                .toasts
+                .iter()
+                .position(|t| t.kind != ToastKind::Error)
+                .unwrap_or(0);
+            self.toasts.remove(oldest);
         }
     }
 
@@ -99,7 +139,36 @@ impl ToastStack {
     /// True if at least one toast is still counting down (not yet sliding out).
     /// The ticker uses this to decide when to stop.
     pub fn has_pending(&self) -> bool {
-        self.toasts.iter().any(|t| t.dismissing.is_none())
+        self.toasts
+            .iter()
+            .any(|t| t.kind != ToastKind::Error && t.dismissing.is_none())
+    }
+
+    /// Pause the short preview timer while the pointer is reading the card.
+    pub fn set_hovered(&mut self, id: u64, hovered: bool) {
+        let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        if hovered {
+            toast.paused_at.get_or_insert_with(Instant::now);
+        } else if let Some(start) = toast.paused_at.take() {
+            toast.born += start.elapsed();
+        }
+    }
+
+    /// Escape dismisses only the newest still-visible notification.
+    pub fn dismiss_newest(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(id) = self
+            .toasts
+            .iter()
+            .rev()
+            .find(|t| t.dismissing.is_none())
+            .map(|t| t.id)
+        else {
+            return false;
+        };
+        self.begin_exit(id, cx);
+        true
     }
 
     // ── Entity orchestration (cx-driven) ─────────────────────────────────────
@@ -189,13 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn push_keeps_only_a_bounded_single_line_preview() {
+    fn error_keeps_multiline_detail_for_bounded_rendering() {
         let mut stack = ToastStack::new();
         let long = format!("first line\n{}", "x".repeat(1_000));
         stack.push(ToastKind::Error, long);
         let message = stack.toasts()[0].message.as_ref();
-        assert_eq!(message, "first line…");
-        assert!(!message.contains('\n'));
+        assert_eq!(message, format!("first line\n{}", "x".repeat(1_000)));
     }
 
     #[test]
@@ -219,5 +287,31 @@ mod tests {
         assert_eq!(stack.toasts().len(), 1);
         stack.remove(id);
         assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn cap_preserves_errors_before_routine_notifications() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "important");
+        for _ in 0..TOASTS_MAX {
+            stack.push(ToastKind::Info, "routine");
+        }
+        assert_eq!(stack.toasts.len(), TOASTS_MAX);
+        assert_eq!(stack.toasts[0].message, "important");
+    }
+
+    #[test]
+    fn errors_never_expire_and_hover_pauses_routine_timer() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "important");
+        stack.push(ToastKind::Success, "done");
+        for toast in &mut stack.toasts {
+            toast.born -= Duration::from_secs(60);
+        }
+        let id = stack.toasts[1].id;
+        stack.set_hovered(id, true);
+        assert!(stack.expiring_ids().is_empty());
+        stack.set_hovered(id, false);
+        assert_eq!(stack.expiring_ids(), vec![id]);
     }
 }

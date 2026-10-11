@@ -628,3 +628,11 @@ Review validation: the bounded native selection
 passes 18/18 scenarios, including all 11 matching Home scenarios. The unified
 matrix now includes Icon and Text and measures the real spacer rather than an
 E2E-only drag proxy. Real AppKit drag/double-click delivery remains Tier B.
+
+Integration geometry correction: the `commit_panel_viewport` desktop file-list
+measurement becomes 440.5 logical px at 1392×883@100%, replacing 411.5px from
+the separate strip/toolbar arrangement. The single-document unified frame gives
+its flexible viewport more height; fixed composer (257px), Generate (21.5px),
+Commit (25px), desktop panel width and small-body AutoGrow oracles are unchanged.
+Recovery-test searches for the old list height, 36/52px chrome constants and
+header offsets found no additional obsolete recorded-header-height expectation.

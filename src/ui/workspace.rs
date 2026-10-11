@@ -39,12 +39,12 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, Entity, IntoElement, ParentElement, SharedString, Styled, Window,
+    div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window,
 };
 use std::sync::Arc;
 
 use super::inspector_model::{FilesSource, InspectorFiles};
-use super::{commit_list, inspector, CommitId, CommitPanelView, KagiApp, MainDiffSource};
+use super::{commit_list, inspector, CommitId, KagiApp, MainDiffSource};
 
 /// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,59 +370,6 @@ pub fn center_item(center: CenterPane) -> Option<&'static dyn WorkspaceItem> {
 /// Staging + commit message panel (T025 / ADR-0118), resolved through the
 /// active owner's `commit_panel` and `commit_panel_open` fields.
 pub struct CommitPanelItem;
-
-impl KagiApp {
-    /// Keep the persisted desktop width, but reserve a readable sliver of graph
-    /// after the actual sidebar and divider footprints at the current zoom.
-    pub(super) fn commit_panel_viewport_width(&self, window: &Window) -> f32 {
-        let scale = f32::from(super::theme::scaled_px(1.));
-        let sidebar = if super::compact::for_window(window) {
-            f32::from(super::theme::scaled_px(super::compact::RAIL_WIDTH))
-        } else {
-            f32::from(super::theme::scaled_px(self.sidebar.width + 4.))
-                * self
-                    .panel_motion
-                    .sidebar
-                    .visible(super::panel_motion::now())
-        };
-        let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
-        self.panel_width.min(available.max(0.))
-    }
-
-    /// Publish owner-scoped inputs once for either desktop or compact projection.
-    pub(super) fn prepare_commit_panel_presentation(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Entity<CommitPanelView>> {
-        let entity = self.ui().commit_panel.clone()?;
-        let active_wip = match self
-            .ui()
-            .main_diff
-            .as_ref()
-            .map(|d| d.read(cx).view.source.clone())
-        {
-            Some(MainDiffSource::Unstaged { path }) => Some((false, path)),
-            Some(MainDiffSource::Staged { path }) => Some((true, path)),
-            _ => None,
-        };
-        let smart = self.smart_commit.clone();
-        let smart_ui = &self.ui[&entity.read(cx).owner];
-        let panel_width = self.commit_panel_viewport_width(window);
-        entity.update(cx, |v, _| {
-            v.active_wip = active_wip;
-            v.panel_render_width = panel_width;
-            v.smart_snapshot = smart;
-            v.smart_generating = smart_ui.smart_commit_generating;
-            v.smart_status = smart_ui.smart_commit_status.clone();
-            #[cfg(feature = "gui-e2e")]
-            {
-                v.window_active_override = self.window_active_override;
-            }
-        });
-        Some(entity)
-    }
-}
 
 impl WorkspaceItem for CommitPanelItem {
     fn slot(&self) -> Slot {

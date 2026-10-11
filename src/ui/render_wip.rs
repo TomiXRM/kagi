@@ -487,7 +487,20 @@ impl KagiApp {
                             .truncate()
                             .child(SharedString::from(note)),
                     )
-                    .when_some(diffstat, |el, stat| el.child(render_wip_diffstat(stat))),
+                    .children(self.render_compact_wip_affordance(is_commit_panel))
+                    .when_some(diffstat, |el, stat| {
+                        let stat = render_wip_diffstat(stat);
+                        if self.compact.enabled && is_commit_panel {
+                            el.child(
+                                div().flex_shrink_0().child(super::e2e::measure_control(
+                                    "compact-wip-diffstat",
+                                    stat,
+                                )),
+                            )
+                        } else {
+                            el.child(stat)
+                        }
+                    }),
             )
             .into_any_element()
     }

@@ -38,6 +38,7 @@ pub(super) struct CompactState {
     surfaces: Option<CommitPanelSurfaces>,
     pub popup_state: Rc<RefCell<Option<Entity<PopoverState>>>>,
     pub preserve_pin: Rc<Cell<bool>>,
+    pending_changes_owner: Option<SessionId>,
 }
 
 impl KagiApp {
@@ -49,6 +50,7 @@ impl KagiApp {
             super::compact_sidebar::dismiss(window, cx);
             self.compact.wip_bounds.set(None);
             self.compact.surfaces = None;
+            self.compact.pending_changes_owner = None;
             self.compact.owner = owner;
         }
         if self.compact.enabled && !enabled {
@@ -62,6 +64,19 @@ impl KagiApp {
             }
             self.dismiss_compact_presentation(window, cx, true);
             super::compact_sidebar::dismiss(window, cx);
+        } else if enabled
+            && !self.compact.enabled
+            && self.ui().commit_panel_open
+            && self.ui().commit_panel.is_some()
+            && !self.home_in_front()
+        {
+            self.compact.popup_owner = owner;
+            self.bottom_tab = BottomTab::Changes;
+            self.bottom_panel_open = true;
+            self.yield_compact_input_focus(window, cx);
+        }
+        if !enabled && self.bottom_tab == BottomTab::Changes {
+            self.bottom_tab = BottomTab::OperationLog;
         }
         self.compact.enabled = enabled;
         self.compact.suspended =
@@ -76,6 +91,7 @@ impl KagiApp {
         {
             self.close_compact_composer(window, cx);
         }
+        self.prepare_compact_changes_owner(window, cx);
     }
 
     /// Close the projection, never its panel entity or text-input owners.
@@ -84,25 +100,113 @@ impl KagiApp {
         self.dismiss_compact_presentation(window, cx, false);
     }
 
+    fn yield_compact_input_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.compact_inputs_focused(window, cx) {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        }
+    }
+
+    fn compact_inputs_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        use gpui::Focusable as _;
+        self.ui().commit_panel.as_ref().is_some_and(|panel| {
+            let panel = panel.read(cx);
+            [&panel.title_input, &panel.body_input]
+                .into_iter()
+                .flatten()
+                .any(|input| input.focus_handle(cx).contains_focused(window, cx))
+        })
+    }
+
+    /// Attach through the existing event path, not repository I/O during render.
+    fn prepare_compact_changes_owner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        if !self.compact.enabled
+            || self.home_in_front()
+            || self.loading_tab().is_some()
+            || self.has_modal_or_visible_plan(cx)
+            || self.bottom_tab != BottomTab::Changes
+            || !self.bottom_panel_open
+            || self.ui().commit_panel.is_some()
+            || self.repo_path.is_none()
+            || self.compact.pending_changes_owner == Some(owner)
+        {
+            return;
+        }
+        self.compact.pending_changes_owner = Some(owner);
+        let app = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            if let Some(app) = app.upgrade() {
+                app.update(cx, |app, cx| {
+                    if app.compact.pending_changes_owner != Some(owner) {
+                        return;
+                    }
+                    app.compact.pending_changes_owner = None;
+                    if app.active_session() == Some(owner)
+                        && for_window(window)
+                        && !app.home_in_front()
+                        && !app.has_modal_or_visible_plan(cx)
+                        && app.bottom_tab == BottomTab::Changes
+                        && app.bottom_panel_open
+                        && app.ui().commit_panel.is_none()
+                    {
+                        app.open_compact_changes(window, cx);
+                        cx.notify();
+                    }
+                });
+            }
+        });
+    }
+
+    pub(super) fn compact_shortcut_anchor_visible(&self, window: &Window, cx: &gpui::App) -> bool {
+        if self
+            .ui()
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).foreign.is_some())
+        {
+            return false;
+        }
+        self.compact.wip_bounds.get().is_some_and(|row| {
+            let list = self
+                .ui()
+                .commit_scroll_handle
+                .0
+                .borrow()
+                .base_handle
+                .bounds();
+            row.size.height > px(0.)
+                && row.bottom() > list.top()
+                && row.top() < list.bottom()
+                && row.bottom() > px(0.)
+                && row.top() < window.viewport_size().height
+        })
+    }
+
     fn dismiss_compact_presentation(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         preserve: bool,
     ) {
+        let input_focused = for_window(window) && self.compact_inputs_focused(window, cx);
+        let mut focused = input_focused;
         let state = self.compact.popup_state.borrow_mut().take();
         if let Some(state) = state {
             use gpui::Focusable as _;
-            let focused = state.read(cx).focus_handle(cx).contains_focused(window, cx);
+            focused |= state.read(cx).focus_handle(cx).contains_focused(window, cx);
             // The root already owns the pin transition (including explicit
             // close); an old kit callback must not clear a freshly reopened pin.
             self.compact.preserve_pin.set(true);
             state.update(cx, |state, cx| state.dismiss(window, cx));
             self.compact.preserve_pin.set(false);
-            if focused && !preserve {
-                if let Some(root) = &self.root_focus {
-                    root.focus(window, cx);
-                }
+        }
+        if focused && !preserve {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
             }
         }
     }
@@ -223,28 +327,26 @@ impl KagiApp {
                         cx.notify();
                     }
                 }))
-                .child(e2e::measure_inside("compact-wip-row"))
-                .when(self.compact.wip_hovered, |row| {
-                    row.child(
-                        div()
-                            .absolute()
-                            .right(theme::scaled_px(8.))
-                            .top_0()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .px_2()
-                            .rounded(theme::scaled_px(4.))
-                            .bg(rgb(theme::theme().surface))
-                            .text_sm()
-                            .text_color(rgb(theme::theme().text_main))
-                            .cursor_pointer()
-                            .child(Msg::CompactCommitAffordance.t())
-                            .child(e2e::measure_inside("compact-wip-affordance")),
-                    )
-                });
+                .child(e2e::measure_inside("compact-wip-row"));
         }
         row
+    }
+
+    pub(super) fn render_compact_wip_affordance(&self, current: bool) -> Option<gpui::Div> {
+        (self.compact.enabled && current && self.compact.wip_hovered).then(|| {
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .px_2()
+                .rounded(theme::scaled_px(4.))
+                .bg(rgb(theme::theme().surface))
+                .text_sm()
+                .text_color(rgb(theme::theme().text_main))
+                .cursor_pointer()
+                .child(Msg::CompactCommitAffordance.t())
+                .child(e2e::measure_inside("compact-wip-affordance"))
+        })
     }
 }
 

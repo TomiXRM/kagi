@@ -91,6 +91,16 @@ pub fn scenario_compact_layout_popup(cx: &mut VisualTestAppContext) {
             "current WIP scrolls out"
         );
         closed(cx, &app, &panel, win, &before);
+        let tab_before = cx.read(|cx| app.read(cx).bottom_tab);
+        focus_root(cx, &app, win);
+        cx.simulate_keystrokes(win, "cmd-enter");
+        settle(cx, win);
+        closed(cx, &app, &panel, win, &before);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).bottom_tab),
+            tab_before,
+            "Cmd+Enter without a visible WIP anchor preserves the current bottom tab"
+        );
         // Returning the anchor must not automatically reopen its dismissed popup.
         let list = graph.0.borrow().base_handle.bounds();
         wheel(cx, win, list.center(), 100_000.);

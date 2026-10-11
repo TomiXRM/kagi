@@ -40,11 +40,6 @@ impl KagiApp {
             return None;
         }
         let compact = self.compact.enabled;
-        let active_tab = if !compact && active_tab == BottomTab::Changes {
-            BottomTab::OperationLog
-        } else {
-            active_tab
-        };
 
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
@@ -214,7 +209,17 @@ impl KagiApp {
             BottomTab::Changes => self
                 .compact_surface(false, cx)
                 .map(IntoElement::into_any_element)
-                .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
+                .unwrap_or_else(|| {
+                    div()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(theme().text_muted))
+                        .child(Msg::HomeWorkLoading.t())
+                        .into_any_element()
+                }),
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──

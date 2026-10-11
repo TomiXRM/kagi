@@ -14,6 +14,8 @@ use std::{cell::RefCell, path::Path, process::Command, rc::Rc, time::Duration};
 
 #[path = "compact_layout/changes.rs"]
 pub mod changes;
+#[path = "compact_layout/lifecycle.rs"]
+pub mod lifecycle;
 #[path = "compact_layout/popup.rs"]
 pub mod popup;
 #[path = "compact_layout/rail.rs"]
@@ -28,6 +30,9 @@ const RECORDERS: &[&str] = &[
     "compact-graph",
     "compact-wip-row",
     "compact-wip-affordance",
+    "compact-wip-diffstat",
+    "cp-coauthor",
+    "status-icon-oplog",
     "compact-sidebar-popover",
     "compact-rail-local",
     "compact-rail-remote",
@@ -431,6 +436,12 @@ fn open_wip(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     settle(cx, win);
     let affordance = bounds(win, "compact-wip-affordance");
     contained(wip, affordance, "hover-only WIP reveal");
+    if let Some(stat) = e2e::control_bounds(win.window_id(), "compact-wip-diffstat") {
+        assert!(
+            affordance.right() <= stat.left() + px(1.),
+            "Commit… reveal must not overlap actual WIP diffstat: {affordance:?} / {stat:?}"
+        );
+    }
     assert!(
         e2e::control_bounds(win.window_id(), "compact-composer").is_none(),
         "hover alone must not open the popup"

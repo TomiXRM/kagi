@@ -51,9 +51,12 @@ virtualization; change the surrounding allocation, not graph density.
 
 ### Pinned WIP composer
 
-The current WIP row reveals its compose affordance on hover; clicking it, or the
-existing Cmd+Enter command, opens the pinned composer using the existing commit
-rendering and action path. Hover reveals the action, not an ephemeral editor.
+The current WIP row reveals its compose affordance on hover. Clicking it, or a
+new compact-only Cmd+Enter (`OpenCommitComposer`) binding in the `!Terminal`
+context, opens the pinned composer using the existing commit rendering/action
+path. Wide windows and a missing/off-screen WIP anchor propagate the shortcut
+without attaching or focusing an undrawn input, or changing the bottom tab.
+Hover reveals the action, not an ephemeral editor.
 Once open, moving the pointer away or clicking outside **does not dismiss** it.
 Escape, its explicit ×, or a successful commit closes the surface. An unavailable,
 blocked or failed commit does not impersonate success or discard the draft.
@@ -88,9 +91,11 @@ surfaces must not recreate inputs or synchronize two sources of truth.
 Compact selection records the valid file reference in that owner's existing
 `selected_file` after the original indexed lookup; wide-origin selection is
 unchanged. Graph selection may close the desktop visibility flag without closing
-the pinned compact composer. Crossing to wide restores that flag on the same
-owner/model, while crossing back renders the same pin and inputs. Retire the old
-Popover lease on dismissal; its callbacks cannot erase a new owner's pin.
+the pinned compact composer. Threshold transitions are symmetric: an open wide
+panel pins the same owner when entering compact, and a compact pin restores that
+owner's desktop flag when entering wide. An undrawn composer input yields focus
+to the root, even before kit has painted its first Popover. Retire the old Popover
+lease on dismissal; its callbacks cannot erase a new owner's pin.
 
 Repository reads remain session-owned `Reads<TabViewState>` keyed by `SessionId`
 under ADR-0183. Compact rendering borrows the active owner's read; it does not add
@@ -103,6 +108,19 @@ oplog**, with existing leases, trust, refusal reasons, refresh and error reporti
 ADR-0093's single `ActiveModal` slot remains unchanged, as does Commit Panel's
 separate commit-plan owner. Existing EN/JA message paths name new surfaces and
 controls; layout does not bypass confirmation or add direct Git/I/O in render.
+
+Changes is app-global but its panel is session-owned. If a tab/new repository
+becomes active with Changes visible and no panel, defer attachment through the
+original open path after its read lands; never do repository I/O during render
+or display another owner's lists. Until attachment, show the existing localized
+loading label. Compact→wide canonicalizes the stored bottom tab to Operation Log
+so the rendered tab and status-bar toggle have the same state. Returning compact
+with a pinned composer selects Changes again.
+
+Rail SVGs carry their own primary-label colour and non-shrinking size: GPUI's
+Svg painter checks the element's explicit colour rather than inheriting it from
+the trigger div. The WIP reveal is an inline, non-shrinking action before the
+diffstat, not an absolute overlay that can obscure live change counts.
 
 ## State and verification contract
 
@@ -133,25 +151,43 @@ file and a missing wide `cp-commit-action` after Graph selection. It now passes
 all 16 cells with actual per-file staging and selection, 940→1392→940 input/entity,
 draft/selection/index identity, and a real Commit whose HEAD parent/message/index
 are checked while unstaged WIP remains and the popup closes.
+Review's six compact scenarios and the extended desktop/co-author oracles pass
+the filtered native run (8 passed, 0 failed). Rail additionally proves all seven
+glyphs paint foreground strokes without replacing their transparent background.
+State includes the wide-first shrink and Graph-selected co-author Escape path;
+popup checks an offscreen shortcut leaves the tab/draft untouched.
+`compact_layout_lifecycle` checks clean-WIP shortcut/focus, deferred new-repository
+and cached-tab Changes ownership/draft retention, real tracked diffstat separation,
+and canonical Operation Log selection/first-click toggle in EN/JA, Light/Dark.
 The required compact matrix includes 940×660 and 940×1000, EN/JA, 100%/167%,
 Apple Light/Dark and a non-Apple preset; exact-threshold transitions; both toolbar
 modes; graph outer bounds and unchanged row/column/lane geometry; real measured
 WIP clicks; popup containment/flip/clamp; Escape/×/successful-commit dismissal;
 pointer/outside-click persistence; scroll-out and resize draft retention; and
 independent Changes scrolling, List/Tree, bulk/per-file staging and diff selection.
-New compact scenarios must first reject the baseline for its missing compact rail,
-then execute their complete behavior assertions after production integration.
+The initial compact scenarios rejected their baseline's missing rail/surfaces.
+Review's `compact_layout_lifecycle` also rejects the original unguarded shortcut
+path with `Cmd+Enter without WIP must not attach/focus an undrawn composer`.
+Its guard-removal Before keeps the same native oracle and restores the guard
+before After/gates; no repository rows or composer state are substituted.
 Existing wide-layout regression oracles remain intact.
 The narrow viewport regression adds real untracked WIP solely to provide the new
 row anchor; the wide fixture and its recorded composer/file/action bounds stay
 unchanged.
+The exact-breakpoint desktop viewport adds 1000×660/560 at 167%, including the
+480px user-width/right-edge List/Tree matrix, retaining the desktop file/composer
+non-overlap and scrolling oracles from #1167. Presentation sizing/publication
+lives with the existing Commit Panel surface adapters, keeping workspace.rs
+below the 800-line target.
 
-**PM Tier B is pending**: compare before/reference/after in the real window using
-the same data and viewport, inspect narrow EN/JA/high-zoom states, drive pointer
-and keyboard reveal/dismissal, and check actual focus, IME and accessibility.
-Bounds probes and the user's prototype approval do not establish those results.
-Build/unit/clippy/invariant gate results belong to the slice's handoff report;
-the navigator PASS does not establish the other compact surfaces or PM Tier B.
+PM's initial Tier B at 940×660, Apple Light, Icon and Text found invisible rail
+glyphs and an overlapping Commit reveal/diffstat. These are real-window findings,
+not dismissible because the preceding bounds-only oracles passed. Review adds
+native foreground/background SVG pixels and reveal/stat non-intersection.
+**PM Tier B of the revised window is pending**: compare before/reference/after
+with the same data, inspect EN/JA/high zoom, and check focus, IME/accessibility.
+Bounds/pixel probes and prototype approval do not establish those manual results.
+Build/unit/clippy/invariant results belong to the functional handoff report.
 
 ## Consequences
 

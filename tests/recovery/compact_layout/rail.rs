@@ -1,5 +1,83 @@
 //! Navigator Popovers and logical-breakpoint geometry on the real root.
 use super::*;
+
+const RAIL_CONTROLS: [&str; 7] = [
+    "compact-rail-local",
+    "compact-rail-remote",
+    "compact-rail-worktrees",
+    "compact-rail-tags",
+    "compact-rail-stashes",
+    "compact-rail-prs",
+    "compact-rail-issues",
+];
+
+fn rail_icon_paint(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    case: Case,
+) {
+    focus_root(cx, app, win);
+    cx.simulate_mouse_move(
+        win,
+        point(px(WIDTH - 2.), px(case.height / 2.)),
+        None,
+        Modifiers::none(),
+    );
+    settle(cx, win);
+    cx.update_window(win, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native compact rail SVG paint capture");
+        let scale = window.scale_factor();
+        let channels = |color: u32| [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+        let background = channels(theme::theme().sidebar);
+        let foreground = channels(theme::theme().text_main);
+        let matches = |pixel: [u8; 4], color: [u8; 3], tolerance: u8| {
+            pixel[..3]
+                .iter()
+                .zip(color)
+                .all(|(actual, expected)| actual.abs_diff(expected) <= tolerance)
+        };
+        for name in RAIL_CONTROLS {
+            let trigger = bounds(win, name);
+            let sample_x = ((f32::from(trigger.left() + theme::scaled_px(3.))) * scale) as u32;
+            let sample_y = (f32::from(trigger.center().y) * scale) as u32;
+            assert!(
+                matches(image.get_pixel(sample_x, sample_y).0, background, 2),
+                "{case:?} {name}: capture must show the unhovered, unselected rail"
+            );
+            // Only the centred SVG box: no control border, focus ring, tooltip
+            // or text. A solid hover/selection fill cannot count as stroke paint.
+            let half = theme::scaled_px(9.);
+            let left = (f32::from(trigger.center().x - half) * scale).ceil() as u32;
+            let right = (f32::from(trigger.center().x + half) * scale).floor() as u32;
+            let top = (f32::from(trigger.center().y - half) * scale).ceil() as u32;
+            let bottom = (f32::from(trigger.center().y + half) * scale).floor() as u32;
+            let mut strokes = 0;
+            let mut empty = 0;
+            for y in top..bottom {
+                for x in left..right {
+                    let pixel = image.get_pixel(x, y).0;
+                    strokes += usize::from(
+                        matches(pixel, foreground, 8) && !matches(pixel, background, 8),
+                    );
+                    empty += usize::from(matches(pixel, background, 2));
+                }
+            }
+            assert!(
+                strokes as f32 >= 4. * scale * scale,
+                "{case:?} {name}: actual SVG strokes must paint, found {strokes} foreground pixels"
+            );
+            assert!(
+                empty >= ((right - left) * (bottom - top)) as usize / 4,
+                "{case:?} {name}: outline glyph must retain transparent background"
+            );
+        }
+    })
+    .unwrap();
+}
+
 fn rail_filter(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -66,18 +144,7 @@ pub(super) fn rail_interactions(
 ) {
     let before = crate::macos::repo_fingerprint(repo);
     let staged_before = index(repo);
-    for (section, trigger) in [
-        "compact-rail-local",
-        "compact-rail-remote",
-        "compact-rail-worktrees",
-        "compact-rail-tags",
-        "compact-rail-stashes",
-        "compact-rail-prs",
-        "compact-rail-issues",
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (section, trigger) in RAIL_CONTROLS.into_iter().enumerate() {
         rail_section(cx, app, win, section, trigger, dimensions);
     }
     // The checked-out local leaf dispatches its real callback without a write.
@@ -112,6 +179,7 @@ pub fn scenario_compact_layout_rail(cx: &mut VisualTestAppContext) {
     matrix(|case| {
         let (app, win) = mount(cx, fixture.path(), case);
         rail_graph(win, case.dimensions());
+        rail_icon_paint(cx, &app, win, case);
         rail_interactions(cx, &app, win, fixture.path(), case.dimensions());
         rail_thresholds(cx, win, case.height);
         unmount(cx, app, win);

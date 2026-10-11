@@ -2246,6 +2246,10 @@ mod macos {
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),
             (
+                "compact_layout_lifecycle",
+                Box::new(crate::compact_layout::lifecycle::scenario_compact_layout_lifecycle),
+            ),
+            (
                 "toolbar_count_scale",
                 Box::new(crate::toolbar_count::scenario_toolbar_count_scale),
             ),

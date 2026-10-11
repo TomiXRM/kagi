@@ -478,7 +478,14 @@ impl RenderOnce for RailTrigger {
             .when(self.selected, |el| el.bg(rgb(theme().surface)))
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(super::sidebar::name_tooltip(LABELS[index].t().into()))
-            .child(svg().path(ICONS[index]).size(theme::scaled_px(18.)))
+            .child(
+                svg()
+                    .path(ICONS[index])
+                    .size(theme::scaled_px(18.))
+                    .flex_shrink_0()
+                    // GPUI Svg paints only its own text colour, not the parent's.
+                    .text_color(rgb(theme().text_main)),
+            )
             .child(super::e2e::measure_inside(IDS[index]))
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 let focused = window.focused(cx);

@@ -11,7 +11,13 @@ use std::{cell::RefCell, rc::Rc};
 pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
     let fixture = build_fixture();
-    for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67), (940., 560., 1.67)] {
+    for (width, height, zoom) in [
+        (1392., 883., 1.),
+        (1000., 660., 1.67),
+        (1000., 560., 1.67),
+        (940., 660., 1.67),
+        (940., 560., 1.67),
+    ] {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();
@@ -91,6 +97,10 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
             let generate = e2e::control_bounds(window.window_id(), "cp-smart-suggest").unwrap();
             let commit = e2e::control_bounds(window.window_id(), "cp-commit-action").unwrap();
             if width >= 1000. {
+                assert!(
+                    e2e::control_bounds(window.window_id(), "compact-composer").is_none(),
+                    "desktop viewport must exercise the original Commit Panel"
+                );
                 assert!(files.bottom() <= composer.top());
             } else {
                 let popup = e2e::control_bounds(window.window_id(), "compact-composer").unwrap();
@@ -204,7 +214,12 @@ fn right_edge_matrix(cx: &mut VisualTestAppContext) {
     std::fs::write(fixture.path().join(&path), "staged\n").unwrap();
     git(fixture.path(), &["add", "--", &path]);
     std::fs::write(fixture.path().join(&path), "unstaged\n").unwrap();
-    for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67)] {
+    for (width, height, zoom) in [
+        (1392., 883., 1.),
+        (1000., 660., 1.67),
+        (1000., 560., 1.67),
+        (940., 660., 1.67),
+    ] {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();

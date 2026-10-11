@@ -88,6 +88,7 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     let (app, win) = mount(cx, fixture.path(), case);
     let panel = changes(cx, &app, win);
     rail_graph(win, case.dimensions());
+    wide_first_leg(cx, &app, &panel, win, case);
     stage_selection(cx, &app, &panel, win, fixture.path());
     rail_graph(win, case.dimensions());
     open_wip(cx, win);
@@ -112,6 +113,42 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     unmount(cx, app, win);
 }
 
+fn wide_first_leg(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    panel: &Entity<CommitPanelView>,
+    win: AnyWindowHandle,
+    case: Case,
+) {
+    resize(cx, win, (1392., case.height));
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+    })
+    .unwrap();
+    settle(cx, win);
+    set_draft(cx, panel, win);
+    let before = snapshot(cx, panel);
+    let identities = input_ids(cx, panel);
+    resize(cx, win, case.dimensions());
+    popup_geometry(win, case.dimensions());
+    assert_eq!(
+        snapshot(cx, panel),
+        before,
+        "wide-first shrink keeps the original draft/state"
+    );
+    assert_eq!(
+        input_ids(cx, panel),
+        identities,
+        "wide-first shrink keeps both inputs"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+        panel.entity_id(),
+        "wide-first shrink pins the same owner"
+    );
+    escape(cx, app, win);
+}
+
 fn graph_selection(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
     let graph = bounds(win, "compact-graph");
     let wip = bounds(win, "compact-wip-row");
@@ -130,6 +167,20 @@ fn graph_selection(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: An
         !cx.read(|cx| app.read(cx).ui().commit_panel_open),
         "real Graph selection closes legacy right-pane flag, not pinned compact composer"
     );
+    click(cx, win, "cp-coauthor");
+    assert!(cx.read(|cx| panel_for_app(app, cx).read(cx).coauthor_menu.is_some()));
+    assert!(cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)));
+    escape(cx, app, win);
+    assert!(cx.read(|cx| panel_for_app(app, cx).read(cx).coauthor_menu.is_none()));
+    bounds(win, "compact-composer");
+}
+
+fn panel_for_app(app: &Entity<KagiApp>, cx: &gpui::App) -> Entity<CommitPanelView> {
+    app.read(cx)
+        .ui()
+        .commit_panel
+        .clone()
+        .expect("original panel")
 }
 
 fn stage_selection(

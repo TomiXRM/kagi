@@ -100,6 +100,7 @@ impl KagiApp {
                     || this.has_modal_or_visible_plan(cx)
                     || this.workspace_mode() != super::workspace_mode::WorkspaceMode::Graph
                     || this.conflict_body_visible()
+                    || !this.compact_shortcut_anchor_visible(window, cx)
                 {
                     cx.propagate();
                     return;

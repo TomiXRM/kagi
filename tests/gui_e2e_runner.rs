@@ -2114,6 +2114,7 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (

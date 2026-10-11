@@ -109,6 +109,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let compact = self.compact.enabled;
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -441,6 +442,11 @@ impl KagiApp {
             .h_full()
             .flex()
             .flex_col()
+            .when(compact, |column| {
+                column
+                    .relative()
+                    .child(e2e::measure_inside("compact-graph"))
+            })
             // ── Column header row (T030) ──────────────
             .child(col_header)
             // WIP, stash and commit rows share one scroll origin.
@@ -594,14 +600,16 @@ impl KagiApp {
             sidebar_shown,
             self.sidebar.visible,
             motion_now,
-            motion_instant,
+            motion_instant || compact,
         );
-        let right_shown = matches!(
-            layout.right,
-            workspace::RightPane::Inspector
-                | workspace::RightPane::Compare
-                | workspace::RightPane::CommitPanel
-        );
+        let compact_right_hidden = compact && layout.right != workspace::RightPane::CommitPanel;
+        let right_shown = !compact_right_hidden
+            && matches!(
+                layout.right,
+                workspace::RightPane::Inspector
+                    | workspace::RightPane::Compare
+                    | workspace::RightPane::CommitPanel
+            );
         let mode = self.workspace_mode();
         let graph_body = mode == workspace_mode::WorkspaceMode::Graph
             && matches!(
@@ -615,8 +623,16 @@ impl KagiApp {
             motion_now,
             motion_instant,
         );
-        let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
-        let right_fraction = self.panel_motion.right.visible(motion_now);
+        let sidebar_fraction = if compact {
+            0.
+        } else {
+            self.panel_motion.sidebar.visible(motion_now)
+        };
+        let right_fraction = if compact_right_hidden {
+            0.
+        } else {
+            self.panel_motion.right.visible(motion_now)
+        };
         // The Graph page's panes are drawn this frame only while the sidebar
         // is (or is still closing) and shows that page — the PRs and Issues
         // pages are lists of their own. Their keyboard state follows this
@@ -626,7 +642,8 @@ impl KagiApp {
                 mode,
                 workspace_mode::WorkspaceMode::Prs | workspace_mode::WorkspaceMode::Issues
             );
-        self.sync_sidebar_focus(panes_front, window, cx);
+        let rail_front = compact && super::compact_sidebar::is_open(window, cx);
+        self.sync_sidebar_focus(panes_front || rail_front, window, cx);
 
         let mut body_row = div()
             .id("repo-tab-panel")
@@ -639,7 +656,9 @@ impl KagiApp {
         // ── Left slot (W5-MENU: hidden when toggled off) ──
         // Drawn while it is shown or still closing; the divider travels with
         // the sidebar's edge inside the clip, which hangs it from the right.
-        if sidebar_fraction > 0. {
+        if compact {
+            body_row = body_row.child(super::compact_sidebar::render(self, window, cx));
+        } else if sidebar_fraction > 0. {
             // `mode` is this frame's, read above.
             let sidebar = div()
                 .flex()

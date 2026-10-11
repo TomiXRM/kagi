@@ -315,6 +315,10 @@ mod recovery_header_fit;
 mod recovery_commit_panel_viewport;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_layout.rs"]
+mod compact_layout;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
 mod toolbar_count;
 
@@ -2220,6 +2224,22 @@ mod macos {
             (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
+            ),
+            (
+                "compact_layout_rail",
+                Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
+            ),
+            (
+                "compact_layout_geometry",
+                Box::new(crate::compact_layout::scenario_compact_layout_geometry),
+            ),
+            (
+                "compact_layout_popup",
+                Box::new(crate::compact_layout::popup::scenario_compact_layout_popup),
+            ),
+            (
+                "compact_layout_state",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),
             (
                 "toolbar_count_scale",

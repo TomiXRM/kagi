@@ -21,6 +21,8 @@ pub mod commands;
 pub mod commit_list;
 pub mod commit_panel;
 mod commit_panel_render;
+mod compact;
+mod compact_sidebar;
 pub mod compare_pane;
 pub mod conflict_abort;
 pub mod conflict_binary_view;
@@ -1071,6 +1073,7 @@ pub struct KagiApp {
     /// `sidebar_*` fields (ADR-0110 Phase 5 Step 5.1). App-global; preserved
     /// across reloads.
     pub sidebar: sidebar::SidebarState,
+    compact: compact::CompactState,
     /// The repository tab strip's cells (repositories, then Home), for the
     /// keyboard (#959).
     pub(crate) tab_strip_focus: keyboard_nav::TabFocus,
@@ -1458,6 +1461,7 @@ impl KagiApp {
             stash_push_focus: None,
             status_footer: FooterStatus::Idle(SharedString::from("Ready")),
             sidebar: sidebar::SidebarState::new(),
+            compact: Default::default(),
             tab_strip_focus: Default::default(),
             panel_width: PANEL_DEFAULT,
             badge_col_w: theme::read_col_width("badge_col_w")

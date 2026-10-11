@@ -376,11 +376,15 @@ impl KagiApp {
     /// after the actual sidebar and divider footprints at the current zoom.
     pub(super) fn commit_panel_viewport_width(&self, window: &Window) -> f32 {
         let scale = f32::from(super::theme::scaled_px(1.));
-        let sidebar = f32::from(super::theme::scaled_px(self.sidebar.width + 4.))
-            * self
-                .panel_motion
-                .sidebar
-                .visible(super::panel_motion::now());
+        let sidebar = if super::compact::for_window(window) {
+            f32::from(super::theme::scaled_px(super::compact::RAIL_WIDTH))
+        } else {
+            f32::from(super::theme::scaled_px(self.sidebar.width + 4.))
+                * self
+                    .panel_motion
+                    .sidebar
+                    .visible(super::panel_motion::now())
+        };
         let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
         self.panel_width.min(available.max(0.))
     }

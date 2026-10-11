@@ -7,7 +7,12 @@
 use super::*;
 
 impl KagiApp {
-    fn cancel_workspace_key_target(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn cancel_workspace_key_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if super::compact_sidebar::is_open(window, cx) {
+            super::compact_sidebar::dismiss(window, cx);
+            cx.notify();
+            return;
+        }
         if diff_selection::clear() {
             cx.notify();
             return;

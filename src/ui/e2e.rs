@@ -12,6 +12,9 @@ use std::cell::RefCell;
 use std::path::Path;
 
 #[cfg(feature = "gui-e2e")]
+pub mod inspector_metadata;
+
+#[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]

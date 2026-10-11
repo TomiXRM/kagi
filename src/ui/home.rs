@@ -314,7 +314,8 @@ impl KagiApp {
                             .whitespace_nowrap()
                             .text_ellipsis()
                             .tooltip(|window, cx| {
-                                gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t()).build(window, cx)
+                                gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t())
+                                    .build(window, cx)
                             })
                             .child(
                                 div()

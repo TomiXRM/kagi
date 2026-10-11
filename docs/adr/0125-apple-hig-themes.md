@@ -400,6 +400,48 @@ The existing count oracle retains every visible glyph's
 size/containment/non-overlap assertion; hidden glyphs must instead be present in
 the actual overflow menu. Real keyboard/VoiceOver delivery and Apple Light JA
 caption-mode visual comparison remain Tier B.
+## Amendment — 2026-10-11: quiet Settings and radio dots (#1199, #1201)
+
+Settings uses the same secondary-label hierarchy as Graph group headers:
+`text_sub`, 12 reference-px semibold. Frame, titlebar and section boundaries
+are literal 1 logical px in `surface`, independent of system accent or zoom.
+Control fills and focus continue through the existing accent/theme bridge.
+
+The pinned gpui-kit Radio previously reused the checkbox check SVG. Its
+selected mark paints a centered contrasting circle approximately 6px inside a
+14px radio, scaled with the control; unchecked radios have no mark. Disabled
+marks retain reduced opacity. Existing RadioGroup selection, focus, keyboard,
+pointer and AX state ownership are unchanged. This is component paint, not a
+hand-made replacement control or a native AppKit implementation.
+
+Native regressions failed before the change: `settings_quiet` recorded the
+accent-coloured heading instead of `text_sub`; `settings_radio_dot` sampled
+the selected circle centre as `[0,122,255,255]`, not white. After the cutover,
+both pass. Quiet Settings coverage includes EN/JA, both Apple themes,
+100%/167%, injected blue/purple, secondary-label contrast ≥4.5:1 and adjacent
+pixels enforcing literal 1px section/titlebar separators. The radio probe
+checks symmetric white-centre and surrounding accent pixels plus unchanged
+empty input fill in both themes/zooms. Fork head
+`13386100eaca38a5759f69fe4596b59f2dff5141` was pushed and matched the remote
+`fix/radio-dot` head before pinning both Cargo patch entries and the lockfile.
+Real pointer/keyboard/VoiceOver delivery remains PM-owned Tier B evidence.
+
+Review correction: the dot uses `primary_foreground` through the theme bridge,
+not hard-coded white: Dark's yellow Theme accent requires a dark dot, as do
+other light fills. The native glyph matrix includes explicit Theme accent and
+blue/purple System accent at both zooms, comparing the foreground pixels and
+requiring ≥4.5:1 contrast. The white-only fork failed with actual
+`[255,255,255,255]` versus expected `[0,0,0]`.
+Fork head `879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b` supersedes `13386100`.
+
+The shared non-E2E `measure_inside` placeholder is absolute and zero-sized,
+so it cannot introduce a third flex item, a gap, or alter `justify_between`.
+The E2E canvas branch is unchanged. A unit test failed on the old placeholder
+(`position: None`, expected `Absolute`) and asserts both position and zero size.
+
+Review validation: the default-build placeholder unit passes (1/1), and the
+scoped native suite `settings_quiet,settings_radio_dot,settings_switches,settings_focus_trap`
+passes (4/4), including settings isolation restoration of `accent_source`.
 ## Amendment — 2026-10-11: draggable surface scrollbars (#1202)
 
 Settings' single body and Home's shared virtualized Repositories / PRs / Issues

@@ -107,6 +107,11 @@ impl KagiApp {
         let el = el.on_action(cx.listener(|this, action: &cmds::SetTheme, _window, cx| {
             this.set_theme(&action.slug, cx);
         }));
+        let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
+            settings::set_toolbar_display(action.mode);
+            cx.set_menus(cmds::build_menus());
+            cx.notify();
+        }));
         // W22-I18N: language switch actions (always enabled).
         let el = menu_act!(el, cmds::LangEnglish, "lang.english");
         let el = menu_act!(el, cmds::LangJapanese, "lang.japanese");
@@ -351,6 +356,10 @@ impl KagiApp {
         // No allocation or contrast work when no count chip is drawn; share
         // one foreground calculation if both Pull and Push have counts.
         let chip_fg = std::cell::LazyCell::new(|| theme::primary_button_foreground(&theme()));
+        let icon_only =
+            settings::toolbar_display(&theme().slug) == settings::ToolbarDisplay::IconOnly;
+        let undo_has_summary = self.ui().operation_history.peek_undo().is_some();
+        let redo_has_summary = self.ui().operation_history.peek_redo().is_some();
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
         // W10-TOOLBAR: icon on top (20px ≈ Size::Medium), text_xs label below,
@@ -376,6 +385,19 @@ impl KagiApp {
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
             let (enabled, unavailable) = button_flags(state);
+            let accessible_label = match id {
+                "tb-branch" => Msg::ToolbarBranch.t(),
+                "tb-stash" => Msg::ToolbarStash.t(),
+                "tb-pop" => Msg::ToolbarPop.t(),
+                "tb-editor-ws" => Msg::ToolbarEditor.t(),
+                "tb-ecosystem" => Msg::ToolbarAnalyze.t(),
+                "tb-terminal" => Msg::ToolbarTerminal.t(),
+                "tb-graph-mode" => Msg::WorkspaceGraph.t(),
+                "tb-pr-mode" => Msg::WorkspacePrs.t(),
+                _ => label,
+            };
+            #[cfg(feature = "gui-e2e")]
+            toolbar_a11y::record_label(id, accessible_label);
             // #354: the exact bool that gates `set_disabled` below, recorded
             // for the GUI E2E oracle (the AccessKit tree itself is only built
             // once assistive technology connects, which a test cannot force).
@@ -389,6 +411,11 @@ impl KagiApp {
 
             // The count is an overlay on the icon cell. Native probes stay
             // inside that cell so they do not change the toolbar's layout.
+            let glyph = icon
+                .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
+                .text_color(rgb(text_color));
+            #[cfg(feature = "gui-e2e")]
+            let glyph = super::e2e::measure_control(format!("{id}-glyph"), glyph);
             let mut icon_cell = div()
                 .relative()
                 .flex()
@@ -396,10 +423,7 @@ impl KagiApp {
                 .justify_center()
                 .w(theme::scaled_px(22.0))
                 .h(theme::scaled_px(22.0))
-                .child(
-                    icon.with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
-                        .text_color(rgb(text_color)),
-                )
+                .child(glyph)
                 .when(cfg!(feature = "gui-e2e"), |el| {
                     el.child(super::e2e::measure_inside(format!("{id}-icon")))
                 });
@@ -446,7 +470,7 @@ impl KagiApp {
                 // Bare string captions have no AX node;
                 // share the visible label explicitly.
                 .role(gpui::Role::Button)
-                .aria_label(label)
+                .aria_label(accessible_label)
                 .when_some(reason, |el, reason| {
                     toolbar_a11y::record_description(id, reason);
                     el.aria_description(reason)
@@ -464,7 +488,7 @@ impl KagiApp {
                 .items_center()
                 .justify_center()
                 .gap(theme::scaled_px(1.0))
-                .min_w(theme::scaled_px(52.0))
+                .min_w(theme::scaled_px(if icon_only { 36.0 } else { 52.0 }))
                 .px(keyboard_nav::inset(4.0))
                 // At 0.7× the old 2px zoomed padding is smaller than the
                 // fixed 2px ring. The centred row keeps its icon/text in
@@ -484,11 +508,25 @@ impl KagiApp {
                     gpui::CursorStyle::Arrow
                 })
                 .child(icon_cell)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(text_color))
-                        .child(SharedString::from(label)),
+                .when(!icon_only, |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    toolbar_a11y::record_caption(id, accessible_label);
+                    el.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(text_color))
+                            .child(SharedString::from(accessible_label)),
+                    )
+                })
+                .when(
+                    !(id == "tb-undo" && undo_has_summary || id == "tb-redo" && redo_has_summary),
+                    |el| {
+                        #[cfg(feature = "gui-e2e")]
+                        toolbar_a11y::record_tooltip(id, accessible_label);
+                        el.tooltip(move |window, cx| {
+                            Tooltip::new(accessible_label).build(window, cx)
+                        })
+                    },
                 );
             #[cfg(feature = "gui-e2e")]
             let btn = btn.on_key_down(move |event, _, _| {
@@ -507,12 +545,12 @@ impl KagiApp {
             .ui()
             .operation_history
             .peek_undo()
-            .map(|e| SharedString::from(format!("Undo: {}", e.summary)));
+            .map(|e| SharedString::from(format!("{}: {}", Msg::Undo.t(), e.summary)));
         let redo_tooltip_text: Option<SharedString> = self
             .ui()
             .operation_history
             .peek_redo()
-            .map(|e| SharedString::from(format!("Redo: {}", e.summary)));
+            .map(|e| SharedString::from(format!("{}: {}", Msg::Redo.t(), e.summary)));
 
         // ── Left label: branch info (ADR-0013) ─────────────────────────────
         // Format: `branch → upstream ↑A ↓B`  or state labels when detached/unborn.
@@ -558,7 +596,7 @@ impl KagiApp {
             .items_center()
             .w_full()
             .px_3()
-            .h(theme::scaled_px(52.0))
+            .h(theme::scaled_px(if icon_only { 36.0 } else { 52.0 }))
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
@@ -591,8 +629,8 @@ impl KagiApp {
                         let spinning = self.op_latched() || self.refresh_spin_started.is_some();
                         let icon = gpui::svg()
                             .path("icons/refresh-cw.svg")
-                            .w(theme::scaled_px(16.0))
-                            .h(theme::scaled_px(16.0))
+                            .w(theme::scaled_px(if icon_only { 20.0 } else { 16.0 }))
+                            .h(theme::scaled_px(if icon_only { 20.0 } else { 16.0 }))
                             .text_color(rgb(theme().text_main));
                         let icon: gpui::AnyElement = if spinning && !theme::reduce_motion() {
                             use gpui::AnimationExt as _;
@@ -615,7 +653,9 @@ impl KagiApp {
                             .id("tb-refresh")
                             .role(gpui::Role::Button)
                             .when_some(commands::command("file.refresh"), |el, command| {
-                                el.aria_label(command.label)
+                                el.aria_label(command.label).tooltip(move |window, cx| {
+                                    Tooltip::new(command.label).build(window, cx)
+                                })
                             })
                             .flex_shrink_0()
                             .mr_2()

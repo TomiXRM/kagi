@@ -149,6 +149,7 @@ fn main() {
     ui::theme::init_reduce_motion();
     // #772 / ADR-0208: terminal auto-lock opt-in (default off).
     ui::settings::init_terminal_auto_lock();
+    ui::settings::init_toolbar_display();
     // #344 / ADR-0211: which git features are available (probed once).
     {
         let f = kagi_git::cli::GitFeatures::detected();

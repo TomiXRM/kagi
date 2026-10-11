@@ -167,6 +167,40 @@ impl KagiApp {
                         row_ix += 1;
                     }
                 }
+                commands::MenuNode::Submenu(commands::DynSubmenu::ToolbarDisplay) => {
+                    for (mode, label) in commands::toolbar_display_menu_entries() {
+                        let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                            this.close_platform_menu(cx);
+                            window.dispatch_action(
+                                Box::new(commands::SetToolbarDisplay { mode }),
+                                cx,
+                            );
+                            cx.stop_propagation();
+                        });
+                        let row = div()
+                            .id(SharedString::from(format!(
+                                "platform-menu-item-{ix}-{row_ix}"
+                            )))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(theme::scaled_px(5.0))
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(theme().selected)))
+                            .on_click(invoke)
+                            .child(div().flex_1().truncate().child(label));
+                        #[cfg(feature = "gui-e2e")]
+                        let row = row.relative().child(super::e2e::measure_inside(format!(
+                            "platform-menu-toolbar-{}",
+                            mode.as_str()
+                        )));
+                        panel = panel.child(row);
+                        row_ix += 1;
+                    }
+                }
                 // OsEdit only ever appears in `mac_only` sections, which are
                 // filtered out before we get here — but match exhaustively.
                 commands::MenuNode::OsEdit(_) => {}

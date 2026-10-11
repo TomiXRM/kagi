@@ -160,9 +160,10 @@ pub fn render_settings_overlay(
         .overflow_hidden()
         .rounded(px(12.0))
         .border_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
         .bg(rgb(theme().panel))
         .shadow_lg()
+        .child(super::e2e::measure_inside("settings-frame"))
         // swallow clicks inside the panel so they don't dismiss via the scrim
         .on_mouse_down(MouseButton::Left, |_, _w, cx| cx.stop_propagation())
         // ── Title bar ──────────────────────────────────────────────
@@ -175,7 +176,8 @@ pub fn render_settings_overlay(
                 .px_4()
                 .py_3()
                 .border_b_1()
-                .border_color(rgb(theme().selected))
+                .border_color(rgb(theme().surface))
+                .child(super::e2e::measure_inside("settings-titlebar"))
                 .child(
                     div()
                         .text_color(rgb(theme().text_main))
@@ -249,14 +251,15 @@ pub fn render_settings_overlay(
 // Section / row helpers
 // ────────────────────────────────────────────────────────────
 
-fn section_header(title: SharedString) -> impl IntoElement {
+fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
     div()
-        .text_sm()
+        .text_size(super::theme::scaled_px(12.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme().accent_text_on(theme().panel)))
+        .text_color(rgb(theme().text_sub))
         .pb_1()
         .border_b_1()
-        .border_color(rgb(theme().selected))
+        .border_color(rgb(theme().surface))
+        .child(super::e2e::measure_inside(name))
         .child(title)
 }
 
@@ -498,9 +501,10 @@ fn appearance_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAppearance.t(),
-        )))
+        .child(section_header(
+            "settings-appearance-heading",
+            SharedString::from(Msg::SettingsAppearance.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsTheme.t()),
             SharedString::from(Msg::SettingsThemeDesc.t()),
@@ -611,9 +615,10 @@ fn language_section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsLanguage.t(),
-        )))
+        .child(section_header(
+            "settings-language-heading",
+            SharedString::from(Msg::SettingsLanguage.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsInterfaceLang.t()),
             SharedString::from(Msg::SettingsInterfaceLangDesc.t()),
@@ -817,9 +822,10 @@ fn smart_commit_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsSmartCommit.t(),
-        )))
+        .child(section_header(
+            "settings-smart-heading",
+            SharedString::from(Msg::SettingsSmartCommit.t()),
+        ))
         .child(setting_row(
             SharedString::from(Msg::SettingsSmartEnable.t()),
             SharedString::from(Msg::SettingsSmartEnableDesc.t()),
@@ -908,9 +914,10 @@ fn analyze_ignore_section(
         .flex()
         .flex_col()
         .gap_2()
-        .child(section_header(SharedString::from(
-            Msg::SettingsAnalyzeIgnore.t(),
-        )))
+        .child(section_header(
+            "settings-analyze-heading",
+            SharedString::from(Msg::SettingsAnalyzeIgnore.t()),
+        ))
         .child(
             div()
                 .text_sm()

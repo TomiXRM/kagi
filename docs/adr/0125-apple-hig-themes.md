@@ -330,3 +330,29 @@ The fixture's repository fingerprint remains unchanged. `inactive_selection`,
 `conflict_continue_cache` and `conflict_pane_survives_activation` also pass.
 These are native renderer / attribute-recorder assertions, not VoiceOver or
 Tier B evidence.
+
+## Amendment — 2026-10-11: quiet Settings and radio dots (#1199, #1201)
+
+Settings uses the same secondary-label hierarchy as Graph group headers:
+`text_sub`, 12 reference-px semibold. Frame, titlebar and section boundaries
+are literal 1 logical px in `surface`, independent of system accent or zoom.
+Control fills and focus continue through the existing accent/theme bridge.
+
+The pinned gpui-kit Radio previously reused the checkbox check SVG. Its
+selected mark now paints a centered white circle approximately 6px inside a
+14px radio, scaled with the control; unchecked radios have no mark. Disabled
+marks retain reduced opacity. Existing RadioGroup selection, focus, keyboard,
+pointer and AX state ownership are unchanged. This is component paint, not a
+hand-made replacement control or a native AppKit implementation.
+
+Native regressions failed before the change: `settings_quiet` recorded the
+accent-coloured heading instead of `text_sub`; `settings_radio_dot` sampled
+the selected circle centre as `[0,122,255,255]`, not white. After the cutover,
+both pass. Quiet Settings coverage includes EN/JA, both Apple themes,
+100%/167%, injected blue/purple, secondary-label contrast ≥4.5:1 and adjacent
+pixels enforcing literal 1px section/titlebar separators. The radio probe
+checks symmetric white-centre and surrounding accent pixels plus unchanged
+empty input fill in both themes/zooms. Fork head
+`13386100eaca38a5759f69fe4596b59f2dff5141` was pushed and matched the remote
+`fix/radio-dot` head before pinning both Cargo patch entries and the lockfile.
+Real pointer/keyboard/VoiceOver delivery remains PM-owned Tier B evidence.

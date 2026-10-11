@@ -228,7 +228,8 @@ pub(crate) fn record_editor_diff_seed_request(editor: gpui::EntityId, req: u64) 
 pub fn editor_diff_seed_request(editor: gpui::EntityId) -> Option<u64> {
     EDITOR_DIFF_SEEDS.with(|seeds| seeds.borrow().get(&editor).copied())
 }
-pub(crate) fn measure_control(
+/// Measure a rendered control, including component probes in the native runner.
+pub fn measure_control(
     name: impl Into<String>,
     control: impl gpui::IntoElement,
 ) -> gpui::AnyElement {

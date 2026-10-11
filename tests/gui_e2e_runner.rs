@@ -67,6 +67,10 @@ mod theme_custom;
 mod system_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_quiet.rs"]
+mod settings_quiet;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -1131,6 +1135,14 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "settings_quiet",
+                Box::new(crate::settings_quiet::scenario_settings_quiet),
+            ),
+            (
+                "settings_radio_dot",
+                Box::new(crate::settings_quiet::scenario_settings_radio_dot),
             ),
             (
                 "inactive_selection",

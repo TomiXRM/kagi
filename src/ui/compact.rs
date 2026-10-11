@@ -52,6 +52,14 @@ impl KagiApp {
             self.compact.owner = owner;
         }
         if self.compact.enabled && !enabled {
+            // Graph selection closes the legacy right-pane flag, not this pin.
+            // Reattach the same owner/model to its desktop projection on resize.
+            if self.compact.popup_owner.is_some()
+                && self.compact.popup_owner == owner
+                && self.ui().commit_panel.is_some()
+            {
+                self.with_ui(|ui| ui.commit_panel_open = true);
+            }
             self.dismiss_compact_presentation(window, cx, true);
             super::compact_sidebar::dismiss(window, cx);
         }
@@ -82,11 +90,13 @@ impl KagiApp {
         cx: &mut Context<Self>,
         preserve: bool,
     ) {
-        let state = self.compact.popup_state.borrow().clone();
+        let state = self.compact.popup_state.borrow_mut().take();
         if let Some(state) = state {
             use gpui::Focusable as _;
             let focused = state.read(cx).focus_handle(cx).contains_focused(window, cx);
-            self.compact.preserve_pin.set(preserve);
+            // The root already owns the pin transition (including explicit
+            // close); an old kit callback must not clear a freshly reopened pin.
+            self.compact.preserve_pin.set(true);
             state.update(cx, |state, cx| state.dismiss(window, cx));
             self.compact.preserve_pin.set(false);
             if focused && !preserve {

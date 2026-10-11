@@ -44,9 +44,9 @@ fn select_row(
     let action = bounds(
         win,
         if staged {
-            "cp-row-unstage"
+            "cp-first-row-unstage"
         } else {
-            "cp-row-stage"
+            "cp-first-row-stage"
         },
     );
     let column = bounds(
@@ -92,6 +92,7 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     rail_graph(win, case.dimensions());
     open_wip(cx, win);
     set_draft(cx, &panel, win);
+    graph_selection(cx, &app, win);
     let before = snapshot(cx, &panel);
     roundtrip(cx, &app, &panel, win, fixture.path(), case, &before);
     if e2e::control_bounds(win.window_id(), "compact-composer").is_some() {
@@ -111,6 +112,26 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     unmount(cx, app, win);
 }
 
+fn graph_selection(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
+    let graph = bounds(win, "compact-graph");
+    let wip = bounds(win, "compact-wip-row");
+    let target = point(
+        graph.right() - theme::scaled_px(20.),
+        wip.bottom() + wip.size.height / 2.,
+    );
+    assert!(
+        target.x > bounds(win, "compact-composer").right(),
+        "real Graph row lies outside pinned popup"
+    );
+    cx.simulate_click(win, target, Modifiers::none());
+    settle(cx, win);
+    bounds(win, "compact-composer");
+    assert!(
+        !cx.read(|cx| app.read(cx).ui().commit_panel_open),
+        "real Graph selection closes legacy right-pane flag, not pinned compact composer"
+    );
+}
+
 fn stage_selection(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -120,7 +141,7 @@ fn stage_selection(
 ) {
     let before_index = index(repo);
     let path = select_row(cx, panel, win, false);
-    click(cx, win, "cp-row-stage");
+    click(cx, win, "cp-first-row-stage");
     assert_ne!(
         index(repo),
         before_index,

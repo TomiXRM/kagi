@@ -98,6 +98,7 @@ fn composer_popover(
     let cache = state.popup_state.clone();
     let preserve_pin = state.preserve_pin.clone();
     let close_app = weak_app.clone();
+    let owner = state.popup_owner;
     Popover::new("compact-composer-popover")
         .anchor(Anchor::TopLeft)
         .trigger(ComposerAnchor)
@@ -110,8 +111,10 @@ fn composer_popover(
                 let app = weak_app.clone();
                 cx.defer(move |cx| {
                     let _ = app.update(cx, |app, cx| {
-                        app.compact.popup_owner = None;
-                        cx.notify();
+                        if app.active_session() == owner && app.compact.popup_owner == owner {
+                            app.compact.popup_owner = None;
+                            cx.notify();
+                        }
                     });
                 });
             }

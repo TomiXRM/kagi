@@ -70,9 +70,10 @@ commit-plan routing; the compact composer is not a new confirmation-modal slot.
 Add Changes to the existing bottom-panel `keyboard_nav::TabList`, retaining its
 selection/focus convention and the existing Terminal/Operation Log/Activity
 paths. Changes contains **two side-by-side, independently scrolling file lists**:
-Unstaged and Staged. Each header retains its own existing List/Tree control and
-bulk Stage All / Unstage All action. Reuse existing row selection, per-file
-stage/unstage controls, path truncation with full tooltip/AX text, and diff opening.
+Unstaged and Staged. Each header exposes List/Tree controls reflecting the **same
+existing tree mode**, plus its column's bulk Stage All / Unstage All action. Reuse
+existing row selection, per-file stage/unstage controls, path truncation with full
+tooltip/AX text, and diff opening.
 The composer and Changes are separate surfaces over the same commit state, not
 a copied full Commit Panel squeezed into a bottom pane.
 
@@ -83,6 +84,13 @@ unsent draft, selected file and staging presentation state. Wide panel, compact
 composer and compact Changes are surface adapters rendering that owner. Never
 clone the draft, selection or staging model into a compact entity; changing
 surfaces must not recreate inputs or synchronize two sources of truth.
+
+Compact selection records the valid file reference in that owner's existing
+`selected_file` after the original indexed lookup; wide-origin selection is
+unchanged. Graph selection may close the desktop visibility flag without closing
+the pinned compact composer. Crossing to wide restores that flag on the same
+owner/model, while crossing back renders the same pin and inputs. Retire the old
+Popover lease on dismissal; its callbacks cannot erase a new owner's pin.
 
 Repository reads remain session-owned `Reads<TabViewState>` keyed by `SessionId`
 under ADR-0183. Compact rendering borrows the active owner's read; it does not add
@@ -119,8 +127,12 @@ source with `missing compact-wip-row`, then passed the same 16-cell matrix with
 actual hover/reveal, WIP click, ⌘⏎, pointer/outside persistence, Escape/×, scroll-out
 draft retention and short-window containment. `compact_layout_geometry` also
 passes measured rail/graph/columns/popup containment over the full matrix.
-Shared-state/commit-success gates are recorded with their functional commit;
-their result is not inferred from the preceding surface PASS results.
+Shared-state Tier A `compact_layout_state` first rejected the original source
+with its missing rail. Integration also exposed the previously unset selected
+file and a missing wide `cp-commit-action` after Graph selection. It now passes
+all 16 cells with actual per-file staging and selection, 940→1392→940 input/entity,
+draft/selection/index identity, and a real Commit whose HEAD parent/message/index
+are checked while unstaged WIP remains and the popup closes.
 The required compact matrix includes 940×660 and 940×1000, EN/JA, 100%/167%,
 Apple Light/Dark and a non-Apple preset; exact-threshold transitions; both toolbar
 modes; graph outer bounds and unchanged row/column/lane geometry; real measured
@@ -130,6 +142,9 @@ independent Changes scrolling, List/Tree, bulk/per-file staging and diff selecti
 New compact scenarios must first reject the baseline for its missing compact rail,
 then execute their complete behavior assertions after production integration.
 Existing wide-layout regression oracles remain intact.
+The narrow viewport regression adds real untracked WIP solely to provide the new
+row anchor; the wide fixture and its recorded composer/file/action bounds stay
+unchanged.
 
 **PM Tier B is pending**: compare before/reference/after in the real window using
 the same data and viewport, inspect narrow EN/JA/high-zoom states, drive pointer

@@ -46,6 +46,8 @@ const RECORDERS: &[&str] = &[
     "cp-commit-action",
     "cp-row-stage",
     "cp-row-unstage",
+    "cp-first-row-stage",
+    "cp-first-row-unstage",
     "cp-view-list",
     "cp-view-tree",
     "cp-staged-view-list",

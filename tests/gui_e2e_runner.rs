@@ -499,6 +499,10 @@ mod pr_pagination;
 mod perf_oplog_detail;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inspector_metadata.rs"]
+mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/inspector_derived.rs"]
 mod perf_inspector_derived;
 
@@ -2966,6 +2970,10 @@ mod macos {
             (
                 "oplog_detail_draw",
                 Box::new(crate::perf_oplog_detail::scenario_expanded_detail_draw),
+            ),
+            (
+                "inspector_metadata_a11y",
+                Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
             ),
             (
                 "inspector_derived",

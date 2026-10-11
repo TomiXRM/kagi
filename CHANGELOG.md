@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector author identities retain their full names with layout ellipsis and full-name/email hover and accessibility text. The compact monospace SHA chip is a named EN/JA ghost Button; Tab, Enter and Space use the existing full-SHA clipboard action. (#1237)
+  - Review: XSmall preserves the original SHA typography inside its dense hover/focus frame. Incomplete author/co-author identities omit empty or duplicated email brackets; native paint coverage asserts layout ellipsis and SHA label containment at both zooms.
 - macOS Settings opens or raises one separate non-modal 715-point window with related EN/JA panes, live preferences, restored pane/position, compact unified chrome and standard close/minimize controls. Cmd-W closes only Settings; Escape leaves the window open (text editors keep their own Escape behavior). Other platforms retain the existing overlay. (#1198, ADR-0223)
   - Review: Settings holds weak repository/callback handles and closes when its owner is released, without retaining fetch/watch/terminal state. Dock reopen restores a repository even when only a utility window remains; the last content height prevents repeated frame drift on reopen. Native coverage includes owner release, stable geometry, Dock restoration and unwind-safe host selection.
   - Quit review: bounds changes persist height as well as position, so quitting the app while Settings remains open restores the same frame. Native geometry coverage dispatches repository Cmd-Q through an explicit quit seam and recreates roots without running Settings-close persistence.

@@ -4354,6 +4354,14 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
     }
 }
 
+/// Accessible action name for the Inspector's short SHA chip.
+pub fn inspector_copy_hash(short_sha: &str) -> String {
+    match lang() {
+        Lang::En => format!("Copy commit hash {short_sha}"),
+        Lang::Ja => format!("commit hash {short_sha} をコピー"),
+    }
+}
+
 /// Inspector files-list truncation indicator: "… and N more".
 pub fn and_n_more(n: usize) -> String {
     match lang() {

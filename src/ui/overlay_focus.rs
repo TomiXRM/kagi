@@ -262,9 +262,11 @@ impl KagiApp {
         }
     }
 
-    /// Open Settings (toolbar button, menu, palette).
+    /// Open or raise Settings (toolbar button, menu, palette). macOS uses the
+    /// non-modal native host; the following focus rules apply to the portable
+    /// overlay only.
     ///
-    /// Focus moves into the panel — to its trap container, not to a control
+    /// Portable focus moves into the panel — to its trap container, not a control
     /// (#974): until it does, Tab still goes wherever focus was, e.g. the
     /// terminal's shell, and Escape (bound `!Terminal`) cannot close
     /// Settings. The container is no Tab stop and draws no ring, so opening
@@ -274,7 +276,22 @@ impl KagiApp {
     /// A modal or a drawn commit plan blocks it — also when a platform menu
     /// dropdown over them is the front layer (#976 review); an undrawn plan
     /// behind Home does not.
-    pub(super) fn open_settings_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        {
+            #[cfg(feature = "gui-e2e")]
+            let native = cx
+                .try_global::<super::settings_view::SettingsHostForE2e>()
+                .is_none_or(|host| host.native);
+            #[cfg(not(feature = "gui-e2e"))]
+            let native = true;
+            if native {
+                self.close_layers_above(super::front_layer::LayerKind::MenuOverlay, cx);
+                let owner = cx.entity();
+                cx.defer(move |cx| super::settings_window::open_or_raise(owner, cx));
+                return;
+            }
+        }
         if self.has_modal_or_visible_plan(cx) {
             return;
         }

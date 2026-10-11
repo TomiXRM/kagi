@@ -36,9 +36,11 @@ mod store;
 #[cfg(test)]
 mod store_env_tests;
 mod terminal_autolock;
+mod window_frame;
 
 pub use store::flush;
 pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
+pub use window_frame::{settings_window_frame, write_settings_window_frame, SettingsWindowFrame};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

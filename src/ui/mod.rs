@@ -136,6 +136,8 @@ pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
 mod settings_theme_folder;
 pub mod settings_view;
+#[cfg(target_os = "macos")]
+mod settings_window;
 pub mod sidebar;
 mod sidebar_focus;
 mod sidebar_panes;
@@ -3241,6 +3243,29 @@ impl KagiApp {
 // Application entry point helper
 // ──────────────────────────────────────────────────────────────
 
+/// A native Settings (or other utility) window is not a repository host.
+pub(super) fn repository_window(window: &Window, cx: &App) -> Option<Entity<KagiApp>> {
+    window
+        .root::<gpui_component::Root>()
+        .flatten()
+        .and_then(|root| root.read(cx).view().clone().downcast::<KagiApp>().ok())
+}
+
+fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
+    let has_repository = cx.windows().into_iter().any(|handle| {
+        handle
+            .update(cx, |_, window, cx| repository_window(window, cx).is_some())
+            .unwrap_or(false)
+    });
+    if has_repository {
+        return None;
+    }
+    let mut fresh = KagiApp::with_error("");
+    tabs::restore_saved_session(&mut fresh);
+    fresh.log_tabs();
+    Some(fresh)
+}
+
 /// Open the GPUI window and start the event loop.
 pub fn run_app(app_state: KagiApp) {
     // W4-TABS / ADR-0027: the watcher is armed from inside the window context
@@ -3254,10 +3279,7 @@ pub fn run_app(app_state: KagiApp) {
     // without this handler the app looks dead while still running.  The
     // previous session's tabs are restored from settings.json.
     application.on_reopen(|cx: &mut App| {
-        if cx.windows().is_empty() {
-            let mut fresh = KagiApp::with_error("");
-            tabs::restore_saved_session(&mut fresh);
-            fresh.log_tabs();
+        if let Some(fresh) = dock_reopen_state(cx) {
             open_main_window(fresh, cx);
         }
         cx.activate(true);

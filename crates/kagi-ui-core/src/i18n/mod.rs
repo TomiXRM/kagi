@@ -844,6 +844,10 @@ pub enum Msg {
     //    domain word "graph" stays English per ADR-0048) ──────────────────
     /// Settings window title.
     SettingsTitle,
+    /// Settings pane containing appearance and general application preferences.
+    SettingsGeneral,
+    /// The native settings host could not be opened.
+    SettingsWindowFailed,
     /// Settings sidebar: Appearance page title.
     SettingsAppearance,
     /// Semantic grouped-form headings (#1200).
@@ -3209,6 +3213,10 @@ impl Msg {
             // ── T-SETTINGS-001: Settings window ──────────────────────
             (En, SettingsTitle) => "Settings",
             (Ja, SettingsTitle) => "設定",
+            (En, SettingsGeneral) => "General",
+            (Ja, SettingsGeneral) => "一般",
+            (En, SettingsWindowFailed) => "Could not open Settings",
+            (Ja, SettingsWindowFailed) => "設定ウィンドウを開けませんでした",
             (En, SettingsAppearance) => "Appearance",
             (Ja, SettingsAppearance) => "外観",
             (En, SettingsGraph) | (Ja, SettingsGraph) => "Graph",

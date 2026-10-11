@@ -1491,9 +1491,21 @@ pub fn register_keybindings(cx: &mut App) {
 /// platforms retain their text notation. Native menus derive it from the keymap.
 #[cfg(target_os = "macos")]
 pub fn display_keystroke(ks: &str) -> String {
-    let stroke =
-        gpui::Keystroke::parse(ks).expect("effective keybinding must use GPUI keystroke notation");
-    gpui_component::kbd::Kbd::format(&stroke)
+    let mut formatted = String::with_capacity(ks.len());
+    for part in ks.split_whitespace() {
+        let Ok(stroke) = gpui::Keystroke::parse(part) else {
+            return ks.to_owned();
+        };
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        formatted.push_str(&gpui_component::kbd::Kbd::format(&stroke));
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1513,20 +1525,8 @@ pub fn display_keystroke(ks: &str) -> String {
         for m in mods_str.split('-') {
             parts.push(
                 match m {
-                    "secondary" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Ctrl"
-                        }
-                    }
-                    "cmd" | "super" | "win" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Super"
-                        }
-                    }
+                    "secondary" => "Ctrl",
+                    "cmd" | "super" | "win" => "Super",
                     "ctrl" => "Ctrl",
                     "alt" => "Alt",
                     "shift" => "Shift",
@@ -2832,6 +2832,24 @@ mod keybinding_tests {
                 display_keystroke(&binding),
                 gpui_component::kbd::Kbd::format(&stroke)
             );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_format_each_chord_stroke() {
+        assert_eq!(display_keystroke("secondary-k secondary-s"), "⌘K ⌘S");
+        assert_eq!(
+            display_keystroke("secondary-k   ctrl-alt-shift-secondary-s"),
+            "⌘K ⌃⌥⇧⌘S"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_preserve_unformattable_bindings_without_panicking() {
+        for binding in ["not-a-keystroke", "secondary-k bogus-modifier-x", "", "  "] {
+            assert_eq!(display_keystroke(binding), binding);
         }
     }
 

@@ -146,9 +146,10 @@ resting pointer (including same-coordinate move replay), and presses Enter;
 unavailable rows stay inert. `palette_shortcut_glyphs` reads renderer-fed
 captions and measures non-overlapping, right-aligned trailing-column bounds
 at 940×660 / 1392×883, 100% / 167%, EN / JA, Apple Light / Dark.
-The runner installs this scenario's saved remaps/unassignment **before**
-`init_app`, because `effective_keystroke` caches settings during production
-startup; changing settings after keymap registration would not test remapping.
+Only the exact KEEP_GOING child for this scenario installs its saved remaps/
+unassignment **before** `init_app`, because `effective_keystroke` caches settings
+during production startup; changing settings after keymap registration would
+not test remapping. Other same-process scenarios retain their normal bindings.
 The guard restores those isolated startup keys after the run. Native pointer
 delivery, IME and VoiceOver remain Tier B, not claims from TestDispatcher.
 

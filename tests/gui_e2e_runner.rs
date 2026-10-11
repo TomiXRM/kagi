@@ -3153,12 +3153,8 @@ mod macos {
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         // Effective bindings are cached at startup, exactly as in the product.
-        let _palette_bindings = selected(
-            "palette_shortcut_glyphs",
-            filters.as_deref(),
-            exact.as_deref(),
-        )
-        .then(crate::palette_polish::install_shortcut_bindings);
+        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
+            .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

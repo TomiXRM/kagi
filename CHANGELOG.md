@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Status-bar Terminal and Operation Log controls expose localized names, show/hide tooltips, toggle state and individual keyboard Tab stops with focus-visible rings. Enter/Space reuse their existing callbacks; compact 16px glyphs and neutral hover affordances remain inside the footer. (#1207)
+  - Review: Cmd+J appears only on Terminal's active Hide tooltip; Show does not imply the panel shortcut selects or starts Terminal. Native coverage checks adjacent forward/reverse focus stops and pointer activation's PTY focus.
 - Toolbar overflow reserves its first-line shortcut column, bounds secondary unavailable reasons to the label column and caps the menu to the viewport. Japanese unavailable reasons no longer mix English prose, and the » tooltip is suppressed while its menu is open. (#1217)
 - Home repository descriptions remain single-line but expose the full sanitized text on hover and in the row's accessibility description. Clone/Open now use a bordered small Secondary push button, distinct from quiet metadata badges; focused-row Enter/Space remains the single keyboard action path. (#1203, #1204)
 - Home-row native regression observations are cleared per presentation cell and tooltip text is consumed after each hover; the description's accessibility assignment and recorder share one helper path. (#1203, #1204 review)

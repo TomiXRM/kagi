@@ -233,7 +233,8 @@ pub(crate) fn record_editor_diff_seed_request(editor: gpui::EntityId, req: u64) 
 pub fn editor_diff_seed_request(editor: gpui::EntityId) -> Option<u64> {
     EDITOR_DIFF_SEEDS.with(|seeds| seeds.borrow().get(&editor).copied())
 }
-pub(crate) fn measure_control(
+/// Measure a rendered control, including component probes in the native runner.
+pub fn measure_control(
     name: impl Into<String>,
     control: impl gpui::IntoElement,
 ) -> gpui::AnyElement {
@@ -300,7 +301,26 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
     {
         let _ = name;
         use gpui::IntoElement as _;
-        gpui::div().into_any_element()
+        measure_inside_placeholder().into_any_element()
+    }
+}
+
+#[cfg(any(test, not(feature = "gui-e2e")))]
+/// Production probes must not become flex items or introduce gaps.
+fn measure_inside_placeholder() -> gpui::Div {
+    use gpui::Styled as _;
+    gpui::div().absolute().size_0()
+}
+
+#[cfg(test)]
+mod measure_inside_tests {
+    #[test]
+    fn measure_inside_placeholder_is_out_of_flow() {
+        use gpui::Styled as _;
+        let mut placeholder = super::measure_inside_placeholder();
+        assert_eq!(placeholder.style().position, Some(gpui::Position::Absolute));
+        let mut zero = gpui::div().size_0();
+        assert_eq!(placeholder.style().size, zero.style().size);
     }
 }
 

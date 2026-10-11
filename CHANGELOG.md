@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Settings section headings use neutral secondary-label 12-reference-px semibold text; the frame, title bar and section separators use literal 1px `surface` boundaries instead of selection tint. Selected gpui-kit radios paint a centered contrasting dot rather than a checkbox tick, retaining the existing radio-group keyboard and accessibility behavior. The dot uses the bridge's primary foreground (dark on yellow), and production measurement placeholders stay out of flow so titlebar alignment is unchanged. (#1199, #1201)
 - Settings and Home Repositories / PRs / Issues now expose draggable vertical scrollbars on their existing scroll owners. Inspector message/files and Activity ranking gain the same affordance: automatic bars overlay content, while non-auto-hide macOS policies reserve a 16px lane. Scroll offsets, virtualized Home rows, wheel and keyboard navigation remain intact. (#1202)
 - Scrollbar review: Home Recent also has a draggable thumb; Inspector/Activity offsets are repository-session-owned, reopening Settings resets to the first controls, and native test guards restore in-memory zoom/language/theme plus the kit palette on unwind. (#1202)
 - Home's recent-repositories sidebar heading shares the navigator's 12px semibold secondary typography and 8px vertical padding, protecting descenders while truncating long localized text horizontally with an ellipsis and full-text tooltip instead of hard clipping. Sidebar width and recent-row behavior stay unchanged. (#1197)

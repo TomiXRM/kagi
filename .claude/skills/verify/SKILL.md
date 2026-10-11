@@ -69,6 +69,20 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
+`settings_quiet` measures inherited heading colour/size/weight and Metal pixels
+for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes
+and injected blue/purple accents; adjacent pixels enforce literal 1px width.
+`settings_radio_dot` renders the actual pinned Radio component and checks a
+symmetric contrast-preserving primary-foreground centre, surrounding accent
+and empty unchecked input fill in both themes at both zooms, with explicit
+Theme accent and blue/purple System accent (Dark Theme requires a dark dot).
+Public `e2e::measure_control` permits native component probes to reuse the app's
+bounds recorder; default builds retain its pass-through. Shared non-E2E
+`measure_inside` placeholders are absolute and zero-sized: the unit
+`measure_inside_placeholder_is_out_of_flow` prevents flex/gap layout changes.
+These renderer assertions are not real keyboard, VoiceOver or Tier B evidence.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \

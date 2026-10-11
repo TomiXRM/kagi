@@ -636,3 +636,172 @@ its flexible viewport more height; fixed composer (257px), Generate (21.5px),
 Commit (25px), desktop panel width and small-body AutoGrow oracles are unchanged.
 Recovery-test searches for the old list height, 36/52px chrome constants and
 header offsets found no additional obsolete recorded-header-height expectation.
+## Amendment — 2026-10-11: Home narrow-window containment (#1212)
+
+Home is an open dashboard with a secondary Recent navigator. Like PR detail,
+the content reader takes priority: reuse its 420-reference-px minimum, and
+narrow Recent from 300 to 120 reference px when the ordinary sidebar leaves
+less than that after Home's scaled 48-reference-px horizontal padding (matching
+the existing `px_6` rem geometry). Compute compact mode once against the actual
+sidebar width, including its test override, and pass it to repository rows. Keep Recent
+mounted and reachable rather than inventing a disclosure, focus owner or
+preference. Above the threshold, sidebar and centered 720-reference-px column
+retain their existing geometry. The column explicitly fits viewport minus
+sidebar rather than relying on percentage sizing against an indefinite flex
+parent.
+The 120-reference-px choice leaves a recognisable short-name navigator while
+returning 180 reference px to the primary content. Long names/paths ellipsize;
+the full path remains available through the row Tooltip and AX description.
+
+Open Folder stays first when actions wrap. The existing TabList retains full
+localized accessibility names and automatic arrow activation; its visible
+labels shrink with ellipsis before Refresh can clip. Compact repository rows
+reserve at least 40% for the name, truncate description and shrinking metadata,
+and keep the final Clone/Open action fixed. Existing theme roles, read/cache
+owners, keyboard navigation and Git write pipeline are unchanged. No new user
+strings or hand-made controls are introduced.
+
+The Home heading native scenario additionally checks narrow 940×660/167%
+EN/JA control containment and repository-name priority, with 1392×660/100%
+sidebar and column widths asserted against the recorded pre-fix native widths.
+Tier B: Home, JA, Apple Dark, 940×660/167%.
+
+Native pre-fix evidence: at 940×660/167% EN, SSH action bounds were
+`x=706, width=338` (right edge 1044), outside the 940px viewport.
+The unchanged 1392×660/100% renderer recorded a 269px sidebar interior
+(270px frame minus its literal 1px border) and 648px centered column;
+the regression asserts equality with those recorded widths in both languages.
+
+Afterward, the scoped `home_heading` scenario passes: both EN and JA narrow
+repository rows measure 687.5px, with a 301.5px name column (43.85%).
+Folder, SSH, all three pane cells, Refresh, search, Recent and Clone bounds
+remain inside the window. Widening restores the exact recorded 269px/648px
+sidebar-interior/column widths. `cargo clippy -q -p kagi` reports no warnings
+in changed files; existing unrelated warnings remain. The scenario uses
+`GlobalSettings::capture()` for in-memory theme/language/zoom/toolbar restoration
+on Drop, in addition to persisted-key restoration.
+
+Review correction: date can shrink and ellipsize once badges have exhausted their
+available width, rather than remaining an unshrinkable sibling of Clone. A
+760×660/167% row-containment oracle failed with the old fixed date: Clone's right
+edge was 739.5px against its row's 724px right edge. This additional cell checks
+Clone against its row, not whole-screen containment; the complete-control
+viewport oracle remains 940×660/167% EN/JA.
+The scoped `home_` native suite passes all 11 scenarios after correction,
+including the additional narrower row in EN/JA (507.5px row, 212px name
+column, 41.77%). Existing Home reads, keyboard paging, list placement and
+incomplete-search scenarios remain green.
+## Amendment — 2026-10-11: discoverable status-bar panel controls (#1207)
+
+The dense footer retains Terminal and Operation Log as its two bottom-panel
+toggles, not inspector controls. Both reuse the header's named
+`keyboard_nav::focusable` contract: individual Tab stops after content,
+Enter/Space activation and the existing fixed accent focus-visible ring.
+Localized stable Button names and state-dependent Show/Hide tooltips are
+provided in EN/JA. `aria_toggled` maps Button's pressed state through the
+pinned GPUI/AccessKit API, which has no `aria_pressed` setter.
+Terminal's Hide tooltip advertises Cmd+J only while Terminal is active:
+the shortcut toggles the panel without selecting a tab or starting Terminal,
+so Show has no Cmd+J hint. Operation Log advertises focused Enter/Space
+because no dedicated shortcut exists. The existing Cmd+J binding is unchanged.
+
+The footer keeps its 22-reference-px height, with centered 16-reference-px
+icons in 24-reference-px-wide targets and neutral `surface` hover. Resting
+labels use existing primary/muted roles. No disabled/loading/error state is
+introduced: these controls only select or hide the existing panel. Existing
+lazy startup, panel ownership and logging remain authoritative. Keyboard
+Terminal activation restores the status button's focus after lazy startup;
+pointer activation retains the PTY focus. Native renderer/attribute and
+keyboard assertions are not live VoiceOver or Tier B evidence.
+
+Native `status_controls` failed before the fix with no recorded Terminal AX
+name (`None`, expected `Terminal`). It now passes Apple Light/Dark × EN/JA ×
+100%/167% at 600×660: named Button/pressed attribute inputs, state-dependent
+tooltips, measured content-box containment in the footer, adjacent forward
+Tab stops and symmetric reverse traversal, Enter/Space opening/closing the
+corresponding panel exactly once, and pointer Terminal activation giving the
+terminal view's focus handle the focus.
+The bounds oracle accounts for the fixed 2px ring and native half-pixel
+snapping. The shared presentation Drop guard restores disk keys and in-memory
+language/zoom/theme/kit palette even on unwind; toolbar display is untouched.
+## Amendment — 2026-10-11: bounded toolbar overflow detail (#1217)
+
+The dense transient command menu keeps gpui-kit Popover/PopupMenu navigation,
+focus and activation ownership. Labels and action-bound shortcuts share the
+first line; the shortcut column does not shrink. The label column can shrink
+to zero and its secondary unavailable reason truncates within that column.
+Full reasons remain in AX descriptions and the ordinary refusal footer.
+The menu width is bounded by the current viewport minus a 16 logical-pixel
+edge margin on each side; resizing an open menu refreshes that limit.
+The trigger has a tooltip only while closed. Japanese toolbar guard prose
+is translated without English fallback clauses; ADR-0048 domain words remain
+English (`upstream`, `commit`, `branch`, `pull`, `push`, `undo`, `redo`).
+English messages are unchanged.
+Rest, hover, disabled explanation and focus-visible roles retain the #1210
+contract. This does not alter Git planning, logging or unavailable activation.
+Tier B integration target: Apple Light JA 940×660 at 167%, both toolbar modes,
+open » and inspect shortcut containment and absence of the trigger tooltip.
+
+Native `toolbar_overflow` failed before the layout correction: a row starting
+at Y=187 placed its shortcut at Y=201.5, centered across the reason instead
+of on the first line. The same assertion passes afterward, along with actual
+popup/row/window shortcut containment, viewport width cap, Japanese drawn AX
+reason prose and no measured tooltip after hovering the open trigger for one
+second. The matrix retains EN/JA, both display modes and 940×660@167% plus
+1392×660@100%, with the existing Drop guard restoring global presentation.
+This first-line failure is regression evidence, not a claim that Tier A
+reproduced the issue's photographed glyph clipping; Tier B remains integration
+owner evidence.
+
+Review correction: Japanese reason tests reject English prose fragments rather
+than domain vocabulary. The native tooltip assertion has a measured closed-state
+positive control before checking its absence while open. A native resize from
+940 to 480 logical pixels while open exercises the viewport-dependent 448px cap,
+then restores the original width for the existing activation/focus coverage.
+PopupMenu applies `max_w` to its inner items, not its bordered outer frame.
+The cap subtracts the two literal 1px borders so the whole measured menu
+fits within the viewport limit.
+The custom row also has an explicit content-width ceiling that subtracts
+the kit's rem-scaled `p_1` and fixed 8px item side padding: its intrinsic
+wrapper otherwise allowed the newly restored long JA domain-word reason to
+push a shortcut 2px outside the measured 500px menu. The strengthened native
+scenario failed on that containment and the 480px shrink cap before these
+corrections, and passes with both applied. Closed hover records a tooltip;
+open hover records none in both languages and presentation modes.
+## Amendment — 2026-10-11: Home repository reveal and actions (#1203, #1204)
+
+Home remains an open-density list with single-line ellipsized descriptions.
+The cached entry owns sanitized SharedString text reused by the visible label,
+full-text Tooltip and row `aria_description`, preserving Japanese and literal
+braces without converting descriptions on every repaint.
+
+Clone/Open use the shared `KagiButton` Secondary (Default-outline) at 22
+reference px, following macOS small-push-button density rather than the quiet
+metadata chip. Its visible localized EN/JA label also names its Button AX node.
+Private/Fork metadata remains `text_sub` on `surface`; no palette changes.
+gpui-kit owns border, hover and pressed styles; RowList owns keyboard focus,
+Enter/Space and the single list Tab stop. The button is not another Tab stop,
+and child clicks stop propagation before invoking the existing pick once.
+Loading/cloning continues through that existing pick/card owner; no Git-write,
+logging or confirmation path changes. This is control hierarchy, not AppKit
+material parity. Native renderer/recorder coverage and Tier B are distinct.
+
+Native `home_repository_affordances` restores in-memory presentation via the
+shared Drop guard and `GlobalSettings::capture()`. Restoring the old action chip
+failed its measured height (17.5px versus 22px at 100%); removing the description
+reveal and its observation failed with no recorded description. The description helper
+sets `aria_description` and records that same argument on one call path; this is
+an assignment-path assertion, not readback of GPUI's accessibility tree. Each
+matrix cell clears old observations and consumes freshly built tooltip text.
+The fixed matrix checks full EN/JA/braces text supplied on native hover,
+constructor-supplied Button role/name, scaled height, rendered border distinct
+from fill and metadata, and focused-row Space opening the existing clone card.
+Attribute recorders do
+not establish live VoiceOver delivery. Tier B: Home Repositories, Apple Light EN,
+hover a truncated description and inspect the trailing action.
+
+Integration with #1203/#1204 retains cached `Rc<RepoListing>` descriptions and
+the nonshrinking Secondary action. Repository row state/compact presentation
+are grouped at the renderer boundary, following the existing pane-cell tuple
+convention rather than adding a Clippy suppression. The merged scoped `home_`
+suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.

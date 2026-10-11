@@ -323,6 +323,12 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                 });
                 if let Some(bounds) = overflow {
                     contained(viewport, bounds, "overflow within window");
+                    e2e::clear_control_bounds(win.window_id(), "tb-overflow-tooltip");
+                    hover_overflow(cx, win, bounds.center());
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "tb-overflow-tooltip").is_some(),
+                        "closed overflow tooltip positive control"
+                    );
                     cx.update_window(win, |_, window, cx| {
                         app.read(cx).root_focus.clone().unwrap().focus(window, cx);
                     })
@@ -373,6 +379,71 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                             !visible[index],
                             "{language}/{display:?}/{id}: exact overflow membership"
                         );
+                    }
+                    for index in 0..IDS.len() {
+                        if let Some(shortcut) = e2e::control_bounds(
+                            win.window_id(),
+                            &format!("tb-overflow-shortcut-{index}"),
+                        ) {
+                            let row = e2e::control_bounds(
+                                win.window_id(),
+                                &format!("tb-overflow-item-{index}"),
+                            )
+                            .unwrap();
+                            contained(viewport, shortcut, "overflow shortcut inside window");
+                            contained(
+                                e2e::control_bounds(win.window_id(), "tb-overflow-menu").unwrap(),
+                                shortcut,
+                                "shortcut inside actual popup menu",
+                            );
+                            contained(row, shortcut, "overflow shortcut inside its row");
+                            assert!(
+                                shortcut.top() <= row.top() + px(1.),
+                                "shortcut must occupy the label's first line: {row:?} / {shortcut:?}"
+                            );
+                        }
+                    }
+                    let menu_bounds =
+                        e2e::control_bounds(win.window_id(), "tb-overflow-menu").unwrap();
+                    assert!(menu_bounds.size.width <= px(width - 32.));
+                    if language == "ja" {
+                        for id in [
+                            "tb-pull", "tb-push", "tb-stash", "tb-pop", "tb-undo", "tb-redo",
+                        ] {
+                            if let Some(reason) = e2e::toolbar_description(id) {
+                                for fragment in [
+                                    "nothing to",
+                                    "is clean",
+                                    "configured",
+                                    "is empty",
+                                    "in progress",
+                                ] {
+                                    assert!(!reason.contains(fragment), "{id}: {reason}");
+                                }
+                            }
+                        }
+                    }
+                    e2e::clear_control_bounds(win.window_id(), "tb-overflow-tooltip");
+                    hover_overflow(cx, win, bounds.center());
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "tb-overflow-tooltip").is_none(),
+                        "open overflow must not render its trigger tooltip"
+                    );
+                    resize_overflow_window(cx, win, 480.);
+                    for _ in 0..4 {
+                        frame(cx, win);
+                    }
+                    assert!(
+                        e2e::control_bounds(win.window_id(), "tb-overflow-menu")
+                            .unwrap()
+                            .size
+                            .width
+                            <= px(448.),
+                        "open menu must refresh its cap after shrinking to 480px"
+                    );
+                    resize_overflow_window(cx, win, width);
+                    for _ in 0..4 {
+                        frame(cx, win);
                     }
                     assert!(
                         e2e::control_bounds(win.window_id(), "tb-overflow-shortcut-5").is_some(),
@@ -603,4 +674,47 @@ fn assert_text_context_available(cx: &mut VisualTestAppContext) {
     cx.update_window(win, |_, window, _| window.remove_window())
         .unwrap();
     cx.run_until_parked();
+}
+
+fn hover_overflow(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+) {
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: gpui::Modifiers::none(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    frame(cx, win);
+}
+
+fn resize_overflow_window(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f32) {
+    let wanted = size(px(width), px(660.));
+    cx.update_window(win, |_, window, _| window.resize(wanted))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        crate::macos::drain_native_events();
+        cx.run_until_parked();
+        if cx
+            .update_window(win, |_, window, _| window.viewport_size())
+            .unwrap()
+            == wanted
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native resize timed out"
+        );
+    }
 }

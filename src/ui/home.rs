@@ -174,14 +174,23 @@ impl KagiApp {
     /// workspace compositor.
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_home_github(window, cx);
+        let normal_sidebar = sidebar_width();
+        let padding = theme::scaled_px(48.);
+        let compact = window.viewport_size().width - normal_sidebar - padding
+            < theme::scaled_px(super::pr_layout::CENTER_MIN);
+        let sidebar = if compact {
+            theme::scaled_px(120.).min((window.viewport_size().width - padding).max(px(0.)))
+        } else {
+            normal_sidebar
+        };
         let body = div()
             .id("home-tab-panel")
             .flex()
             .flex_row()
             .flex_1()
             .min_h(px(0.))
-            .child(self.render_home_sidebar(cx))
-            .child(self.render_home_main(window, cx));
+            .child(self.render_home_sidebar(sidebar, cx))
+            .child(self.render_home_main(sidebar, compact, window, cx));
         // Home's content is the Home cell's panel while the strip is drawn
         // (#983); with no tab there is no strip, so no tab list.
         let body = if !self.tab_strip_visible() {
@@ -269,7 +278,7 @@ impl KagiApp {
         self.attach_active_modal_key_routing(content, false, cx)
     }
 
-    fn render_home_sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_home_sidebar(&mut self, width: gpui::Pixels, cx: &mut Context<Self>) -> AnyElement {
         let recent = super::tabs::recent_repos();
         let mut list = div().flex().flex_col().gap_1();
         if recent.is_empty() {
@@ -294,7 +303,7 @@ impl KagiApp {
             .flex()
             .flex_col()
             .gap_2()
-            .w(sidebar_width())
+            .w(width)
             .flex_shrink_0()
             .h_full()
             .p_3()
@@ -347,7 +356,13 @@ impl KagiApp {
             .into_any_element()
     }
 
-    fn render_home_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_home_main(
+        &mut self,
+        sidebar: gpui::Pixels,
+        compact: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let open_folder = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
             app.pick_repository(window, cx);
         });
@@ -358,6 +373,7 @@ impl KagiApp {
             .flex()
             .flex_row()
             .items_center()
+            .flex_wrap()
             .gap_2()
             .child(super::e2e::measure_control(
                 "home-open-folder",
@@ -386,8 +402,11 @@ impl KagiApp {
                     .flex()
                     .flex_col()
                     .gap_4()
+                    .relative()
+                    .child(super::e2e::measure_inside("home-content-column"))
                     .mx_auto()
-                    .w_full()
+                    .w((window.viewport_size().width - sidebar).max(px(0.)))
+                    .min_w(px(0.))
                     .h_full()
                     .max_w(theme::scaled_px(MAIN_MAX_W))
                     .px_6()
@@ -400,7 +419,7 @@ impl KagiApp {
                             .child(SharedString::from(Msg::HomeTitle.t())),
                     )
                     .child(actions.flex_shrink_0())
-                    .child(self.render_home_github(window, cx)),
+                    .child(self.render_home_github(compact, window, cx)),
             )
             .into_any_element()
     }
@@ -413,13 +432,21 @@ fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoEl
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
+    let name = SharedString::from(name);
     let full = path.display().to_string();
+    let full = SharedString::from(full);
+    let tooltip = full.clone();
     let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
         app.open_repository(path.clone(), cx);
         cx.notify();
     });
     div()
         .id(("home-recent", i))
+        .aria_label(name.clone())
+        .aria_description(full.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
         .flex()
         .flex_col()
         .px_2()
@@ -433,7 +460,7 @@ fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoEl
                 .text_sm()
                 .text_color(rgb(theme().text_main))
                 .truncate()
-                .child(SharedString::from(name)),
+                .child(name),
         )
         .child(
             div()

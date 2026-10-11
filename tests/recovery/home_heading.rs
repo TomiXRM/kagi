@@ -10,16 +10,19 @@ use kagi::ui::{
 };
 
 pub fn scenario_home_heading(cx: &mut VisualTestAppContext) {
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
     let _saved =
         crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang", "theme", "ui_zoom"]);
     let previous = (i18n::lang(), theme::theme().slug.to_string(), theme::zoom());
     let _gh = OfflineGh::install();
     let fixture = build_fixture();
+    kagi::ui::tabs::record_recent_repo(fixture.path());
     let (app, window) = mount(cx, fixture.path());
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_home_tab(window, cx));
     })
     .unwrap();
+    check_narrow(cx, &app, window);
     for preset in ["apple-light", "apple-dark"] {
         theme::set_active(preset);
         for lang in [Lang::Ja, Lang::En] {
@@ -100,4 +103,113 @@ pub fn scenario_home_heading(cx: &mut VisualTestAppContext) {
     theme::set_active(&previous.1);
     theme::set_zoom(previous.2);
     unmount(cx, app, window);
+}
+
+fn check_narrow(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+) {
+    use kagi_git::github_repos::{OwnerRepos, RepoList, RepoListing};
+    crate::home_github::wait_for(cx, app, "offline Home settles", crate::home_github::settled);
+    app.update(cx, |app, cx| {
+        app.home_github.repos = kagi::ui::home_github::GithubRepos::Loaded {
+            sections: vec![OwnerRepos {
+                owner: None,
+                list: Ok(RepoList {
+                    truncated: false,
+                    repos: vec![RepoListing {
+                        name_with_owner: "acme/gpui-component".into(),
+                        host: "github.com".into(),
+                        is_private: true,
+                        is_fork: true,
+                        description: "Long repository description that yields to its name".into(),
+                        updated_at: "2026-10-11T00:00:00Z".into(),
+                    }],
+                }),
+            }],
+            orgs_error: None,
+        };
+        cx.notify();
+    });
+    theme::set_active("apple-dark");
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        for (width, zoom) in [(1392., 1.), (940., 1.67), (760., 1.67), (1392., 1.)] {
+            theme::set_zoom(zoom);
+            let wanted = gpui::size(gpui::px(width), gpui::px(660.));
+            cx.update_window(window, |_, window, _| window.resize(wanted))
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                crate::macos::drain_native_events();
+                cx.run_until_parked();
+                let actual = cx
+                    .update_window(window, |_, window, cx| {
+                        window.refresh();
+                        window.draw(cx).clear();
+                        window.viewport_size()
+                    })
+                    .unwrap();
+                if actual == wanted {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "native Home resize timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let viewport = gpui::Bounds::new(gpui::point(gpui::px(0.), gpui::px(0.)), wanted);
+            for id in [
+                "home-open-folder",
+                "home-remote",
+                "home-pane-repos",
+                "home-pane-prs",
+                "home-pane-issues",
+                "home-github-refresh",
+                "home-search",
+                "home-recent-0",
+            ] {
+                let bounds = e2e::control_bounds(window.window_id(), id)
+                    .unwrap_or_else(|| panic!("missing {id}"));
+                if width >= 940. {
+                    crate::recovery_layout::contained(viewport, bounds, id);
+                }
+            }
+            let action_id = format!("home-gh-acme/gpui-component:{}", Msg::HomeGithubClone.t());
+            let action = e2e::control_bounds(window.window_id(), &action_id).unwrap();
+            if width >= 940. {
+                crate::recovery_layout::contained(viewport, action, &action_id);
+            }
+            if zoom > 1. {
+                let row =
+                    e2e::control_bounds(window.window_id(), "home-gh-acme/gpui-component").unwrap();
+                crate::recovery_layout::contained(row, action, &action_id);
+                let name = e2e::control_bounds(
+                    window.window_id(),
+                    "home-gh-acme/gpui-component-name-column",
+                )
+                .unwrap();
+                assert!(
+                    name.size.width >= row.size.width * 0.4,
+                    "name priority: {name:?} / {row:?}"
+                );
+                eprintln!("[gui-e2e] home_narrow {lang:?}: row={row:?} name={name:?}");
+            }
+            if zoom == 1. {
+                let sidebar =
+                    e2e::control_bounds(window.window_id(), "home-sidebar-bounds").unwrap();
+                let column =
+                    e2e::control_bounds(window.window_id(), "home-content-column").unwrap();
+                eprintln!(
+                    "[gui-e2e] home_narrow wide {lang:?}: sidebar={sidebar:?} column={column:?}"
+                );
+                // Recorded on the unchanged native 1392px/100% layout:
+                // the sidebar probe excludes its literal 1px right border.
+                assert_eq!(sidebar.size.width, gpui::px(269.));
+                assert_eq!(column.size.width, gpui::px(648.));
+            }
+        }
+    }
 }

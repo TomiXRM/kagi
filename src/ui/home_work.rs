@@ -430,6 +430,8 @@ impl KagiApp {
             .flex()
             .flex_row()
             .items_center()
+            .min_w(px(0.))
+            .flex_shrink(1.)
             .gap_1()
             .p(theme::scaled_px(3.))
             .rounded_lg()
@@ -509,6 +511,7 @@ fn pane_cell(
         .cell(slot, &name, div().id(id))
         .flex()
         .flex_row()
+        .flex_shrink(1.)
         .items_center()
         .gap_2()
         .px(super::keyboard_nav::inset(12.))
@@ -530,7 +533,11 @@ fn pane_cell(
                 HomePane::Prs => "home-pane-prs-label",
                 HomePane::Issues => "home-pane-issues-label",
             },
-            SharedString::from(label),
+            div()
+                .min_w(px(0.))
+                .flex_shrink(1.)
+                .truncate()
+                .child(SharedString::from(label)),
         ))
         .children(badge)
         .min_w(px(0.));

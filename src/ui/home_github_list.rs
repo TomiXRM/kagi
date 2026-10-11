@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use super::button_style::{ButtonRole, KagiButton};
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
 use gpui_component::input::{Input, InputState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
@@ -48,7 +50,7 @@ pub(super) struct ListKey {
 pub(super) enum HomeItem {
     Heading(String),
     Note(String),
-    Repo(RepoListing, &'static str),
+    Repo(Rc<RepoListing>, &'static str, SharedString),
     /// Something is still being read: a spinner row with its label and the
     /// spinner's id.
     Loading(&'static str, &'static str),
@@ -71,6 +73,7 @@ impl KagiApp {
     pub(super) fn render_github_list(
         &mut self,
         query: String,
+        compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -136,7 +139,9 @@ impl KagiApp {
                 .enumerate()
                 .map(|(ix, item)| {
                     let key = match item {
-                        HomeItem::Repo(listing, _) => format!("repo:{}", listing.name_with_owner),
+                        HomeItem::Repo(listing, _, _) => {
+                            format!("repo:{}", listing.name_with_owner)
+                        }
                         HomeItem::Work(kind, work, _) => {
                             format!("{kind:?}:{}#{}", work.name_with_owner, work.number)
                         }
@@ -164,7 +169,7 @@ impl KagiApp {
             cx,
         ));
         let list_rows = rows.clone();
-        let list = gpui::list(state.clone(), move |i, _window, _cx| match items.get(i) {
+        let list = gpui::list(state.clone(), move |i, _window, cx| match items.get(i) {
             Some(HomeItem::Heading(title)) => section_heading(title).into_any_element(),
             Some(HomeItem::Note(text)) => note_row(text),
             Some(HomeItem::OrgsFailed(text)) => {
@@ -208,14 +213,16 @@ impl KagiApp {
                     .text_color(rgb(theme().color_blocker))
                     .child(safe_text(text)),
             ),
-            Some(HomeItem::Repo(listing, state)) => super::e2e::measure_control(
+            Some(HomeItem::Repo(listing, state, description)) => super::e2e::measure_control(
                 format!("home-gh-{}", listing.name_with_owner),
                 github_row(
                     listing.clone(),
-                    state,
+                    (state, compact),
                     &rows,
                     positions[i].unwrap_or(0),
                     &app,
+                    description.clone(),
+                    cx,
                 ),
             ),
             None => div().into_any_element(),
@@ -340,7 +347,7 @@ fn github_items(
                 } else {
                     Msg::HomeGithubClone.t()
                 };
-                HomeItem::Repo(l.clone(), state)
+                HomeItem::Repo(Rc::new(l.clone()), state, safe_text(&l.description))
             })
             .collect();
         if rows.is_empty() && !query.is_empty() && !list.truncated {
@@ -380,6 +387,8 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
     // its `size_full` did not resolve, leaving the text area zero-wide —
     // typed characters and the placeholder were drawn into nothing.
     div()
+        .relative()
+        .child(super::e2e::measure_inside("home-search"))
         .flex()
         .flex_row()
         .items_center()
@@ -469,19 +478,23 @@ pub(super) fn muted_inline(text: &str) -> impl IntoElement {
 }
 
 /// One repository: its name over its description on the left; on the right
-/// the last update, private / fork marks and what a click does, as a chip.
+/// the last update, private / fork marks and a small Secondary push button.
 /// It is row `at` of `rows`: ↑/↓ move from it, Tab reaches it as the list's
 /// stop.
 fn github_row(
-    listing: RepoListing,
-    state: &'static str,
+    listing: Rc<RepoListing>,
+    presentation: (&'static str, bool),
     rows: &super::keyboard_nav::RowList,
     at: usize,
     app: &Entity<KagiApp>,
+    full_description: SharedString,
+    cx: &gpui::App,
 ) -> AnyElement {
+    let (state, compact) = presentation;
     let chip = |text: &str| {
         div()
-            .flex_shrink_0()
+            .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
+            .when(!compact, |el| el.flex_shrink_0())
             .px_2()
             .rounded_md()
             .bg(rgb(theme().surface))
@@ -494,40 +507,91 @@ fn github_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .flex_shrink_0();
+        .when(compact, |el| {
+            el.min_w(px(0.)).flex_shrink(1.).max_w(gpui::relative(0.5))
+        })
+        .when(!compact, |el| el.flex_shrink_0());
     if let Some(day) = listing.updated_at.get(..10) {
         meta = meta.child(
             div()
                 .text_sm()
+                .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(day.to_string())),
         );
     }
     if listing.is_private {
-        meta = meta.child(chip(Msg::HomeGithubPrivate.t()));
+        meta = meta.child(super::e2e::measure_control(
+            format!("home-gh-private-{}", listing.name_with_owner),
+            chip(Msg::HomeGithubPrivate.t()),
+        ));
     }
     if listing.is_fork {
         meta = meta.child(chip(Msg::HomeGithubFork.t()));
     }
+    let button_app = app.clone();
+    let button_listing = listing.clone();
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_home_repository_action(&listing.name_with_owner, state);
     meta = meta.child(super::e2e::measure_control(
         format!("home-gh-{}:{state}", listing.name_with_owner),
-        chip(state).text_color(rgb(theme().color_branch)),
+        KagiButton::styled(
+            SharedString::from(format!("home-gh-action-{}", listing.name_with_owner)),
+            state,
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .h(super::theme::scaled_px(22.))
+        .flex_shrink_0()
+        .tab_stop(false)
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            button_app.update(cx, |app, cx| {
+                app.home_github_pick((*button_listing).clone(), cx);
+                app.focus_after_pick(window, cx);
+            });
+        }),
     ));
-    let description = (!listing.description.is_empty()).then(|| {
+    let tooltip_description = full_description.clone();
+    #[cfg(feature = "gui-e2e")]
+    let tooltip_name = listing.name_with_owner.clone();
+    let description = (!full_description.is_empty()).then(|| {
         div()
+            .id(SharedString::from(format!(
+                "home-gh-description-{}",
+                listing.name_with_owner
+            )))
             .text_sm()
             .text_color(rgb(theme().text_muted))
             .truncate()
-            .child(safe_text(&listing.description))
+            .tooltip(move |window, cx| {
+                #[cfg(feature = "gui-e2e")]
+                super::e2e::record_home_repository_description(
+                    &format!("tooltip:{tooltip_name}"),
+                    &tooltip_description,
+                );
+                Tooltip::new(tooltip_description.clone()).build(window, cx)
+            })
+            .child(full_description.clone())
+            .child(super::e2e::measure_inside(format!(
+                "home-gh-description-{}",
+                listing.name_with_owner
+            )))
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
+    #[cfg(feature = "gui-e2e")]
+    let column_id = format!("home-gh-{}-name-column", listing.name_with_owner);
+    #[cfg(not(feature = "gui-e2e"))]
+    let column_id = "home-repository-name-column";
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
     rows.row(
         at,
         super::list_a11y::list_item(HOME_LIST, div().id(id), at, rows.len(), label),
     )
+    .map(|row| repository_row_description(row, &listing.name_with_owner, full_description))
     .w_full()
     .flex()
     .flex_row()
@@ -540,7 +604,7 @@ fn github_row(
     .hover(|s| s.bg(rgb(theme().surface)))
     .on_click(move |_, window, cx| {
         app.update(cx, |app, cx| {
-            app.home_github_pick(listing.clone(), cx);
+            app.home_github_pick((*listing).clone(), cx);
             app.focus_after_pick(window, cx);
         });
     })
@@ -550,6 +614,9 @@ fn github_row(
             .flex_col()
             .flex_1()
             .min_w(px(0.))
+            .when(compact, |el| el.min_w(gpui::relative(0.45)))
+            .relative()
+            .child(super::e2e::measure_inside(column_id))
             .child(
                 div()
                     .text_base()
@@ -590,5 +657,25 @@ impl KagiApp {
     /// Read only the pull request / issue lists again, as a Refresh does.
     pub fn reload_home_work_for_e2e(&mut self, cx: &mut Context<Self>) {
         self.reload_home_work(cx);
+    }
+}
+
+/// Keep the description assignment and Tier A observation on one call path.
+fn repository_row_description(
+    row: gpui::Stateful<gpui::Div>,
+    name: &str,
+    description: SharedString,
+) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_home_repository_description(name, &description);
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = name;
+    row.aria_description(description)
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn take_home_repository_description_for_e2e(&self, name: &str) -> Option<String> {
+        super::e2e::take_home_repository_description(name)
     }
 }

@@ -532,8 +532,9 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }
 
-/// ADR-0200 retention: repository departure revokes request publication, not
-/// the owner's PR pane or draft. Activation revalidates its local head.
+/// ADR-0200 retention: activation's newer GitHub L1 request supersedes the
+/// departed request without disposing of the owner's PR pane or draft.
+/// Its accepted list answer triggers the retained pane's local PR-ref fetch.
 pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();
@@ -600,11 +601,8 @@ pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
     git(&repo_a, &["checkout", "-q", "main"]);
     git(&repo_a, &["push", "-q", "origin", "+feat:refs/pull/7/head"]);
     let refreshed = fixture_pr(&repo_a);
-    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(kagi_git::github::PrListSnapshot {
-        base_repo: refreshed.base_repo.clone(),
-        prs: vec![refreshed],
-        next_cursor: None,
-    })));
+    let (activation_task, activation) = crate::evidence_support::deferred(cx);
+    kagi::ui::e2e::queue_github_pr_fetch(activation_task);
     let fresh_head = kagi_git::Backend::open(&repo_a)
         .unwrap()
         .snapshot(10_000)
@@ -616,6 +614,13 @@ pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
         .target
         .clone();
 
+    let retained_rows = kagi.read_with(cx, |app, _| {
+        app.ui[&app.tabs[0].session]
+            .github_prs
+            .iter()
+            .map(|pr| pr.key())
+            .collect::<Vec<_>>()
+    });
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx);
         assert_retained_pr(app, "immediate activation");
@@ -625,9 +630,43 @@ pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
         );
         assert_eq!(app.pr_mode().unwrap().tabs[0].selected_file, Some(0));
     });
+    let mut stale = crate::cleanup_publish_owner::pr(999, "feat");
+    stale.state = kagi_domain::github::IssueState::Open;
+    stale.title = "superseded departed request must not publish".into();
+    departed.send(Ok(kagi_git::github::PrListSnapshot {
+        base_repo: stale.base_repo.clone(),
+        prs: vec![stale],
+        next_cursor: None,
+    }));
+    cx.run_until_parked();
+    kagi.read_with(cx, |app, _| {
+        assert!(
+            app.ui().github_prs_loading,
+            "superseded completion must not clear the outstanding activation request's latch"
+        );
+        assert_eq!(
+            app.ui()
+                .github_prs
+                .iter()
+                .map(|pr| pr.key())
+                .collect::<Vec<_>>(),
+            retained_rows,
+            "superseded departed request must not replace retained rows"
+        );
+        assert_retained_pr(app, "rejected superseded publication");
+        assert!(
+            std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
+            "superseded request cannot replace the retained conversation pane owner"
+        );
+    });
+    activation.send(Ok(kagi_git::github::PrListSnapshot {
+        base_repo: refreshed.base_repo.clone(),
+        prs: vec![refreshed],
+        next_cursor: None,
+    }));
     cx.run_until_parked();
     kagi.update(cx, |app, _| {
-        assert_retained_pr(app, "accepted revalidation");
+        assert_retained_pr(app, "accepted activation L1 refresh");
         assert!(
             std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
             "head revalidation retains the same conversation pane owner"
@@ -636,11 +675,11 @@ pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
         let head = &app.pr_mode().unwrap().tabs[0].head;
         assert_ne!(
             head, &old_head,
-            "activation must refresh changed local head evidence"
+            "activation's accepted GitHub L1 refresh must fetch changed local head evidence"
         );
         assert_eq!(
             head, &fresh_head,
-            "pane head matches the accepted repository read"
+            "pane head matches the PR-ref fetch triggered by the activation L1 answer"
         );
         assert_eq!(app.pr_mode().unwrap().tabs[0].pr.head_sha, fresh_head.0);
     });
@@ -651,31 +690,6 @@ pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
         "activation accepted the refreshed Open row"
     );
     assert_eq!(accepted[0].head_sha, fresh_head.0);
-    let mut stale = crate::cleanup_publish_owner::pr(999, "feat");
-    stale.state = kagi_domain::github::IssueState::Open;
-    stale.title = "departed request must not publish".into();
-    departed.send(Ok(kagi_git::github::PrListSnapshot {
-        base_repo: stale.base_repo.clone(),
-        prs: vec![stale],
-        next_cursor: None,
-    }));
-    cx.run_until_parked();
-    kagi.read_with(cx, |app, _| {
-        assert_eq!(
-            app.ui()
-                .github_prs
-                .iter()
-                .map(|pr| pr.key())
-                .collect::<Vec<_>>(),
-            accepted.iter().map(|pr| pr.key()).collect::<Vec<_>>(),
-            "departed visit cannot replace the new visit's accepted PR rows"
-        );
-        assert_retained_pr(app, "rejected departed publication");
-        assert!(
-            std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
-            "departed request cannot replace the retained conversation pane owner"
-        );
-    });
 
     unmount(cx, kagi, window);
     eprintln!("[gui-e2e] PASS pr_mode_retained_on_activation");

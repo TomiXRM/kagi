@@ -357,9 +357,12 @@ Operation Log panel への追加を同時に行い、panel の自動表示と fo
 のみ current visit に限定する（#992 review 4175461885）。ADR-0200 の
 retention 契約（#1119）では activation は PR mode・predicate・accepted rows・
 opened panes・draft を保持し、旧 visit/request の publication 権だけを失効する。
-新 visit の activation read は retained pane の head を revalidate する。
+新 visit の `enter_tab` → `refresh_github_prs` による GitHub L1 refresh が
+`sync_open_pr_tabs` → `reload_moved_pr_tabs` → `fetch_pr_for_open` を通して
+retained pane の head を再取得する（repository read の pane revalidation ではない）。
 旧 visit の完了は新 fetch の loading latch と data を触らず、もし新 visit の
-fetch が走っておらず head が未読なら `fetch_pr_for_open` で一度だけ再開する。
+fetch が走っておらず head が未読なら `fetch_pr_for_open` で一度だけ再開する
+（#992 review 4175505337）。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

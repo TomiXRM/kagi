@@ -398,10 +398,13 @@ pub fn scenario_coauthor_menu_under_conflict(cx: &mut VisualTestAppContext) {
         e2e::open_local_panel_no_inputs(app, repo.clone(), cx);
     });
     cx.run_until_parked();
-    app.update(cx, |app, cx| {
-        let panel = app.ui().commit_panel.clone().expect("Commit Panel");
-        panel.update(cx, |panel, cx| panel.toggle_coauthor_menu(cx));
-    });
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            let panel = app.ui().commit_panel.clone().expect("Commit Panel");
+            panel.update(cx, |panel, cx| panel.toggle_coauthor_menu(window, cx));
+        });
+    })
+    .unwrap();
     cx.run_until_parked();
     assert!(
         cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)),

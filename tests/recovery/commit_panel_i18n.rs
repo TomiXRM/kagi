@@ -144,7 +144,11 @@ fn check_captions(locale: &str, zoom: f32) {
         );
         assert_eq!(
             e2e::commit_panel_labels::accessible_role(id),
-            Some(gpui::Role::Button)
+            Some(if id == "cp-view-list" || id == "cp-view-tree" {
+                gpui::Role::Tab
+            } else {
+                gpui::Role::Button
+            })
         );
     }
     assert_eq!(

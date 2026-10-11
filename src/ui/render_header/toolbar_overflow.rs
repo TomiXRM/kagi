@@ -30,12 +30,15 @@ pub(super) type StyleKey = (bool, i18n::Lang, u32);
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
-    widths: [f32; 14],
+    widths: [f32; 16],
     key: Option<StyleKey>,
     last_hidden: u16,
 }
 
 impl Layout {
+    pub(super) fn identity_width(&self, key: StyleKey) -> f32 {
+        (self.widths[14] + self.widths[15] + 24.) * f32::from_bits(key.2)
+    }
     pub(super) fn measure(&mut self, index: Option<usize>, width: f32, key: StyleKey) -> bool {
         let changed = self.key != Some(key);
         if changed {
@@ -61,12 +64,20 @@ impl Layout {
             .iter()
             .enumerate()
             .fold(0, |pending, (i, width)| {
-                pending | if *width == 0. { present & (1 << i) } else { 0 }
+                pending
+                    | if *width == 0. && i < IDS.len() {
+                        present & (1 << i)
+                    } else {
+                        0
+                    }
             })
     }
 
     pub(super) fn hidden(&mut self, present: u16, selected: usize, key: StyleKey) -> u16 {
-        if self.available == 0. || self.pending(present, key) != 0 {
+        if self.available == 0.
+            || self.pending(present, key) != 0
+            || !key.0 && (self.widths[14] == 0. || self.widths[15] == 0.)
+        {
             // A style change must not remove the focused trigger or an open
             // menu for the measurement frame. Hidden controls get a natural
             // width probe without an interactive subtree while pending.
@@ -75,7 +86,7 @@ impl Layout {
         let scale = f32::from_bits(key.2);
         let (mut repo, mut workspace) = (0., 0.);
         for (i, width) in self.widths.iter().enumerate() {
-            if present & (1 << i) != 0 {
+            if i < IDS.len() && present & (1 << i) != 0 {
                 if i < 8 {
                     repo += width * scale;
                 } else {
@@ -88,6 +99,25 @@ impl Layout {
             let visible = present & !hidden;
             let (repo_spacing, workspace_spacing) = spacing(visible, scale);
             let overflow = if hidden != 0 { 36. * scale } else { 0. };
+            if !key.0 {
+                // Caption mode uses natural, nonshrinking side content rather
+                // than equal flex columns. Include both measured identity
+                // controls and their Refresh/identity margins and drag spacer.
+                let identity = self.identity_width(key);
+                return identity
+                    + repo
+                    + repo_spacing
+                    + workspace
+                    + workspace_spacing
+                    + overflow
+                    + 24. * scale
+                    + if cfg!(target_os = "macos") {
+                        80. - 12. * scale
+                    } else {
+                        0.
+                    }
+                    + 28. * scale;
+            }
             repo + repo_spacing
                 + 2. * (workspace + workspace_spacing + overflow).max(100. * scale)
                 // Frame padding, native lights (unscaled) and trailing +.
@@ -192,6 +222,9 @@ pub(super) fn measure_hidden(
         .flex()
         .flex_col()
         .items_center()
+        .when(!icon_only, |el| {
+            el.border_2().border_color(gpui::transparent_black())
+        })
         .min_w(theme::scaled_px(minimum_width(icon_only)))
         .px(keyboard_nav::inset(4.))
         .child(div().w(theme::scaled_px(22.)))
@@ -212,7 +245,7 @@ pub(super) fn probe(
                 return;
             }
             let normalized = if index.is_some() {
-                width / f32::from_bits(key.2)
+                (width + if !key.0 && index != Some(15) { 4. } else { 0. }) / f32::from_bits(key.2)
             } else {
                 width
             };

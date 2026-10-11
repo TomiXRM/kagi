@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Icon and Text toolbar fitting measures captions in both groups and repository identity, preserves the workspace group's natural width, and moves trailing actions into » before controls intersect. Icon Only and the saved display preference remain unchanged. (#1252)
 - Commit Panel List/Tree is now one named keyboard tab group: arrows and Home/End move the selection, and Enter/Space activate without losing the selected file, draft or scroll state. Pointer selection preserves the window's diff-file arrow navigation. (#1229)
 - Commit Panel Template, Generate, co-author and Amend actions use named EN/JA ghost Buttons in visual keyboard order. Bulk staging actions are keyboard reachable, disabled actions expose their reason without executing, and Template exposes its pressed state. Hidden bulk controls return keyboard focus to the selected view cell and pointer focus to the diff-navigation root; distinct paint/control identities preserve expanded pointer targets. (#1230)
 - The co-author picker supports arrow/Home/End selection, scrolls the active candidate into view, exposes named listbox options and a system scrollbar, and returns focus to its opener after insertion or Escape/Tab/Shift+Tab dismissal. (#1231)

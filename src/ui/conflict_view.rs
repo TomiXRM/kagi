@@ -782,40 +782,29 @@ impl ConflictView {
         let _ = c.buffer.autosave();
     }
 
-    /// Move to the next / previous unresolved hunk by selecting an adjacent
-    /// still-conflicted file and re-opening the editor on it.
-    pub fn conflict_editor_nav_hunk(&mut self, dir: i32) {
-        self.conflict_nav_unresolved(dir);
-        if let Some(c) = self.mode.as_ref() {
-            if let Some(idx) = c.selected_file {
-                if let Some(f) = c.session.files.get(idx) {
-                    let p = f.path.clone();
-                    self.conflict_open_editor(&p);
-                }
-            }
-        }
-    }
-
-    /// Select a conflicting file (open its detail + Result preview). Activating a
-    /// content conflict also opens the dedicated hunk-level Conflict Editor.
+    /// Select a file and open its matching content editor (or binary preview).
+    /// All row and navigation activations use this path.
     pub fn conflict_select_file(&mut self, idx: usize) {
-        let mut open_path: Option<PathBuf> = None;
-        if let Some(c) = self.mode.as_mut() {
-            if let Some(f) = c.session.files.get(idx) {
-                c.selected_file = Some(idx);
-                if f.kind == kagi_git::ConflictKind::Content {
-                    open_path = Some(f.path.clone());
-                }
-            }
-        }
+        let Some(mode) = self.mode.as_mut() else {
+            return;
+        };
+        let Some(file) = mode.session.files.get(idx) else {
+            return;
+        };
+        let open_path = (file.kind == ConflictKind::Content).then(|| file.path.clone());
+        mode.selected_file = Some(idx);
+        mode.editing_file = open_path.as_ref().map(|_| idx);
         if let Some(p) = open_path {
             self.conflict_open_editor(&p);
+        } else {
+            self.editing = None;
+            self.editor_inputs = None;
         }
     }
 
     /// Move the selection to the previous / next unresolved file, wrapping.
     pub fn conflict_nav_unresolved(&mut self, dir: i32) {
-        let Some(c) = self.mode.as_mut() else {
+        let Some(c) = self.mode.as_ref() else {
             return;
         };
         let n = c.session.files.len();
@@ -823,23 +812,23 @@ impl ConflictView {
             return;
         }
         let start = c.selected_file.unwrap_or(0);
-        for step in 1..=n {
-            let i = if dir >= 0 {
-                (start + step) % n
-            } else {
-                (start + n - (step % n)) % n
-            };
-            if c.session.files[i].status == kagi_git::ConflictStatus::Unresolved {
-                c.selected_file = Some(i);
-                return;
-            }
-        }
-        let i = if dir >= 0 {
-            (start + 1) % n
-        } else {
-            (start + n - 1) % n
-        };
-        c.selected_file = Some(i);
+        let next = (1..=n)
+            .map(|step| {
+                if dir >= 0 {
+                    (start + step) % n
+                } else {
+                    (start + n - (step % n)) % n
+                }
+            })
+            .find(|&i| c.session.files[i].status == ConflictStatus::Unresolved)
+            .unwrap_or_else(|| {
+                if dir >= 0 {
+                    (start + 1) % n
+                } else {
+                    (start + n - 1) % n
+                }
+            });
+        self.conflict_select_file(next);
     }
 
     /// Apply a per-file side choice to the in-memory resolution buffer, emit the
@@ -1360,11 +1349,14 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             view.conflict_nav_unresolved(1);
             cx.notify();
         });
-        row = row.child(secondary_button(
-            "conflict-next".to_string(),
-            Msg::ConflictNextConflict.t(),
-            true,
-            Some(next),
+        row = row.child(super::e2e::measure_control(
+            "conflict-next",
+            secondary_button(
+                "conflict-next".to_string(),
+                Msg::ConflictNextConflict.t(),
+                true,
+                Some(next),
+            ),
         ));
         has_secondary = true;
     }
@@ -1618,25 +1610,32 @@ fn dash_sections(
         .into_any_element()
 }
 
-/// A labelled section listing the given file indices.  `is_conflicted` rows are
-/// "activatable": clicking sets the editing-file state (W32 opens the editor).
+/// A labelled selectable file list. Both sections preview the selected file.
 fn section(
     mode: &ConflictMode,
-    title: &str,
+    title: &'static str,
     indices: &[usize],
     empty_msg: &str,
-    _is_conflicted: bool,
+    is_conflicted: bool,
     window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    let mut col = div().flex().flex_col().child(
-        div()
-            .px(theme::scaled_px(12.))
-            .py(theme::scaled_px(6.))
-            .text_size(theme::scaled_px(10.))
-            .text_color(rgb(theme().text_label))
-            .child(SharedString::from(format!("{} ({})", title, indices.len()))),
-    );
+    let list_id = if is_conflicted {
+        "conflict-files"
+    } else {
+        "conflict-resolved-files"
+    };
+    let mut col = super::list_a11y::list_box(list_id, div().id(list_id), title)
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px(theme::scaled_px(12.))
+                .py(theme::scaled_px(6.))
+                .text_size(theme::scaled_px(10.))
+                .text_color(rgb(theme().text_label))
+                .child(SharedString::from(format!("{} ({})", title, indices.len()))),
+        );
 
     if indices.is_empty() {
         col = col.child(
@@ -1650,10 +1649,10 @@ fn section(
         return col.into_any_element();
     }
 
-    for &idx in indices {
+    for (position, &idx) in indices.iter().enumerate() {
         let file = &mode.session.files[idx];
         let selected = mode.selected_file == Some(idx);
-        let path_str = file.path.to_string_lossy().into_owned();
+        let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
         let kind = file.kind;
         let (status_color, status_text) = match file.status {
             ConflictStatus::Unresolved => (theme().color_blocker, Msg::ConflictUnresolved.t()),
@@ -1698,7 +1697,7 @@ fn section(
                 s.bg(theme().selected_for_window(window_active))
                     .text_color(rgb(theme().text_main))
             })
-            .hover(|s| s.bg(rgb(theme().bg_row_alt)))
+            .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
             // Left: file name + status/kind (flex-shrinks; name truncates).
             .child(
@@ -1713,7 +1712,7 @@ fn section(
                             .text_size(theme::scaled_px(12.))
                             .text_color(rgb(theme().text_main))
                             .truncate()
-                            .child(SharedString::from(path_str)),
+                            .child(path_str.clone()),
                     )
                     .child(
                         div()
@@ -1747,6 +1746,14 @@ fn section(
                         more,
                     )),
             );
+        let row_el = super::list_a11y::list_option(
+            list_id,
+            row_el,
+            position,
+            indices.len(),
+            path_str,
+            selected,
+        );
         #[cfg(feature = "gui-e2e")]
         let row_el = row_el
             .relative()

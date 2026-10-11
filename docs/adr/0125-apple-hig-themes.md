@@ -215,3 +215,28 @@ recoloured. The native gap probe asserts strip-background pixels differ from
 inactive fills. The rail probe samples `bounds.top() - RING + 0.5`, including
 the old overlay above the content bounds; restoring it was measured to fail
 with actual blue `[0,136,255]` instead of white `[255,255,255]`.
+## Amendment — 2026-10-11: persistent conflict file selection (#1187)
+
+The dense Conflict Dashboard keeps the selected file's window-aware theme fill
+even while the pointer is over that row; hover is only a state of an unselected
+row. Both Conflicted Files and Resolved Files expose named ListBoxes with
+selected options. Existing navigation buttons (pointer or keyboard activation)
+select and open the same file, including clearing the content editor when the
+destination is binary. Selection is not inferred from a display name.
+
+Resolving an in-memory draft keeps its file open and selected in Resolved Files
+for review; it does not unexpectedly switch away while editing. Next / Previous
+conflict then wrap to an unresolved file, retaining the existing fallback to an
+adjacent file when none is unresolved. Save's authoritative re-detection retains
+the existing path-based fallback when a file leaves the session. No selection
+palette, geometry, repository-write or logging contract changes.
+
+Native `conflict_file_selection` reproduced the bug before the fix: after a
+measured click on `notes.txt`, the rendered fill was `#f5f5f5` (hover), not the
+required inactive `#d3d3d3`. Afterward the same assertion passes, as do active
+selection under hover, selected AX attributes, dashboard Next, editor Previous /
+Next, keyboard Space on Next, binary-preview cleanup and resolved-draft selection.
+The fixture's repository fingerprint remains unchanged. `inactive_selection`,
+`conflict_continue_cache` and `conflict_pane_survives_activation` also pass.
+These are native renderer / attribute-recorder assertions, not VoiceOver or
+Tier B evidence.

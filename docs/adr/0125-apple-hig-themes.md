@@ -192,18 +192,26 @@ keyboard/wheel routing are unchanged.
 
 The repository and Home strip takes Finder/Safari's neutral document-tab
 hierarchy, not native materials or a new tab-navigation model. Apple Light uses
-`bg_base` active / `surface` inactive; Apple Dark uses `surface` active / `panel`
-inactive. Both keep `text_main` labels in key/non-key windows. Selection stays distinct from
+`bg_base` active / `surface` inactive; Apple Dark uses `surface` active / `bg_base`
+inactive, so inactive cells remain visible against the `panel` strip and its 1px gaps.
+Both keep `text_main` labels in key/non-key windows. Selection stays distinct from
 the independent keyboard focus ring; it does not require accent attenuation.
-Other presets retain their selection/surface palette and activation behavior.
-All presets remove the permanent 2px top rail and worktree-wide tint: the
-existing 🌲 identity marker remains. Close is visible for active or focused
+Other presets retain their selection/surface palette, activation behavior and
+active accent rail: some existing fill pairs have <1.15:1 contrast without it
+(One Light 1.010:1, Flower Road 1.082:1, Tokyo Night key 1.099:1, Latte non-key
+1.142:1). Only Apple themes remove the permanent 2px top rail. All presets remove
+worktree-wide tint and stored lane rank; the existing 🌲 identity marker remains.
+Close is visible for active or focused
 tabs and on inactive-tab hover, with a reserved target so reveal never changes
 label width. Cmd+W, keyed identities, one Tab stop, manual activation, tooltips,
 40px strip and 80–200px cell limits remain unchanged. A single tab is not hidden.
 Native `repo_tabs_neutral` measures fills, top-edge rail absence, inherited
 label colours and bounds for 1/2/6 tabs, long JA names, 100%/167%, both Apple
 themes and the activation seam. Real pointer/AX delivery remains Tier B.
-The role-level unit test requires Apple active/inactive fill contrast ≥1.15:1
-(Light 1.260:1, Dark 1.297:1) and each primary label ≥4.5:1; other presets are
-asserted against their existing selected/surface roles rather than recoloured.
+The role-level unit test requires every preset without a rail to have
+active/inactive fill contrast ≥1.15:1 and each primary label ≥4.5:1. Other
+presets are asserted against existing selected/surface roles rather than
+recoloured. The native gap probe asserts strip-background pixels differ from
+inactive fills. The rail probe samples `bounds.top() - RING + 0.5`, including
+the old overlay above the content bounds; restoring it was measured to fail
+with actual blue `[0,136,255]` instead of white `[255,255,255]`.

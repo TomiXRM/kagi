@@ -202,7 +202,6 @@ impl KagiApp {
             name: name.to_string(),
             remote: None,
             is_worktree,
-            wt_color_idx: None,
         });
         self.active_tab = self.tabs.len() - 1;
         self.publish_tab_view(session, view);
@@ -336,15 +335,6 @@ impl KagiApp {
         // `scans_stale` live here — so no apply site can forget it. Callers still
         // re-resolve `selected` by CommitId (there is no `cx` here).
         self.invalidate_caches_for_row_renumber(session);
-
-        // Tie a worktree tab's colour to its WIP-row colour: the WIP row uses
-        // lane_color(rank-in-worktrees-list), so record the same rank on the tab.
-        let wt_idx = self.view().worktrees.iter().position(|w| w.is_current);
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-            if tab.is_worktree {
-                tab.wt_color_idx = wt_idx;
-            }
-        }
     }
 
     /// The read model on screen changed owner (a tab switch). Same UI reaction

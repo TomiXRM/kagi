@@ -47,10 +47,6 @@ pub struct RepoTab {
     /// True when this tab is a linked git worktree (shown with a 🌲 marker so
     /// it is not mistaken for the main repository).
     pub is_worktree: bool,
-    /// Lane-colour index for a worktree tab, matching that worktree's WIP-row
-    /// colour (its rank in the repo's worktree list). Set when the tab's view is
-    /// applied; `None` until then / for non-worktree tabs.
-    pub wt_color_idx: Option<usize>,
 }
 
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
@@ -77,7 +73,7 @@ fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (g
             rgb(if selected {
                 palette.surface
             } else {
-                palette.panel
+                palette.bg_base
             })
             .into(),
             palette.text_main,
@@ -95,6 +91,25 @@ fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (g
             },
         ),
     }
+}
+
+fn tab_has_rail(palette: &theme::Theme) -> bool {
+    !matches!(palette.slug.as_ref(), "apple-light" | "apple-dark")
+}
+
+fn tab_rail(palette: &theme::Theme, window_active: bool) -> gpui::Div {
+    let ring = super::keyboard_nav::RING;
+    div()
+        .absolute()
+        .top(px(-ring))
+        .left(px(-ring))
+        .right(px(-ring))
+        .h(px(2.))
+        .bg(rgb(if window_active {
+            palette.color_branch
+        } else {
+            palette.text_muted
+        }))
 }
 
 impl KagiApp {
@@ -165,7 +180,6 @@ impl KagiApp {
             name: info.name.clone(),
             remote: None,
             is_worktree: info.is_worktree,
-            wt_color_idx: None,
         };
         self.tabs.push(tab);
         let new_idx = self.tabs.len() - 1;
@@ -411,7 +425,6 @@ impl KagiApp {
                     name: name.clone(),
                     remote: Some(rv.clone()),
                     is_worktree: false,
-                    wt_color_idx: None,
                 });
                 self.tabs.len() - 1
             }
@@ -1051,6 +1064,9 @@ impl KagiApp {
                 // tab's own border is the keyboard focus ring).
                 .mr(px(1.))
                 .child(super::e2e::measure_inside(format!("repo-tab-{i}")))
+                .when(is_active && tab_has_rail(&theme()), |el| {
+                    el.child(tab_rail(&theme(), self.window_active_for_render(window)))
+                })
                 .cursor(gpui::CursorStyle::PointingHand)
                 .tooltip({
                     let full = full_path.clone();
@@ -1135,6 +1151,9 @@ fn render_home_tab(
         .text_color(rgb(fg))
         .mr(px(1.))
         .child(super::e2e::measure_inside("home-tab"))
+        .when(front && tab_has_rail(&theme()), |el| {
+            el.child(tab_rail(&theme(), window_active))
+        })
         .cursor(gpui::CursorStyle::PointingHand)
         .child(div().flex_1().truncate().child(SharedString::from(format!(
             "\u{2302} {}",
@@ -1206,7 +1225,6 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
                     name: info.name.clone(),
                     remote: None,
                     is_worktree: info.is_worktree,
-                    wt_color_idx: None,
                 });
             }
             Err(e) => klog!("session: skip {} ({})", path.display(), e),
@@ -1254,7 +1272,7 @@ mod tab_chrome_tests {
             for key in [true, false] {
                 let (active, active_text) = tab_colors(palette, true, key);
                 let (inactive, inactive_text) = tab_colors(palette, false, key);
-                if matches!(palette.slug.as_ref(), "apple-light" | "apple-dark") {
+                if !tab_has_rail(palette) {
                     let first = luminance(active);
                     let second = luminance(inactive);
                     assert!(

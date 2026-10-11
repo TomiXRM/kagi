@@ -157,7 +157,7 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                             if slug == "apple-light" {
                                 theme::theme().surface
                             } else {
-                                theme::theme().panel
+                                theme::theme().bg_base
                             }
                         };
                         let (pixel, bounds) = paint(cx, window, &name);
@@ -191,12 +191,28 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                             let scale = window.scale_factor();
                             let x = ((f32::from(bounds.left()) + 10.) * scale) as u32;
                             // The old absolute accent overlay occupies the first two px.
-                            let y = ((f32::from(bounds.top()) + 0.5) * scale) as u32;
+                            let y = ((f32::from(bounds.top()) - 2. + 0.5) * scale) as u32;
                             assert_eq!(
                                 &image.get_pixel(x, y).0[..3],
                                 &pixel[..3],
                                 "no accent rail"
                             );
+                            if index > 0 {
+                                let gap_x = ((f32::from(bounds.right()) + 2. + 0.5) * scale) as u32;
+                                let gap_y = ((f32::from(bounds.top()) + 5.) * scale) as u32;
+                                let gap = image.get_pixel(gap_x, gap_y).0;
+                                assert_ne!(
+                                    &gap[..3],
+                                    &pixel[..3],
+                                    "{slug}: inactive cell must differ from its gap"
+                                );
+                                let panel = theme::theme().panel;
+                                assert_eq!(
+                                    &gap[..3],
+                                    &[(panel >> 16) as u8, (panel >> 8) as u8, panel as u8],
+                                    "gap is strip background"
+                                );
+                            }
                             let paint =
                                 e2e::control_paint(window.window_handle().window_id(), &name)
                                     .unwrap();

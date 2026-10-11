@@ -1,5 +1,5 @@
 //! macOS chrome accent cache. Native preferences are read only at startup/activation.
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::i18n::Msg;
 use crate::settings::{read_setting, write_setting};
@@ -69,10 +69,11 @@ impl SystemAccent {
 }
 
 static DETECTED: AtomicU8 = AtomicU8::new(SystemAccent::Blue as u8);
-static FOLLOW_SYSTEM: AtomicBool = AtomicBool::new(true);
+// 0 = theme-specific default, 1 = explicit System, 2 = explicit Theme accent.
+static ACCENT_SOURCE: AtomicU8 = AtomicU8::new(0);
 #[cfg(any(test, feature = "gui-e2e"))]
 thread_local! {
-    static INJECTED: std::cell::Cell<Option<(SystemAccent, bool)>> = const { std::cell::Cell::new(None) };
+    static INJECTED: std::cell::Cell<Option<(SystemAccent, Option<bool>)>> = const { std::cell::Cell::new(None) };
 }
 
 pub fn detected_system_accent() -> SystemAccent {
@@ -84,18 +85,34 @@ pub fn detected_system_accent() -> SystemAccent {
 }
 
 pub fn follows_system_accent() -> bool {
+    follows_system_accent_for(crate::theme::theme().dark)
+}
+
+pub(crate) fn follows_system_accent_for(dark: bool) -> bool {
     #[cfg(any(test, feature = "gui-e2e"))]
     if let Some((_, follow)) = INJECTED.with(std::cell::Cell::get) {
-        return follow;
+        return follow.unwrap_or(!dark);
     }
-    FOLLOW_SYSTEM.load(Ordering::Relaxed)
+    match ACCENT_SOURCE.load(Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => !dark,
+    }
+}
+
+fn source_from_setting(value: Option<&str>) -> Option<bool> {
+    match value {
+        Some("system") => Some(true),
+        Some("theme" | "blue") => Some(false),
+        _ => None,
+    }
 }
 
 pub fn set_follows_system_accent(follow: bool) {
     #[cfg(any(test, feature = "gui-e2e"))]
     let injected = INJECTED.with(|slot| {
         if let Some((accent, _)) = slot.get() {
-            slot.set(Some((accent, follow)));
+            slot.set(Some((accent, Some(follow))));
             true
         } else {
             false
@@ -104,16 +121,35 @@ pub fn set_follows_system_accent(follow: bool) {
     #[cfg(not(any(test, feature = "gui-e2e")))]
     let injected = false;
     if !injected {
-        FOLLOW_SYSTEM.store(follow, Ordering::Relaxed);
+        ACCENT_SOURCE.store(if follow { 1 } else { 2 }, Ordering::Relaxed);
     }
-    write_setting("accent", Some(if follow { "system" } else { "blue" }));
+    write_setting(
+        "accent_source",
+        Some(if follow { "system" } else { "theme" }),
+    );
 }
 
 pub(crate) fn init() {
-    FOLLOW_SYSTEM.store(
-        read_setting("accent").as_deref() != Some("blue"),
+    let source = read_setting("accent_source");
+    let legacy = read_setting("accent");
+    let follow = source_from_setting(source.as_deref().or(legacy.as_deref()));
+    ACCENT_SOURCE.store(
+        match follow {
+            Some(true) => 1,
+            Some(false) => 2,
+            None => 0,
+        },
         Ordering::Relaxed,
     );
+    if source.as_deref() == Some("blue") || (source.is_none() && legacy.is_some()) {
+        write_setting(
+            "accent_source",
+            follow.map(|follow| if follow { "system" } else { "theme" }),
+        );
+    }
+    if legacy.is_some() {
+        write_setting("accent", None);
+    }
     refresh_system_accent();
 }
 
@@ -173,26 +209,18 @@ pub fn refresh_system_accent() -> bool {
     false
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn resolved_accent() -> SystemAccent {
-    if follows_system_accent() {
-        detected_system_accent()
-    } else {
-        SystemAccent::Blue
-    }
-}
-
 /// Scoped in-memory injection; never reads or writes the person's defaults.
 #[cfg(any(test, feature = "gui-e2e"))]
 pub struct AccentInjection(
-    Option<(SystemAccent, bool)>,
+    Option<(SystemAccent, Option<bool>)>,
     std::marker::PhantomData<std::rc::Rc<()>>,
 );
 #[cfg(any(test, feature = "gui-e2e"))]
 impl AccentInjection {
-    pub fn new(accent: SystemAccent) -> Self {
+    /// `None` exercises the preset default; `Some` is an explicit source choice.
+    pub fn new(accent: SystemAccent, follow: Option<bool>) -> Self {
         Self(
-            INJECTED.with(|slot| slot.replace(Some((accent, true)))),
+            INJECTED.with(|slot| slot.replace(Some((accent, follow)))),
             std::marker::PhantomData,
         )
     }
@@ -207,6 +235,18 @@ impl Drop for AccentInjection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accent_source_accepts_explicit_modes_and_legacy_blue() {
+        assert_eq!(source_from_setting(None), None);
+        assert_eq!(source_from_setting(Some("system")), Some(true));
+        assert_eq!(source_from_setting(Some("theme")), Some(false));
+        assert_eq!(source_from_setting(Some("blue")), Some(false));
+        assert_eq!(source_from_setting(Some("unsupported")), None);
+        let _default = AccentInjection::new(SystemAccent::Blue, None);
+        assert!(follows_system_accent_for(false), "Light defaults to System");
+        assert!(!follows_system_accent_for(true), "Dark defaults to Theme");
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

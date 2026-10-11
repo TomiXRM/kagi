@@ -100,11 +100,13 @@ altered.
 
 Closes #1181.
 
-On macOS, built-in Apple Light and Apple Dark follow the person's accent for
-primary chrome, focus rings and text selection. `Theme::ui_accent()` is distinct
-from the Git `color_branch` role: ref chips, graph lanes, status colours, terminal
-and body links keep their existing palette. This supersedes ADR-0126's decision
-not to separate chrome from branch colour, not its yellow Git palette.
+On macOS, built-in Apple Light defaults to the person's system accent for
+primary chrome, focus rings and text selection. Apple Dark defaults to its
+theme accent (`#ffd600` yellow), preserving ADR-0126's identity; System is an
+explicit opt-in on Dark. `Theme::ui_accent()` is distinct from the Git
+`color_branch` role: ref chips, graph lanes, status colours, terminal and body
+links keep their existing palette. This supersedes ADR-0126's non-goal of
+separating chrome from branch colour, not its yellow default.
 
 The startup and window-activation seams read `AppleAccentColor` with the
 in-process, read-only `CFPreferencesCopyAppValue` global-domain API. The key is
@@ -131,12 +133,19 @@ is kept separately from the graph's increased-contrast/2025 system colours:
 | 5 | Purple | `#af52de` | `#bf5af2` |
 | 6 | Pink | `#ff2d55` | `#ff375f` |
 
-Missing/unsupported values (including Multicolour) use blue and are labelled
-Default (Blue), rather than falsely identifying an explicit Blue preference. Settings →
-Appearance has an Apple-only System/Blue radio choice persisted as the string
-`accent: system|blue`, with the detected Mac colour name in EN/JA even while Blue
-is selected. Other presets, custom themes including Apple-derived themes, and
-non-macOS platforms retain their fixed accent hue and do not follow macOS.
+In System mode, missing/unsupported Mac values (including Multicolour) use blue
+and are labelled Default (Blue), rather than falsely identifying an explicit
+Blue preference. Settings → Appearance has an Apple-only **System / Theme accent**
+choice (JA: 「システム」/「テーマのアクセント」), persisted as
+`accent_source: system|theme`. An absent source uses System for Apple Light and
+Theme for Apple Dark; an explicit value applies to either Apple preset.
+Theme restores the preset's fixed chrome (`#0088ff` Light, `#ffd600` Dark) and
+selection tint. The detected Mac name remains visible in EN/JA in either mode.
+Reading migrates legacy `accent: blue` to `accent_source: theme` and legacy
+`accent: system` to `accent_source: system`, then removes the old key. A `blue`
+value under the new key is canonicalized to `theme`; the new key takes precedence.
+Other presets, custom themes including Apple-derived themes, and non-macOS
+platforms retain their fixed accent hue and do not follow macOS.
 
 Primary labels reuse the bridge's contrast-preserving foreground/hover/pressed
 derivation (4.5:1 minimum), including the update pill and filled thread badges.

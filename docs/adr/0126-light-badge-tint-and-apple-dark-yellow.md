@@ -41,3 +41,19 @@
   primary ボタン)+ 無彩色選択となり、Apple ダークアプリの雰囲気に寄る。
 - Apple Dark の warning と tag はどちらも orange になるが、表示文脈
   (テキスト vs チップ)が重ならないため許容。
+
+## Amendment — 2026-10-11: theme identity and system accent (#1181)
+
+Tier B の Apple Dark／JA で、Mac の既定アクセントが Blue のとき chrome まで青に
+なり、ユーザーが選んだ黄色の identity が失われることを確認した。chrome と Git
+palette の分離自体は [ADR-0125 amendment](0125-apple-hig-themes.md#amendment--2026-10-11-system-chrome-accent-1181)
+に従うが、**Apple Dark の既定 chrome は Theme accent (`#ffd600`) のまま**にする。
+Mac の色を使う場合だけ Settings → Appearance で System を選ぶ。
+
+保存 key は `accent_source: system|theme`。未指定は Apple Light が System、
+Apple Dark が Theme。Theme は preset の `color_branch` と `selection_tint` に戻り、
+Light は固定 Blue `#0088ff`、Dark は Yellow `#ffd600`。旧 `accent: blue` は
+Theme、旧 `accent: system` は System へ読み込み時に移行し、旧 key を削除する。
+radio は EN “System” / “Theme accent”、JA「システム」/「テーマのアクセント」。
+検出した Mac の色名はどちらの選択でも表示し、Git ref／lane／body link と Dark の
+無彩色 row selection は変えない。

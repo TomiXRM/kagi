@@ -4,11 +4,17 @@ kagi ships built-in colour themes (Settings → Appearance, the command palette'
 `Theme: …` entries, and View → Theme). You can add your own as JSON files.
 Design record: [ADR-0220](adr/0220-json-user-themes.md).
 
-On macOS, built-in **Apple Light / Apple Dark** use the Mac's Appearance accent
-for chrome actions, focus rings and selection. Settings → Appearance shows the
-detected accent name and a **System / Blue** override (`"accent": "system"` by
-default, or `"blue"` in `settings.json`). Return to Kagi after changing the Mac
-accent to refresh it. Multicolour uses blue and is labelled Default (Blue).
+On macOS, built-in **Apple Light / Apple Dark** offer **System / Theme accent**
+in Settings → Appearance, alongside the detected Mac accent name.
+`"accent_source": "system"` follows the Mac; `"theme"` restores the preset's
+fixed accent (Light Blue `#0088ff`, Dark Yellow `#ffd600`). With no explicit
+source, Apple Light defaults to System and Apple Dark defaults to Theme,
+preserving its yellow identity. An explicit source applies to either Apple preset.
+Legacy `"accent": "blue"` migrates to `"accent_source": "theme"`; legacy
+`"accent": "system"` migrates to the new System key, and the old key is removed.
+A `"blue"` value under the new key is likewise normalized to `"theme"`.
+Return to Kagi after changing the Mac accent to refresh detection. In System
+mode, Multicolour uses blue and is labelled Default (Blue).
 Git ref/lane/status colours and body
 links remain unchanged. Custom themes (even ones extending Apple themes), other
 built-in presets and non-macOS platforms keep their fixed accent hue rather than
@@ -271,7 +277,7 @@ their existing token meanings.
 `colors.link` (Issue composer previews, Issue/PR descriptions and conversation
 TextViews). It is not the filled `color_branch` accent. Built-ins target at least
 4.5:1 over `bg_base`; Apple Light uses `#0066cc` (5.567:1 on white), while its
-ref chips keep `#0088ff`; macOS Primary chrome follows the System/Blue setting
+ref chips keep `#0088ff`; macOS Primary chrome follows the System/Theme accent setting
 above. Already-readable dark palettes, including Apple Dark, keep their prior
 link colour. Latte, One Light, Pinky Boo,
 Flower Road and IBM PC also have a separately readable link shade.

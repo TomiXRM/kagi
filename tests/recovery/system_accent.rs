@@ -34,7 +34,8 @@ fn assert_rgb(actual: [u8; 4], expected: u32) {
 }
 
 pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "accent", "lang"]);
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["theme", "accent_source", "accent", "lang"]);
     let before = theme::theme().slug.to_string();
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());
@@ -52,7 +53,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
             theme::SystemAccent::Red,
             theme::SystemAccent::Yellow,
         ] {
-            let injected = theme::AccentInjection::new(accent);
+            let injected = theme::AccentInjection::new(accent, None);
             app.update(cx, |app, cx| app.set_theme(slug, cx));
             cx.simulate_mouse_move(
                 window,
@@ -85,6 +86,13 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                 label
             );
             let expected = accent.rgb(slug == "apple-dark");
+            let default_expected = if slug == "apple-dark" {
+                0xffd600
+            } else {
+                expected
+            };
+            assert_eq!(theme::follows_system_accent(), slug == "apple-light");
+            assert_eq!(theme::theme().ui_accent(), default_expected);
             assert_rgb(
                 pixel(
                     cx,
@@ -94,7 +102,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     // Sample the fixed 2pt ring immediately outside its top edge.
                     f32::from(bounds.top()) - 1.,
                 ),
-                expected,
+                default_expected,
             );
 
             let row = e2e::control_bounds(window.window_id(), "graph-commit-row")
@@ -108,7 +116,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(bar.center().x),
                     f32::from(bar.center().y),
                 ),
-                expected,
+                default_expected,
             );
             assert_rgb(
                 pixel(
@@ -198,9 +206,38 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(input_bounds.left()) + 0.25,
                     f32::from(input_bounds.center().y),
                 ),
-                expected,
+                default_expected,
             );
             let primary = e2e::confirm_bounds(window.window_id()).unwrap();
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(primary.left()) + 6.,
+                    f32::from(primary.center().y),
+                ),
+                default_expected,
+            );
+            app.update(cx, |_, cx| {
+                theme::set_follows_system_accent(true);
+                theme::sync_gpui_component_theme(cx);
+                cx.notify();
+                assert_eq!(theme::theme().ui_accent(), expected);
+                assert_eq!(
+                    kagi_ui_core::settings::read_setting("accent_source").as_deref(),
+                    Some("system")
+                );
+            });
+            draw(cx, window);
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(input_bounds.left()) + 0.25,
+                    f32::from(input_bounds.center().y),
+                ),
+                expected,
+            );
             assert_rgb(
                 pixel(
                     cx,
@@ -214,9 +251,10 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                 theme::set_follows_system_accent(false);
                 theme::sync_gpui_component_theme(cx);
                 cx.notify();
+                assert_eq!(theme::theme().ui_accent(), theme::theme().color_branch);
                 assert_eq!(
-                    theme::theme().ui_accent(),
-                    theme::SystemAccent::Blue.rgb(slug == "apple-dark")
+                    kagi_ui_core::settings::read_setting("accent_source").as_deref(),
+                    Some("theme")
                 );
             });
             draw(cx, window);
@@ -227,17 +265,63 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(primary.left()) + 6.,
                     f32::from(primary.center().y),
                 ),
-                theme::SystemAccent::Blue.rgb(slug == "apple-dark"),
+                theme::theme().color_branch,
             );
             app.update(cx, |app, cx| {
                 app.cancel_create_branch_modal();
                 cx.notify();
             });
             drop(input);
+            app.update(cx, |_, cx| {
+                theme::set_follows_system_accent(true);
+                theme::sync_gpui_component_theme(cx);
+                cx.notify();
+            });
+            cx.update_window(window, |_, window, cx| {
+                app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx));
+            })
+            .unwrap();
+            cx.simulate_keystrokes(window, "f19");
+            draw(cx, window);
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "sidebar-mode-graph").unwrap(),
+                bounds
+            );
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "sidebar-mode-graph-label").unwrap(),
+                label
+            );
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(bounds.center().x),
+                    f32::from(bounds.top()) - 1.,
+                ),
+                expected,
+            );
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(bar.center().x),
+                    f32::from(bar.center().y),
+                ),
+                expected,
+            );
+            assert_rgb(
+                pixel(
+                    cx,
+                    window,
+                    f32::from(row.right()) - 2.,
+                    f32::from(row.top()) + 1.,
+                ),
+                theme::theme().ui_selected(),
+            );
             drop(injected);
         }
     }
     app.update(cx, |app, cx| app.set_theme(&before, cx));
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS system_accent_chrome: blue/purple/graphite/red/yellow x Apple Light/Dark native primary/ring/graph-bar/selection pixels, fixed geometry and retained inactive selection");
+    eprintln!("[gui-e2e] PASS system_accent_chrome: Apple Dark default yellow, Light default system, explicit System/Theme accent primary/ring/graph pixels for five injected colours; fixed geometry and retained inactive selection");
 }

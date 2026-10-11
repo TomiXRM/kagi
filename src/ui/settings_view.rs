@@ -493,7 +493,7 @@ fn appearance_section(
                     RadioGroup::horizontal("settings-accent")
                         .children([
                             SharedString::from(Msg::SettingsAccentSystem.t()),
-                            SharedString::from(Msg::SettingsAccentFixedBlue.t()),
+                            SharedString::from(Msg::SettingsAccentTheme.t()),
                         ])
                         .selected_index(Some(usize::from(!theme::follows_system_accent())))
                         .on_click(move |index: &usize, _, cx| {

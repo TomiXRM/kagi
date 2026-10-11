@@ -208,8 +208,10 @@ impl Theme {
     #[inline]
     pub fn ui_accent(&self) -> u32 {
         #[cfg(target_os = "macos")]
-        if matches!(&*self.slug, "apple-light" | "apple-dark") {
-            return crate::system_accent::resolved_accent().rgb(self.dark);
+        if matches!(&*self.slug, "apple-light" | "apple-dark")
+            && crate::system_accent::follows_system_accent_for(self.dark)
+        {
+            return detected_system_accent().rgb(self.dark);
         }
         self.color_branch
     }
@@ -217,8 +219,10 @@ impl Theme {
     #[inline]
     pub fn ui_selection_tint(&self) -> u32 {
         #[cfg(target_os = "macos")]
-        if matches!(&*self.slug, "apple-light" | "apple-dark") {
-            return self.ui_accent();
+        if matches!(&*self.slug, "apple-light" | "apple-dark")
+            && crate::system_accent::follows_system_accent_for(self.dark)
+        {
+            return detected_system_accent().rgb(self.dark);
         }
         self.selection_tint
     }
@@ -227,9 +231,9 @@ impl Theme {
     #[inline]
     pub fn ui_selected(&self) -> u32 {
         #[cfg(target_os = "macos")]
-        if &*self.slug == "apple-light" {
+        if &*self.slug == "apple-light" && crate::system_accent::follows_system_accent_for(false) {
             return crate::theme_apple_light::SYSTEM_SELECTIONS
-                [crate::system_accent::resolved_accent().palette_index()];
+                [detected_system_accent().palette_index()];
         }
         self.selected
     }
@@ -2311,13 +2315,61 @@ mod system_accent_tests {
     use super::*;
 
     #[test]
+    fn apple_dark_default_keeps_yellow_chrome() {
+        let _injected = AccentInjection::new(SystemAccent::Blue, None);
+        let dark = &crate::theme_apple_dark::APPLE_DARK;
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(dark, &mut gc);
+        assert_eq!(dark.ui_accent(), dark.color_branch);
+        assert_eq!(gc.colors.button_primary, to_hsla(dark.color_branch));
+        assert_eq!(gc.colors.ring, to_hsla(dark.color_branch));
+        assert_eq!(
+            gc.colors.selection,
+            to_hsla(dark.selection_tint).alpha(SELECTION_ALPHA)
+        );
+        assert_eq!(dark.ui_selected(), dark.selected);
+        let light = &crate::theme_apple_light::APPLE_LIGHT;
+        assert_eq!(light.ui_accent(), SystemAccent::Blue.rgb(false));
+    }
+
+    #[test]
+    fn theme_accent_source_restores_both_preset_palettes() {
+        let _injected = AccentInjection::new(SystemAccent::Purple, Some(false));
+        for theme in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(theme, &mut gc);
+            assert_eq!(theme.ui_accent(), theme.color_branch);
+            assert_eq!(theme.ui_selection_tint(), theme.selection_tint);
+            assert_eq!(theme.ui_selected(), theme.selected);
+            assert_eq!(gc.colors.primary, to_hsla(theme.color_branch));
+            assert_eq!(gc.colors.ring, to_hsla(theme.color_branch));
+            assert_eq!(gc.colors.button_primary, to_hsla(theme.color_branch));
+            assert_eq!(
+                gc.colors.selection,
+                to_hsla(theme.selection_tint).alpha(SELECTION_ALPHA)
+            );
+            let label = u32::from(gc.colors.button_primary_foreground.to_rgb()) >> 8;
+            assert!(contrast_ratio(theme.color_branch, label) >= 4.5);
+            for fill in [
+                gc.colors.button_primary_hover,
+                gc.colors.button_primary_active,
+            ] {
+                assert!(contrast_ratio(u32::from(fill.to_rgb()) >> 8, label) >= 4.5);
+            }
+        }
+    }
+
+    #[test]
     fn system_accent_chrome_mapping_and_contrast() {
         let _lock = ACTIVE_THEME_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         for value in -2..=6 {
             let accent = SystemAccent::from_default(Some(value));
-            let _injected = AccentInjection::new(accent);
+            let _injected = AccentInjection::new(accent, Some(true));
             for theme in [
                 &crate::theme_apple_light::APPLE_LIGHT,
                 &crate::theme_apple_dark::APPLE_DARK,
@@ -2370,7 +2422,7 @@ mod system_accent_tests {
 
     #[test]
     fn system_accent_keeps_custom_and_other_theme_palettes() {
-        let _injected = AccentInjection::new(SystemAccent::Purple);
+        let _injected = AccentInjection::new(SystemAccent::Purple, Some(true));
         assert!(
             !refresh_system_accent(),
             "injection must bypass native defaults"

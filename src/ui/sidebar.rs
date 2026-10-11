@@ -14,16 +14,18 @@ use super::sidebar_rows::{
     split_first_segment, GroupRow, RemoteRow,
 };
 use super::theme::{self, theme};
-use super::{BranchDrag, BranchDragGhost, KagiApp};
+use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
 
-/// Row slot height (unscaled) for section headers and every virtualized leaf
-/// outside the WORKTREES pane.
+/// Row slot height (unscaled) for every virtualized leaf outside WORKTREES.
 ///
 /// `uniform_list` measures the first item of a list and applies that height to
 /// all of them. Each pane owns its own list, so every row a pane's list can
 /// draw (group headers and leaves alike) is pinned to that pane's slot height
 /// and the list scrolls correctly regardless of which row happens to be first.
 pub(super) const SIDEBAR_ROW_H: f32 = 20.0;
+
+/// Pinned pane headings are separate from the virtualized body slots.
+pub(super) const SIDEBAR_SECTION_HEADER_H: f32 = 28.0;
 
 /// Visible height of a group heading, centered inside its `SIDEBAR_ROW_H` slot
 /// so the LOCAL / REMOTE lists keep one uniform row height.
@@ -188,7 +190,7 @@ pub enum SidebarRow {
     /// A top-level pane header. `section` is the static collapse key.
     SectionHeader {
         section: &'static str,
-        title: &'static str,
+        title: Msg,
         count: usize,
         collapsed: bool,
     },
@@ -280,7 +282,7 @@ pub(super) fn build_sidebar_row(
             title,
             count,
             collapsed,
-        } => build_section_header(section, title, *count, *collapsed, cx),
+        } => build_section_header(section, *title, *count, *collapsed, cx),
         SidebarRow::LocalGroupHeader {
             key,
             prefix,
@@ -340,17 +342,12 @@ pub(super) fn build_sidebar_row(
 /// Section header row (LOCAL BRANCHES / …). Click toggles `sidebar_collapsed`.
 fn build_section_header(
     section: &'static str,
-    title: &'static str,
+    title: Msg,
     count: usize,
     collapsed: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let label = SharedString::from(format!(
-        "{} {} ({})",
-        if collapsed { "\u{25b8}" } else { "\u{25be}" },
-        title,
-        count
-    ));
+    let label = SharedString::from(format!("({count})"));
     let toggle = cx.listener(
         move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
             this.sidebar.toggle_section(section);
@@ -361,18 +358,82 @@ fn build_section_header(
         .id(SharedString::from(format!("sidebar-section-{}", section)))
         .relative()
         .child(super::e2e::measure_inside(section))
-        .h(theme::scaled_px(SIDEBAR_ROW_H))
+        .h(theme::scaled_px(SIDEBAR_SECTION_HEADER_H))
+        .flex_shrink_0()
         .px_3()
+        .py(theme::scaled_px(8.))
         .flex()
         .flex_row()
         .items_center()
-        .text_xs()
-        .font_weight(gpui::FontWeight::BOLD)
-        .text_color(rgb(theme().text_muted))
+        .text_size(theme::scaled_px(12.))
+        .line_height(theme::scaled_px(12.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(rgb(theme().text_sub))
         .on_click(toggle)
         .hover(|s| s.bg(rgb(theme().surface)))
-        .child(label)
+        .child(
+            div()
+                .relative()
+                .size(theme::scaled_px(10.))
+                .flex_shrink_0()
+                .child(super::e2e::measure_inside(section_header_chevron_id(
+                    section,
+                )))
+                .child(
+                    gpui::svg()
+                        .path("icons/chevron-right.svg")
+                        .size(theme::scaled_px(10.))
+                        .text_color(rgb(theme().text_sub))
+                        .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                            if collapsed {
+                                0.
+                            } else {
+                                std::f32::consts::FRAC_PI_2
+                            },
+                        ))),
+                ),
+        )
+        .child(
+            div()
+                .relative()
+                .ml(theme::scaled_px(6.))
+                .h(theme::scaled_px(12.))
+                .child(super::e2e::measure_inside(section_header_label_id(section)))
+                .child(title.t()),
+        )
+        .child(
+            div()
+                .ml(theme::scaled_px(6.))
+                .rounded_full()
+                .px(theme::scaled_px(4.))
+                .bg(rgb(theme().bg_base))
+                .font_weight(gpui::FontWeight::NORMAL)
+                .text_size(theme::scaled_px(11.))
+                .child(label),
+        )
         .into_any()
+}
+
+fn section_header_label_id(section: &str) -> &'static str {
+    match section {
+        SECTION_LOCAL => "sidebar-local-heading-label",
+        SECTION_REMOTE => "sidebar-remote-heading-label",
+        SECTION_WORKTREES => "sidebar-worktrees-heading-label",
+        SECTION_TAGS => "sidebar-tags-heading-label",
+        SECTION_STASHES => "sidebar-stashes-heading-label",
+        _ => unreachable!("known sidebar section"),
+    }
+}
+
+fn section_header_chevron_id(section: &str) -> &'static str {
+    match section {
+        SECTION_LOCAL => "sidebar-local-heading-chevron",
+        SECTION_REMOTE => "sidebar-remote-heading-chevron",
+        SECTION_WORKTREES => "sidebar-worktrees-heading-chevron",
+        SECTION_TAGS => "sidebar-tags-heading-chevron",
+        SECTION_STASHES => "sidebar-stashes-heading-chevron",
+        _ => unreachable!("known sidebar section"),
+    }
 }
 
 /// A `/`-prefix group header (local groups, remote level-1, remote level-2).

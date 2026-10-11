@@ -4321,7 +4321,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
             .unwrap_or_else(|| panic!("no row naming {needle}: {:?}", list.rows))
     };
     // Section header: level 1, expanded.
-    let (_, _, (level, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    let (_, _, (level, expanded, ..)) = find(&list, kagi::ui::i18n::Msg::A11ySidebarLocal.t());
     assert_eq!((level, expanded), (1, Some(true)));
     // The current branch is level 2 and named as current.
     let (_, main_label, (level, expanded, ..)) = find(&list, "main");
@@ -4366,7 +4366,7 @@ pub fn scenario_sidebar_tree_roles(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     redraw(cx);
     let list = recorded_list("sidebar-local").expect("local branches drawn after collapse");
-    let (_, _, (_, expanded, ..)) = find(&list, "LOCAL BRANCHES");
+    let (_, _, (_, expanded, ..)) = find(&list, kagi::ui::i18n::Msg::A11ySidebarLocal.t());
     assert_eq!(expanded, Some(false));
     assert!(
         !list.rows.values().any(|(l, _)| l.contains("feat/a")),

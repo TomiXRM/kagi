@@ -425,7 +425,7 @@ impl KagiApp {
             .flex_1()
             .min_h(px(0.))
             .overflow_y_scroll()
-            .track_scroll(&self.activity_ranking_scroll)
+            .track_scroll(&self.ui().activity_ranking_scroll)
             .flex()
             .flex_col();
         if contribs.is_empty() {
@@ -457,7 +457,7 @@ impl KagiApp {
             )
             .child(super::render_helpers::with_system_vertical_scrollbar(
                 "activity-ranking-scrollbar",
-                &self.activity_ranking_scroll,
+                &self.ui().activity_ranking_scroll,
                 rows_el,
                 cx,
             ));

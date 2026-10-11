@@ -40,8 +40,8 @@ fn top(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHa
 }
 
 pub fn scenario_home_list_place(cx: &mut VisualTestAppContext) {
-    let _saved =
-        crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang", "theme", "ui_zoom"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
     let start = build_fixture();
     let _gh = OfflineGh::with_script(&gh_script());
     let mut cleared = kagi_git::github_repos::TOKEN_OVERRIDES.to_vec();
@@ -60,7 +60,6 @@ pub fn scenario_home_list_place(cx: &mut VisualTestAppContext) {
     .unwrap();
     wait_for(cx, &app, "the lists", settled);
     assert!(drawn(cx, window, "home-gh-acme/r00"));
-    let old_policy = cx.read(|cx| gpui_component::Theme::global(cx).scrollbar_show);
     let scroll = cx.read(|cx| {
         app.read(cx)
             .home_scroll_for_e2e()
@@ -91,7 +90,6 @@ pub fn scenario_home_list_place(cx: &mut VisualTestAppContext) {
     }
     kagi::ui::theme::set_zoom(1.);
     app.update(cx, |app, cx| app.set_lang(Lang::En, cx));
-    cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = old_policy);
     app.update(cx, |app, _| app.scroll_home_list_for_e2e(30));
     assert_eq!(top(cx, &app, window), 30, "the list scrolls");
 

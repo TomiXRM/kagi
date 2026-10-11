@@ -265,15 +265,28 @@ impl KagiApp {
             .bg(rgb(theme().panel))
             .border_r_1()
             .border_color(rgb(theme().surface))
-            .overflow_y_scroll()
-            .child(
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "home-sidebar-scrollbar",
+                &self.home_github.recent_scroll,
                 div()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::HomeRecent.t())),
-            )
-            .child(list)
+                    .id("home-recent-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.home_github.recent_scroll)
+                    .child(
+                        div()
+                            .px_2()
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(SharedString::from(Msg::HomeRecent.t())),
+                    )
+                    .child(list),
+                cx,
+            ))
             .into_any_element()
     }
 

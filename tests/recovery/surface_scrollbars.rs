@@ -4,6 +4,37 @@ use gpui::{point, px, size, AnyWindowHandle, Modifiers, MouseButton, VisualTestA
 use gpui_component::scroll::{ScrollbarHandle, ScrollbarShow};
 use kagi::ui::{e2e, theme};
 
+/// Restore both disk keys and thread-local/kit presentation state on unwind.
+pub(crate) struct PresentationRestore {
+    cx: VisualTestAppContext,
+    globals: Option<crate::recovery_layout::GlobalSettings>,
+    theme: String,
+    policy: ScrollbarShow,
+    _saved: crate::gui_isolation::SavedKeys,
+}
+
+impl PresentationRestore {
+    pub(crate) fn capture(cx: &VisualTestAppContext) -> Self {
+        Self {
+            cx: cx.clone(),
+            globals: Some(crate::recovery_layout::GlobalSettings::capture()),
+            theme: theme::theme().slug.to_string(),
+            policy: cx.read(|cx| gpui_component::Theme::global(cx).scrollbar_show),
+            _saved: crate::gui_isolation::SavedKeys::keep(&["theme"]),
+        }
+    }
+}
+
+impl Drop for PresentationRestore {
+    fn drop(&mut self) {
+        drop(self.globals.take());
+        theme::set_active(&self.theme);
+        self.cx.update(theme::sync_gpui_component_theme);
+        self.cx
+            .update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = self.policy);
+    }
+}
+
 fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     cx.update_window(win, |_, w, cx| w.draw(cx).clear())
         .unwrap();
@@ -71,8 +102,7 @@ pub(crate) fn drag<H: ScrollbarHandle>(
 }
 
 pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom", "lang"]);
-    let old_policy = cx.read(|cx| gpui_component::Theme::global(cx).scrollbar_show);
+    let _restore = PresentationRestore::capture(cx);
     let fixture = build_fixture();
     let (app, win) = mount(cx, fixture.path());
     assert!(theme::set_active("apple-light"));
@@ -108,7 +138,25 @@ pub fn scenario_settings_scrollbar_drag(cx: &mut VisualTestAppContext) {
         draw(cx, win);
         cx.run_until_parked();
     }
-    cx.update(|cx| gpui_component::Theme::global_mut(cx).scrollbar_show = old_policy);
+    app.update(cx, |app, cx| {
+        app.menu_overlay = None;
+        cx.notify();
+    });
+    cx.update_window(win, |_, w, cx| {
+        app.update(cx, |app, cx| app.handle_menu_command("app.settings", w, cx));
+    })
+    .unwrap();
+    draw(cx, win);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).settings_scroll.offset()),
+        gpui::Point::default(),
+        "reopening Settings reveals the first controls"
+    );
+    for _ in 0..10 {
+        cx.advance_clock(std::time::Duration::from_millis(100));
+        draw(cx, win);
+        cx.run_until_parked();
+    }
     app.update(cx, |app, cx| {
         app.menu_overlay = None;
         cx.notify();

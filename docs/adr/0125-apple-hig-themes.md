@@ -335,14 +335,17 @@ Tier B evidence.
 
 Settings' single body and Home's shared virtualized Repositories / PRs / Issues
 list attach the pinned kit's vertical scrollbar to their persistent scroll owner.
-Inspector files and message, plus Activity contributor ranking, use the same
-policy. Operation Log already has a scrollbar and is not changed.
+Home Recent, Inspector files and message, plus Activity contributor ranking,
+use the same policy. Operation Log already has a scrollbar and is not changed.
 `Scrolling` overlays without reducing content width; `Hover` and `Always` reserve
 a 16 logical-pixel lane and use `Always`, matching the PR table's #1182 policy.
 No new preference, colour mapping, row allocation or wheel/key dispatcher is added.
 
-Settings, Inspector and Activity retain ScrollHandle in KagiApp; Home retains
-its existing ListState, including cached entries, refresh anchoring and keyboard
+Settings retains its application-wide ScrollHandle in KagiApp and resets it on
+each open so the first keyboard control is visible. Inspector and Activity
+positions belong to TabUiState and never carry another repository's offset.
+Home Recent retains its application-wide handle in HomeGithub; the GitHub list
+retains its existing ListState, cached entries, refresh anchoring and keyboard
 row navigation. The pinned kit's ScrollbarState is private: GPUI retains it under
 a stable scrollbar element id instead of application code allocating it each
 render. Thumb interaction delegates to that kit, not a hand-built drag control.
@@ -356,3 +359,15 @@ offset and repaint retention. Settings and Home target 940×660 Apple Light,
 Tier B must additionally inspect Settings wheel then thumb drag, EN/JA and
 100%/167%, including last-section/list-item reachability; native state assertions
 alone do not establish native material parity or VoiceOver delivery.
+
+Audit exclusions: Operation Log already uses `with_vertical_scrollbar`;
+PR navigator (`pr_nav.rs`), commit strip and file list (`pr_mode.rs`), Conflict
+dashboard and context/modal scrollers (`conflict_view.rs`), command/menu
+popovers and modal previews remain unchanged. They have distinct workspace or
+transient-focus/layout owners outside Settings/Home and the specifically
+requested Inspector/oplog/Activity audit; this change does not claim they all
+have thumbs. Diff/editor/terminal scrollers already own independent rendering
+and scrollbar behavior and are likewise not replaced.
+
+Native scenario guards restore disk keys, in-memory zoom/language, active theme,
+synced kit palette and scrollbar policy on Drop, including panic unwinding.

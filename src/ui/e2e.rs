@@ -1267,3 +1267,50 @@ pub(super) fn take_github_issue_detail() -> Option<gpui::Task<IssueDetailResult>
 pub fn retarget_github_issues(app: &mut KagiApp, identity: &str, cx: &mut gpui::Context<KagiApp>) {
     app.address_issues_to(identity, cx);
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static HOME_REPOSITORY_DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(Default::default());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_home_repository_description(name: &str, description: &str) {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(name.to_owned(), description.to_owned());
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_home_repository_description(name: &str) -> Option<String> {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().remove(name))
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static HOME_REPOSITORY_ACTIONS: std::cell::RefCell<std::collections::HashMap<String, (gpui::Role, String)>> =
+        std::cell::RefCell::new(Default::default());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_home_repository_action(name: &str, label: &str) {
+    HOME_REPOSITORY_ACTIONS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(name.to_owned(), (gpui::Role::Button, label.to_owned()));
+    });
+}
+
+/// Attributes supplied by the named gpui-kit Button constructor, not live AX delivery.
+#[cfg(feature = "gui-e2e")]
+pub fn home_repository_action(name: &str) -> Option<(gpui::Role, String)> {
+    HOME_REPOSITORY_ACTIONS.with(|values| values.borrow().get(name).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clear_home_repository_probes() {
+    HOME_REPOSITORY_DESCRIPTIONS.with(|values| values.borrow_mut().clear());
+    HOME_REPOSITORY_ACTIONS.with(|values| values.borrow_mut().clear());
+}

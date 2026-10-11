@@ -715,3 +715,117 @@ pub fn scenario_home_row_paging(cx: &mut VisualTestAppContext) {
 
     unmount(cx, app, window);
 }
+
+/// #1203/#1204: description reveal and distinct small Secondary action.
+pub fn scenario_home_repository_affordances(cx: &mut VisualTestAppContext) {
+    use kagi::ui::{e2e, i18n, theme};
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos"]);
+    let fixture = build_fixture();
+    const DESCRIPTION: &str = "A long repository description with literal {} braces — 長い日本語の説明を最後まで読めます。 Long enough to be clipped in this compact repository row.";
+    let script = gh_script()
+        .replace(
+            "\"description\":\"\"",
+            &format!("\"description\":\"{DESCRIPTION}\""),
+        )
+        .replace("\"isPrivate\":false", "\"isPrivate\":true")
+        .replace("\"isFork\":false", "\"isFork\":true");
+    let _gh = OfflineGh::with_script(&script);
+    let mut cleared = kagi_git::github_repos::TOKEN_OVERRIDES.to_vec();
+    cleared.push("GH_HOST");
+    let _env = EnvCleared::new(&cleared);
+    let dir = kagi::ui::settings::settings_path()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let _ = std::fs::remove_file(kagi_git::github_repos_cache::cache_path(&dir));
+    let _ = std::fs::remove_file(kagi_git::github_repos_cache::work_cache_path(&dir));
+    for slug in ["apple-light", "apple-dark"] {
+        theme::set_active(slug);
+        cx.update(theme::sync_gpui_component_theme);
+        for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+            i18n::set_lang(lang);
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                let (app, window) = mount(cx, fixture.path());
+                cx.update_window(window, |_, w, cx| {
+                    app.update(cx, |app, cx| app.open_home_tab(w, cx))
+                })
+                .unwrap();
+                wait_for(cx, &app, "repositories", settled);
+                for _ in 0..2 {
+                    cx.update_window(window, |_, w, cx| w.draw(cx).clear())
+                        .unwrap();
+                }
+                let id = format!("home-gh-acme/r00:{}", i18n::Msg::HomeGithubClone.t());
+                let bounds =
+                    e2e::control_bounds(window.window_id(), &id).expect("Clone control drawn");
+                assert!(
+                    (bounds.size.height - theme::scaled_px(22.)).abs() <= gpui::px(1.),
+                    "small push button height: {bounds:?}"
+                );
+                assert_eq!(
+                    e2e::home_repository_action("acme/r00"),
+                    Some((
+                        gpui::Role::Button,
+                        i18n::Msg::HomeGithubClone.t().to_owned()
+                    ))
+                );
+                let probe =
+                    cx.read(|cx| app.read(cx).home_repository_description_for_e2e("acme/r00"));
+                assert_eq!(probe.as_deref(), Some(DESCRIPTION));
+                let desc = e2e::control_bounds(window.window_id(), "home-gh-description-acme/r00")
+                    .expect("description drawn");
+                cx.simulate_mouse_move(window, desc.center(), None, gpui::Modifiers::none());
+                for _ in 0..3 {
+                    cx.advance_clock(std::time::Duration::from_millis(400));
+                    cx.run_until_parked();
+                    cx.update_window(window, |_, w, cx| w.draw(cx).clear())
+                        .unwrap();
+                }
+                assert_eq!(
+                    cx.read(|cx| app
+                        .read(cx)
+                        .home_repository_description_for_e2e("tooltip:acme/r00"))
+                        .as_deref(),
+                    Some(DESCRIPTION),
+                    "hover builds full tooltip"
+                );
+                cx.update_window(window, |_, w, _| {
+                    let image = w.render_to_image().expect("native action paint");
+                    let scale = w.scale_factor();
+                    let pixel = |x: gpui::Pixels, y: gpui::Pixels| {
+                        image
+                            .get_pixel((f32::from(x) * scale) as u32, (f32::from(y) * scale) as u32)
+                            .0
+                    };
+                    let border = pixel(bounds.left() + gpui::px(0.5), bounds.center().y);
+                    let fill = pixel(bounds.left() + theme::scaled_px(5.), bounds.center().y);
+                    assert_ne!(
+                        border, fill,
+                        "identifying button border, not a metadata chip"
+                    );
+                    let badge = e2e::control_bounds(
+                        w.window_handle().window_id(),
+                        "home-gh-private-acme/r00",
+                    )
+                    .expect("Private badge");
+                    let badge_fill = pixel(badge.left() + theme::scaled_px(2.), badge.center().y);
+                    assert_ne!(
+                        border, badge_fill,
+                        "button boundary differs from quiet metadata fill"
+                    );
+                })
+                .unwrap();
+                focus_row(cx, &app, window, "repo:acme/r00");
+                keys(cx, window, "space");
+                assert!(
+                    cx.read(|cx| e2e::active_modal_present(app.read(cx))),
+                    "focused-row Space opens Clone card"
+                );
+                unmount(cx, app, window);
+            }
+        }
+    }
+}

@@ -171,11 +171,7 @@ pub(crate) fn render_trust_repo_modal(
             )
         })
         .child(
-            div()
-                .flex()
-                .flex_row()
-                .gap_2()
-                .justify_end()
+            super::button_style::modal_button_row()
                 .child(super::e2e::measure_control(
                     "trust-repo-cancel",
                     modal_button(

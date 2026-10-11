@@ -36,6 +36,8 @@ pub fn tinted_action_variant(base: u32, cx: &gpui::App) -> ButtonCustomVariant {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ButtonRole {
     Primary,
+    Secondary,
+    Destructive,
     SideCurrent,
     SideIncoming,
     Success,
@@ -49,6 +51,8 @@ impl ButtonRole {
     fn accent(self, t: &super::theme::Theme) -> u32 {
         match self {
             Self::Primary => t.ui_accent(),
+            Self::Secondary => t.text_sub,
+            Self::Destructive => t.color_blocker,
             Self::SideCurrent => t.color_branch,
             Self::SideIncoming => t.color_remote,
             Self::Success => t.color_success,
@@ -61,6 +65,8 @@ impl ButtonRole {
     fn filled_variant(self) -> Option<ButtonVariant> {
         match self {
             Self::Primary | Self::SideCurrent => Some(ButtonVariant::Primary),
+            Self::Secondary => Some(ButtonVariant::Default),
+            Self::Destructive => Some(ButtonVariant::Danger),
             Self::SideIncoming => Some(ButtonVariant::Info),
             Self::Neutral => Some(ButtonVariant::Ghost),
             Self::Success | Self::Warning | Self::Danger | Self::NeutralTinted => None,
@@ -192,6 +198,12 @@ fn record_modal_button(id: &'static str, label: &SharedString, reason: Option<&S
 #[inline]
 fn record_modal_button(_id: &'static str, _label: &SharedString, _reason: Option<&SharedString>) {}
 
+/// Fixed, right-aligned dialog footer. Callers append Cancel first and the
+/// default action last; button sizing and semantics stay in `modal_button`.
+pub(crate) fn modal_button_row() -> gpui::Div {
+    div().flex().flex_row().gap_2().justify_end()
+}
+
 /// Dialog actions share the small (24px) control, regardless of operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModalButtonKind {
@@ -268,10 +280,11 @@ fn modal_button_with_tab_stop(
             .into_any_element();
     }
     let button = match kind {
-        ModalButtonKind::Cancel => Button::new(id).label(label).ghost(),
+        ModalButtonKind::Cancel | ModalButtonKind::Secondary => {
+            KagiButton::styled(id, label, ButtonRole::Secondary, cx)
+        }
         ModalButtonKind::Primary => KagiButton::styled(id, label, ButtonRole::Primary, cx),
-        ModalButtonKind::Destructive => KagiButton::styled(id, label, ButtonRole::Danger, cx),
-        ModalButtonKind::Secondary => Button::new(id).label(label),
+        ModalButtonKind::Destructive => KagiButton::styled(id, label, ButtonRole::Destructive, cx),
     };
     button
         .small()

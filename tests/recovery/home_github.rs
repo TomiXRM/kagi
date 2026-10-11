@@ -430,6 +430,21 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
         .unwrap(),
         "the clone card holds the focus, not the row"
     );
+    crate::keyboard_nav::keys(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).clone_modal().is_none()));
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .root_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        })
+        .unwrap(),
+        "Escape from the clone task owner restores root focus"
+    );
+    click_control(cx, window, "home-gh-acme/widgets");
+    cx.run_until_parked();
+    choose_folder(cx, &app, &elsewhere);
     crate::keyboard_nav::keys(cx, window, "enter");
     wait_for(cx, &app, "the failed clone", |app| {
         app.home_github.cloning.is_none()

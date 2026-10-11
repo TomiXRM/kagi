@@ -227,6 +227,11 @@ impl Render for KagiApp {
         // render no longer needs to nudge it (ADR-0110 Phase 5).
 
         // Modal text inputs: lazy-create + sync (needs Window).
+        // Input task frames share one persistent trap handle, including cards
+        // whose opener historically relied only on InputState's own focus.
+        if self.has_active_modal() && self.modal_focus.is_none() {
+            self.modal_focus = Some(cx.focus_handle());
+        }
         self.sync_modal_inputs(window, cx);
         // The PR page's comment composer, for the same reason (ADR-0200).
         self.sync_pr_comment_input(window, cx);

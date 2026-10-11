@@ -197,6 +197,10 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_file_selection.rs"]
+mod conflict_file_selection;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/repo_health.rs"]
 mod repo_health;
 
@@ -1777,6 +1781,10 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_file_selection",
+                Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
             ),
             (
                 "modal_polish_editor_fs",

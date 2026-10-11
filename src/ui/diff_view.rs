@@ -224,6 +224,9 @@ pub struct MainDiffView {
 /// added or deleted files have only one).
 #[derive(Clone)]
 pub struct DiffImagePair {
+    /// Blob existence is independent of whether its encoding is previewable.
+    pub old_exists: bool,
+    pub new_exists: bool,
     pub old: Option<std::sync::Arc<gpui::Image>>,
     pub new: Option<std::sync::Arc<gpui::Image>>,
 }
@@ -493,6 +496,8 @@ pub(crate) fn attach_selection_handlers(
     sel_key: u64,
 ) -> gpui::Stateful<gpui::Div> {
     let rows_up = rows.clone();
+    #[cfg(feature = "gui-e2e")]
+    let el = super::e2e::diff_controls::row(sel_key, i, el);
     el.on_mouse_down(
         gpui::MouseButton::Left,
         move |_e: &gpui::MouseDownEvent, window, _cx| {
@@ -533,14 +538,18 @@ pub(crate) fn render_main_diff_row(
     match row {
         DiffRow::HunkHeader(header) => div()
             .id(("main-diff-hunk", i))
-            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .w_full()
             .flex()
             .items_center()
             .gap_2()
             .px_2()
             .py_px()
-            .bg(rgb(theme::theme().surface))
+            .bg(if super::diff_selection::is_keyboard_caret(sel_key, i) {
+                theme::selection_overlay()
+            } else {
+                rgb(theme::theme().surface).into()
+            })
+            .map(|el| attach_selection_handlers(el, rows, i, sel_key))
             .text_sm()
             .text_color(rgb(theme::theme().diff_hunk))
             // Hunk headers stay single-line (never wrap): overflow_hidden +
@@ -554,6 +563,11 @@ pub(crate) fn render_main_diff_row(
             )
             // #842: a Commit Panel side moves this hunk to the other side.
             .children(hunk.and_then(|h| h.button(i, header)))
+            .map(|el| {
+                #[cfg(feature = "gui-e2e")]
+                let el = super::e2e::measure_control(format!("main-diff-hunk-row-{i}"), el);
+                el
+            })
             .into_any(),
         DiffRow::Line {
             kind,
@@ -701,14 +715,11 @@ pub(crate) fn render_main_diff_row(
                 )
                 .into_any()
         }
-        DiffRow::Binary => div()
+        DiffRow::Binary => super::render_helpers::diff_state::caption(Msg::DiffBinaryNoText)
             .id(("main-diff-binary", i))
             .w_full()
             .px_2()
             .py_1()
-            .text_sm()
-            .text_color(rgb(theme::theme().text_muted))
-            .child(SharedString::from("Binary file (no diff)"))
             .into_any(),
     }
 }

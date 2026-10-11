@@ -5,6 +5,7 @@ pub fn scenario_compact_layout_changes(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let fixture = fixture();
     matrix(|case| {
+        e2e::commit_panel_labels::clear();
         let (app, win) = mount(cx, fixture.path(), case);
         rail_graph(win, case.dimensions());
         let panel = changes(cx, &app, win);
@@ -13,6 +14,7 @@ pub fn scenario_compact_layout_changes(cx: &mut VisualTestAppContext) {
         header_controls(cx, &panel, win);
         independent_scroll(cx, &app, &panel, win);
         set_draft(cx, &panel, win);
+        selector_keys(cx, &panel, win);
         let before = draft(cx, &panel);
         let identity = panel.entity_id();
         resize(cx, win, (1392., case.height));
@@ -73,6 +75,66 @@ fn header_controls(
             "real List control updates original panel"
         );
     }
+}
+
+fn selector_keys(
+    cx: &mut VisualTestAppContext,
+    panel: &Entity<CommitPanelView>,
+    win: AnyWindowHandle,
+) {
+    use kagi_ui_core::i18n::Msg;
+    let preserved = draft(cx, panel);
+    let before_scroll = cx.read(|cx| {
+        let view = panel.read(cx);
+        (
+            view.unstaged_scroll_handle.0.borrow().base_handle.offset(),
+            view.staged_scroll_handle.0.borrow().base_handle.offset(),
+        )
+    });
+    for (group, list, tree) in [
+        ("cp-view-group", "cp-view-list", "cp-view-tree"),
+        (
+            "cp-staged-view-group",
+            "cp-staged-view-list",
+            "cp-staged-view-tree",
+        ),
+    ] {
+        assert_ax(group, gpui::Role::TabList, Msg::CommitPanelTitle.t());
+        assert_ax(list, gpui::Role::Tab, Msg::CommitPanelList.t());
+        assert_ax(tree, gpui::Role::Tab, Msg::CommitPanelTree.t());
+        let initial = bounds(win, list);
+        focus_control(cx, win, list);
+        for (key, id, selected) in [("right", tree, true), ("home", list, false)] {
+            press_key(cx, win, key);
+            assert_control_focus(cx, win, id);
+            assert_eq!(cx.read(|cx| panel.read(cx).state.tree_view), selected);
+            assert_eq!(
+                e2e::commit_panel_labels::accessible_selected(tree),
+                Some(selected)
+            );
+            assert_eq!(
+                e2e::commit_panel_labels::accessible_selected(list),
+                Some(!selected)
+            );
+            assert_eq!(bounds(win, list), initial, "selector focus cannot reflow");
+            assert_eq!(
+                draft(cx, panel),
+                preserved,
+                "selectors retain the same draft"
+            );
+        }
+    }
+    assert_eq!(
+        cx.read(|cx| {
+            let view = panel.read(cx);
+            (
+                view.unstaged_scroll_handle.0.borrow().base_handle.offset(),
+                view.staged_scroll_handle.0.borrow().base_handle.offset(),
+            )
+        }),
+        before_scroll,
+        "both keyboard selectors retain independent scroll offsets"
+    );
 }
 
 fn bulk_controls(cx: &mut VisualTestAppContext, repo: &Path) {

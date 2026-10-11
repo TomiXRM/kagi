@@ -23,10 +23,44 @@ pub mod rail;
 #[path = "compact_layout/state.rs"]
 pub mod state;
 
+fn press_key(cx: &mut VisualTestAppContext, win: AnyWindowHandle, key: &str) {
+    settle(cx, win);
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    cx.dispatch_keystroke(win, keystroke.clone());
+    cx.simulate_event(win, gpui::KeyUpEvent { keystroke });
+    settle(cx, win);
+}
+
+fn focus_control(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
+    let focus = e2e::commit_panel_labels::focus_handle(id)
+        .unwrap_or_else(|| panic!("{id} must expose its production keyboard focus"));
+    cx.update_window(win, |_, window, cx| focus.focus(window, cx))
+        .unwrap();
+    settle(cx, win);
+}
+
+fn assert_control_focus(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
+    assert!(
+        cx.update_window(win, |_, window, _| {
+            e2e::commit_panel_labels::focused(id, window)
+        })
+        .unwrap(),
+        "{id} must own actual window focus"
+    );
+}
+
+fn assert_ax(id: &str, role: gpui::Role, name: &str) {
+    assert_eq!(e2e::commit_panel_labels::accessible_role(id), Some(role));
+    assert_eq!(
+        e2e::commit_panel_labels::accessible_name(id).as_deref(),
+        Some(name)
+    );
+}
 const WIDTH: f32 = 940.;
 const FILES_PER_SIDE: usize = 72;
 const RECORDERS: &[&str] = &[
     "compact-rail",
+    "plan-heading-title",
     "compact-graph",
     "compact-wip-row",
     "compact-wip-affordance",

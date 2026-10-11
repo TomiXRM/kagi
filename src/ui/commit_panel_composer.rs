@@ -1,351 +1,140 @@
-use super::commit_panel::CommitPanelView;
+//! Commit Panel template/input synchronization; state remains on CommitPanelView.
 use super::*;
-use crate::ui::button_style::{ButtonRole, KagiButton};
-use gpui_component::Disableable as _;
 
 impl CommitPanelView {
-    pub(super) fn render_composer_commit(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let can_commit = !self.state.staged.is_empty()
-            && self
-                .title_input
-                .as_ref()
-                .map(|e| !e.read(cx).value().trim().is_empty())
-                .unwrap_or(!self.state.commit_msg.trim().is_empty());
-        // ── Commit button ─────────────────────────────────────────
-        // No destination branch in the label: ADR-0134 put it here as "one
-        // place to look", but a real branch name overflows the button. The
-        // header shows the branch at all times and has room for a long one.
-        let commit_label = SharedString::from(i18n::commit_button());
-        let commit_click = cx.listener(
-            |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
-                view.defer_open_commit_plan_modal(window, cx);
-            },
-        );
-        // One Button in both states (`.disabled`), so enabling it does not change
-        // the footer's height, and the disabled form still reads as a button
-        // rather than blending into the footer background.
-        let commit_btn = KagiButton::styled("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
-            .small()
-            .mt_1()
-            .w_full()
-            .disabled(!can_commit)
-            .when(can_commit, |b| b.on_click(commit_click))
-            .into_any_element();
-        div()
-            .relative()
-            .flex_shrink_0()
-            .child(commit_btn)
-            .child(super::e2e::measure_inside("cp-commit-action"))
-    }
-    pub(super) fn render_composer_icon(
-        &self,
-        id: &'static str,
-        path: &'static str,
-        tip: String,
-        enabled: bool,
-        accent: u32,
-    ) -> gpui::Stateful<gpui::Div> {
-        let mut b = div()
-            .id(id)
-            .p_1()
-            .rounded_sm()
-            .flex()
-            .items_center()
-            .justify_center()
-            .relative()
-            .child(super::e2e::measure_inside(id))
-            .tooltip(move |_w, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx))
-            .child(
-                gpui::svg()
-                    .path(path)
-                    .w(theme::scaled_px(16.0))
-                    .h(theme::scaled_px(16.0))
-                    .text_color(rgb(if enabled { accent } else { theme().text_muted })),
-            );
-        if enabled {
-            b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
-        }
-        b
-    }
-    pub(super) fn render_composer_suggest(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let smart = &self.smart_snapshot;
-        let smart_ui = (self.smart_generating, &self.smart_status);
-        let staged_empty = self.state.staged.is_empty();
-        // Sparkles — generate a commit message. Uses the local LLM when it is
-        // usable (green), otherwise the rule-based draft.
-        let llm_on = smart.llm_offered();
-        let suggest_enabled = !staged_empty && !smart_ui.0;
-        let suggest_color = if llm_on {
-            theme().color_success
-        } else {
-            theme().accent_text_on(theme().panel)
-        };
-        let suggest_btn: gpui::AnyElement = if smart_ui.0 {
-            // Spin the same icon rather than swapping in a text spinner, so
-            // the row does not change width mid-generation.
-            use gpui::AnimationExt as _;
-            let spinner_base = gpui::svg()
-                .path("icons/loader-circle.svg")
-                .w(theme::scaled_px(16.0))
-                .h(theme::scaled_px(16.0))
-                .text_color(rgb(suggest_color));
-            // Reduce motion: static loader glyph, no per-frame rotation tick.
-            let spinner: gpui::AnyElement = if theme::reduce_motion() {
-                spinner_base.into_any_element()
-            } else {
-                spinner_base
-                    .with_animation(
-                        "cp-smart-spinner",
-                        gpui::Animation::new(Duration::from_millis(900)).repeat(),
-                        |svg, delta| {
-                            svg.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                                delta * std::f32::consts::TAU,
-                            )))
-                        },
-                    )
-                    .into_any_element()
-            };
-            div()
-                .id("cp-smart-suggest")
-                .p_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(spinner)
-                .into_any_element()
-        } else {
-            let mut b = self.render_composer_icon(
-                "cp-smart-suggest",
-                "icons/sparkles.svg",
-                Msg::GenerateMessage.t().to_string(),
-                suggest_enabled,
-                suggest_color,
-            );
-            if suggest_enabled {
-                b = b.on_click(cx.listener(
-                    move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        if llm_on {
-                            view.defer_smart_generate(window, cx);
-                        } else {
-                            view.defer_smart_suggest(window, cx);
-                        }
-                    },
-                ));
-            }
-            b.into_any_element()
-        };
-        suggest_btn
-    }
-    pub(super) fn render_composer_icons(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let suggest_btn = self.render_composer_suggest(cx);
-        let coauthor_menu = if self.coauthor_menu_visible() {
-            self.coauthor_menu.as_deref()
-        } else {
-            None
-        };
-        // Person+ — co-author picker.
-        let coauthor_btn = self
-            .render_composer_icon(
-                "cp-coauthor",
-                "icons/user-plus.svg",
-                Msg::AddCoAuthor.t().to_string(),
-                true,
-                theme().text_main,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                    view.toggle_coauthor_menu(cx);
-                },
-            ));
-
-        // Undo — amend the previous commit (the plan still blocks pushed
-        // commits; this only opens the modal).
-        let amend_btn = self
-            .render_composer_icon(
-                "cp-amend-btn",
-                "icons/undo-2.svg",
-                Msg::AmendLastCommit.t().to_string(),
-                true,
-                theme().color_warning,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                    view.defer_amend(window, cx);
-                },
-            ));
-
-        let row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .child(suggest_btn)
-            .child(coauthor_btn)
-            // #476 slice 3: amend resolves the panel's repository, so it is
-            // offered on a worktree panel too — the confirm names it.
-            .child(amend_btn);
-
-        div()
-            .relative()
-            .child(row)
-            .children(super::commit_panel_render::render_coauthor_menu(
-                coauthor_menu,
-                cx,
-            ))
-    }
-    pub(super) fn render_composer_template(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        // ── commit.template toggle (bottom-left of the body box) ──────
-        // Only offered when the user actually has a `commit.template`; without
-        // one the control would toggle nothing.
-        let template_toggle: gpui::AnyElement = if self.commit_template.is_some() {
-            let on = self.template_active(cx);
-            div()
-                .id("cp-template-toggle")
-                .px_1p5()
-                .py_px()
-                .rounded_sm()
-                .text_xs()
-                .text_color(rgb(if on {
-                    theme().accent_text_on(theme().panel)
-                } else {
-                    theme().text_muted
-                }))
-                .hover(|s| {
-                    let s = s.bg(rgb(theme().selected)).cursor_pointer();
-                    if on {
-                        s.text_color(rgb(theme().accent_text_on(theme().selected)))
-                    } else {
-                        s
-                    }
-                })
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
-                        .build(w, cx)
-                })
-                .on_click(cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.toggle_template(window, cx);
-                    },
-                ))
-                .child(SharedString::from(Msg::Template.t()))
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        };
-        template_toggle
-    }
-    pub(super) fn render_composer_inputs(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let title_input = &self.title_input;
-        let body_input = &self.body_input;
-        let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
-        let template_toggle = self.render_composer_template(cx);
-        let icon_row = self.render_composer_icons(cx);
-        // Subject + body (ADR-0134), with template/co-author trailers in the body.
-        // Real icon rows inside its box cannot overlap a long body.
-        // AutoGrow's inner minimum prevents flex shrinking at high zoom. Keep
-        // its cached visual-row measurement, without imposing that minimum.
-        let body_rows = body_input
+    /// Whether the body currently carries the template's comment block.
+    ///
+    /// Derived from the text rather than tracked in a flag, so the toggle can
+    /// never disagree with what is actually in the box (the user can delete the
+    /// comments by hand).
+    pub fn template_active(&self, cx: &gpui::App) -> bool {
+        self.body_input
             .as_ref()
-            .map_or(3, |body| body.read(cx).wrap_row_count().clamp(3, 12));
-        let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
-            + gpui_component::Size::Medium.input_py() * 2.;
-        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
-            (Some(title), Some(body)) => div()
-                .flex()
-                .flex_col()
-                .min_h(px(0.))
-                .flex_shrink(1.)
-                .overflow_hidden()
-                .gap_2()
-                .child(Input::new(title).appearance(true).bordered(true))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        // Icon, its p_1, row pb_1, and the body's two borders.
-                        .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
-                        .flex_shrink(1.)
-                        // Same radius the `Input` gives itself, so the two boxes
-                        // do not have visibly different corners.
-                        .rounded(input_radius)
-                        .border_1()
-                        .border_color(rgb(theme().text_muted))
-                        .bg(rgb(theme().bg_base))
-                        .child(
-                            div()
-                                .h(body_height)
-                                .min_h(px(0.))
-                                .flex_shrink(1.)
-                                .overflow_hidden()
-                                .child(Input::new(body).h_full().appearance(false).bordered(false)),
-                        )
-                        .relative()
-                        .child(super::e2e::measure_inside("cp-body"))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .flex_shrink_0()
-                                .px_1()
-                                .pb_1()
-                                .child(template_toggle)
-                                .child(icon_row),
-                        ),
-                )
-                .into_any_element(),
-            // No window yet (headless); the message still flows through
-            // `state.commit_msg`, so this is a placeholder, not a failure.
-            _ => div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(commit message input unavailable)"))
-                .into_any_element(),
-        };
-        msg_inputs
+            .map(|i| {
+                i.read(cx)
+                    .value()
+                    .lines()
+                    .any(kagi_domain::message::is_comment_line)
+            })
+            .unwrap_or(false)
     }
-    pub(super) fn render_composer(&self, compact: bool, cx: &mut Context<Self>) -> gpui::Div {
-        let msg_inputs = self.render_composer_inputs(cx);
-        let commit_btn = self.render_composer_commit(cx);
-        let has_unstaged_warning = !self.state.unstaged.is_empty() && !self.state.staged.is_empty();
-        div()
-            .when(compact, |el| el.w_full().h_full())
-            .flex_shrink(1.)
-            .min_h(px(0.))
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .px_3()
-            .py_2()
-            .gap_2()
-            .bg(rgb(theme().surface))
-            // Subject + body (the icon actions live inside the body box)
-            .child(msg_inputs)
-            // Transient smart-commit status. Its own full-width line:
-            // inside the right-aligned icon group it pushed the icons
-            // sideways as the text appeared (user report).
-            .when_some(self.smart_status.clone(), |el, status| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(status)),
-                )
-            })
-            // Unstaged warning
-            .when(has_unstaged_warning, |el| {
-                el.child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(theme().color_warning))
-                        .child(SharedString::from(i18n::unstaged_not_included(
-                            self.state.unstaged.len(),
-                        ))),
-                )
-            })
-            .child(commit_btn)
+
+    /// Add or remove the `commit.template` block in the body, and remember the
+    /// choice for the next open.
+    pub fn toggle_template(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        let Some(body) = self.body_input.clone() else {
+            return;
+        };
+        let current = body.read(cx).value().to_string();
+        let on = !self.template_active(cx);
+        let next = if on {
+            let Some(tpl) = self.commit_template.clone() else {
+                return;
+            };
+            let written = kagi_domain::message::strip_template_comments(&current);
+            if written.trim().is_empty() {
+                tpl
+            } else {
+                format!("{}\n\n{}", written.trim_end(), tpl)
+            }
+        } else {
+            kagi_domain::message::strip_template_comments(&current)
+        };
+        body.update(cx, |s, cx| s.set_value(next, window, cx));
+        crate::ui::settings::write_setting(KEY_COMMIT_TEMPLATE, Some(if on { "1" } else { "0" }));
+        klog!("commit template: {}", if on { "on" } else { "off" });
+        cx.notify();
+    }
+    /// Render-time input sync: push a queued smart-commit message into the Input
+    /// (correction #2 — was the parent `render.rs:196` block), then run the
+    /// per-branch draft autosave (correction #1 — was the parent
+    /// `sync_modal_inputs` half). Runs on this entity's own render path with
+    /// `&mut Window`, so the parent never reads the child's input each frame.
+    pub fn sync_inputs(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        self.sync_input_language(window, cx);
+
+        // ── Queued smart-commit message → Input (needs `&mut Window`). ──
+        if let Some(msg) = self.pending_smart_msg.take() {
+            let (title, body) = kagi_git::split_title_body(&msg);
+            if let Some(input) = self.title_input.clone() {
+                input.update(cx, |state, cx| state.set_value(title, window, cx));
+            }
+            if let Some(input) = self.body_input.clone() {
+                input.update(cx, |state, cx| state.set_value(body, window, cx));
+            }
+        }
+
+        // ── Commit-message draft autosave (T-COMMIT-007 / T-COMMIT-009) ──
+        if self.title_input.is_some() || self.body_input.is_some() {
+            let v = self.effective_commit_message(cx);
+            if v != self.last_draft_value {
+                self.last_draft_value = v;
+                self.draft_save_gen = self.draft_save_gen.wrapping_add(1);
+                let gen = self.draft_save_gen;
+                let mode = "plain".to_string();
+                let repo_path = self.repo_path.clone();
+                let tab_branch = self
+                    .app
+                    .read_with(cx, |app, _| {
+                        app.reads
+                            .get(Some(self.owner))
+                            .status_summary
+                            .branch
+                            .clone()
+                    })
+                    .unwrap_or_default();
+                // A queued checkout can switch HEAD during the debounce. The
+                // draft still belongs to the branch on which editing occurred.
+                let branch = crate::ui::worktree_wip::draft_branch(
+                    self.foreign.as_ref().map(|(label, _)| label.as_ref()),
+                    &tab_branch,
+                );
+                cx.spawn(async move |this, acx| {
+                    acx.background_executor()
+                        .timer(std::time::Duration::from_millis(250))
+                        .await;
+                    let _ = this.update(acx, |view, _cx| {
+                        if view.draft_save_gen != gen {
+                            return;
+                        }
+                        let msg = view.last_draft_value.clone();
+                        if msg.trim().is_empty() {
+                            let _ = kagi_git::clear_draft(&repo_path, &branch);
+                        } else {
+                            let _ = kagi_git::save_draft(&repo_path, &branch, &msg, &mode);
+                            klog!("draft: saved {}", branch);
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn sync_input_language(&mut self, window: &mut gpui::Window, cx: &mut gpui::Context<Self>) {
+        // ── Language switch → rebuild the inputs for their placeholders. ──
+        // `InputState` has no placeholder setter, so the text is carried across
+        // a fresh pair. Rare (a menu action), and it only costs the caret.
+        let lang = kagi_ui_core::i18n::lang();
+        if lang != self.input_lang {
+            self.input_lang = lang;
+            if let Some(old) = self.title_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh =
+                    cx.new(|cx| InputState::new(window, cx).placeholder(Msg::CommitTitle.t()));
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.title_input = Some(fresh);
+            }
+            if let Some(old) = self.body_input.clone() {
+                let text = old.read(cx).value().to_string();
+                let fresh = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .multi_line(true)
+                        .placeholder(Msg::CommitBody.t())
+                });
+                fresh.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.body_input = Some(fresh);
+            }
+        }
     }
 }

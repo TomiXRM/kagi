@@ -55,6 +55,37 @@ fn compact_composer_localizes_prose_and_keeps_git_controls_english() {
 }
 
 #[test]
+fn commit_panel_chrome_has_japanese_without_english_fallbacks() {
+    for (message, japanese) in [
+        (Msg::CommitPanelTitle, "Commit Panel"),
+        (Msg::CommitPanelUnstaged, "未 stage"),
+        (Msg::CommitPanelStaged, "stage 済み"),
+        (Msg::CommitPanelList, "一覧"),
+        (Msg::CommitPanelTree, "ツリー"),
+        (Msg::CommitPanelStageAll, "Stage all"),
+        (Msg::CommitPanelUnstageAll, "Unstage all"),
+        (Msg::CommitPanelDiscardAll, "Discard all"),
+        (Msg::CommitPanelStage, "Stage"),
+        (Msg::CommitPanelUnstage, "Unstage"),
+        (Msg::CommitPanelConflict, "競合"),
+    ] {
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+        if matches!(
+            message,
+            Msg::CommitPanelUnstaged
+                | Msg::CommitPanelStaged
+                | Msg::CommitPanelList
+                | Msg::CommitPanelTree
+                | Msg::CommitPanelConflict
+        ) {
+            assert_ne!(message.t_for(Lang::En), japanese);
+        } else {
+            assert_eq!(message.t_for(Lang::En), japanese);
+        }
+    }
+}
+
+#[test]
 fn toolbar_unavailable_reasons_are_japanese_prose() {
     for message in [
         Msg::PullBusy,
@@ -149,7 +180,7 @@ fn parameterized_helpers_switch() {
         "detached abc12345"
     );
     set_lang_no_persist(Lang::Ja);
-    assert!(wip_row_note(2).contains("クリックで commit panel"));
+    assert!(wip_row_note(2).contains("クリックで Commit Panel"));
     assert_eq!(
         graph_detached_worktree_label("abc12345"),
         "detached abc12345"

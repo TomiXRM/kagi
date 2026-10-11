@@ -25,6 +25,7 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+pub(crate) mod diff_state;
 mod metadata;
 pub(crate) mod row_overlay;
 
@@ -544,6 +545,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     // R1: selection-surface semantics stay title+count based, independently of
     // the derived-layout cache's immutable row identity.
     let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
+    // Focus follows the title, not the row-count-dependent selection token.
+    let focus_key = super::diff_selection::surface_key(view.title.as_ref(), 0);
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
     let layout = overlay
@@ -576,45 +579,6 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
 
     let header = header.render(title, stats, cx);
 
-    // W-IMG: one labelled image column ("Before"/"After"); either side of the
-    // pair may be missing for added/deleted files.
-    let image_col = |label: &'static str, img: std::sync::Arc<gpui::Image>| {
-        // The column stretches to the panel height and the image fills what the
-        // label leaves, contained. `max_h_full` on the img had no definite
-        // height to resolve against, so a portrait image overflowed and the
-        // centred panel clipped its top and bottom (user report). The img is
-        // absolutely placed: percent sizes on in-flow children of a
-        // flex_basis(0) column can resolve to 0 (#362).
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .self_stretch()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(label)),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .self_stretch()
-                    .child(
-                        gpui::img(gpui::ImageSource::Image(img))
-                            .absolute()
-                            .inset_0()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
-            )
-    };
-
     div()
         .flex_1()
         // Allow the center diff column to shrink below its content's intrinsic
@@ -634,28 +598,16 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         .child(header)
         // ── Diff body: full remaining space ──────────────────────────────
         .child(if let Some(pair) = images {
-            // W-IMG: binary image file — render before/after panels instead of
-            // the (empty) text-diff list.
-            div()
-                .id("main-diff-image-panel")
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_hidden()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .p_4()
-                .children(pair.old.map(|img| image_col("Before", img)))
-                .children(pair.new.map(|img| image_col("After", img)))
-                .into_any_element()
+            diff_state::image_panel(pair)
         } else {
             // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
             // gpui-component 0.5.1 implements `ScrollbarHandle` directly for
             // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
             // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
             let scrollbar_handle = scroll_handle.clone();
+            let selection_scroll = scroll_handle.clone();
+            let selection_projection = projection.clone();
+            let selection_items = items.clone();
             // User report: diff text rendered in the UI font (the root div's
             // `UI_FONT`), which is proportional — wrong for code, and it also
             // broke the `format!("{:5}", n)` line-number gutters, which only
@@ -673,6 +625,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
             // gpui-component's `mono_font_family` — i.e. `MONO_FONT`. Matching
             // the neighbour matters more than the Nerd Font preference here.
             div()
+                .id(("diff-selection-body", focus_key))
                 .flex_1()
                 .min_h(px(0.))
                 .flex()
@@ -728,6 +681,27 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     .min_h(px(0.)),
                     true,
                 ))
+                .map(|element| super::diff_selection::keyboard::Pane {
+                    element,
+                    key: sel_key,
+                    focus_key,
+                    rows,
+                    scroll: selection_scroll,
+                    item_index: move |row| {
+                        let base = selection_projection
+                            .as_ref()
+                            .and_then(|p| super::diff_split::split_index_of(&p.rows, row))
+                            .unwrap_or(row);
+                        selection_items
+                            .as_ref()
+                            .and_then(|items| {
+                                items
+                                    .iter()
+                                    .position(|item| *item == row_overlay::Item::Row(base))
+                            })
+                            .unwrap_or(base)
+                    },
+                })
                 .into_any_element()
         })
 }

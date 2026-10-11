@@ -170,6 +170,7 @@ impl KagiApp {
             (
                 cx.new(|_| {
                     let mut v = CommitPanelView::new(panel, weak_app, repo_path.clone(), owner);
+                    v.pointer_root_focus = self.root_focus.clone();
                     v.foreign = foreign;
                     v
                 }),
@@ -930,6 +931,10 @@ impl KagiApp {
                     if let Some(entity) = self.ui().commit_panel.clone() {
                         entity.update(cx, |v, _| v.state.plan_modal = None);
                     }
+                } else if self.compact.enabled && self.commit_plan_visible(cx) {
+                    // The plan suspends the pinned composer, unmounting its
+                    // focused footer/input. Keep Enter/Escape on the drawn root.
+                    self.focus_root_for_modal();
                 }
             }
             Err(e) => {

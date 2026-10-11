@@ -122,6 +122,34 @@ Svg painter checks the element's explicit colour rather than inheriting it from
 the trigger div. The WIP reveal is an inline, non-shrinking action before the
 diffstat, not an absolute overlay that can obscure live change counts.
 
+### Integration with the shared keyboard/AX Commit Panel
+
+The later #1251 renderer split is authoritative for dense file rows, the
+List/Tree TabList, named ghost footer Buttons and the co-author ListBox.
+Compact adapters call those same updated render helpers; they do not retain the
+former custom footer as a second implementation. Each Changes column has a
+stable roving selector focus owner while sharing the existing tree-mode state.
+Composer/input synchronization stays on the same CommitPanelView entity.
+
+The window Escape fallback respects the shared front-layer modal/menu boundary,
+then diff-line selection or a PR drawer, then the newest toast, then a compact
+rail Popover, then the pinned composer, and finally remaining workspace fallback.
+The co-author menu therefore dismisses before the popup and restores its opener
+through existing menu reconciliation. Closing the composer yields its hidden
+input focus to the root. The lifecycle native oracle exercises menu, error toast,
+rail and composer together; no second modal slot or Git write path is introduced.
+
+Warned/blocked compact Commit plans request the existing modal root-focus handoff
+before suspending a keyboard-focused footer. A controlled pinned Popover has no
+implicit prior-focus restore, so leaving focus on its unmounted Commit control
+would prevent Escape from reaching the visible plan. The direct execution path
+and wide plan presentation remain unchanged. Native lifecycle coverage checks the
+drawn plan heading, root focus, first Escape returning the same pinned owner/
+inputs/draft, second Escape dismissing the composer, and unchanged Git index.
+Incoming narrow keyboard fixtures provide real untracked WIP; wide fixtures stay
+unchanged. Localization tests close the occluding composer before pointer-selecting
+Changes, then reopen the same WIP owner rather than clicking through a pinned popup.
+
 ## State and verification contract
 
 Rest retains neutral theme surfaces; hover reveals the WIP action and rail

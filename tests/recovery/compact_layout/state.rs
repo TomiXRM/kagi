@@ -85,6 +85,7 @@ pub fn scenario_compact_layout_state(cx: &mut VisualTestAppContext) {
 
 fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     let fixture = fixture();
+    e2e::commit_panel_labels::clear();
     let (app, win) = mount(cx, fixture.path(), case);
     let panel = changes(cx, &app, win);
     rail_graph(win, case.dimensions());
@@ -167,11 +168,56 @@ fn graph_selection(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: An
         !cx.read(|cx| app.read(cx).ui().commit_panel_open),
         "real Graph selection closes legacy right-pane flag, not pinned compact composer"
     );
-    click(cx, win, "cp-coauthor");
-    assert!(cx.read(|cx| panel_for_app(app, cx).read(cx).coauthor_menu.is_some()));
+    coauthor_keys(cx, app, win);
+}
+
+fn coauthor_keys(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
+    use kagi_ui_core::i18n::Msg;
+    let panel = cx.read(|cx| panel_for_app(app, cx));
+    let preserved = draft(cx, &panel);
+    focus_control(cx, win, "cp-coauthor");
+    press_key(cx, win, "enter");
     assert!(cx.read(|cx| e2e::menu_is_front(app.read(cx), cx)));
-    escape(cx, app, win);
-    assert!(cx.read(|cx| panel_for_app(app, cx).read(cx).coauthor_menu.is_none()));
+    let candidates = cx
+        .read(|cx| panel.read(cx).coauthor_menu.clone())
+        .expect("keyboard opens original co-author picker");
+    assert_ax(
+        "cp-coauthor-menu",
+        gpui::Role::ListBox,
+        Msg::AddCoAuthor.t(),
+    );
+    if candidates.is_empty() {
+        assert_ax(
+            "cp-coauthor-empty",
+            gpui::Role::Status,
+            Msg::NoRecentAuthors.t(),
+        );
+        press_key(cx, win, "down");
+        assert_control_focus(cx, win, "cp-coauthor-empty");
+    } else {
+        for (key, index) in [("end", candidates.len() - 1), ("home", 0)] {
+            press_key(cx, win, key);
+            let id = format!("cp-coauthor-row-{index}");
+            assert_control_focus(cx, win, &id);
+            assert_ax(
+                &id,
+                gpui::Role::ListBoxOption,
+                &format!("{} <{}>", candidates[index].name, candidates[index].email),
+            );
+            assert_eq!(
+                e2e::commit_panel_labels::accessible_selected(&id),
+                Some(true)
+            );
+        }
+    }
+    press_key(cx, win, "escape");
+    assert!(cx.read(|cx| panel.read(cx).coauthor_menu.is_none()));
+    assert_control_focus(cx, win, "cp-coauthor");
+    assert_eq!(
+        draft(cx, &panel),
+        preserved,
+        "picker navigation/dismissal keeps draft"
+    );
     bounds(win, "compact-composer");
 }
 

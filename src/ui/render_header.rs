@@ -124,7 +124,7 @@ impl KagiApp {
             9 => self.handle_menu_command("view.togglePrMode", window, cx),
             10 => self.handle_menu_command("view.toggleEditorWorkspace", window, cx),
             11 => self.open_ecosystem_view(cx),
-            12 => self.open_settings_overlay(window, cx),
+            12 => self.open_settings(window, cx),
             13 => self.open_update_modal(),
             _ => unreachable!("toolbar command index"),
         }
@@ -598,11 +598,7 @@ impl KagiApp {
                         theme().surface
                     }))
                 })
-                .cursor(if enabled {
-                    gpui::CursorStyle::PointingHand
-                } else {
-                    gpui::CursorStyle::Arrow
-                })
+                .cursor(gpui::CursorStyle::Arrow)
                 .child(icon_cell)
                 .when(!icon_only, |el| {
                     #[cfg(feature = "gui-e2e")]
@@ -773,7 +769,7 @@ impl KagiApp {
                                 } else {
                                     theme().surface
                                 }))
-                                .cursor_pointer()
+                                .cursor_default()
                             })
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
@@ -1036,7 +1032,7 @@ impl KagiApp {
                                         .mr(theme::scaled_px(8.0))
                                         .rounded_md()
                                         .bg(rgb(theme().ui_accent()))
-                                        .cursor(gpui::CursorStyle::PointingHand)
+                                        .cursor(gpui::CursorStyle::Arrow)
                                         .hover(move |s| s.bg(hover_fill))
                                         .child(
                                             div()

@@ -111,7 +111,7 @@ impl Render for CommitPanelSurfaceView {
                     .when(view.foreign.is_some(), |el| {
                         el.child(view.render_panel_header())
                     })
-                    .child(view.render_composer(true, pcx))
+                    .child(view.render_composer(true, window, pcx))
                     .into_any_element(),
                 Surface::Changes => view.render_changes(pcx).into_any_element(),
             }
@@ -163,9 +163,9 @@ impl CommitPanelView {
             .flex_col()
             .child(super::e2e::measure_inside(marker))
             .child(if staged {
-                self.render_staged_header(true, cx)
+                super::commit_panel_controls::staged_header(self, true, cx)
             } else {
-                self.render_unstaged_header(true, cx)
+                super::commit_panel_controls::unstaged_header(self, true, cx)
             })
             .child(if staged {
                 self.render_staged_list(cx)

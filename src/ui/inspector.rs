@@ -558,12 +558,17 @@ pub(super) fn render_inspector(
         }
     };
 
-    let author_name_short: SharedString = if author_name.chars().count() > 24 {
-        let s: String = author_name.chars().take(23).collect();
-        SharedString::from(format!("{}\u{2026}", s))
-    } else {
-        SharedString::from(author_name.clone())
-    };
+    let author_display = SharedString::from(author_name.clone());
+    let author_identity = super::inspector_metadata::identity(&author_name, &author_email);
+    let hash_name = SharedString::from(i18n::inspector_copy_hash(&short_sha));
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::inspector_metadata::record(super::e2e::inspector_metadata::Metadata {
+        author: author_display.clone(),
+        identity: Some(author_identity.clone()),
+        tooltip: None,
+        hash_role: None,
+        hash_name: None,
+    });
 
     // Short-hash chip: tooltip = full SHA (+ committer when it differs from the
     // author), click = Copy SHA (dispatch).  This replaces the old always-on
@@ -576,27 +581,23 @@ pub(super) fn render_inspector(
         )),
         None => d.full_sha.clone(),
     };
-    let hash_chip = div()
-        .id("inspector-hash-chip")
-        .flex_shrink_0()
+    let hash_chip = Button::new("inspector-hash-chip")
+        .ghost()
+        .xsmall()
+        .compact()
+        .h(theme::scaled_px(18.))
         .px_1()
-        .rounded_sm()
-        .bg(rgb(theme().surface))
-        .text_xs()
+        .font_family(super::MONO_FONT)
         .text_color(rgb(theme().text_sub))
-        .hover(|s| {
-            s.bg(rgb(theme().selected))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-        })
+        .tooltip(tooltip_text.clone())
         .on_click(copy_sha_click1)
-        .tooltip(move |_window, cx| {
-            cx.new(|_| HashTooltip {
-                sha: tooltip_text.clone(),
-            })
-            .into()
-        })
-        .child(short_sha);
+        .child(
+            div()
+                .child(short_sha)
+                .child(super::e2e::measure_inside("inspector-hash-label")),
+        );
+    let hash_chip =
+        super::inspector_metadata::named_hash_button(hash_chip, hash_name, tooltip_text);
 
     let meta_row = div()
         .flex()
@@ -615,12 +616,24 @@ pub(super) fn render_inspector(
                 .gap_2()
                 .child(
                     div()
+                        .id("inspector-author")
+                        .role(gpui::Role::Label)
+                        .aria_label(author_identity.clone())
+                        .tooltip(move |_window, cx| {
+                            #[cfg(feature = "gui-e2e")]
+                            super::e2e::inspector_metadata::record_tooltip(author_identity.clone());
+                            cx.new(|_| HashTooltip {
+                                sha: author_identity.clone(),
+                            })
+                            .into()
+                        })
                         .flex_shrink(1.)
                         .min_w(px(0.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
                         .truncate()
-                        .child(author_name_short),
+                        .child(author_display)
+                        .child(super::e2e::measure_inside("inspector-author")),
                 )
                 .child(
                     div()
@@ -630,7 +643,10 @@ pub(super) fn render_inspector(
                         .child(d.committed_date),
                 ),
         )
-        .child(hash_chip);
+        .child(super::e2e::measure_control(
+            "inspector-hash-chip",
+            hash_chip,
+        ));
 
     // ── Co-author rows (W18-COAUTHOR-COPY) ────────────────────────────────
     // Parse `Co-authored-by:` trailers from the full message.  Each co-author
@@ -647,12 +663,7 @@ pub(super) fn render_inspector(
             } else {
                 ca.name.clone()
             };
-            let name_short: SharedString = if display_name.chars().count() > 28 {
-                let s: String = display_name.chars().take(27).collect();
-                SharedString::from(format!("{}\u{2026}", s))
-            } else {
-                SharedString::from(display_name.clone())
-            };
+            let name_full = SharedString::from(display_name.clone());
 
             // 16px avatar reusing the author avatar machinery.
             let ca_initial = SharedString::from(avatar_initial(&display_name));
@@ -680,15 +691,18 @@ pub(super) fn render_inspector(
                 }
             };
 
-            // Email tooltip (only when an email is present).
-            let email_tooltip: Option<SharedString> = if ca.email.is_empty() {
-                None
-            } else {
-                Some(SharedString::from(ca.email.clone()))
-            };
+            let identity = super::inspector_metadata::identity(&ca.name, &ca.email);
 
-            let mut row = div()
+            let row = div()
                 .id(("inspector-coauthor", i))
+                .role(gpui::Role::Label)
+                .aria_label(identity.clone())
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| HashTooltip {
+                        sha: identity.clone(),
+                    })
+                    .into()
+                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -701,13 +715,8 @@ pub(super) fn render_inspector(
                         .text_xs()
                         .text_color(rgb(theme().text_muted))
                         .truncate()
-                        .child(name_short),
+                        .child(name_full),
                 );
-            if let Some(email) = email_tooltip {
-                row = row.tooltip(move |_window, cx| {
-                    cx.new(|_| HashTooltip { sha: email.clone() }).into()
-                });
-            }
             row.into_any()
         })
         .collect();

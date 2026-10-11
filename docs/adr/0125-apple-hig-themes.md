@@ -805,3 +805,13 @@ the nonshrinking Secondary action. Repository row state/compact presentation
 are grouped at the renderer boundary, following the existing pane-cell tuple
 convention rather than adding a Clippy suppression. The merged scoped `home_`
 suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.
+
+## Amendment — 2026-10-11: Home virtual-list containment oracle (#1179, #1212)
+
+The unified frame can expose a partially mounted GitHub repository row below
+Home's scrollable fold at 940×660/167%. Native row bounds include virtualization
+overdraw, not only painted clipped content. `home_heading` therefore restricts
+window containment to fixed controls and the first Recent repository row;
+compact GitHub action-in-row and name-priority checks remain, along with every
+other heading, fixed-control and wide-layout assertion. Production is unchanged.
+

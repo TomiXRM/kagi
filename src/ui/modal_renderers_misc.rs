@@ -79,11 +79,7 @@ pub(crate) fn render_smart_commit_modal(
                     .child(lines_col)
                     .child(
                         div().flex_shrink_0().child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .justify_end()
+                            super::button_style::modal_button_row()
                                 .child(modal_button(
                                     "smart-consent-cancel",
                                     Msg::PlanCancel.t(),
@@ -199,7 +195,7 @@ pub(crate) fn render_smart_commit_modal(
                             .child(wrapper.child(list)),
                     )
                     .child(div().flex_shrink_0().child(
-                        div().flex().flex_row().justify_end().child(modal_button(
+                        super::button_style::modal_button_row().child(modal_button(
                             "smart-model-cancel",
                             Msg::PlanCancel.t(),
                             ModalButtonKind::Cancel,
@@ -361,11 +357,8 @@ pub(crate) fn render_update_modal(
     }
 
     // Installation is the only primary action; release notes and skip are quieter.
-    let actions = div()
-        .flex()
-        .flex_row()
+    let actions = super::button_style::modal_button_row()
         .items_center()
-        .gap_2()
         .child(modal_button(
             "update-skip",
             Msg::UpdateSkipVersion.t(),
@@ -441,11 +434,7 @@ pub(crate) fn render_editor_dirty_guard_modal(cx: &mut Context<KagiApp>) -> gpui
         )))
         .child(
             div().flex_shrink_0().child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .justify_end()
+                super::button_style::modal_button_row()
                     .child(modal_button(
                         "editor-dirty-guard-cancel",
                         Msg::EditorWorkspaceCancel.t(),
@@ -494,64 +483,63 @@ pub(crate) fn render_app_notice_modal(
         Msg::AppNoticeDismiss.t()
     };
 
-    let card =
-        modal_card(MODAL_W_SM)
-            .child(div().flex_shrink_0().child(render_modal_title_row(
-                SharedString::from(Msg::AppNoticeTitle.t()),
-                Some((IconName::Info.into(), current_theme().color_warning)),
-            )))
-            .child(
-                // One scroll region for the whole card: the message is producer
-                // text of unbounded length (a multi-line evidence string among
-                // them), and the header and the action row stay pinned.
-                modal_scroll_body()
-                    .child(
+    let card = modal_card(MODAL_W_SM)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from(Msg::AppNoticeTitle.t()),
+            Some((IconName::Info.into(), current_theme().color_warning)),
+        )))
+        .child(
+            // One scroll region for the whole card: the message is producer
+            // text of unbounded length (a multi-line evidence string among
+            // them), and the header and the action row stay pinned.
+            modal_scroll_body()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_main))
+                        .child(SharedString::from(notice.message)),
+                )
+                // #706 stage two. Never behind disclosure: this is the
+                // sentence the second confirm acts on.
+                .when(notice.release_armed, |body| {
+                    body.child(super::e2e::measure_control(
+                        "app-notice-release-warning",
                         div()
                             .text_sm()
-                            .text_color(rgb(current_theme().text_main))
-                            .child(SharedString::from(notice.message)),
-                    )
-                    // #706 stage two. Never behind disclosure: this is the
-                    // sentence the second confirm acts on.
-                    .when(notice.release_armed, |body| {
-                        body.child(super::e2e::measure_control(
-                            "app-notice-release-warning",
-                            div()
-                                .text_sm()
-                                .text_color(rgb(current_theme().color_warning))
-                                .child(Msg::AppReconcileReleaseArmed.t()),
-                        ))
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(current_theme().text_muted))
-                            .child(Msg::AppNoticeDetailsInOpLog.t()),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .child(div().flex().flex_row().justify_end().child(
-                        super::e2e::measure_control(
-                            "app-notice-confirm",
-                            modal_button_without_tab_stop(
-                                "app-notice-dismiss",
-                                action_label,
-                                if notice.release_armed {
-                                    ModalButtonKind::Destructive
-                                } else {
-                                    ModalButtonKind::Primary
-                                },
-                                None,
-                                cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
-                                    this.confirm_app_notice(cx);
-                                }),
-                                cx,
-                            ),
+                            .text_color(rgb(current_theme().color_warning))
+                            .child(Msg::AppReconcileReleaseArmed.t()),
+                    ))
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(current_theme().text_muted))
+                        .child(Msg::AppNoticeDetailsInOpLog.t()),
+                ),
+        )
+        .child(
+            div()
+                .flex_shrink_0()
+                .child(
+                    super::button_style::modal_button_row().child(super::e2e::measure_control(
+                        "app-notice-confirm",
+                        modal_button_without_tab_stop(
+                            "app-notice-dismiss",
+                            action_label,
+                            if notice.release_armed {
+                                ModalButtonKind::Destructive
+                            } else {
+                                ModalButtonKind::Primary
+                            },
+                            None,
+                            cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+                                this.confirm_app_notice(cx);
+                            }),
+                            cx,
                         ),
                     )),
-            );
+                ),
+        );
 
     modal_overlay(card)
         .child(super::e2e::measure_inside("active-modal/app-notice"))

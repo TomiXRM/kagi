@@ -387,6 +387,14 @@ pub(crate) fn render_remote_browse(
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let busy = modal.busy;
+    let dialog_title = match &modal.stage {
+        RemoteBrowseStage::Connect => Msg::RemoteConnectTitle.t().to_owned(),
+        RemoteBrowseStage::Browse => modal
+            .host
+            .as_ref()
+            .map(|host| host.label())
+            .unwrap_or_default(),
+    };
     let app = cx.entity();
 
     // Cancel/close: an `&mut App` handler (gpui-component Button form) that
@@ -481,12 +489,8 @@ pub(crate) fn render_remote_browse(
             }
 
             card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
+                super::button_style::modal_button_row()
                     .pt_2()
-                    .justify_end()
                     .child(super::e2e::measure_control(
                         "remote-connect-cancel",
                         modal_button(
@@ -668,21 +672,14 @@ pub(crate) fn render_remote_browse(
                 );
             }
 
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .justify_end()
-                    .child(modal_button(
-                        "remote-browse-close",
-                        Msg::RemoteClose.t(),
-                        ModalButtonKind::Cancel,
-                        None,
-                        cancel,
-                        cx,
-                    )),
-            );
+            card = card.child(super::button_style::modal_button_row().child(modal_button(
+                "remote-browse-close",
+                Msg::RemoteClose.t(),
+                ModalButtonKind::Cancel,
+                None,
+                cancel,
+                cx,
+            )));
         }
     }
 
@@ -697,17 +694,18 @@ pub(crate) fn render_remote_browse(
             cx.notify();
         }
     });
-    let focusable_card = {
-        let base = div()
+    let focusable_card = super::modal_renderers::input_dialog_frame(
+        "remote-browse-dialog",
+        &dialog_title,
+        None,
+        div()
             .relative()
             .on_key_down(esc_cancel)
-            .child(super::e2e::measure_inside("remote-browse-card"));
-        if let Some(ref fh) = focus_handle {
-            base.track_focus(fh).child(card)
-        } else {
-            base.child(card)
-        }
-    };
+            .child(super::e2e::measure_inside("remote-browse-card"))
+            .child(card),
+        focus_handle.as_ref(),
+        cx,
+    );
 
     div()
         .size_full()

@@ -242,12 +242,14 @@ handling to the pinned gpui-component Button. No new control is introduced.
 
 | Operation role | Theme token | Button presentation |
 |---|---|---|
-| `Primary` | `color_branch` | Filled Primary (for the main confirm/Commit action). |
+| `Primary` | `ui_accent()` | Filled Primary (for the main confirm/Commit action). |
+| `Secondary` | `colors.input` boundary / neutral foreground | Default-outline push button (dialog Cancel / quieter dialog action). |
+| `Destructive` | `color_blocker` | Filled danger push button (destructive dialog confirm). |
 | `SideCurrent` | `color_branch` | Filled Primary (Keep Current / Keep Directory). |
 | `SideIncoming` | `color_remote` | Filled Info (Take Incoming / Keep File). |
 | `Success` | `color_success` | Translucent tinted action (Stage / Save / Continue / Approve). |
 | `Warning` | `color_warning` | Translucent tinted action (Unstage / Reset before arming / Request Changes). |
-| `Danger` | `color_blocker` | Translucent tinted action (Abort / armed Reset / destructive modal confirm). |
+| `Danger` | `color_blocker` | Translucent tinted action (Abort / armed Reset outside dialog footers). |
 | `Neutral` | `text_sub` | Ghost (Keep Both / paging / external raw-side action). |
 | `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
 

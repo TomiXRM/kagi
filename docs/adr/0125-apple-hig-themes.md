@@ -330,3 +330,34 @@ The fixture's repository fingerprint remains unchanged. `inactive_selection`,
 `conflict_continue_cache` and `conflict_pane_survives_activation` also pass.
 These are native renderer / attribute-recorder assertions, not VoiceOver or
 Tier B evidence.
+
+## Amendment — 2026-10-11: dialog push buttons and named input tasks (#1208/#1209)
+
+Cancel uses the existing Default-outline Secondary push button, not Ghost
+text. Dialog actions retain S height and right-aligned Cancel-before-default
+order; Primary follows `ui_accent`, Destructive uses the filled danger family,
+and identifying secondary boundaries follow the theme bridge's `colors.input`.
+Hover, press, focus-visible and sizing remain owned by gpui-kit Button.
+Unavailable confirms remain inert and expose their localized reason.
+
+The shared input-dialog frame reuses `apply_dialog` for a named modal Dialog
+and availability-aware Confirm/Cancel actions, plus gpui-kit's existing focus
+trap. Create Branch, Tag and Worktree, Stash Push, Rename/Set Upstream,
+Worktree Lock Reason, Editor filesystem prompts, Clone, Remote Browse and
+PR Fields use it. Existing plan and destructive cards retain their richer
+Dialog/AlertDialog task boundary rather than receiving a nested outer Dialog.
+Localized EN/JA titles and the single modal slot remain authoritative.
+The existing InputState marked-text and Escape handling is not replaced.
+
+Native `dialog_a11y_roles` failed against the pre-fix sources because Create
+Branch had no recorded dialog boundary. Restoring only Ghost Cancel against the
+fixed frame failed its native border pixel: `247` rather than required `142`
+on Apple Light. The unchanged assertions pass with Secondary: matching action
+heights, Cancel before default, border pixels, Primary accent and destructive
+red pixels in Apple Light/Dark × EN/JA × 100%/167%. Opening focus and repeated
+Tab/Shift+Tab remain in Create Branch, and Escape closes it. The destructive
+card retains AlertDialog and its two-stage actions. Nine scoped neighboring
+scenarios also pass, including marked-text Enter, rejected replan, queue release,
+Editor/Remote/PR focus and Operation Log restoration.
+These are native renderer/attribute-recorder assertions; live VoiceOver and
+Tier B comparison remain the integration owner's responsibility.

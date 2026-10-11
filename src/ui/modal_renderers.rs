@@ -26,7 +26,7 @@ use super::plan_card_rows::{render_commit_row, render_note_row};
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::{Icon, IconName, Sizable as _};
+use gpui_component::{FocusTrapElement as _, Icon, IconName, Sizable as _};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{
@@ -126,6 +126,52 @@ pub(crate) fn modal_overlay(card: impl IntoElement) -> gpui::Div {
                 .items_center()
                 .child(card),
         )
+}
+
+/// Named task boundary for input cards; existing plan/alert cards keep their
+/// own richer boundary rather than being nested inside another dialog.
+pub(crate) fn input_dialog_frame(
+    id: &'static str,
+    title: &str,
+    confirm: Option<&'static str>,
+    card: impl IntoElement,
+    focus: Option<&gpui::FocusHandle>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let entity = cx.entity();
+    let on_confirm: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        entity.update(cx, |this, cx| {
+            this.confirm_active_modal(window, cx);
+            cx.notify();
+        });
+    });
+    let entity = cx.entity();
+    let on_cancel: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        entity.update(cx, |this, cx| {
+            this.cancel_active_modal(cx);
+            if let Some(focus) = &this.root_focus {
+                window.focus(focus, cx);
+            }
+            cx.notify();
+        });
+    });
+    let mut spec = dialog_a11y(title, confirm, false, ConfirmStage::Single);
+    // Navigation-only tasks have no default action; that does not mean the
+    // whole task is blocked. Unavailable input actions explain their reason
+    // on the actual button, rather than a generic dialog-wide instruction.
+    spec.description = None;
+    let frame = apply_dialog(
+        id,
+        div().id(id),
+        spec,
+        confirm.map(|_| on_confirm),
+        on_cancel,
+    )
+    .child(card);
+    match focus {
+        Some(focus) => frame.focus_trap(id, focus).into_any_element(),
+        None => frame.into_any_element(),
+    }
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -903,11 +949,7 @@ fn render_plan_modal_card_styled(
     }
 
     // ── Buttons ───────────────────────────────────────────
-    let mut button_row = div()
-        .flex()
-        .flex_row()
-        .gap_2()
-        .justify_end()
+    let mut button_row = super::button_style::modal_button_row()
         // Cancel button (always present — safe default). #462: measured, so a
         // scenario can assert the footer's own controls are on screen rather
         // than inferring it from the card.

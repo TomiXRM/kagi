@@ -1,9 +1,9 @@
 //! #985 — the context-menu key and the keyboard inside a context menu.
 //!
 //! Shift+F10 on the window opens the selected commit's menu at its row's
-//! bottom-left, with the focus on the first enabled item; ↑/↓/Home/End move
-//! among the enabled items only (the menu's last item, Reset, is always
-//! disabled); Enter presses the focused item; Escape closes the menu, and
+//! bottom-left, with the focus on the first visible item; ↑/↓/Home/End move
+//! among visible items, including disabled ones (the last item, Reset, is
+//! always disabled and inert); Enter presses an enabled focused item; Escape closes the menu, and
 //! either way the focus goes back to the window it came from. On a focused
 //! sidebar row the key opens that row's menu below it, and Escape gives the
 //! focus back to the row.
@@ -28,6 +28,26 @@ fn menu(
         app.read(cx).menu_keys_for_e2e(window)
     })
     .unwrap()
+}
+
+/// Reach a rendered command/header through the actual active menu keyboard.
+pub(crate) fn focus_menu_control(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    control: &str,
+) {
+    let (_, visible) = menu(cx, app, window);
+    for _ in 0..visible.len() {
+        let focused = menu(cx, app, window)
+            .0
+            .and_then(kagi::ui::menu_overlay::recorded_slot_control);
+        if focused.as_deref() == Some(control) {
+            return;
+        }
+        keys(cx, window, "down");
+    }
+    panic!("{control}: not keyboard reachable among {visible:?}");
 }
 
 fn root_focused(
@@ -87,17 +107,21 @@ pub fn scenario_context_menu_keys(cx: &mut VisualTestAppContext) {
 
     open_from_key(cx, &app, window);
     let window_id = window.window_id();
-    // Reset (the last group's only item) is drawn and disabled.
+    // Disabled Reset remains keyboard-discoverable and Enter is inert.
     assert!(e2e::control_bounds(window_id, "commit-menu-item-5-0").is_some());
     let (_, enabled) = menu(cx, &app, window);
-    let last = *enabled.last().expect("enabled items");
-    assert!(
-        !enabled.contains(&(last + 1)),
-        "a disabled item follows the last enabled one"
-    );
+    let last = *enabled.last().expect("visible items");
     keys(cx, window, "end");
     assert_eq!(menu(cx, &app, window).0, Some(last));
-    // ↓ passes the disabled Reset by and wraps to the first enabled item.
+    assert_eq!(
+        kagi::ui::menu_overlay::recorded_slot_control(last).as_deref(),
+        Some("commit-menu-item-5-0"),
+        "End focuses disabled Reset"
+    );
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).commit_menu.is_some()));
+    assert!(cx.read(|cx| app.read(cx).active_modal.is_none()));
+    // ↓ wraps from disabled Reset to the first visible item.
     keys(cx, window, "down");
     assert_eq!(menu(cx, &app, window).0, Some(enabled[0]));
     keys(cx, window, "up");
@@ -259,9 +283,9 @@ pub fn scenario_context_menu_keys_home(cx: &mut VisualTestAppContext) {
 pub fn scenario_context_menu_keys_short(cx: &mut VisualTestAppContext) {
     let _restore = crate::recovery_layout::GlobalSettings::capture();
     kagi_ui_core::theme::set_zoom(1.67);
-    // "Show changed files", the last enabled item (Reset below it is
-    // always disabled).
-    const LAST: &str = "commit-menu-item-4-2";
+    // #1098 clamping must reveal the final disabled row too, not merely
+    // stop at the final enabled action.
+    const LAST: &str = "commit-menu-item-5-0";
     let fixture = build_fixture();
     crate::gui_evidence::fixture(fixture.path());
     let mount_at_height = |cx: &mut VisualTestAppContext, height: f32| {
@@ -558,35 +582,44 @@ pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
-/// The focused item turns disabled while the menu stays open (a write is
-/// admitted, so opening a worktree is no longer offered): the focus stays
-/// inside the menu and ↓ still moves it onto an enabled item (#991 review).
-/// The first item, Checkout, stays enabled while busy since #355 queues it.
+/// A worktree command turns disabled while its submenu stays open. It keeps
+/// focus, records a reason, remains inert on Enter, and ↓ reaches its sibling.
 pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "feature"]);
     let (app, window) = mount(cx, fixture.path());
     open_row_menu(cx, &app, window);
-    keys(cx, window, "down");
-    let (before, enabled) = menu(cx, &app, window);
-    let before = before.expect("an item has the focus");
-    assert_eq!(Some(&before), enabled.get(1));
-    // Any latched operation disables the branch menu's write items.
+    focus_menu_control(cx, &app, window, "branch-menu-item-3-1");
+    keys(cx, window, "right");
+    const OPEN_WORKTREE: &str = "branch-menu-item-3-1-submenu-1-0";
+    focus_menu_control(cx, &app, window, OPEN_WORKTREE);
+    assert_eq!(
+        kagi::ui::menu_overlay::recorded_item_description(OPEN_WORKTREE),
+        Some(None)
+    );
+    let before = menu(cx, &app, window).0.expect("worktree item focused");
+    // A live operation disables this same focused command in the open submenu.
     app.update(cx, |app, cx| {
         app.planning = Some("e2e");
         cx.notify();
     });
-    let (focused, enabled) = menu(cx, &app, window);
+    let (focused, visible) = menu(cx, &app, window);
     assert_eq!(focused, Some(before), "the focus is still on that item");
-    assert!(
-        !enabled.contains(&before),
-        "precondition: the focused item is now disabled ({enabled:?})"
-    );
+    assert!(visible.contains(&before), "disabled rows remain focusable");
+    let reason = kagi::ui::menu_overlay::recorded_item_description(OPEN_WORKTREE)
+        .flatten()
+        .expect("live-disabled worktree command records its reason");
+    assert!(!reason.is_empty());
+    keys(cx, window, "enter");
+    assert!(cx.read(|cx| app.read(cx).branch_menu.is_some()));
+    assert!(cx.read(|cx| app.read(cx).active_modal.is_none()));
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 1);
+    assert!(!cx.read(|cx| app.read(cx).app_sessions.has_leases()));
     keys(cx, window, "down");
-    let (after, enabled) = menu(cx, &app, window);
+    let (after, visible) = menu(cx, &app, window);
     assert!(
-        after.is_some_and(|slot| enabled.contains(&slot)),
-        "↓ reached the menu and moved onto an enabled item ({after:?} of {enabled:?})"
+        after != Some(before) && after.is_some_and(|slot| visible.contains(&slot)),
+        "↓ moves to the next visible submenu row"
     );
     app.update(cx, |app, cx| {
         app.planning = None;
@@ -595,11 +628,9 @@ pub fn scenario_context_menu_keys_disabled_live(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
-/// An item above the focused one appears while the menu is open (a branch
-/// with no upstream: Push is hidden until an operation is latched, then shown
-/// disabled above the rest): the focus stays on the same action, so Enter on
-/// "Copy head SHA" still copies the SHA, not the branch name now drawn in
-/// that place (#991 review).
+/// A sibling appears while Advanced is open (Push becomes a disabled row
+/// when busy). Focus must remain on Copy SHA and Enter must still copy the
+/// exact SHA, not dispatch a different command after the live redraw.
 pub fn scenario_context_menu_keys_item_appears(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "feature"]);
@@ -611,18 +642,21 @@ pub fn scenario_context_menu_keys_item_appears(cx: &mut VisualTestAppContext) {
     let head = String::from_utf8(head.stdout).unwrap().trim().to_string();
     let (app, window) = mount(cx, fixture.path());
     open_row_menu(cx, &app, window);
-    const COPY_SHA: &str = "branch-menu-item-4-3";
+    focus_menu_control(cx, &app, window, "branch-menu-item-3-2");
+    const PUSH: &str = "branch-menu-item-3-2-submenu-2-1";
+    e2e::clear_control_bounds(window.window_id(), PUSH);
+    keys(cx, window, "right");
+    const COPY_SHA: &str = "branch-menu-item-3-2-submenu-0-3";
     let control = |cx: &mut VisualTestAppContext| {
         menu(cx, &app, window)
             .0
             .and_then(kagi::ui::menu_overlay::recorded_slot_control)
     };
-    for _ in 0..40 {
-        if control(cx).as_deref() == Some(COPY_SHA) {
-            break;
-        }
-        keys(cx, window, "down");
-    }
+    focus_menu_control(cx, &app, window, COPY_SHA);
+    assert!(
+        e2e::control_bounds(window.window_id(), PUSH).is_none(),
+        "precondition: Push is hidden without an upstream"
+    );
     assert_eq!(
         control(cx).as_deref(),
         Some(COPY_SHA),
@@ -635,7 +669,17 @@ pub fn scenario_context_menu_keys_item_appears(cx: &mut VisualTestAppContext) {
     assert_eq!(
         control(cx).as_deref(),
         Some(COPY_SHA),
-        "the focus stayed on Copy head SHA when Push appeared above it"
+        "the focus stayed on Copy head SHA when a disabled Push sibling appeared"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), PUSH).is_some(),
+        "the live busy redraw really introduced Push"
+    );
+    assert!(
+        kagi::ui::menu_overlay::recorded_item_description(PUSH)
+            .flatten()
+            .is_some_and(|reason| !reason.is_empty()),
+        "the new Push sibling is disabled with a reason"
     );
     keys(cx, window, "enter");
     app.update(cx, |app, cx| {

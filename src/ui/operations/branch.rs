@@ -1225,6 +1225,9 @@ impl KagiApp {
                     self.fetch_remote_branch_async(state.name, cx);
                 }
             }
+            BranchAction::Fetch => {
+                self.fetch_async(false, cx);
+            }
             BranchAction::CreatePr => {
                 self.open_create_pr(state.name, state.kind, cx);
             }

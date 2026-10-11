@@ -392,6 +392,9 @@ pub enum Msg {
     BcmCheckedOutElsewhere,
     BcmConflictMode,
     BcmNothingToPush,
+    BcmIntegrateMenu,
+    BcmAdvancedMenu,
+    BcmWorktreeMenu,
 
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
@@ -2500,6 +2503,12 @@ impl Msg {
             (Ja, BcmConflictMode) => "先に conflict を解決してください",
             (En, BcmNothingToPush) => "nothing to push",
             (Ja, BcmNothingToPush) => "push するものがありません",
+            (En, BcmIntegrateMenu) => "Integrate",
+            (Ja, BcmIntegrateMenu) => "統合",
+            (En, BcmAdvancedMenu) => "Advanced",
+            (Ja, BcmAdvancedMenu) => "詳細",
+            (En, BcmWorktreeMenu) => "Worktree",
+            (Ja, BcmWorktreeMenu) => "Worktree",
 
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",

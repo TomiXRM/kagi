@@ -265,7 +265,9 @@ pub fn scenario_queue_menu_merge_while_busy(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, _| {
         app.open_local_branch_menu("feature".into(), gpui::point(gpui::px(40.), gpui::px(200.)));
     });
-    click(cx, window, "branch-menu-item-2-0");
+    click(cx, window, "branch-menu-item-3-0");
+    assert_eq!(cx.read(|cx| app.read(cx).submenu_depth_for_e2e()), 1);
+    click(cx, window, "branch-menu-item-3-0-submenu-0-0");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).branch_menu.is_none()));
     assert_eq!(

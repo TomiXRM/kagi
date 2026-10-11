@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/surface_scrollbars.rs"]
+mod surface_scrollbars;
+#[cfg(target_os = "macos")]
 fn main() {
     std::process::exit(macos::run());
 }
@@ -1920,6 +1923,10 @@ mod macos {
             (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
+            ),
+            (
+                "settings_scrollbar_drag",
+                Box::new(crate::surface_scrollbars::scenario_settings_scrollbar_drag),
             ),
             (
                 "settings_zoom_bound",

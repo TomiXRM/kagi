@@ -132,6 +132,7 @@ pub fn render_settings_overlay(
     // the same reason (no `app.read(cx)` during render). Built lazily via
     // `KagiApp::ensure_analyze_ignore_input` when the overlay opens.
     analyze_ignore_input: Option<Entity<InputState>>,
+    scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
@@ -191,16 +192,17 @@ pub fn render_settings_overlay(
                         .on_click(close_click),
                 )),
         )
-        // ── Scrollable content: Appearance + Language + Smart Commit ─────
-        // `overflow_y_scroll` (not hidden): when zoomed in the sections grow
-        // taller than the panel, so the lower ones (Smart Commit / LLM) must
-        // stay reachable by scrolling rather than being clipped.
-        .child(
+        // One persistent scroll owner for the whole body; the kit owns thumb
+        // drag/visibility state under the stable scrollbar element id.
+        .child(super::render_helpers::with_system_vertical_scrollbar(
+            "settings-scrollbar",
+            &scroll,
             div()
                 .id("settings-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&scroll)
                 .px_5()
                 .py_4()
                 .flex()
@@ -210,7 +212,8 @@ pub fn render_settings_overlay(
                 .child(language_section(&app))
                 .child(smart_commit_section(&app, &smart, &switches, cx))
                 .child(analyze_ignore_section(&app, analyze_ignore_input)),
-        );
+            cx,
+        ));
 
     // Scrim + centred panel.
     div()

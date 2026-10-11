@@ -1146,6 +1146,8 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    /// Settings' single scroll owner survives control updates and redraws.
+    pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
     /// opening Settings focuses it, so Tab / Shift+Tab cycle inside the
     /// panel (gpui-component's Root) instead of reaching the terminal or the
@@ -1479,6 +1481,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
             command_palette_input: None,

@@ -2223,8 +2223,8 @@ mod macos {
                 Box::new(crate::tab_ui_state::scenario_tab_ui_state_background_reload),
             ),
             (
-                "pr_mode_cleared_on_activation",
-                Box::new(crate::tab_ui_state::scenario_pr_mode_cleared_on_activation),
+                "pr_mode_retained_on_activation",
+                Box::new(crate::tab_ui_state::scenario_pr_mode_retained_on_activation),
             ),
             (
                 "pr_open_enters_before_ref_fetch",

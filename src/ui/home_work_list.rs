@@ -214,7 +214,7 @@ pub(super) fn work_row(
         .py(super::keyboard_nav::inset(8.))
         .rounded_lg()
         .when(state != WorkRowState::Opening, |el| {
-            el.cursor(gpui::CursorStyle::PointingHand)
+            el.cursor(gpui::CursorStyle::Arrow)
                 .hover(|s| s.bg(rgb(theme().surface)))
         })
         .on_click(move |_, window, cx| {

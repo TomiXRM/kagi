@@ -319,6 +319,10 @@ mod recovery_header_fit;
 mod recovery_commit_panel_viewport;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_polish.rs"]
+mod recovery_commit_panel_polish;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
 mod toolbar_count;
 
@@ -1968,6 +1972,10 @@ mod macos {
                 Box::new(crate::settings_switches::scenario_settings_zoom_bound),
             ),
             (
+                "settings_groups",
+                Box::new(crate::settings_switches::scenario_settings_groups),
+            ),
+            (
                 "tab_panels",
                 Box::new(crate::tab_panels::scenario_tab_panels),
             ),
@@ -2224,6 +2232,14 @@ mod macos {
             (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
+            ),
+            (
+                "commit_panel_selection_hover",
+                Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_selection_hover),
+            ),
+            (
+                "commit_panel_body_focus",
+                Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
             ),
             (
                 "toolbar_count_scale",

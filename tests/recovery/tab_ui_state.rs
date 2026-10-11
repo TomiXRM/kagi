@@ -6,8 +6,8 @@
 //! - a selection made in A is invisible in B, and vice versa;
 //! - A→B→A restores A's selection instead of clearing it — and, since S6 deleted
 //!   the switch-time reset, A's row menu and Branch Cleanup takeover too,
-//!   while B first appears `is_pristine` (PR mode is dropped by the activation
-//!   revalidation — see `pr_mode_cleared_on_activation`);
+//!   while B first appears `is_pristine`; A's PR predicate, pane and draft
+//!   survive activation and its accepted revalidation (ADR-0200 retention);
 //! - opening A again through a second locator for the same worktree (`<root>`
 //!   vs `<root>/.git`) resolves to the live session and leaves its state alone;
 //! - closing A removes its key from **both** stores, and reopening the same
@@ -77,6 +77,92 @@ fn assert_ui_domain(app: &KagiApp, where_: &str) {
 fn selected_commit(app: &KagiApp, session: kagi::app::SessionId) -> Option<kagi_git::CommitId> {
     let row = app.ui[&session].selected?;
     Some(app.reads.get(Some(session)).rows[row].id.clone())
+}
+
+fn seed_pr_refs(repo: &Path) {
+    for branch in ["main", "feat"] {
+        git(
+            repo,
+            &[
+                "update-ref",
+                &format!("refs/remotes/origin/{branch}"),
+                "main",
+            ],
+        );
+    }
+    git(repo, &["branch", "feat", "main"]);
+    prepare_pr_remote(repo);
+}
+
+fn prepare_pr_remote(repo: &Path) {
+    let remote = repo.with_extension("bare");
+    git(
+        repo,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            repo.to_str().unwrap(),
+            remote.to_str().unwrap(),
+        ],
+    );
+    git(
+        &remote,
+        &["update-ref", "refs/pull/7/head", "refs/heads/feat"],
+    );
+    let url = "https://github.test/o/r.git";
+    git(repo, &["remote", "add", "origin", url]);
+    git(
+        repo,
+        &[
+            "config",
+            &format!("url.file://{}.insteadOf", remote.display()),
+            url,
+        ],
+    );
+}
+
+fn fixture_pr(repo: &Path) -> kagi_domain::github::PullRequest {
+    let mut pr = crate::cleanup_publish_owner::pr(7, "feat");
+    pr.state = kagi_domain::github::IssueState::Open;
+    pr.head_sha = kagi_git::Backend::open(repo)
+        .unwrap()
+        .snapshot(10_000)
+        .unwrap()
+        .branches
+        .iter()
+        .find(|branch| branch.name == "feat")
+        .unwrap()
+        .target
+        .0
+        .clone();
+    pr
+}
+
+fn assert_retained_pr(app: &KagiApp, where_: &str) {
+    let mode = app.pr_mode().expect("owner-retained PR mode");
+    assert_eq!(mode.tabs.len(), 1, "{where_}: opened pane membership");
+    assert_eq!(mode.active, Some(0), "{where_}: active PR pane");
+    assert_eq!(
+        mode.tabs[0].pr.key(),
+        crate::cleanup_publish_owner::pr(7, "feat").key()
+    );
+    assert_eq!(
+        mode.tabs[0].comment_draft, "A's unsent review 日本語",
+        "{where_}: owner draft"
+    );
+    assert_eq!(
+        app.ui().github_pr_filter.common.text,
+        "A predicate",
+        "{where_}: owner predicate"
+    );
+}
+
+fn seed_owned_pr(app: &mut KagiApp, cx: &mut gpui::Context<KagiApp>) {
+    app.pr_mode_open(&fixture_pr(app.repo_path.as_ref().unwrap()), cx);
+    app.ui_mut().unwrap().pr_mode.as_mut().unwrap().tabs[0].comment_draft =
+        "A's unsent review 日本語".into();
+    app.ui_mut().unwrap().github_pr_filter.common.text = "A predicate".into();
 }
 
 /// ADR-0197 決定 3: a retained selection is not authoritative against a read it
@@ -171,6 +257,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let root = root_dir.path().canonicalize().unwrap();
     let repo_a = build_linear_fixture(&root, "alpha");
     let repo_b = build_linear_fixture(&root, "beta");
+    seed_pr_refs(&repo_a);
     // `build_fixture` is what every other scenario mounts against; keeping the
     // helper referenced here documents that this one deliberately does not.
     let _ = build_fixture;
@@ -180,12 +267,12 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     let session_a = kagi.read_with(cx, |app, _| app.active_session().expect("A session"));
     let a_limit = kagi.update(cx, |app, cx| {
         app.load_more_commits(cx);
+        seed_owned_pr(app, cx);
         let ui = app.ui_mut().expect("active session");
         ui.graph_scroll_x = 42.0;
         ui.branch_groups_collapsed.insert("local:feature".into());
         // S6: the workspace mode used to be reset on every switch.
         ui.branch_cleanup_open = true;
-        ui.pr_mode = Some(Default::default());
         ui.pr_menu = Some((
             crate::cleanup_publish_owner::pr(7, "a-head"),
             Default::default(),
@@ -244,6 +331,15 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     assert_ne!(session_a, session_b, "each tab is its own owner");
     cx.run_until_parked();
     kagi.update(cx, |app, _| {
+        assert_eq!(
+            app.ui().is_pristine(),
+            Ok(()),
+            "B's accepted read stays pristine"
+        );
+        assert!(
+            app.pr_mode().is_none(),
+            "B's accepted read never shows A's PR mode"
+        );
         let ui = app.ui.get_mut(&session_a).expect("A ui");
         ui.commit_scroll_handle
             .scroll_to_item(2, ScrollStrategy::Center);
@@ -264,6 +360,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     kagi.update(cx, |app, cx| {
         app.switch_repo(0, cx); // → A
         assert_eq!(app.active_session(), Some(session_a));
+        assert_retained_pr(app, "immediate first activation");
         assert!(
             app.ui().cleanup_selected.contains(&a_cleanup_name),
             "A cleanup selection was lost on the first restore",
@@ -281,6 +378,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
         );
 
         app.switch_repo(1, cx); // → B
+        assert!(app.pr_mode().is_none(), "B never displays A's PR pane");
         assert_eq!(
             app.ui().selected,
             Some(1),
@@ -326,14 +424,15 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             "A's cleanup takeover was not restored"
         );
         assert!(
-            app.pr_mode().is_none(),
-            "the activation revalidation must drop A's PR mode, not restore it",
+            app.pr_mode().is_some(),
+            "repository activation must retain A's session-owned PR mode",
         );
         assert_eq!(
             app.ui().pr_menu.as_ref().map(|(pr, _)| pr.number),
             Some(7),
             "A's PR row menu was not restored",
         );
+        assert_retained_pr(app, "immediate round-trip activation");
     });
 
     // The switches armed background revalidates. A landing read publishes a
@@ -346,6 +445,7 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
             "the revalidate that followed the switch cleared A's selection",
         );
         assert_ui_domain(app, "after the round trip");
+        assert_retained_pr(app, "accepted activation revalidation");
     });
 
     // ── a second locator for one worktree is the same session ─────────────
@@ -432,18 +532,15 @@ pub fn scenario_tab_ui_state_ownership(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS tab_ui_state_ownership");
 }
 
-/// #724 review (ADR-0197 決定 3): a PR tab is a snapshot of the refs **and** of
-/// GitHub taken when it was opened, and nothing refreshes it while the tab is
-/// away. Carrying it across a switch is out of scope for S6, so the activation
-/// drops PR mode and the tab reopens the PR — what S6 keeps is the *ownership*:
-/// a PR opened in A is never visible in B.
-pub fn scenario_pr_mode_cleared_on_activation(cx: &mut VisualTestAppContext) {
+/// ADR-0200 retention: repository departure revokes request publication, not
+/// the owner's PR pane or draft. Activation revalidates its local head.
+pub fn scenario_pr_mode_retained_on_activation(cx: &mut VisualTestAppContext) {
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();
     let repo_a = build_linear_fixture(&root, "gamma");
     let repo_b = build_linear_fixture(&root, "beta");
-    // A PR tab resolves its base and head tips from the read's remote branches,
-    // so the fixture needs both as remote-tracking refs.
+    // The retained pane loads through a real synthetic PR ref fetch against
+    // a local bare remote; only the GitHub list response is injected.
     git(&repo_a, &["checkout", "-q", "-b", "feat", "main"]);
     std::fs::write(repo_a.join("feat.txt"), "feat one\n").unwrap();
     git(&repo_a, &["add", "."]);
@@ -459,13 +556,30 @@ pub fn scenario_pr_mode_cleared_on_activation(cx: &mut VisualTestAppContext) {
             ],
         );
     }
+    prepare_pr_remote(&repo_a);
 
     let (kagi, window) = mount(cx, &repo_a);
     cx.run_until_parked();
+    kagi.update(cx, |app, cx| seed_owned_pr(app, cx));
+    cx.run_until_parked();
+    let old_head = kagi.read_with(cx, |app, _| app.pr_mode().unwrap().tabs[0].head.clone());
+    assert!(
+        !old_head.0.is_empty(),
+        "initial pane has real fetched head evidence"
+    );
+    let pane = kagi.read_with(cx, |app, _| {
+        let tab = &app.pr_mode().unwrap().tabs[0];
+        assert_eq!(tab.selected_file, Some(0), "initial PR file pane is opened");
+        tab.feed_entries.clone()
+    });
+    let (task, departed) = crate::evidence_support::deferred(cx);
+    kagi::ui::e2e::queue_github_pr_fetch(task);
     kagi.update(cx, |app, cx| {
-        app.pr_mode_open(&crate::cleanup_publish_owner::pr(7, "feat"), cx);
-        let mode = app.pr_mode().expect("PR mode is open");
-        assert_eq!(mode.tabs.len(), 1, "the PR did not open a tab");
+        app.refresh_github_prs(cx);
+        assert!(
+            app.ui().github_prs_loading,
+            "old visit owns an outstanding request"
+        );
     });
 
     kagi.update(cx, |app, cx| {
@@ -479,17 +593,92 @@ pub fn scenario_pr_mode_cleared_on_activation(cx: &mut VisualTestAppContext) {
         );
     });
 
-    kagi.update(cx, |app, cx| app.switch_repo(0, cx));
+    git(&repo_a, &["checkout", "-q", "feat"]);
+    std::fs::write(repo_a.join("feat.txt"), "feat two\n").unwrap();
+    git(&repo_a, &["commit", "-q", "-am", "feat two"]);
+    git(&repo_a, &["update-ref", "refs/remotes/origin/feat", "feat"]);
+    git(&repo_a, &["checkout", "-q", "main"]);
+    git(&repo_a, &["push", "-q", "origin", "+feat:refs/pull/7/head"]);
+    let refreshed = fixture_pr(&repo_a);
+    kagi::ui::e2e::queue_github_pr_fetch(gpui::Task::ready(Ok(kagi_git::github::PrListSnapshot {
+        base_repo: refreshed.base_repo.clone(),
+        prs: vec![refreshed],
+        next_cursor: None,
+    })));
+    let fresh_head = kagi_git::Backend::open(&repo_a)
+        .unwrap()
+        .snapshot(10_000)
+        .unwrap()
+        .branches
+        .iter()
+        .find(|branch| branch.name == "feat")
+        .unwrap()
+        .target
+        .clone();
+
+    kagi.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        assert_retained_pr(app, "immediate activation");
+        assert!(
+            std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
+            "immediate activation retains the same conversation pane owner"
+        );
+        assert_eq!(app.pr_mode().unwrap().tabs[0].selected_file, Some(0));
+    });
     cx.run_until_parked();
     kagi.update(cx, |app, _| {
+        assert_retained_pr(app, "accepted revalidation");
         assert!(
-            app.pr_mode().is_none(),
-            "pr-mode-cleared-on-activation: returning to A showed the PR snapshot it left behind",
+            std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
+            "head revalidation retains the same conversation pane owner"
+        );
+        assert_eq!(app.pr_mode().unwrap().tabs[0].selected_file, Some(0));
+        let head = &app.pr_mode().unwrap().tabs[0].head;
+        assert_ne!(
+            head, &old_head,
+            "activation must refresh changed local head evidence"
+        );
+        assert_eq!(
+            head, &fresh_head,
+            "pane head matches the accepted repository read"
+        );
+        assert_eq!(app.pr_mode().unwrap().tabs[0].pr.head_sha, fresh_head.0);
+    });
+    let accepted = kagi.read_with(cx, |app, _| app.ui().github_prs.clone());
+    assert_eq!(
+        accepted.len(),
+        1,
+        "activation accepted the refreshed Open row"
+    );
+    assert_eq!(accepted[0].head_sha, fresh_head.0);
+    let mut stale = crate::cleanup_publish_owner::pr(999, "feat");
+    stale.state = kagi_domain::github::IssueState::Open;
+    stale.title = "departed request must not publish".into();
+    departed.send(Ok(kagi_git::github::PrListSnapshot {
+        base_repo: stale.base_repo.clone(),
+        prs: vec![stale],
+        next_cursor: None,
+    }));
+    cx.run_until_parked();
+    kagi.read_with(cx, |app, _| {
+        assert_eq!(
+            app.ui()
+                .github_prs
+                .iter()
+                .map(|pr| pr.key())
+                .collect::<Vec<_>>(),
+            accepted.iter().map(|pr| pr.key()).collect::<Vec<_>>(),
+            "departed visit cannot replace the new visit's accepted PR rows"
+        );
+        assert_retained_pr(app, "rejected departed publication");
+        assert!(
+            std::rc::Rc::ptr_eq(&app.pr_mode().unwrap().tabs[0].feed_entries, &pane),
+            "departed request cannot replace the retained conversation pane owner"
         );
     });
 
     unmount(cx, kagi, window);
-    eprintln!("[gui-e2e] PASS pr_mode_cleared_on_activation");
+    eprintln!("[gui-e2e] PASS pr_mode_retained_on_activation");
 }
 
 /// A missing local PR ref is a loading state, not a navigation blocker. The

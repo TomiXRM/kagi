@@ -354,11 +354,12 @@ remote branch fetch の `[kagi] fetch-remote-branch: ok` / `failed` 行は
 terminal klog 行を出している。
 離脱後の fetch / remote branch fetch / PR ref fetch の失敗 receipt は、永続化と
 Operation Log panel への追加を同時に行い、panel の自動表示と footer/toast
-のみ current visit に限定する（#992 review 4175461885）。#643 S6 の
-activation は PR mode を破棄するため、新 visit で同じ PR を開き直すと
-その visit の fetch が始まる。旧 visit の完了は新 fetch の loading latch
-と data を触らず、もし新 visit の fetch が走っておらず head が未読なら
-`fetch_pr_for_open` で一度だけ再開する（#992 review 4175505337）。
+のみ current visit に限定する（#992 review 4175461885）。ADR-0200 の
+retention 契約（#1119）では activation は PR mode・predicate・accepted rows・
+opened panes・draft を保持し、旧 visit/request の publication 権だけを失効する。
+新 visit の activation read は retained pane の head を revalidate する。
+旧 visit の完了は新 fetch の loading latch と data を触らず、もし新 visit の
+fetch が走っておらず head が未読なら `fetch_pr_for_open` で一度だけ再開する。
 
 **pull（A' 採用 = 上記 (a) の改訂結果）**: `FamilyEvidence::Pull(PullReport)`。
 `PullReport { steps: Vec<RunReport>, terminal }` は実際に走った child の receipt を

@@ -256,6 +256,10 @@ mod sidebar_rows;
 mod tab_panels;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_overflow.rs"]
+mod toolbar_overflow;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -2026,6 +2030,7 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             (
                 "pr_threads_via_gh",
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),

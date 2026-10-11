@@ -995,6 +995,7 @@ pub struct KagiApp {
     pub root_focus: Option<gpui::FocusHandle>,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     pub(crate) window_active: bool,
+    pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
@@ -1435,6 +1436,7 @@ impl KagiApp {
             root_focus: None,
             window_activation_subscription: None,
             window_active: true,
+            toolbar_layout: render_header::toolbar_overflow::Layout::default(),
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             view_epoch: 0,

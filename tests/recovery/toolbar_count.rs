@@ -8,6 +8,20 @@ use kagi_ui_core::theme;
 
 use crate::macos::{build_fixture, mount, repo_fingerprint, unmount};
 use crate::recovery_layout::{contained, GlobalSettings};
+const ICON_BUTTONS: [&str; 12] = [
+    "tb-pull",
+    "tb-push",
+    "tb-branch",
+    "tb-stash",
+    "tb-pop",
+    "tb-undo",
+    "tb-redo",
+    "tb-terminal",
+    "tb-graph-mode",
+    "tb-pr-mode",
+    "tb-editor-ws",
+    "tb-ecosystem",
+];
 
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
@@ -184,28 +198,61 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
                             );
                         }
                         crate::recovery_layout::draw(cx, window, (width, 883.));
+                        e2e::clear_control_bounds(window.window_id(), "tb-overflow");
+                        for index in 0..14 {
+                            e2e::clear_control_bounds(
+                                window.window_id(),
+                                &format!("tb-overflow-item-{index}"),
+                            );
+                        }
+                        for button in ICON_BUTTONS {
+                            e2e::clear_control_bounds(
+                                window.window_id(),
+                                &format!("{button}-icon"),
+                            );
+                            e2e::clear_control_bounds(
+                                window.window_id(),
+                                &format!("{button}-glyph"),
+                            );
+                        }
+                        for _ in 0..3 {
+                            frame(cx, window);
+                        }
+                        let overflow = e2e::control_bounds(window.window_id(), "tb-overflow");
+                        if let Some(overflow) = overflow {
+                            cx.simulate_click(window, overflow.center(), gpui::Modifiers::none());
+                            cx.run_until_parked();
+                            frame(cx, window);
+                        }
                         let row = bounds(window, "toolbar-row");
                         assert!((f32::from(row.size.height) - theme::scaled(expected)).abs() < 1.);
                         inspect(window, "tb-pull");
                         inspect(window, "tb-push");
                         let mut previous = None;
-                        for button in [
-                            "tb-pull",
-                            "tb-push",
-                            "tb-branch",
-                            "tb-stash",
-                            "tb-pop",
-                            "tb-undo",
-                            "tb-redo",
-                            "tb-terminal",
-                            "tb-graph-mode",
-                            "tb-editor-ws",
-                            "tb-ecosystem",
-                        ] {
+                        for button in ICON_BUTTONS.into_iter().filter(|id| *id != "tb-pr-mode") {
                             assert!(!e2e::toolbar_label(button)
                                 .expect("AX/tooltip label")
                                 .is_empty());
-                            let icon = bounds(window, &format!("{button}-icon"));
+                            let icon =
+                                e2e::control_bounds(window.window_id(), &format!("{button}-icon"))
+                                    .unwrap_or_default();
+                            if icon.size.width <= gpui::px(0.) {
+                                let index =
+                                    ICON_BUTTONS.iter().position(|id| *id == button).unwrap();
+                                assert!(
+                                    overflow.is_some(),
+                                    "{button}: hidden glyph requires overflow"
+                                );
+                                assert!(
+                                    e2e::control_bounds(
+                                        window.window_id(),
+                                        &format!("tb-overflow-item-{index}")
+                                    )
+                                    .is_some(),
+                                    "{button}: hidden command must be in the actual menu"
+                                );
+                                continue;
+                            }
                             contained(row, icon, button);
                             let glyph = bounds(window, &format!("{button}-glyph"));
                             assert!((f32::from(glyph.size.height) - theme::scaled(20.)).abs() < 1.);
@@ -217,6 +264,10 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
                                 );
                             }
                             previous = Some(icon.right());
+                        }
+                        if overflow.is_some() {
+                            cx.simulate_keystrokes(window, "escape");
+                            cx.run_until_parked();
                         }
                     }
                 }

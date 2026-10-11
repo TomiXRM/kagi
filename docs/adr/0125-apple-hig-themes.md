@@ -331,6 +331,75 @@ The fixture's repository fingerprint remains unchanged. `inactive_selection`,
 These are native renderer / attribute-recorder assertions, not VoiceOver or
 Tier B evidence.
 
+## Amendment — 2026-10-11: layout-owned toolbar overflow (#1210)
+
+The existing centered toolbar retains its natural button/caption geometry in
+both `toolbar_display` modes. A canvas inside the toolbar measures its own
+available width; canvases inside its controls record natural widths into a
+fixed-size window-owned cache, normalized to the current zoom and keyed by
+presentation, language and zoom. A key change remeasures natural elements
+before fitting the next frame. These are production layout probes, not
+window-bounds guesses or E2E recorder reads.
+Measurements that change request the next frame; steady paints allocate no
+fit vectors and do not notify. This two-pass choice keeps translated labels
+and wide-window geometry authoritative rather than estimating text advances.
+The row clips intermediate paint while measurements settle.
+
+Fitting reserves existing group spacing and the equal side columns, with
+room for Refresh and the repository identity. Repository commands overflow
+first; workspace-mode/Analyze/Settings controls collapse last, and the selected
+workspace control is the last candidate. Hidden commands omit their interactive
+subtree entirely: GPUI still registers Tab stops when an interactive element
+merely has `display: none`. Growing the row restores commands from cached
+natural widths. The trailing » reuses the header's
+`keyboard_nav::focusable` named, tooltip-bearing, ringed Tab stop. The pinned
+Button cannot independently name a captionless AX node, so the existing
+header helper draws the trigger rather than an unnamed icon Button.
+gpui-kit Popover/PopupMenu owns positioning and menu keyboard navigation.
+The header's existing controls are individual Tab stops, not a roving
+`TabList`, and this preserves that convention.
+
+Popover's mouse-down trigger does not receive GPUI keyboard clicks, so the named
+trigger explicitly opens controlled state on Enter/Space release. Pointer clicks
+still belong to Popover and are not handled twice. Closing returns the prior focus
+only if focus still belongs to the menu (or nothing is focused); action-assigned
+focus such as Terminal's PTY is retained. Widening away a focused overflow control
+hands focus to the root so subsequent app shortcuts still dispatch. The cached
+state holds the popover alive for synchronous dismissal before removing its
+element; a next-frame weak dismissal can be too late to unregister gpui-kit's
+deferred context and would block unrelated text-input right-click menus.
+
+State contract: rest inherits the toolbar panel, hover/open use neutral `surface`,
+the glyph uses `text_main`, and focus-visible uses the header's accent ring.
+Unavailable rows remain reachable
+to explain their localized reason, expose disabled AX state/description and invoke
+only the existing reason footer. Empty overflow has no trigger; loading remains
+the existing operation strip, and Git errors remain in the existing plan/footer
+path. Workspace selection and all theme palettes are unchanged.
+
+While a new style's natural widths are pending, retain the last hidden mask
+intersected with commands still present. Invisible, noninteractive width probes
+measure hidden controls only until their new natural widths are known. This avoids
+temporarily dismissing an open menu or losing trigger focus at each zoom/language
+change. Menu content is cached against the hidden-mask/reasons snapshot and
+rebuilt when it changes, so labels and unavailable reasons do not remain stale.
+Gaps and separators require visible neighbours on both sides; the fitting model
+uses these same predicates rather than reserving dangling separators.
+
+Popup rows retain localized labels, unavailable reasons and action-bound
+shortcut glyphs. Activation uses the same toolbar dispatcher as the ordinary
+buttons, including reason footers and Terminal's tab-specific toggle. Git
+planning, confirmation, logging and theme-bridge colour roles are unchanged.
+The native `toolbar_overflow` scenario covers 940×660 at 167% and 1392×660 at
+100%, EN/JA and both modes with long repository/branch names: exact hidden/menu
+membership, visible control containment, real toolbar Tab traversal with no
+hidden Tab stops, Enter opening the menu, refreshed Undo reason during an open
+language/zoom transition, retained Terminal PTY focus, Create Branch activation,
+and a real text-input right-click path after widening an open menu away.
+The existing count oracle retains every visible glyph's
+size/containment/non-overlap assertion; hidden glyphs must instead be present in
+the actual overflow menu. Real keyboard/VoiceOver delivery and Apple Light JA
+caption-mode visual comparison remain Tier B.
 ## Amendment — 2026-10-11: quiet Settings and radio dots (#1199, #1201)
 
 Settings uses the same secondary-label hierarchy as Graph group headers:

@@ -294,7 +294,7 @@ mod tests {
     fn actions(locked: bool, path: Option<&Path>) -> Vec<WorktreeAction> {
         build_worktree_menu(locked, false, path)
             .into_iter()
-            .flat_map(|g| g.items.into_iter().map(|i| i.action))
+            .flat_map(|g| g.items.into_iter().filter_map(|i| i.action().cloned()))
             .collect()
     }
 
@@ -435,7 +435,12 @@ mod tests {
     fn detached_main_badge_menu_keeps_path_actions_but_not_linked_lifecycle() {
         let actions: Vec<_> = build_worktree_menu(false, true, Some(Path::new("/main")))
             .into_iter()
-            .flat_map(|group| group.items.into_iter().map(|item| item.action))
+            .flat_map(|group| {
+                group
+                    .items
+                    .into_iter()
+                    .filter_map(|item| item.action().cloned())
+            })
             .collect();
         assert!(actions.contains(&WorktreeAction::OpenInNewTab));
         assert!(actions.contains(&WorktreeAction::Reveal));

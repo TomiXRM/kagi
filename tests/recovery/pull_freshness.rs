@@ -570,11 +570,21 @@ fn click_branch_sync(
         gpui::MouseButton::Right,
         gpui::Modifiers::none(),
     );
+    e2e::clear_control_bounds(window.window_id(), "branch-menu-item-1-0");
     draw(cx, window);
-    let id = if ff_only {
-        "branch-menu-item-1-2"
+    let root_pull = e2e::control_bounds(window.window_id(), "branch-menu-item-1-0");
+    let id = if ff_only || root_pull.is_none() {
+        let advanced = e2e::control_bounds(window.window_id(), "branch-menu-item-3-2")
+            .expect("Advanced submenu header is drawn");
+        cx.simulate_click(window, advanced.center(), gpui::Modifiers::none());
+        draw(cx, window);
+        if ff_only {
+            "branch-menu-item-3-2-submenu-3-1"
+        } else {
+            "branch-menu-item-3-2-submenu-2-0"
+        }
     } else {
-        "branch-menu-item-1-1"
+        "branch-menu-item-1-0"
     };
     let pull = e2e::control_bounds(window.window_id(), id)
         .expect("branch context-menu Pull action is drawn");

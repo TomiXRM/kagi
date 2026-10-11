@@ -1475,11 +1475,13 @@ pub fn render_file_menu(
         .map(|f| SharedString::from(f.path.to_string_lossy().into_owned()))
         .unwrap_or_default();
 
-    let item = |action: ConflictFileAction, label: &str| MenuItem {
-        action,
-        label: SharedString::from(label.to_string()),
-        state: ItemState::Enabled,
-        dangerous: false,
+    let item = |action: ConflictFileAction, label: &str| {
+        MenuItem::command(
+            action,
+            SharedString::from(label.to_string()),
+            ItemState::Enabled,
+            false,
+        )
     };
     let groups = vec![
         MenuGroup {

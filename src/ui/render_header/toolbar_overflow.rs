@@ -457,12 +457,11 @@ impl gpui::RenderOnce for OverflowMenu {
                 let hidden = self.hidden;
                 let reasons = self.reasons;
                 let menu = PopupMenu::build(window, cx, move |mut menu, _, _| {
-                    for index in 0..IDS.len() {
+                    for (index, &reason) in reasons.iter().enumerate() {
                         if hidden & (1 << index) == 0 {
                             continue;
                         }
                         let name = label(index);
-                        let reason = reasons[index];
                         let item_app = app.clone();
                         // Kbd reads the actual window action bindings, including
                         // overrides; the shared handler still owns activation.

@@ -183,6 +183,9 @@ mod home_heading;
 mod home_tab;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/branch_menu_compact.rs"]
+mod branch_menu_compact;
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_paging.rs"]
 mod commit_paging;
 #[cfg(target_os = "macos")]
@@ -1294,6 +1297,10 @@ mod macos {
             (
                 "commit_paging",
                 Box::new(crate::commit_paging::scenario_commit_paging),
+            ),
+            (
+                "branch_menu_compact",
+                Box::new(crate::branch_menu_compact::scenario_branch_menu_compact),
             ),
             (
                 "context_menu_keys",

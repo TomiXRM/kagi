@@ -31,12 +31,12 @@ pub enum StashAction {
 }
 
 fn item(action: StashAction, label: &str, dangerous: bool) -> MenuItem<StashAction> {
-    MenuItem {
+    MenuItem::command(
         action,
-        label: SharedString::from(label.to_string()),
-        state: ItemState::Enabled,
+        SharedString::from(label.to_string()),
+        ItemState::Enabled,
         dangerous,
-    }
+    )
 }
 
 /// Build the stash menu groups. Pop is included too (discoverability) even

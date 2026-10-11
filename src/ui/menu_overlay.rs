@@ -1,45 +1,26 @@
-//! Shared context-menu overlay renderer.
-//!
-//! The commit, branch, and stash context menus were three near-identical copies
-//! of the same positioned-overlay + grouped-item machinery (viewport clamping,
-//! zoom-aware sizing, the occlude/click-through dismiss fix, group headers, and
-//! per-item Enabled/Disabled/Hidden + dangerous styling). This module hosts that
-//! logic once, generic over the menu's action type `A`; the three menu modules
-//! keep their public `render_*_menu_overlay` entry points as thin wrappers that
-//! supply the action-dispatch and state-clearing closures.
-
+//! Shared, viewport-clamped context menus, including generic cascading submenus.
 use gpui::{
-    div, prelude::*, px, rgb, AnyElement, ClickEvent, Context, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, Role, SharedString, Window,
+    canvas, div, point, prelude::*, px, rgb, AnyElement, ClickEvent, Context, IntoElement,
+    MouseButton, MouseDownEvent, Pixels, Point, Role, SharedString, Window,
 };
 use gpui_component::tooltip::Tooltip;
 
-use super::context_menu::{ItemState, MenuGroup, MenuItem};
+use super::context_menu::{ItemState, MenuGroup, MenuItem, MenuItemKind};
 use super::menu_keys::{
-    MenuDismiss, MenuFirst, MenuKeys, MenuLast, MenuNext, MenuPrev, Step, MENU_CONTEXT,
+    MenuBack, MenuDismiss, MenuEscape, MenuFirst, MenuKeys, MenuLast, MenuNext, MenuOpen, MenuPrev,
+    Step, MENU_CONTEXT,
 };
 use super::theme::{self, theme};
 use super::KagiApp;
 
 pub const MENU_MARGIN: f32 = 8.0;
-// W27-UIPOLISH: Zed-style compact density — tighter rows, group headers, and
-// title bar than the previous 28/36/22 (≈14% shorter overall).
 pub const MENU_ROW_H: f32 = 24.0;
 pub const MENU_HEADER_H: f32 = 30.0;
 pub const MENU_GROUP_H: f32 = 18.0;
 const MENU_SEPARATOR_H: f32 = 9.0;
 
-/// Render a positioned context-menu overlay from a generic group list.
-///
-/// * `id` — unique element id for the menu box (e.g. `"commit-context-menu"`).
-/// * `item_id_prefix` — element-id prefix for rows (`"commit-menu-item"`).
-/// * `menu_w` — the menu's design width in unscaled px (differs per menu).
-/// * `danger_title` — the group title that should render in the warning colour.
-/// * `position` — cursor anchor in unscaled window px.
-/// * `on_dismiss` — clears the owning menu state (run for the backdrop click).
-/// * `on_select` — clears the owning state and dispatches the chosen action.
-/// * `keys` — the context menus' keyboard (#985, see `menu_keys`); `None`
-///   for a menu without it (the pointer and the window's Escape only).
+/// The owner supplies persistent MenuKeys when it offers submenus. The overlay
+/// owns presentation only; selecting a leaf still uses the owner's dispatcher.
 #[allow(clippy::too_many_arguments)]
 pub fn render_menu_overlay<A>(
     id: &'static str,
@@ -58,70 +39,198 @@ pub fn render_menu_overlay<A>(
 where
     A: Clone + 'static,
 {
-    let viewport = window.viewport_size();
-    let visible_items = groups
-        .iter()
-        .flat_map(|group| group.items.iter())
-        .filter(|item| item.state != ItemState::Hidden)
-        .count() as f32;
-    let mut visible_groups = 0_usize;
-    let mut titled_groups = 0_usize;
-    for group in &groups {
-        if group
+    let backdrop = div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .occlude()
+        .bg(rgb(theme().modal_overlay))
+        .opacity(0.01);
+    let dismiss = on_dismiss.clone();
+    let dismiss_right = on_dismiss.clone();
+    let backdrop = backdrop
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                dismiss(this, window, cx);
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                dismiss_right(this, window, cx);
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        );
+    let panel = Panel {
+        id: id.into(),
+        prefix: item_id_prefix.into(),
+        menu_w,
+        danger_title,
+        position,
+        label: header,
+        header: true,
+        groups: &groups,
+        keys,
+        parent: None,
+    };
+    div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .occlude()
+        .child(backdrop)
+        .child(render_panels(&panel, &on_select, &on_dismiss, window, cx))
+        .into_any_element()
+}
+
+struct Panel<'a, A> {
+    id: SharedString,
+    prefix: SharedString,
+    menu_w: f32,
+    danger_title: &'static str,
+    position: Point<Pixels>,
+    label: SharedString,
+    header: bool,
+    groups: &'a [MenuGroup<A>],
+    keys: Option<&'a MenuKeys>,
+    parent: Option<&'a MenuKeys>,
+}
+
+fn menu_height<A>(panel: &Panel<A>) -> f32 {
+    let mut rows = 0;
+    let mut groups = 0usize;
+    let mut titles = 0;
+    for group in panel.groups {
+        let visible = group
             .items
             .iter()
-            .any(|item| item.state != ItemState::Hidden)
-        {
-            visible_groups += 1;
-            titled_groups += usize::from(group.title.is_some());
+            .filter(|item| item.state != ItemState::Hidden)
+            .count();
+        if visible == 0 {
+            continue;
+        }
+        rows += visible;
+        groups += 1;
+        titles += usize::from(group.title.is_some());
+    }
+    (if panel.header { MENU_HEADER_H } else { 0. })
+        + rows as f32 * MENU_ROW_H
+        + titles as f32 * MENU_GROUP_H
+        + groups.saturating_sub(1) as f32 * MENU_SEPARATOR_H
+        + 16.
+}
+
+fn render_panels<A, S, D>(
+    panel: &Panel<A>,
+    on_select: &S,
+    on_dismiss: &D,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement
+where
+    A: Clone + 'static,
+    S: Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+    D: Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+{
+    let mut layer = div()
+        .size_full()
+        .absolute()
+        .top_0()
+        .left_0()
+        .child(render_panel(panel, on_select, on_dismiss, window, cx));
+    if let Some(keys) = panel.keys {
+        if let Some((slot, child_keys)) = keys.submenu() {
+            let entry = panel.groups.iter().flat_map(|group| &group.items).nth(slot);
+            if let (Some(item), Some(bounds)) = (entry, keys.bounds(slot)) {
+                if let MenuItemKind::Submenu(groups) = &item.kind {
+                    let control = row_control(panel, slot);
+                    let prefix = SharedString::from(format!("{control}-submenu"));
+                    let width = f32::from(theme::scaled_px(panel.menu_w));
+                    let right = f32::from(bounds.right());
+                    let x = if right + width + MENU_MARGIN > f32::from(window.viewport_size().width)
+                    {
+                        f32::from(bounds.left()) - width
+                    } else {
+                        right
+                    };
+                    let child = Panel {
+                        id: prefix.clone(),
+                        prefix,
+                        menu_w: panel.menu_w,
+                        danger_title: panel.danger_title,
+                        position: point(px(x), bounds.top()),
+                        label: item.label.clone(),
+                        header: false,
+                        groups,
+                        keys: Some(&child_keys),
+                        parent: Some(keys),
+                    };
+                    layer = layer.child(render_panels(&child, on_select, on_dismiss, window, cx));
+                }
+            }
         }
     }
+    layer.into_any_element()
+}
 
-    // Include only drawn headings and boundaries, including untitled groups.
-    let menu_h = MENU_HEADER_H
-        + visible_items * MENU_ROW_H
-        + titled_groups as f32 * MENU_GROUP_H
-        + visible_groups.saturating_sub(1) as f32 * MENU_SEPARATOR_H
-        + 16.0;
-    let clamped = kagi_ui_core::theme::clamp_menu_pos(position, menu_w, menu_h, viewport);
-    let (x, y) = (f32::from(clamped.x), f32::from(clamped.y));
-    let viewport_h = f32::from(viewport.height);
+fn row_control<A>(panel: &Panel<A>, slot: usize) -> String {
+    let mut start = 0;
+    for (group_ix, group) in panel.groups.iter().enumerate() {
+        if slot < start + group.items.len() {
+            return format!("{}-{group_ix}-{}", panel.prefix, slot - start);
+        }
+        start += group.items.len();
+    }
+    unreachable!("submenu slot belongs to the rendered menu")
+}
 
-    let dismiss_left = {
-        let on_dismiss = on_dismiss.clone();
-        cx.listener(move |this: &mut KagiApp, _e: &MouseDownEvent, window, cx| {
-            on_dismiss(this, window, cx);
-            cx.stop_propagation();
-            cx.notify();
-        })
-    };
-    // Tab / Shift+Tab close a keyboard menu as the backdrop does (#991
-    // review); the next frame gives the focus back where it came from.
-    let dismiss_key = keys.map(|_| {
-        let on_dismiss = on_dismiss.clone();
-        cx.listener(move |this: &mut KagiApp, _: &MenuDismiss, window, cx| {
-            on_dismiss(this, window, cx);
-            cx.notify();
-        })
+fn render_panel<A, S, D>(
+    panel: &Panel<A>,
+    on_select: &S,
+    on_dismiss: &D,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) -> AnyElement
+where
+    A: Clone + 'static,
+    S: Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+    D: Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+{
+    let position = kagi_ui_core::theme::clamp_menu_pos(
+        panel.position,
+        panel.menu_w,
+        menu_height(panel),
+        window.viewport_size(),
+    );
+    let opened = panel.keys.is_some_and(|keys| {
+        keys.drawn(
+            panel
+                .groups
+                .iter()
+                .flat_map(|group| &group.items)
+                .enumerate()
+                .filter(|(_, item)| item.state != ItemState::Hidden)
+                .map(|(slot, _)| slot),
+        )
     });
-    let dismiss_right = cx.listener(move |this: &mut KagiApp, _e: &MouseDownEvent, window, cx| {
-        on_dismiss(this, window, cx);
-        cx.stop_propagation();
-        cx.notify();
-    });
-
     let mut menu = div()
-        .id(id)
-        // Block mouse events from reaching the dismiss backdrop below — without
-        // this, pressing a menu item fires the backdrop's on_mouse_down first,
-        // the menu unmounts, and the item's on_click (down+up on the same
-        // element) never completes (user-reported click-through bug).
+        .id(panel.id.clone())
+        .role(Role::Menu)
+        .aria_label(panel.label.clone())
         .occlude()
         .absolute()
-        .top(px(y))
-        .left(px(x))
-        .w(theme::scaled_px(menu_w))
-        .max_h(px((viewport_h - MENU_MARGIN * 2.0).max(120.0)))
+        .top(position.y)
+        .left(position.x)
+        .w(theme::scaled_px(panel.menu_w))
+        .max_h(px((f32::from(window.viewport_size().height)
+            - MENU_MARGIN * 2.)
+            .max(120.)))
         .flex()
         .flex_col()
         .overflow_hidden()
@@ -129,86 +238,93 @@ where
         .border_1()
         .border_color(rgb(theme().selected))
         .bg(rgb(theme().modal))
-        .shadow_md()
-        .child(
+        .shadow_md();
+    if panel.header {
+        menu = menu.child(
             div()
                 .h(theme::scaled_px(MENU_HEADER_H))
                 .flex_shrink_0()
                 .px_3()
                 .flex()
-                .flex_row()
                 .items_center()
                 .border_b_1()
                 .border_color(rgb(theme().selected))
                 .text_sm()
                 .text_color(rgb(theme().text_main))
                 .truncate()
-                .child(header.clone()),
-        )
-        .role(Role::Menu)
-        .aria_label(header);
-    // #985: the menu's keyboard (see `menu_keys`). A slot is an item's place
-    // in the menu's list, hidden items included, so it names the same action
-    // however many items above it are hidden (#991 review).
-    let opened = keys.is_some_and(|keys| {
-        keys.drawn(
-            groups
-                .iter()
-                .flat_map(|group| group.items.iter())
-                .enumerate()
-                .filter(|(_, item)| item.state == ItemState::Enabled)
-                .map(|(slot, _)| slot),
-        )
-    });
+                .child(panel.label.clone()),
+        );
+    }
+    menu = menu.child(render_items(panel, on_select, cx));
+    if let Some(keys) = panel.keys {
+        menu = with_menu_keys(
+            menu.key_context(MENU_CONTEXT),
+            keys,
+            panel.parent,
+            (*on_dismiss).clone(),
+            opened,
+            window,
+            cx,
+        );
+    }
+    menu = cancel_parent_hover(menu, panel.parent, cx);
+    #[cfg(feature = "gui-e2e")]
+    let menu = menu.child(super::e2e::measure_inside(panel.id.to_string()));
+    menu.into_any_element()
+}
 
-    // The items scroll under the header when the menu is taller than the
-    // window (#991 review: a key must not focus an item out of sight).
+fn cancel_parent_hover(
+    menu: gpui::Stateful<gpui::Div>,
+    parent: Option<&MenuKeys>,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    if let Some(parent) = parent {
+        let parent = parent.clone();
+        menu.on_hover(cx.listener(move |_, hovered: &bool, _, _| {
+            if *hovered {
+                parent.cancel_hover();
+            }
+        }))
+    } else {
+        menu
+    }
+}
+
+fn render_items<A, S>(
+    panel: &Panel<A>,
+    on_select: &S,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div>
+where
+    A: Clone + 'static,
+    S: Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
+{
     let mut list = div()
-        .id("menu-items")
+        .id(SharedString::from(format!("{}-items", panel.id)))
         .flex()
         .flex_col()
         .flex_shrink(1.)
         .min_h(px(0.))
         .overflow_y_scroll();
-    if let Some(keys) = keys {
+    if let Some(keys) = panel.keys {
         list = list.track_scroll(keys.scroll());
     }
-    let mut child = 0_usize;
-    let mut slot = 0_usize;
-    let mut previous_group = false;
-    for (group_ix, group) in groups.into_iter().enumerate() {
-        if !group
+    let (mut slot, mut child, mut previous) = (0, 0, false);
+    for (group_ix, group) in panel.groups.iter().enumerate() {
+        if group
             .items
             .iter()
-            .any(|item| item.state != ItemState::Hidden)
+            .all(|item| item.state == ItemState::Hidden)
         {
             slot += group.items.len();
             continue;
         }
-        if previous_group {
-            list = list.child(
-                div()
-                    .h(theme::scaled_px(MENU_SEPARATOR_H))
-                    .flex_shrink_0()
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .w_full()
-                            .h(theme::scaled_px(1.0))
-                            .bg(rgb(theme().selected)),
-                    ),
-            );
+        if previous {
+            list = list.child(separator());
             child += 1;
         }
-        previous_group = true;
+        previous = true;
         if let Some(title) = group.title {
-            let title_color = if title == danger_title {
-                theme().color_warning
-            } else {
-                theme().text_muted
-            };
             list = list.child(
                 div()
                     .h(theme::scaled_px(MENU_GROUP_H))
@@ -216,72 +332,64 @@ where
                     .px_3()
                     .pt_1()
                     .text_xs()
-                    .text_color(rgb(title_color))
+                    .text_color(rgb(if title == panel.danger_title {
+                        theme().color_warning
+                    } else {
+                        theme().text_muted
+                    }))
                     .child(SharedString::from(title)),
             );
             child += 1;
         }
-        for (item_ix, item) in group.items.into_iter().enumerate() {
+        for (item_ix, item) in group.items.iter().enumerate() {
             if item.state == ItemState::Hidden {
                 slot += 1;
                 continue;
             }
-            if let Some(keys) = keys {
+            let control = format!("{}-{group_ix}-{item_ix}", panel.prefix);
+            if let Some(keys) = panel.keys {
                 keys.place(slot, child);
                 #[cfg(feature = "gui-e2e")]
                 SLOT_CONTROLS.with(|map| {
-                    map.borrow_mut()
-                        .insert(slot, format!("{item_id_prefix}-{group_ix}-{item_ix}"));
+                    map.borrow_mut().insert(slot, control.clone());
                 });
             }
-            list = list.child(render_menu_item(
-                item_id_prefix,
-                group_ix,
-                item_ix,
+            list = list.child(render_item(
+                control,
                 item,
-                on_select.clone(),
-                keys.map(|keys| keys.item(slot, cx)),
+                slot,
+                panel.keys,
+                (*on_select).clone(),
                 cx,
             ));
-            child += 1;
             slot += 1;
+            child += 1;
         }
     }
-    menu = menu.child(list);
-    if let Some(keys) = keys {
-        menu = with_menu_keys(menu.key_context(MENU_CONTEXT), keys, opened, window, cx);
-    }
-    if let Some(dismiss_key) = dismiss_key {
-        menu = menu.on_action(dismiss_key);
-    }
-
-    div()
-        .size_full()
-        .absolute()
-        .top_0()
-        .left_0()
-        .occlude()
-        .child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .occlude()
-                .bg(rgb(theme().modal_overlay))
-                .opacity(0.01)
-                .on_mouse_down(MouseButton::Left, dismiss_left)
-                .on_mouse_down(MouseButton::Right, dismiss_right),
-        )
-        .child(menu)
-        .into_any_element()
+    list
 }
 
-/// The menu's ↑/↓/Home/End, and the focus on its first enabled item when
-/// it has just `opened`.
+fn separator() -> impl IntoElement {
+    div()
+        .h(theme::scaled_px(MENU_SEPARATOR_H))
+        .flex_shrink_0()
+        .px_2()
+        .flex()
+        .items_center()
+        .child(
+            div()
+                .w_full()
+                .h(theme::scaled_px(1.))
+                .bg(rgb(theme().selected)),
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn with_menu_keys(
     menu: gpui::Stateful<gpui::Div>,
     keys: &MenuKeys,
+    parent: Option<&MenuKeys>,
+    on_dismiss: impl Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
     opened: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
@@ -299,107 +407,196 @@ fn with_menu_keys(
         step(Step::First),
         step(Step::Last),
     );
+    let parent = parent.cloned();
+    let escape = on_dismiss.clone();
+    let escape_parent = parent.clone();
     menu.on_action(move |_: &MenuPrev, window, cx| prev(window, cx))
         .on_action(move |_: &MenuNext, window, cx| next(window, cx))
         .on_action(move |_: &MenuFirst, window, cx| first(window, cx))
         .on_action(move |_: &MenuLast, window, cx| last(window, cx))
+        .on_action(cx.listener(move |_, _: &MenuBack, window, cx| {
+            if let Some(parent) = &parent {
+                parent.close_submenu(window, cx);
+            }
+            cx.notify();
+        }))
+        .on_action(cx.listener(move |this, _: &MenuEscape, window, cx| {
+            if let Some(parent) = &escape_parent {
+                parent.close_submenu(window, cx);
+            } else {
+                escape(this, window, cx);
+            }
+            cx.notify();
+        }))
+        .on_action(cx.listener(move |this, _: &MenuDismiss, window, cx| {
+            on_dismiss(this, window, cx);
+            cx.notify();
+        }))
 }
 
-fn render_menu_item<A>(
-    item_id_prefix: &'static str,
-    group_ix: usize,
-    item_ix: usize,
-    item: MenuItem<A>,
-    on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + 'static,
-    focus: Option<gpui::FocusHandle>,
+fn render_item<A, S>(
+    control: String,
+    item: &MenuItem<A>,
+    slot: usize,
+    keys: Option<&MenuKeys>,
+    on_select: S,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
 where
     A: Clone + 'static,
+    S: Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + 'static,
 {
+    let control: SharedString = control.into();
     let enabled = item.state == ItemState::Enabled;
-    let action = item.action.clone();
-    let label_color = match (&item.state, item.dangerous) {
-        (ItemState::Enabled, true) => theme().color_blocker,
-        (ItemState::Enabled, false) => theme().text_main,
-        (ItemState::Disabled(_), true) => theme().color_blocker_muted,
-        (ItemState::Disabled(_), false) => theme().text_muted,
-        (ItemState::Hidden, _) => theme().text_muted,
+    let mut row = base_row(&control, item);
+    if let Some(keys) = keys {
+        row = focus_row(row, keys, slot, cx);
+    }
+    if matches!(item.kind, MenuItemKind::Submenu(_)) {
+        row = row.child("›").aria_expanded(
+            keys.is_some_and(|keys| keys.submenu().is_some_and(|(at, _)| at == slot)),
+        );
+        if let Some(keys) = keys {
+            row = submenu_row(row, keys, slot, cx);
+        }
+    } else if let MenuItemKind::Command(action) = &item.kind {
+        if enabled {
+            let action = action.clone();
+            row = row.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                on_select(this, action.clone(), window, cx);
+                cx.notify();
+            }));
+        }
+    }
+    if let Some(keys) = keys.filter(|_| matches!(item.kind, MenuItemKind::Command(_))) {
+        let keys = keys.clone();
+        row = row.on_hover(cx.listener(move |_, hovered: &bool, window, cx| {
+            if *hovered {
+                keys.hover_submenu(None, window, cx);
+            }
+        }));
+    }
+    row = if enabled {
+        row.hover(|style| style.bg(rgb(theme().selected)).cursor_default())
+    } else {
+        row.hover(|style| style.bg(rgb(theme().surface)))
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled()
+            })
+    };
+    disabled_reason(row, control, &item.state)
+}
+
+fn base_row<A>(control: &SharedString, item: &MenuItem<A>) -> gpui::Stateful<gpui::Div> {
+    let color = match (item.state == ItemState::Enabled, item.dangerous) {
+        (true, true) => theme().color_blocker,
+        (true, false) => theme().text_main,
+        (false, true) => theme().color_blocker_muted,
+        (false, false) => theme().text_muted,
     };
     let text = if item.dangerous {
-        SharedString::from(format!("⚠ {}", item.label.as_ref()))
+        SharedString::from(format!("⚠ {}", item.label))
     } else {
         item.label.clone()
     };
-
-    let click = cx.listener(move |this: &mut KagiApp, _e: &ClickEvent, window, cx| {
-        on_select(this, action.clone(), window, cx);
-        cx.notify();
-    });
-
-    let row = div()
-        .id(SharedString::from(format!(
-            "{}-{}-{}",
-            item_id_prefix, group_ix, item_ix
-        )))
+    div()
+        .id(control.clone())
         .role(Role::MenuItem)
         .aria_label(item.label.clone())
         .h(theme::scaled_px(MENU_ROW_H))
         .flex_shrink_0()
         .px_3()
         .flex()
-        .flex_row()
         .items_center()
         .text_sm()
-        .text_color(rgb(label_color))
+        .text_color(rgb(color))
         .overflow_hidden()
-        .child(div().flex_1().truncate().child(text));
+        .child(div().flex_1().truncate().child(text))
+}
 
-    // #985: every item tracks its focus handle, so a focused item that turns
-    // disabled while the menu is open (a write starts) stays in the dispatch
-    // tree and ↑/↓ still reach the menu (#991 review); the keys only ever
-    // move onto enabled items, and Enter / Space press one through gpui's
-    // keyboard click on `on_click` (a disabled item has none). Keyboard focus
-    // shows as the pointer's hover does.
-    let row = match focus {
-        Some(focus) => row
-            .track_focus(&focus.tab_index(0).tab_stop(false))
-            .on_key_down(super::keyboard_nav::stop_activation_keys)
-            .focus_visible(|style| style.bg(rgb(theme().selected))),
-        None => row,
-    };
-    let row = if enabled {
-        row.on_click(click)
-            .hover(|style| style.bg(rgb(theme().selected)).cursor_default())
-    } else {
-        // gpui has no aria_disabled setter; the node's own builder has one.
-        row.hover(|style| style.bg(rgb(theme().surface)))
-            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
-                builder.parent_node().set_disabled();
-            })
-    };
+fn focus_row(
+    row: gpui::Stateful<gpui::Div>,
+    keys: &MenuKeys,
+    slot: usize,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    let probe = keys.clone();
+    row.track_focus(&keys.item(slot, cx).tab_index(0).tab_stop(false))
+        .on_key_down(super::keyboard_nav::stop_activation_keys)
+        .focus_visible(|style| style.bg(rgb(theme().selected)))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, _, _| probe.record_bounds(slot, bounds),
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+        )
+}
 
+fn submenu_row(
+    mut row: gpui::Stateful<gpui::Div>,
+    keys: &MenuKeys,
+    slot: usize,
+    cx: &mut Context<KagiApp>,
+) -> gpui::Stateful<gpui::Div> {
+    let click = keys.clone();
+    let right = keys.clone();
+    let hover = keys.clone();
+    row = row
+        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+            click.cancel_hover();
+            click.open_submenu(slot, true);
+            cx.notify();
+        }))
+        .on_action(cx.listener(move |_, _: &MenuOpen, _, cx| {
+            right.cancel_hover();
+            right.open_submenu(slot, true);
+            cx.notify();
+        }))
+        .on_hover(cx.listener(move |_, hovered: &bool, window, cx| {
+            if *hovered {
+                hover.hover_submenu(Some(slot), window, cx);
+            }
+        }));
+    row
+}
+
+fn disabled_reason(
+    row: gpui::Stateful<gpui::Div>,
+    _control: SharedString,
+    state: &ItemState,
+) -> AnyElement {
     #[cfg(feature = "gui-e2e")]
-    let control = format!("{item_id_prefix}-{group_ix}-{item_ix}");
-    // A disabled item says why to assistive technology too, not only in its
-    // pointer tooltip (#991 review).
-    let row = match item.state {
-        ItemState::Disabled(reason) => {
-            #[cfg(feature = "gui-e2e")]
-            record_description(&control, Some(reason.clone()));
-            row.aria_description(reason.clone())
-                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-                .into_any_element()
-        }
-        _ => {
-            #[cfg(feature = "gui-e2e")]
-            record_description(&control, None);
-            row.into_any_element()
-        }
+    record_description(
+        &_control,
+        match state {
+            ItemState::Disabled(reason) => Some(reason.clone()),
+            _ => None,
+        },
+    );
+    let row = if let ItemState::Disabled(reason) = state {
+        let reason = reason.clone();
+        #[cfg(feature = "gui-e2e")]
+        let tooltip_control = _control.clone();
+        row.aria_description(reason.clone())
+            .tooltip(move |window, cx| {
+                #[cfg(feature = "gui-e2e")]
+                TOOLTIPS.with(|map| {
+                    map.borrow_mut()
+                        .insert(tooltip_control.to_string(), reason.clone());
+                });
+                Tooltip::new(reason.clone()).build(window, cx)
+            })
+            .into_any_element()
+    } else {
+        row.into_any_element()
     };
     #[cfg(feature = "gui-e2e")]
     {
-        super::e2e::measure_control(control, row)
+        super::e2e::measure_control(_control.to_string(), row)
     }
     #[cfg(not(feature = "gui-e2e"))]
     {
@@ -409,11 +606,11 @@ where
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
-    static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, Option<SharedString>>> =
-        std::cell::RefCell::default();
+    static DESCRIPTIONS: std::cell::RefCell<std::collections::HashMap<String, Option<SharedString>>> = std::cell::RefCell::default();
+    static TOOLTIPS: std::cell::RefCell<std::collections::HashMap<String, SharedString>> = std::cell::RefCell::default();
+    static SLOT_CONTROLS: std::cell::RefCell<std::collections::HashMap<usize, String>> = std::cell::RefCell::default();
 }
 
-/// What the item drawn as `control` last handed `aria_description`.
 #[cfg(feature = "gui-e2e")]
 fn record_description(control: &str, description: Option<SharedString>) {
     DESCRIPTIONS.with(|map| {
@@ -421,20 +618,17 @@ fn record_description(control: &str, description: Option<SharedString>) {
     });
 }
 
-/// The `aria_description` the menu item `control` was last drawn with:
-/// `None` when it was never drawn, `Some(None)` when it had none.
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_item_description(control: &str) -> Option<Option<SharedString>> {
     DESCRIPTIONS.with(|map| map.borrow().get(control).cloned())
 }
 
+/// Text handed to the real Tooltip builder when the pointer requests it.
 #[cfg(feature = "gui-e2e")]
-thread_local! {
-    static SLOT_CONTROLS: std::cell::RefCell<std::collections::HashMap<usize, String>> =
-        std::cell::RefCell::default();
+pub fn recorded_item_tooltip(control: &str) -> Option<SharedString> {
+    TOOLTIPS.with(|map| map.borrow().get(control).cloned())
 }
 
-/// The menu item last drawn for keyboard slot `slot` (its control id).
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_slot_control(slot: usize) -> Option<String> {
     SLOT_CONTROLS.with(|map| map.borrow().get(&slot).cloned())

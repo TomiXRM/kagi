@@ -555,3 +555,48 @@ and scrollbar behavior and are likewise not replaced.
 
 Native scenario guards restore disk keys, in-memory zoom/language, active theme,
 synced kit palette and scrollbar policy on Drop, including panic unwinding.
+
+## Amendment — 2026-10-11: unified window frame (#1179)
+
+Every theme uses the same unified top-frame geometry, not an Apple-only fork.
+GPUI still owns native macOS traffic lights, positioned at (9,16) logical px;
+the frame reserves an unscaled 80px left exclusion. Repository name and branch
+remain left, existing actions and » retain their dispatch/focus/AX owners, and
+workspace controls stay right. Blank frame surface uses `WindowControlArea::Drag`.
+Colours continue through the existing panel/surface/accent bridge, not AppKit
+material imitation or a new title state.
+
+Icon Only has a 52-reference-px frame (46.8 logical px at 100%, below the 54px
+target); Icon and Text intentionally uses a taller 64-reference-px frame.
+The 20px glyphs, caption geometry and #1178 setting/menu paths remain unchanged.
+#1210's production layout fitting additionally reserves the native exclusion
+and trailing +; natural-width caching, overflow priority, keyboard menu and
+unavailable reasons remain authoritative.
+
+The document strip moves below the frame and is shown only when repository
+tabs plus the optional Home tab total more than one. This explicitly supersedes
+#1180's “A single tab is not hidden.” Home is still a document: one repository
+plus Home shows both cells. The + affordance moves from the strip to the frame's
+right end, including Home's frame; Cmd+T and File → New Tab open Home, Cmd+W and
+File → Close Tab close the front document even with the strip hidden. Hidden
+cells release keyboard focus to the root through the existing `TabList` owner.
+Neutral fills, tab close/reveal rules and manual keyboard activation stay intact.
+
+Native regressions intentionally update `toolbar-row` heights and single-tab
+expectations; they measure first-frame ordering, exclusion/identity/action
+containment, blank chrome region and the two-document strip below the frame at
+1392×883, EN/JA, 100%/167%, Apple Light/Dark and Mocha. Neutral-tab paint and
+existing toolbar/overflow/keyboard scenarios retain their behavioral oracles.
+Real native traffic-light interaction, window dragging and the requested
+Finder comparison remain integration-owned Tier B, not claimed by bounds probes.
+
+Regression-first evidence: against the old sources, `unified_toolbar` failed
+because the toolbar began at Y=36 instead of Y=0. After recomposition the
+scenario passes its full matrix, including hidden-strip New/Close Tab commands,
+frame + → Home and focus release when closing two documents down to one.
+Scoped native verification passes all eight affected scenarios (six in the
+first post-cutover selection, then `repo_tabs_neutral` / `keyboard_nav` after
+deliberately updating their viewport and single-document focus expectations).
+`ToolbarRestore` composes the existing presentation Drop guard, including
+`GlobalSettings::capture()`, and restores cached toolbar display from its saved
+key on unwind. Neutral fill/rail pixels and toolbar counts/reasons remain tested.

@@ -197,21 +197,33 @@ impl KagiApp {
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            // With no tab there is no strip, but the (transparent, themed)
-            // title bar still needs its band: the traffic lights are drawn
-            // over it and it is what drags the window.
-            .child(match self.render_tab_strip(window, cx) {
-                Some(strip) => strip,
-                None => div()
+            // Home shares the native frame; document tabs never host the lights.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
                     .w_full()
-                    .h(theme::scaled_px(super::tabs::TAB_STRIP_H))
+                    .h(theme::scaled_px(52.))
+                    .pl(if cfg!(target_os = "macos") {
+                        px(80.)
+                    } else {
+                        theme::scaled_px(12.)
+                    })
+                    .pr_3()
                     .flex_shrink_0()
                     .bg(rgb(theme().panel))
-                    .border_b_1()
-                    .border_color(rgb(theme().surface))
                     .window_control_area(gpui::WindowControlArea::Drag)
-                    .into_any_element(),
-            })
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(rgb(theme().text_main))
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(Msg::HomeTabTitle.t()),
+                    )
+                    .child(self.render_tab_add(cx)),
+            )
+            .children(self.render_tab_strip(window, cx))
             .child(body);
         // A flex box, as the Welcome screen's root was: the window-global
         // modals attached below are absolute overlays, and in a plain block

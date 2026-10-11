@@ -7,7 +7,7 @@ use kagi::ui::{
 use kagi_ui_core::theme;
 
 use crate::macos::{build_fixture, mount, repo_fingerprint, unmount};
-use crate::recovery_layout::{contained, GlobalSettings};
+use crate::recovery_layout::contained;
 const ICON_BUTTONS: [&str; 12] = [
     "tb-pull",
     "tb-push",
@@ -86,9 +86,7 @@ fn shaped_width_scale(actual: f32, baseline: f32, zoom: f32) {
 }
 
 pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
-    let _restore = GlobalSettings::capture();
-    let _toolbar_restore = crate::gui_isolation::SavedKeys::keep(&["toolbar_display", "theme"]);
-    let original_theme = theme::theme();
+    let _restore = crate::toolbar_overflow::ToolbarRestore::capture(cx);
     kagi_ui_core::settings::write_setting("toolbar_display", None);
     kagi_ui_core::settings::init_toolbar_display();
     for slug in ["apple-light", "apple-dark"] {
@@ -162,9 +160,9 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
             Some(display)
         );
         let expected = if display == kagi_ui_core::settings::ToolbarDisplay::IconOnly {
-            36.
-        } else {
             52.
+        } else {
+            64.
         };
         assert!(
             (f32::from(bounds(window, "toolbar-row").size.height) - theme::scaled(expected)).abs()
@@ -345,9 +343,6 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
             .1
             .starts_with("✓ "));
     }
-    assert!(theme::set_active(&original_theme.slug));
-    drop(_toolbar_restore);
-    kagi_ui_core::settings::init_toolbar_display();
     assert_eq!(
         repo_fingerprint(&repo),
         before,

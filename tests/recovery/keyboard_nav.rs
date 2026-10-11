@@ -479,10 +479,8 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
         root_focused(cx, &app, window),
         "the closed Home tab's focus goes to the window"
     );
-    // ⌘W with the focus arrowed to another tab's cell closes the tab in
-    // front, not that one; the cells after it move up a slot, and the focus
-    // and the arrowed-to cell move with their tab (#961 review): Enter then
-    // switches to the tab that had the focus.
+    // ⌘W closes the front tab, not the arrow-focused cell. Once only one
+    // document remains, #1179 hides the strip and releases that cell's focus.
     assert_eq!(
         cx.read(|cx| app.read(cx).tabs.len()),
         2,
@@ -503,10 +501,13 @@ pub fn scenario_keyboard_nav(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         strip_focus(cx),
-        Some(0),
-        "the focus moved with the second tab into the first slot"
+        None,
+        "single-document hiding releases the arrow-focused surviving tab"
     );
-    keys(cx, window, "enter");
+    assert!(
+        root_focused(cx, &app, window),
+        "hidden strip hands focus to root"
+    );
     let (tabs, active, path) = cx.read(|cx| {
         let app = app.read(cx);
         (

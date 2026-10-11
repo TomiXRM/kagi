@@ -28,10 +28,16 @@ fn paint(
 }
 
 pub fn scenario_inactive_selection(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let old_theme = theme::theme().slug.to_string();
     let fixture = content_fixture();
     let (app, window) = mount(cx, fixture.path());
+    let second = crate::macos::build_fixture();
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx));
+        app.switch_repo(0, cx);
+    });
+    cx.run_until_parked();
     app.update(cx, |app, cx| app.detect_conflict_mode(cx));
     cx.run_until_parked();
     let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
@@ -95,7 +101,7 @@ pub fn scenario_inactive_selection(cx: &mut VisualTestAppContext) {
 
 /// #1180: document tabs stay neutral in both activation states, without a rail.
 pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let old_theme = theme::theme().slug.to_string();
     let old_zoom = theme::zoom();
     let fixtures: Vec<_> = (0..6).map(|_| crate::macos::build_fixture()).collect();
@@ -145,6 +151,14 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                 for active in [true, false] {
                     app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
                     cx.run_until_parked();
+                    if count == 1 {
+                        crate::recovery_layout::draw(cx, window, (1440., 900.));
+                        assert!(
+                            e2e::control_bounds(window.window_id(), "repo-tab-0").is_none(),
+                            "single document hides the neutral strip (#1179)"
+                        );
+                        continue;
+                    }
                     for index in 0..count {
                         let name = format!("repo-tab-{index}");
                         let expected = if index == 0 {

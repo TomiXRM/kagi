@@ -1163,6 +1163,10 @@ mod macos {
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
             ),
             (
+                "unified_toolbar",
+                Box::new(crate::toolbar_overflow::scenario_unified_toolbar),
+            ),
+            (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),

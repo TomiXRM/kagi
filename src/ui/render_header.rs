@@ -171,13 +171,8 @@ impl KagiApp {
         el
     }
 
-    /// Header slot — the Toolbar bar (T-HT-001 / ADR-0013). The in-progress
-    /// operation gets its own row below this one (`render_operation_strip`).
-    ///
-    /// Layout (34 px):
-    ///   LEFT:   repo-name | branch → upstream ↑A ↓B
-    ///   CENTRE: Pull(↓N) Push(↑N) | Branch Stash Pop | Undo("<summary>") Terminal
-    ///   RIGHT:  Refresh
+    /// Unified top frame: native traffic lights, repository identity, actions
+    /// and workspace group. Document tabs are a separate optional row below.
     pub(super) fn render_header_slot(
         &mut self,
         toolbar: ToolbarState,
@@ -629,7 +624,7 @@ impl KagiApp {
                 .flex_shrink_0()
         };
 
-        // ── Toolbar bar (52 px — W10-TOOLBAR vertical buttons) ──────────────
+        // The native lights stay unscaled; controls and frame follow UI zoom.
         div()
             .id("toolbar-bar")
             .flex()
@@ -639,13 +634,28 @@ impl KagiApp {
             .overflow_hidden()
             .child(toolbar_overflow::probe(layout_app.clone(), None, style_key))
             .w_full()
-            .px_3()
-            .h(theme::scaled_px(if icon_only { 36.0 } else { 52.0 }))
+            .pr_3()
+            .pl(if cfg!(target_os = "macos") {
+                px(80.)
+            } else {
+                theme::scaled_px(12.)
+            })
+            .h(theme::scaled_px(if icon_only { 52.0 } else { 64.0 }))
+            .window_control_area(gpui::WindowControlArea::Drag)
             .flex_shrink_0()
             .bg(rgb(theme().panel))
             .text_color(rgb(theme().text_sub))
             .when(cfg!(feature = "gui-e2e"), |el| {
-                el.child(super::e2e::measure_inside("toolbar-row"))
+                el.child(super::e2e::measure_inside("toolbar-row")).child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(80.))
+                        .right(px(0.))
+                        .h(px(3.))
+                        .window_control_area(gpui::WindowControlArea::Drag)
+                        .child(super::e2e::measure_inside("toolbar-drag-region")),
+                )
             })
             // ── LEFT column (flex_1, equal width to the RIGHT column so the
             // centre cluster is window-centred regardless of side widths).
@@ -701,6 +711,8 @@ impl KagiApp {
                                     Tooltip::new(command.label).build(window, cx)
                                 })
                             })
+                            .relative()
+                            .child(super::e2e::measure_inside("tb-refresh"))
                             .flex_shrink_0()
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
@@ -733,6 +745,8 @@ impl KagiApp {
                             .flex_col()
                             .flex_1()
                             .min_w_0()
+                            .relative()
+                            .child(super::e2e::measure_inside("toolbar-identity"))
                             .mr_2()
                             .child(
                                 div()
@@ -1092,5 +1106,6 @@ impl KagiApp {
                         self.root_focus.clone(),
                     )),
             )
+            .child(self.render_tab_add(cx))
     }
 }

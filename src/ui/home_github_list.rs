@@ -380,6 +380,8 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
     // its `size_full` did not resolve, leaving the text area zero-wide —
     // typed characters and the placeholder were drawn into nothing.
     div()
+        .relative()
+        .child(super::e2e::measure_inside("home-search"))
         .flex()
         .flex_row()
         .items_center()
@@ -479,9 +481,13 @@ fn github_row(
     at: usize,
     app: &Entity<KagiApp>,
 ) -> AnyElement {
+    let compact = theme::viewport_w().is_some_and(|width| {
+        px(width) < theme::scaled_px(300. + super::pr_layout::CENTER_MIN) + px(48.)
+    });
     let chip = |text: &str| {
         div()
-            .flex_shrink_0()
+            .when(compact, |el| el.min_w(px(0.)).flex_shrink(1.).truncate())
+            .when(!compact, |el| el.flex_shrink_0())
             .px_2()
             .rounded_md()
             .bg(rgb(theme().surface))
@@ -494,11 +500,15 @@ fn github_row(
         .flex_row()
         .items_center()
         .gap_2()
-        .flex_shrink_0();
+        .when(compact, |el| {
+            el.min_w(px(0.)).flex_shrink(1.).max_w(gpui::relative(0.5))
+        })
+        .when(!compact, |el| el.flex_shrink_0());
     if let Some(day) = listing.updated_at.get(..10) {
         meta = meta.child(
             div()
                 .text_sm()
+                .when(compact, |el| el.min_w(px(0.)).flex_shrink_0().truncate())
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(day.to_string())),
         );
@@ -511,7 +521,9 @@ fn github_row(
     }
     meta = meta.child(super::e2e::measure_control(
         format!("home-gh-{}:{state}", listing.name_with_owner),
-        chip(state).text_color(rgb(theme().color_branch)),
+        chip(state)
+            .flex_shrink_0()
+            .text_color(rgb(theme().color_branch)),
     ));
     let description = (!listing.description.is_empty()).then(|| {
         div()
@@ -522,6 +534,10 @@ fn github_row(
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();
+    #[cfg(feature = "gui-e2e")]
+    let column_id = format!("home-gh-{}-name-column", listing.name_with_owner);
+    #[cfg(not(feature = "gui-e2e"))]
+    let column_id = "home-repository-name-column";
     let label = format!("{}, {state}", listing.name_with_owner);
     let app = app.clone();
     rows.row(
@@ -550,6 +566,9 @@ fn github_row(
             .flex_col()
             .flex_1()
             .min_w(px(0.))
+            .when(compact, |el| el.min_w(gpui::relative(0.45)))
+            .relative()
+            .child(super::e2e::measure_inside(column_id))
             .child(
                 div()
                     .text_base()

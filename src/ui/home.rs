@@ -54,6 +54,17 @@ fn sidebar_width() -> gpui::Pixels {
 }
 const MAIN_MAX_W: f32 = 720.;
 
+/// Share the PR reader's 420 reference-pixel minimum. Recent remains reachable
+/// in a narrow navigator rather than disappearing with its keyboard targets.
+fn fitted_sidebar_width(viewport: gpui::Pixels) -> gpui::Pixels {
+    let normal = sidebar_width();
+    if viewport - normal - px(48.) < theme::scaled_px(super::pr_layout::CENTER_MIN) {
+        theme::scaled_px(120.).min((viewport - px(48.)).max(px(0.)))
+    } else {
+        normal
+    }
+}
+
 impl KagiApp {
     /// Does the window show Home? Always when no tab is open (except the
     /// read-only remote view, which has no tab but a workspace).
@@ -174,14 +185,15 @@ impl KagiApp {
     /// workspace compositor.
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ensure_home_github(window, cx);
+        let sidebar = fitted_sidebar_width(window.viewport_size().width);
         let body = div()
             .id("home-tab-panel")
             .flex()
             .flex_row()
             .flex_1()
             .min_h(px(0.))
-            .child(self.render_home_sidebar(cx))
-            .child(self.render_home_main(window, cx));
+            .child(self.render_home_sidebar(sidebar, cx))
+            .child(self.render_home_main(sidebar, window, cx));
         // Home's content is the Home cell's panel while the strip is drawn
         // (#983); with no tab there is no strip, so no tab list.
         let body = if self.tabs.is_empty() {
@@ -253,7 +265,7 @@ impl KagiApp {
         self.attach_active_modal_key_routing(content, false, cx)
     }
 
-    fn render_home_sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_home_sidebar(&mut self, width: gpui::Pixels, cx: &mut Context<Self>) -> AnyElement {
         let recent = super::tabs::recent_repos();
         let mut list = div().flex().flex_col().gap_1();
         if recent.is_empty() {
@@ -278,7 +290,7 @@ impl KagiApp {
             .flex()
             .flex_col()
             .gap_2()
-            .w(sidebar_width())
+            .w(width)
             .flex_shrink_0()
             .h_full()
             .p_3()
@@ -331,7 +343,12 @@ impl KagiApp {
             .into_any_element()
     }
 
-    fn render_home_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_home_main(
+        &mut self,
+        sidebar: gpui::Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let open_folder = cx.listener(|app, _: &gpui::ClickEvent, window, cx| {
             app.pick_repository(window, cx);
         });
@@ -342,6 +359,7 @@ impl KagiApp {
             .flex()
             .flex_row()
             .items_center()
+            .flex_wrap()
             .gap_2()
             .child(super::e2e::measure_control(
                 "home-open-folder",
@@ -374,8 +392,11 @@ impl KagiApp {
                     .flex()
                     .flex_col()
                     .gap_4()
+                    .relative()
+                    .child(super::e2e::measure_inside("home-content-column"))
                     .mx_auto()
-                    .w_full()
+                    .w((window.viewport_size().width - sidebar).max(px(0.)))
+                    .min_w(px(0.))
                     .h_full()
                     .max_w(theme::scaled_px(MAIN_MAX_W))
                     .px_6()

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Home caps its centered content column to the remaining window width, narrows Recent when the shared PR-reader minimum cannot fit, wraps folder/SSH actions in order, and ellipsizes pane labels before clipping. Compact repository rows reserve at least 40% for the name while keeping the trailing Clone/Open action visible; wide layout geometry is retained. (#1212)
 - Bottom-panel Operation Log / Terminal / Activity use the shared single-stop keyboard tab list with manual activation, localized EN/JA names and distinct focus rings. Rounded pane-selector cells retain their window-aware selected fill under hover; arrow focus alone never starts Terminal. Cmd+J and lazy terminal startup remain unchanged. (#1205, #1206)
 - Bottom-selector review: keyboard Terminal activation keeps the selector focus for further arrow navigation, while a pointer click gives text input to the PTY. The native scenario restores in-memory theme/language/zoom as well as persisted settings. (#1205 review)
 - Dialog Cancel uses the shared bordered Secondary push button at the same S size as the trailing default; destructive dialog actions use the filled red role. Input cards expose named modal Dialog boundaries with available Confirm/Cancel actions and reuse the existing focus trap, preserving localized EN/JA titles, blocked reasons, Escape and IME routing. Existing plan/alert boundaries remain unnested. (#1208, #1209)

@@ -716,6 +716,7 @@ impl KagiApp {
         let header = div()
             .flex()
             .flex_row()
+            .min_w(px(0.))
             .items_center()
             .gap_2()
             .flex_shrink_0()
@@ -741,11 +742,12 @@ impl KagiApp {
                     ))
                 },
             )
-            .child(div().flex_1())
+            .child(div().flex_1().min_w(px(0.)))
             .child(super::e2e::measure_control(
                 "home-github-refresh",
                 Button::new("home-github-refresh")
                     .ghost()
+                    .flex_shrink_0()
                     .small()
                     .label(Msg::HomeGithubRefresh.t())
                     .disabled(reading)

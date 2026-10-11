@@ -555,3 +555,43 @@ and scrollbar behavior and are likewise not replaced.
 
 Native scenario guards restore disk keys, in-memory zoom/language, active theme,
 synced kit palette and scrollbar policy on Drop, including panic unwinding.
+
+## Amendment — 2026-10-11: Home narrow-window containment (#1212)
+
+Home is an open dashboard with a secondary Recent navigator. Like PR detail,
+the content reader takes priority: reuse its 420-reference-px minimum, and
+narrow Recent from 300 to 120 reference px when the ordinary sidebar leaves
+less than that after Home's literal 48px horizontal padding. Keep Recent
+mounted and reachable rather than inventing a disclosure, focus owner or
+preference. Above the threshold, sidebar and centered 720-reference-px column
+retain their existing geometry. The column explicitly fits viewport minus
+sidebar rather than relying on percentage sizing against an indefinite flex
+parent.
+
+Open Folder stays first when actions wrap. The existing TabList retains full
+localized accessibility names and automatic arrow activation; its visible
+labels shrink with ellipsis before Refresh can clip. Compact repository rows
+reserve at least 40% for the name, truncate description and shrinking metadata,
+and keep the final Clone/Open action fixed. Existing theme roles, read/cache
+owners, keyboard navigation and Git write pipeline are unchanged. No new user
+strings or hand-made controls are introduced.
+
+The Home heading native scenario additionally checks narrow 940×660/167%
+EN/JA control containment and repository-name priority, with 1392×660/100%
+sidebar and column widths asserted against the recorded pre-fix native widths.
+Tier B: Home, JA, Apple Dark, 940×660/167%.
+
+Native pre-fix evidence: at 940×660/167% EN, SSH action bounds were
+`x=706, width=338` (right edge 1044), outside the 940px viewport.
+The unchanged 1392×660/100% renderer recorded a 269px sidebar interior
+(270px frame minus its literal 1px border) and 648px centered column;
+the regression asserts equality with those recorded widths in both languages.
+
+Afterward, the scoped `home_heading` scenario passes: both EN and JA narrow
+repository rows measure 687.5px, with a 301.5px name column (43.85%).
+Folder, SSH, all three pane cells, Refresh, search, Recent and Clone bounds
+remain inside the window. Widening restores the exact recorded 269px/648px
+sidebar-interior/column widths. `cargo clippy -q -p kagi` reports no warnings
+in changed files; existing unrelated warnings remain. The scenario uses
+`GlobalSettings::capture()` for in-memory theme/language/zoom/toolbar restoration
+on Drop, in addition to persisted-key restoration.

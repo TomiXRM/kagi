@@ -71,9 +71,10 @@ for all-preset primary-label contrast.
 
 For #1227 use `KAGI_GUI_E2E_ONLY='commit_panel_i18n,commit_panel_viewport,commit_row_layout'`.
 `commit_panel_i18n` draws Apple Light/Dark at 1392×883/100% and 940×660/167%,
-changes JA→EN→JA→EN on the same panel, compares renderer-fed captions and AX
-name assignments with Msg, measures header/control containment and ≥20 logical-pixel
-hit heights, clicks Tree, and preserves the user-owned Template body verbatim.
+changes JA→EN→JA→EN on the same panel, compares renderer-fed captions plus AX
+name/role assignments with Msg, checks selector selection state, measures containment
+and ≥20 logical-pixel hit heights, clicks Tree, and preserves Template data verbatim.
+The feature name Commit Panel and operation-button names intentionally stay English.
 The AX recorder proves the renderer assignment, not native VoiceOver delivery.
 Tier B remains a real-window comparison of Japanese headers, batch actions and
 unchanged user Template text; `commit_panel_viewport` retains composer geometry.

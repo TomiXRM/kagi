@@ -305,9 +305,9 @@ fn render_cp_file_row(
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
     let (label, role) = if staged {
-        (Msg::EditorTreeUnstage.t(), ButtonRole::Warning)
+        (Msg::CommitPanelUnstage.t(), ButtonRole::Warning)
     } else {
-        (Msg::EditorTreeStage.t(), ButtonRole::Success)
+        (Msg::CommitPanelStage.t(), ButtonRole::Success)
     };
     let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
         if staged {
@@ -317,18 +317,30 @@ fn render_cp_file_row(
         }
     });
     file_row.child(
-        KagiButton::styled((btn_id, fi), label, role, cx)
-            .xsmall()
-            .min_h(px(20.))
-            .ml_2()
-            .flex_shrink_0()
-            .relative()
-            .child(super::e2e::measure_inside(if staged {
-                "cp-row-unstage"
-            } else {
-                "cp-row-stage"
-            }))
-            .on_click(action_click),
+        KagiButton::styled(
+            (btn_id, fi),
+            super::e2e::commit_panel_labels::caption(
+                if staged {
+                    "cp-row-unstage"
+                } else {
+                    "cp-row-stage"
+                },
+                label,
+            ),
+            role,
+            cx,
+        )
+        .xsmall()
+        .min_h(px(20.))
+        .ml_2()
+        .flex_shrink_0()
+        .relative()
+        .child(super::e2e::measure_inside(if staged {
+            "cp-row-unstage"
+        } else {
+            "cp-row-stage"
+        }))
+        .on_click(action_click),
     )
 }
 
@@ -1093,6 +1105,11 @@ impl CommitPanelView {
                     theme().text_muted
                 }))
                 .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
+                .role(super::e2e::commit_panel_labels::role(
+                    id,
+                    gpui::Role::Button,
+                ))
+                .aria_selected(super::e2e::commit_panel_labels::selected(id, active))
                 .aria_label(super::e2e::commit_panel_labels::name(id, label))
                 .child(super::e2e::commit_panel_labels::caption(id, label))
         };
@@ -1158,6 +1175,10 @@ impl CommitPanelView {
                         .text_color(rgb(theme().color_success))
                         .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(stage_all_click)
+                        .role(super::e2e::commit_panel_labels::role(
+                            "cp-stage-all",
+                            gpui::Role::Button,
+                        ))
                         .aria_label(super::e2e::commit_panel_labels::name(
                             "cp-stage-all",
                             Msg::CommitPanelStageAll.t(),
@@ -1187,6 +1208,10 @@ impl CommitPanelView {
                     .rounded_sm()
                     .bg(rgb(theme().surface))
                     .text_xs()
+                    .role(super::e2e::commit_panel_labels::role(
+                        "cp-discard-all",
+                        gpui::Role::Button,
+                    ))
                     .aria_label(super::e2e::commit_panel_labels::name(
                         "cp-discard-all",
                         Msg::CommitPanelDiscardAll.t(),
@@ -1266,6 +1291,10 @@ impl CommitPanelView {
                         .text_color(rgb(theme().color_warning))
                         .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(unstage_all_click)
+                        .role(super::e2e::commit_panel_labels::role(
+                            "cp-unstage-all",
+                            gpui::Role::Button,
+                        ))
                         .aria_label(super::e2e::commit_panel_labels::name(
                             "cp-unstage-all",
                             Msg::CommitPanelUnstageAll.t(),

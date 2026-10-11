@@ -10,6 +10,8 @@ thread_local! {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static NAMES: RefCell<HashMap<&'static str, SharedString>> = RefCell::new(HashMap::new());
+    static ROLES: RefCell<HashMap<&'static str, gpui::Role>> = RefCell::new(HashMap::new());
+    static SELECTED: RefCell<HashMap<&'static str, bool>> = RefCell::new(HashMap::new());
 }
 
 pub(crate) fn name(id: &'static str, text: &'static str) -> SharedString {
@@ -23,6 +25,32 @@ pub(crate) fn name(id: &'static str, text: &'static str) -> SharedString {
 #[cfg(feature = "gui-e2e")]
 pub fn accessible_name(id: &str) -> Option<SharedString> {
     NAMES.with(|names| names.borrow().get(id).cloned())
+}
+
+pub(crate) fn role(id: &'static str, role: gpui::Role) -> gpui::Role {
+    #[cfg(feature = "gui-e2e")]
+    ROLES.with(|roles| roles.borrow_mut().insert(id, role));
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = id;
+    role
+}
+
+pub(crate) fn selected(id: &'static str, selected: bool) -> bool {
+    #[cfg(feature = "gui-e2e")]
+    SELECTED.with(|states| states.borrow_mut().insert(id, selected));
+    #[cfg(not(feature = "gui-e2e"))]
+    let _ = id;
+    selected
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn accessible_role(id: &str) -> Option<gpui::Role> {
+    ROLES.with(|roles| roles.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn accessible_selected(id: &str) -> Option<bool> {
+    SELECTED.with(|states| states.borrow().get(id).copied())
 }
 
 pub(crate) fn caption(id: &'static str, text: impl Into<SharedString>) -> SharedString {

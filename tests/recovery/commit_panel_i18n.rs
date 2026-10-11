@@ -111,13 +111,21 @@ fn check_languages(
         );
         draw(cx, window, dimensions);
         assert!(cx.read(|cx| panel.read(cx).state.tree_view));
+        assert_eq!(
+            e2e::commit_panel_labels::accessible_selected("cp-view-tree"),
+            Some(true)
+        );
+        assert_eq!(
+            e2e::commit_panel_labels::accessible_selected("cp-view-list"),
+            Some(false)
+        );
         drop(panel);
     }
 }
 
 fn check_captions(locale: &str, zoom: f32) {
     for (id, msg) in [
-        ("cp-title", Msg::CommitPanelTitle),
+        // Domain operation names intentionally remain identical in EN/JA.
         ("cp-view-list", Msg::CommitPanelList),
         ("cp-view-tree", Msg::CommitPanelTree),
         ("cp-stage-all", Msg::CommitPanelStageAll),
@@ -128,14 +136,31 @@ fn check_captions(locale: &str, zoom: f32) {
         assert_eq!(
             rendered.as_ref(),
             msg.t(),
-            "{locale}@{zoom} {id}: English fallback remains"
+            "{locale}@{zoom} {id}: rendered label mismatch"
         );
-        if id != "cp-title" {
-            assert_eq!(
-                e2e::commit_panel_labels::accessible_name(id).unwrap(),
-                rendered
-            );
-        }
+        assert_eq!(
+            e2e::commit_panel_labels::accessible_name(id).unwrap(),
+            rendered
+        );
+        assert_eq!(
+            e2e::commit_panel_labels::accessible_role(id),
+            Some(gpui::Role::Button)
+        );
+    }
+    assert_eq!(
+        e2e::commit_panel_labels::rendered("cp-title")
+            .unwrap()
+            .as_ref(),
+        Msg::CommitPanelTitle.t()
+    );
+    for (id, msg) in [
+        ("cp-row-stage", Msg::CommitPanelStage),
+        ("cp-row-unstage", Msg::CommitPanelUnstage),
+    ] {
+        assert_eq!(
+            e2e::commit_panel_labels::rendered(id).unwrap().as_ref(),
+            msg.t()
+        );
     }
 }
 

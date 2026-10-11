@@ -367,7 +367,10 @@ impl KagiApp {
             _ => usize::MAX,
         };
         let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
+        let pending_widths = self.toolbar_layout.pending(present, style_key);
         let hidden = self.toolbar_layout.hidden(present, selected, style_key);
+        let visible = present & !hidden;
+        let gap = |left, right| toolbar_overflow::gap(visible, left, right);
         let layout_app = cx.entity().downgrade();
 
         // ── Helper: build a single Finder/Keynote-style toolbar button ──────
@@ -395,11 +398,6 @@ impl KagiApp {
                 .iter()
                 .position(|candidate| *candidate == id)
                 .unwrap();
-            // Omit the interactive subtree, not just its paint: GPUI still
-            // registers Tab stops in display:none elements.
-            if hidden & (1 << index) != 0 {
-                return div().id(id).hidden();
-            }
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
             let (enabled, unavailable) = button_flags(state);
@@ -414,6 +412,21 @@ impl KagiApp {
                 "tb-pr-mode" => Msg::WorkspacePrs.t(),
                 _ => label,
             };
+            // Pending hidden commands need natural widths, not interactive
+            // descendants; retaining the last fit keeps the open menu stable.
+            if hidden & (1 << index) != 0 {
+                return if pending_widths & (1 << index) != 0 {
+                    toolbar_overflow::measure_hidden(
+                        layout_app.clone(),
+                        index,
+                        accessible_label,
+                        icon_only,
+                        style_key,
+                    )
+                } else {
+                    div().id(id).hidden()
+                };
+            }
             #[cfg(feature = "gui-e2e")]
             toolbar_a11y::record_label(id, accessible_label);
             // #354: the exact bool that gates `set_disabled` below, recorded
@@ -516,7 +529,7 @@ impl KagiApp {
                 .when(cfg!(feature = "gui-e2e"), |el| {
                     el.child(super::e2e::measure_inside(id))
                 })
-                .min_w(theme::scaled_px(if icon_only { 36.0 } else { 52.0 }))
+                .min_w(theme::scaled_px(toolbar_overflow::minimum_width(icon_only)))
                 .px(keyboard_nav::inset(4.0))
                 // At 0.7× the old 2px zoomed padding is smaller than the
                 // fixed 2px ring. The centred row keeps its icon/text in
@@ -776,7 +789,7 @@ impl KagiApp {
                                     )
                                     .on_click(pull_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(1, 2), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Push (↑N chip when ahead>0)
                                 .child(
                                     make_btn(
@@ -791,7 +804,7 @@ impl KagiApp {
                                     )
                                     .on_click(push_click),
                                 )
-                                .child(sep())
+                                .when(gap(3, 0xfc), |el| el.child(sep()))
                                 // Branch
                                 .child(
                                     make_btn(
@@ -804,7 +817,7 @@ impl KagiApp {
                                     )
                                     .on_click(branch_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(4, 0x18), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Stash
                                 .child(
                                     make_btn(
@@ -817,7 +830,7 @@ impl KagiApp {
                                     )
                                     .on_click(stash_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(8, 0x10), |el| el.child(div().w(theme::scaled_px(2.0))))
                                 // Pop
                                 .child(
                                     make_btn(
@@ -832,7 +845,7 @@ impl KagiApp {
                                     )
                                     .on_click(pop_click),
                                 )
-                                .child(sep())
+                                .when(gap(0x1c, 0xe0), |el| el.child(sep()))
                                 // Undo — operation-history undo (T-UNDOREDO-001). Label fixed; the
                                 // previewed operation summary is shown in the tooltip.
                                 .child(
@@ -868,7 +881,9 @@ impl KagiApp {
                                     })
                                     .on_click(redo_click),
                                 )
-                                .child(div().w(theme::scaled_px(2.0)))
+                                .when(gap(0x60, 0x80), |el| {
+                                    el.child(div().w(theme::scaled_px(2.0)))
+                                })
                                 // Terminal (toggles bottom panel Terminal tab)
                                 .child(
                                     make_btn(
@@ -903,13 +918,37 @@ impl KagiApp {
                     .when_some(
                         self.update_available
                             .as_ref()
-                            .filter(|_| hidden & (1 << 13) == 0)
+                            .filter(|_| hidden & (1 << 13) == 0 || pending_widths & (1 << 13) != 0)
                             .map(|(p, _)| p.tag.clone()),
                         |el, tag| {
                             let open = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
                                 this.activate_toolbar(13, None, window, cx);
                             });
                             let chip_text = SharedString::from(format!("\u{2191} Update {}", tag));
+                            if hidden & (1 << 13) != 0 {
+                                return if pending_widths & (1 << 13) != 0 {
+                                    el.child(
+                                        div()
+                                            .absolute()
+                                            .invisible()
+                                            .flex()
+                                            .px(keyboard_nav::inset(8.0))
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .child(chip_text),
+                                            )
+                                            .child(toolbar_overflow::probe(
+                                                layout_app.clone(),
+                                                Some(13),
+                                                style_key,
+                                            )),
+                                    )
+                                } else {
+                                    el
+                                };
+                            }
                             let hover_fill =
                                 gpui_component::ActiveTheme::theme(&**cx).button_primary_hover;
                             el.child(
@@ -961,7 +1000,9 @@ impl KagiApp {
                         .when(mode == WorkspaceMode::Graph, mode_on)
                         .on_click(graph_click),
                     )
-                    .child(div().w(theme::scaled_px(2.0)))
+                    .when(gap(0x100, 0xe00), |el| {
+                        el.child(div().w(theme::scaled_px(2.0)))
+                    })
                     // PRs — hidden when gh isn't installed (nothing to show).
                     .when(pr_mode_on, |el| {
                         el.child(
@@ -976,7 +1017,9 @@ impl KagiApp {
                             .when(mode == WorkspaceMode::Prs, mode_on)
                             .on_click(pr_mode_click),
                         )
-                        .child(div().w(theme::scaled_px(2.0)))
+                        .when(gap(0x200, 0xc00), |el| {
+                            el.child(div().w(theme::scaled_px(2.0)))
+                        })
                     })
                     // Editor
                     .child(
@@ -991,7 +1034,9 @@ impl KagiApp {
                         .when(mode == WorkspaceMode::Editor, mode_on)
                         .on_click(editor_ws_click),
                     )
-                    .child(div().w(theme::scaled_px(2.0)))
+                    .when(gap(0x400, 0x800), |el| {
+                        el.child(div().w(theme::scaled_px(2.0)))
+                    })
                     // Analyze / Code Ecosystem (ADR-0119) — read-only hot-spot
                     // analysis; placed just left of Settings.
                     .child(
@@ -1005,7 +1050,7 @@ impl KagiApp {
                         )
                         .on_click(ecosystem_click),
                     )
-                    .child(sep())
+                    .when(gap(0xf00, 0x1000), |el| el.child(sep()))
                     .child({
                         let settings_click =
                             cx.listener(|this, _: &gpui::ClickEvent, window, cx| {

@@ -32,6 +32,7 @@ pub(crate) struct Layout {
     available: f32,
     widths: [f32; 14],
     key: Option<StyleKey>,
+    last_hidden: u16,
 }
 
 impl Layout {
@@ -52,29 +53,27 @@ impl Layout {
         true
     }
 
-    pub(super) fn hidden(&self, present: u16, selected: usize, key: StyleKey) -> u16 {
-        if self.key != Some(key)
-            || self.available == 0.
-            || IDS
-                .iter()
-                .enumerate()
-                .any(|(i, _)| present & (1 << i) != 0 && self.widths[i] == 0.)
-        {
-            return 0;
+    pub(super) fn pending(&self, present: u16, key: StyleKey) -> u16 {
+        if self.key != Some(key) {
+            return present;
         }
-        let scale = theme::scaled(1.);
-        // The spacers are the same 2-reference-px gaps and 4-reference-px
-        // hairline margins used by render_header; hairlines remain literal px.
-        let mut repo = if present & 0xff != 0 {
-            24. * scale + 2.
-        } else {
-            0.
-        };
-        let mut workspace = (12.
-            + if present & (1 << 9) != 0 { 2. } else { 0. }
-            + if present & (1 << 13) != 0 { 8. } else { 0. })
-            * scale
-            + 1.;
+        self.widths
+            .iter()
+            .enumerate()
+            .fold(0, |pending, (i, width)| {
+                pending | if *width == 0. { present & (1 << i) } else { 0 }
+            })
+    }
+
+    pub(super) fn hidden(&mut self, present: u16, selected: usize, key: StyleKey) -> u16 {
+        if self.available == 0. || self.pending(present, key) != 0 {
+            // A style change must not remove the focused trigger or an open
+            // menu for the measurement frame. Hidden controls get a natural
+            // width probe without an interactive subtree while pending.
+            return self.last_hidden & present;
+        }
+        let scale = f32::from_bits(key.2);
+        let (mut repo, mut workspace) = (0., 0.);
         for (i, width) in self.widths.iter().enumerate() {
             if present & (1 << i) != 0 {
                 if i < 8 {
@@ -84,17 +83,22 @@ impl Layout {
                 }
             }
         }
-        // Preserve equal side columns (and therefore the wide toolbar's
-        // centering), with room for Refresh and a useful repository identity.
-        let required =
-            |repo: f32, workspace: f32| repo + 2. * workspace.max(100. * scale) + 24. * scale;
-        if required(repo, workspace) <= self.available {
+        // Preserve equal side columns and reserve only the gaps actually drawn.
+        let required = |repo: f32, workspace: f32, hidden: u16| {
+            let visible = present & !hidden;
+            let (repo_spacing, workspace_spacing) = spacing(visible, scale);
+            let overflow = if hidden != 0 { 36. * scale } else { 0. };
+            repo + repo_spacing
+                + 2. * (workspace + workspace_spacing + overflow).max(100. * scale)
+                + 24. * scale
+        };
+        if required(repo, workspace, 0) <= self.available {
+            self.last_hidden = 0;
             return 0;
         }
         let mut hidden = 0;
-        workspace += 36. * scale; // The overflow trigger's exact width.
-                                  // Repository commands collapse first. Preserve the selected workspace
-                                  // until every other command has moved to the menu.
+        // Repository commands collapse first; preserve the selected workspace
+        // until every other command has moved to the menu.
         for i in [13, 7, 6, 5, 4, 3, 2, 1, 0, 12, 11, 10, 9, 8] {
             if i == selected || present & (1 << i) == 0 {
                 continue;
@@ -104,20 +108,92 @@ impl Layout {
                 repo -= self.widths[i] * scale;
             } else {
                 workspace -= self.widths[i] * scale;
-                if i == 13 {
-                    workspace -= 8. * scale;
-                }
             }
-            if required(repo, workspace) <= self.available {
+            if required(repo, workspace, hidden) <= self.available {
+                self.last_hidden = hidden;
                 return hidden;
             }
         }
         if selected < IDS.len() {
-            hidden | (present & (1 << selected))
-        } else {
-            hidden
+            hidden |= present & (1 << selected);
         }
+        self.last_hidden = hidden;
+        hidden
     }
+}
+
+/// Shared by the rendered gaps and the fitting model. The right set may include
+/// later neighbours when an entire intermediate group has overflowed.
+pub(super) fn gap(visible: u16, left: u16, right: u16) -> bool {
+    visible & left != 0 && visible & right != 0
+}
+
+fn spacing(visible: u16, scale: f32) -> (f32, f32) {
+    let sum = |gaps: &[(u16, u16, bool)]| {
+        gaps.iter().fold(0., |width, &(left, right, hairline)| {
+            width
+                + if gap(visible, left, right) {
+                    if hairline {
+                        8. * scale + 1.
+                    } else {
+                        2. * scale
+                    }
+                } else {
+                    0.
+                }
+        })
+    };
+    (
+        sum(&[
+            (1, 2, false),
+            (3, 0xfc, true),
+            (4, 0x18, false),
+            (8, 0x10, false),
+            (0x1c, 0xe0, true),
+            (0x60, 0x80, false),
+        ]),
+        sum(&[
+            (0x100, 0xe00, false),
+            (0x200, 0xc00, false),
+            (0x400, 0x800, false),
+            (0xf00, 0x1000, true),
+        ]) + if visible & (1 << 13) != 0 {
+            8. * scale
+        } else {
+            0.
+        },
+    )
+}
+
+pub(super) fn minimum_width(icon_only: bool) -> f32 {
+    if icon_only {
+        36.
+    } else {
+        52.
+    }
+}
+
+pub(super) fn measure_hidden(
+    app: gpui::WeakEntity<KagiApp>,
+    index: usize,
+    label: &'static str,
+    icon_only: bool,
+    key: StyleKey,
+) -> gpui::Stateful<gpui::Div> {
+    // Same width-producing styles as make_btn, but no focus, AX, tooltip or
+    // command subtree. Visibility affects paint, not natural layout/prepaint.
+    div()
+        .id(("toolbar-width-probe", index))
+        .absolute()
+        .invisible()
+        .flex()
+        .flex_col()
+        .items_center()
+        .min_w(theme::scaled_px(minimum_width(icon_only)))
+        .px(keyboard_nav::inset(4.))
+        .child(div().w(theme::scaled_px(22.)))
+        .when(!icon_only, |el| el.child(div().text_xs().child(label)))
+        .child(probe(app, Some(index), key))
 }
 pub(super) fn probe(
     app: gpui::WeakEntity<KagiApp>,
@@ -133,7 +209,7 @@ pub(super) fn probe(
                 return;
             }
             let normalized = if index.is_some() {
-                width / theme::scaled(1.)
+                width / f32::from_bits(key.2)
             } else {
                 width
             };
@@ -272,7 +348,20 @@ struct MenuState {
     open: bool,
     previous_focus: Option<gpui::FocusHandle>,
     trigger_focus: gpui::FocusHandle,
-    popover: Option<gpui::WeakEntity<gpui_component::popover::PopoverState>>,
+    // Retain state until synchronous dismissal has released deferred context.
+    popover: Option<gpui::Entity<gpui_component::popover::PopoverState>>,
+    snapshot: Option<(u16, [Option<&'static str>; 14], i18n::Lang)>,
+}
+
+impl MenuState {
+    fn owns_focus(&self, window: &Window, cx: &gpui::App) -> bool {
+        window.focused(cx).is_none()
+            || self.trigger_focus.is_focused(window)
+            || self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.focus_handle(cx).contains_focused(window, cx))
+    }
 }
 
 impl gpui::RenderOnce for OverflowMenu {
@@ -283,29 +372,34 @@ impl gpui::RenderOnce for OverflowMenu {
             previous_focus: None,
             trigger_focus: cx.focus_handle(),
             popover: None,
+            snapshot: None,
         });
         if self.hidden == 0 {
             let (reset_focus, popover) = {
                 let state = cached.read(cx);
                 (
-                    state.open || state.trigger_focus.is_focused(window),
+                    state.trigger_focus.is_focused(window)
+                        || (state.open && state.owns_focus(window, cx)),
                     state.popover.clone(),
                 )
             };
+            // Dismiss while the old element's state is still alive. Deferring
+            // a weak update until the next frame can strand the library's
+            // process-wide deferred-popover registration after state disposal.
+            if let Some(popover) = popover {
+                popover.update(cx, |state, cx| state.dismiss(window, cx));
+            }
             if reset_focus {
                 if let Some(root) = self.root_focus {
                     root.focus(window, cx);
-                }
-                if let Some(popover) = popover {
-                    window.on_next_frame(move |window, cx| {
-                        let _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
-                    });
                 }
             }
             cached.update(cx, |state, _| {
                 state.open = false;
                 state.menu = None;
                 state.previous_focus = None;
+                state.popover = None;
+                state.snapshot = None;
             });
             return div().into_any_element();
         }
@@ -318,20 +412,21 @@ impl gpui::RenderOnce for OverflowMenu {
             .anchor(gpui::Anchor::TopRight)
             .open(open)
             .on_open_change(move |open, window, cx| {
-                let previous = changed_state
-                    .update(cx, |state, _| {
+                let (previous, restore) = changed_state
+                    .update(cx, |state, cx| {
+                        let restore = !open && state.owns_focus(window, cx);
                         state.open = *open;
                         if !open {
                             state.menu = None;
-                            state.previous_focus.take()
+                            state.snapshot = None;
+                            (state.previous_focus.take(), restore)
                         } else {
-                            None
+                            (None, false)
                         }
                     })
-                    .ok()
-                    .flatten();
+                    .unwrap_or((None, false));
                 let _ = changed_app.update(cx, |app, cx| {
-                    if !open {
+                    if !open && restore {
                         let focus = if app.active_modal.is_some() {
                             app.root_focus.clone()
                         } else {
@@ -351,8 +446,12 @@ impl gpui::RenderOnce for OverflowMenu {
                 focus: cached.read(cx).trigger_focus.clone(),
             })
             .content(move |_, window, cx| {
-                if let Some(menu) = cached.read(cx).menu.clone() {
-                    return menu;
+                let snapshot = (self.hidden, self.reasons, i18n::lang());
+                let state = cached.read(cx);
+                if state.snapshot == Some(snapshot) {
+                    if let Some(menu) = state.menu.clone() {
+                        return menu;
+                    }
                 }
                 let app = self.app.clone();
                 let hidden = self.hidden;
@@ -441,10 +540,12 @@ impl gpui::RenderOnce for OverflowMenu {
                     }
                     menu
                 });
-                let popover = cx.entity().downgrade();
+                let popover_state = cx.entity();
+                let popover = popover_state.downgrade();
                 cached.update(cx, |state, _| {
                     state.menu = Some(menu.clone());
-                    state.popover = Some(popover.clone());
+                    state.popover = Some(popover_state);
+                    state.snapshot = Some(snapshot);
                 });
                 menu.focus_handle(cx).focus(window, cx);
                 let dismissed_cache = cached.downgrade();
@@ -457,5 +558,68 @@ impl gpui::RenderOnce for OverflowMenu {
                 menu
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toolbar_overflow_keeps_fit_while_new_style_is_measuring() {
+        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let mut layout = Layout::default();
+        layout.measure(None, 500., key);
+        for index in 0..IDS.len() {
+            layout.measure(Some(index), 60., key);
+        }
+        let present = 0x1fff;
+        let hidden = layout.hidden(present, 8, key);
+        assert_ne!(hidden, 0);
+        let next = (false, i18n::Lang::Ja, 1_f32.to_bits());
+        assert_eq!(
+            layout.hidden(present, 8, next),
+            hidden,
+            "pending measurement cannot eject a focused/open overflow trigger"
+        );
+        layout.measure(None, 500., next);
+        assert_eq!(
+            layout.hidden(present, 8, next),
+            hidden,
+            "partial measurement must preserve the last fit"
+        );
+        assert_eq!(
+            layout.hidden(1 << 8, 8, next),
+            hidden & (1 << 8),
+            "commands no longer present cannot remain in the menu"
+        );
+    }
+}
+
+#[cfg(test)]
+mod spacing_tests {
+    use super::*;
+
+    #[test]
+    fn toolbar_overflow_spacing_requires_visible_neighbours() {
+        let scale = 1.;
+        let spacing = |visible| super::spacing(visible, scale);
+        assert_eq!(spacing(0), (0., 0.));
+        for i in 0..13 {
+            assert_eq!(
+                spacing(1 << i),
+                (0., 0.),
+                "a lone command has no dangling gap"
+            );
+        }
+        assert_eq!(spacing(0xff).0, 24. * scale + 2.);
+        assert_eq!(spacing(0x1d00).1, 12. * scale + 1.);
+        assert_eq!(spacing(0x1f00).1, 14. * scale + 1.);
+        assert_eq!(
+            spacing(1 | (1 << 5)).0,
+            8. * scale + 1.,
+            "an absent middle group leaves one separator, not two"
+        );
+        assert_eq!(spacing((1 << 5) | (1 << 7)).0, 2. * scale);
     }
 }

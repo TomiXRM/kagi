@@ -358,7 +358,7 @@ pub fn scenario_preflight_presentation(cx: &mut VisualTestAppContext) {
             .unwrap_err();
         let expected = i18n::op_failed(Op::Preflight, error);
         cx.run_until_parked();
-        press_enter(cx, &app, window);
+        crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
         cx.read(|cx| {
             assert_eq!(
                 app.read(cx).history_modal().unwrap().error.as_deref(),
@@ -584,7 +584,7 @@ pub fn scenario_cleanup_partial_presentation(cx: &mut VisualTestAppContext) {
     )
     .unwrap();
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     wait_idle(cx, &app);
     assert!(output(remote.path(), &["for-each-ref", "refs/heads/merged"]).is_empty());
     assert_eq!(output(repo, &["rev-parse", "merged"]), moved);
@@ -3153,7 +3153,7 @@ fn confirm_branch_delete(
     input: &str,
 ) {
     if input == "enter" {
-        press_enter(cx, app, window);
+        crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     } else {
         paint(cx, window);
         let bounds =
@@ -3235,7 +3235,7 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
         .open(log_dir.join("operations.jsonl.lock"))
         .unwrap();
     lock.lock().unwrap();
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     wait_idle(cx, &app);
     drop(lock);
     assert_eq!(output(repo, &["branch", "--list", "victim"]), "");
@@ -3938,7 +3938,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
                 let border = if slug == "apple-light" {
                     0x8e8e8e
                 } else {
-                    t.text_muted
+                    kagi_ui_core::theme_apple_dark::INPUT_BORDER
                 };
                 assert_dialog_pixel(
                     cx,
@@ -4003,7 +4003,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
     assert!(!text.is_empty());
 
     // Armed: description and Confirm name change.
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).delete_branch_modal().unwrap().confirm_armed));
     redraw(cx, &app, window);
@@ -4105,7 +4105,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
                 let border = if slug == "apple-light" {
                     0x8e8e8e
                 } else {
-                    t.text_muted
+                    kagi_ui_core::theme_apple_dark::INPUT_BORDER
                 };
                 assert_dialog_pixel(
                     cx,
@@ -4152,7 +4152,7 @@ pub fn scenario_dialog_a11y_roles(cx: &mut VisualTestAppContext) {
             .t()
             .replace("{}", "1")
     );
-    press_enter(cx, &app, window);
+    crate::destructive_modal_return::focused_confirm(cx, &app, window, "discard-confirm");
     cx.run_until_parked();
     redraw(cx, &app, window);
     let d = kagi::ui::dialog_a11y::recorded_dialog("discard-card").expect("armed discard drawn");

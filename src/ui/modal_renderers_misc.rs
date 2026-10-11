@@ -2,7 +2,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::button_style::{modal_button, modal_button_without_tab_stop, ModalButtonKind};
+use super::button_style::{modal_button, modal_button_with_tab_stop, ModalButtonKind};
 use super::i18n::Msg;
 use super::modal_renderers::{modal_overlay, render_modal_title_row, ModalIcon};
 use super::modal_shell::{
@@ -523,7 +523,7 @@ pub(crate) fn render_app_notice_modal(
                 .child(
                     super::button_style::modal_button_row().child(super::e2e::measure_control(
                         "app-notice-confirm",
-                        modal_button_without_tab_stop(
+                        modal_button_with_tab_stop(
                             "app-notice-dismiss",
                             action_label,
                             if notice.release_armed {
@@ -535,6 +535,7 @@ pub(crate) fn render_app_notice_modal(
                             cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
                                 this.confirm_app_notice(cx);
                             }),
+                            notice.release_armed,
                             cx,
                         ),
                     )),

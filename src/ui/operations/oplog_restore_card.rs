@@ -1,7 +1,7 @@
 //! REFS-first confirmation for Operation Log ref restore. The executable plan
 //! remains untouched; this card only presents its once-decoded ref rows.
 
-use crate::ui::button_style::{ButtonRole, KagiButton};
+use crate::ui::button_style::{modal_button, ModalButtonKind};
 use crate::ui::dialog_a11y::{apply_dialog, dialog_a11y, DialogHandler};
 use crate::ui::modal_command::{equivalent_command, plan_ready};
 use crate::ui::modal_copy::modal_copy_button;
@@ -13,8 +13,6 @@ use crate::ui::theme::{self, theme};
 use crate::ui::KagiApp;
 use crate::ui::MONO_FONT;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
-use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
 use kagi_domain::head::Head;
 use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreTitle, PlanNote, PlanTitle};
 use kagi_domain::ref_restore::RefRestore;
@@ -543,22 +541,19 @@ pub(crate) fn render(
             ),
         ));
     if !blocked {
-        let button = if modal.confirm_armed {
-            KagiButton::styled(
-                "plan-confirm",
-                SharedString::from(label),
-                ButtonRole::Destructive,
-                cx,
-            )
-        } else {
-            Button::new("plan-confirm")
-                .label(SharedString::from(label))
-                .primary()
-        };
-        buttons = buttons.child(crate::ui::e2e::measure_control(
+        let button = modal_button(
             "plan-confirm",
-            button.small().on_click(move |_, w, a| confirm(w, a)),
-        ));
+            SharedString::from(label),
+            if modal.confirm_armed {
+                ModalButtonKind::Destructive
+            } else {
+                ModalButtonKind::Primary
+            },
+            None,
+            move |_, w, a| confirm(w, a),
+            cx,
+        );
+        buttons = buttons.child(crate::ui::e2e::measure_control("plan-confirm", button));
     }
     #[cfg(feature = "gui-e2e")]
     let buttons = buttons

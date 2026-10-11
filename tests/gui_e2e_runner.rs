@@ -234,6 +234,10 @@ mod repo_health;
 mod modal_polish_b;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/destructive_modal_return.rs"]
+mod destructive_modal_return;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/inventory/mod.rs"]
 mod inventory;
 
@@ -1236,6 +1240,10 @@ mod macos {
             (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
+            ),
+            (
+                "destructive_modal_return",
+                Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
             ),
             (
                 "sync_to_remote_armed",

@@ -74,7 +74,7 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
                 }
             });
             draw(cx, window);
-            cx.simulate_keystrokes(window, "enter");
+            crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
             wait_idle(cx, &app);
             let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                 .into_iter()

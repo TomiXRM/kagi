@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
 - macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)
   - Review: multi-stroke remaps format each chord stroke independently; malformed display strings remain visible verbatim rather than panicking. Native remap fixtures are confined to their isolated KEEP_GOING child.

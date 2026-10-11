@@ -1244,13 +1244,13 @@ fn vdivider(kind: DividerKind, fill: u32, group: &'static str) -> gpui::Stateful
                 .h_full()
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
-                .group_hover(group, |s| s.bg(rgb(theme().color_branch)))
-                .group_drag_over::<DividerDrag>(group, |s| s.bg(rgb(theme().color_branch))),
+                .group_hover(group, |s| s.bg(rgb(theme().ui_accent())))
+                .group_drag_over::<DividerDrag>(group, |s| s.bg(rgb(theme().ui_accent()))),
         )
-        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_col_resize())
+        .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_col_resize())
         .drag_over::<DividerDrag>(move |style, drag, _, _| {
             if drag.kind == kind {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }
@@ -1296,7 +1296,7 @@ pub(super) fn card_pane_bg() -> u32 {
 /// A pane's focus cue: a 2px accent top border when it owns the arrow keys.
 pub(super) fn focus_border<E: gpui::Styled>(el: E, focused: bool) -> E {
     el.border_t_2().border_color(rgb(if focused {
-        theme().color_branch
+        theme().ui_accent()
     } else {
         theme().panel
     }))
@@ -1390,7 +1390,7 @@ fn render_center(
         .child(super::pr_dashboard::refresh_button(cx))
         .child(
             div()
-                .text_color(rgb(theme().color_branch))
+                .text_color(rgb(theme().accent_text_on(theme().bg_base)))
                 .text_sm()
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
@@ -1408,11 +1408,11 @@ fn render_center(
                 .text_sm()
                 .cursor_pointer()
                 .text_color(rgb(if show_description {
-                    theme().color_branch
+                    theme().accent_text_on(theme().bg_base)
                 } else {
                     theme().text_main
                 }))
-                .hover(|s| s.text_color(rgb(theme().color_branch)))
+                .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().bg_base))))
                 .tooltip(|w, cx| {
                     gpui_component::tooltip::Tooltip::new(Msg::PrModeShowDescription.t())
                         .build(w, cx)
@@ -1614,7 +1614,7 @@ fn render_center(
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(rgb(theme().color_branch))
+                            .text_color(rgb(theme().accent_text_on(theme().bg_base)))
                             .child(SharedString::from("\u{25CF}")),
                     )
                     .child(
@@ -1683,7 +1683,7 @@ fn render_center(
             .cursor_pointer()
             .border_b_2()
             .border_color(rgb(if on {
-                theme().color_branch
+                theme().ui_accent()
             } else {
                 theme().panel
             }))
@@ -1701,7 +1701,7 @@ fn render_center(
                     .w(theme::scaled_px(13.))
                     .h(theme::scaled_px(13.))
                     .text_color(rgb(if on {
-                        theme().color_branch
+                        theme().accent_text_on(theme().panel)
                     } else {
                         theme().text_sub
                     })),

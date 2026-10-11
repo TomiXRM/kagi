@@ -480,7 +480,7 @@ pub(super) fn render_inspector(
     let create_branch_button = action_button(
         "create-branch-btn",
         "+ Branch here",
-        theme().color_branch,
+        theme().ui_accent(),
         create_branch_click,
     );
 
@@ -966,16 +966,16 @@ pub(super) fn render_inspector(
                 .flex_shrink_0()
                 .bg(rgb(theme().surface))
                 .group_hover("inspector-split-divider", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 })
                 .group_drag_over::<DividerDrag>("inspector-split-divider", |s| {
-                    s.bg(rgb(theme().color_branch))
+                    s.bg(rgb(theme().ui_accent()))
                 }),
         )
-        .hover(|s| s.bg(rgb(theme().color_branch)).cursor_row_resize())
+        .hover(|s| s.bg(rgb(theme().ui_accent())).cursor_row_resize())
         .drag_over::<DividerDrag>(|style, drag, _, _| {
             if drag.kind == DividerKind::InspectorSplit {
-                style.bg(rgb(theme().color_branch))
+                style.bg(rgb(theme().ui_accent()))
             } else {
                 style
             }
@@ -1096,9 +1096,8 @@ fn action_button(
         .label(SharedString::from(label))
         .small()
         .on_click(click);
-    // `color_branch` is the only "primary" action here; the cherry-pick accent
-    // keeps the default (neutral) Button look.
-    let btn = if color == theme().color_branch {
+    // The chrome accent marks this primary action; cherry-pick remains neutral.
+    let btn = if color == theme().ui_accent() {
         btn.primary()
     } else {
         btn

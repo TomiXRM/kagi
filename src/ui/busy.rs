@@ -142,7 +142,7 @@ impl KagiApp {
         write: Option<(&'static str, u64)>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let accent = theme().color_branch;
+        let accent = theme().ui_accent();
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
         let mut text = div()
             .flex_1()

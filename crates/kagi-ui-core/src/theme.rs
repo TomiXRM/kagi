@@ -35,6 +35,12 @@ use serde::Serialize;
 
 use crate::settings::{read_setting, write_setting, Settings};
 
+#[cfg(any(test, feature = "gui-e2e"))]
+pub use crate::system_accent::AccentInjection;
+pub use crate::system_accent::{
+    detected_system_accent, follows_system_accent, refresh_system_accent,
+    set_follows_system_accent, SystemAccent,
+};
 pub use crate::theme_custom::{themes_dir, ThemeLoadError};
 
 // Compatibility re-export: font constants historically lived in `theme`.
@@ -198,17 +204,46 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
-    /// Active (key-window) selection fill.
-    pub fn ui_selected(&self) -> Hsla {
-        rgb(self.selected).into()
+    /// Chrome accent. Git ref/lane/status tokens and custom themes stay fixed.
+    #[inline]
+    pub fn ui_accent(&self) -> u32 {
+        #[cfg(target_os = "macos")]
+        if matches!(&*self.slug, "apple-light" | "apple-dark")
+            && crate::system_accent::follows_system_accent_for(self.dark)
+        {
+            return detected_system_accent().rgb(self.dark);
+        }
+        self.color_branch
+    }
+
+    #[inline]
+    pub fn ui_selection_tint(&self) -> u32 {
+        #[cfg(target_os = "macos")]
+        if matches!(&*self.slug, "apple-light" | "apple-dark")
+            && crate::system_accent::follows_system_accent_for(self.dark)
+        {
+            return detected_system_accent().rgb(self.dark);
+        }
+        self.selection_tint
+    }
+
+    /// Apple Light key selection follows chrome; Dark retains its neutral fill.
+    #[inline]
+    pub fn ui_selected(&self) -> u32 {
+        #[cfg(target_os = "macos")]
+        if &*self.slug == "apple-light" && crate::system_accent::follows_system_accent_for(false) {
+            return crate::theme_apple_light::SYSTEM_SELECTIONS
+                [detected_system_accent().palette_index()];
+        }
+        self.selected
     }
 
     /// Selection presentation never changes the selected identity.
     pub fn selected_for_window(&self, active: bool) -> Hsla {
         if active {
-            self.ui_selected()
+            to_hsla(self.ui_selected())
         } else {
-            rgb(self.inactive_selected).into()
+            to_hsla(self.inactive_selected)
         }
     }
 
@@ -221,14 +256,14 @@ impl Theme {
         }
     }
 
-    /// The accent (`color_branch`) as text on `background`, kept readable
+    /// The chrome accent as text on `background`, kept readable
     /// (WCAG AA, 4.5:1): unchanged when it already is, otherwise the same hue
     /// and saturation with its lightness stepped down (light background) or up
     /// (dark one) until it reads. Flower Road's pink accent on its beige
     /// `surface` was 1.6:1 on the selected sidebar tab; it stays pink, deeper.
     pub fn accent_text_on(&self, background: u32) -> u32 {
         const MIN: f64 = 4.5;
-        let accent = self.color_branch;
+        let accent = self.ui_accent();
         if contrast_ratio(accent, background) >= MIN {
             return accent;
         }
@@ -919,6 +954,7 @@ pub fn save_settings(slug: &str) {
 /// persisted `settings.json` → default (Catppuccin Mocha) against the full
 /// list.  Logs `[kagi] theme: <slug> dark=<bool>`.
 pub fn init_active() {
+    crate::system_accent::init();
     let errors = reload_custom_themes();
     *STARTUP_ERRORS.lock().unwrap_or_else(|e| e.into_inner()) = errors;
 
@@ -1033,9 +1069,9 @@ fn filled_button_foreground(background: u32, theme: &Theme) -> u32 {
     }
 }
 
-/// Readable label on `color_branch`, shared by primary buttons and count chips.
+/// Readable label on the chrome accent, shared by primary buttons/count chips.
 pub fn primary_button_foreground(theme: &Theme) -> u32 {
-    filled_button_foreground(theme.color_branch, theme)
+    filled_button_foreground(theme.ui_accent(), theme)
 }
 
 fn filled_button_interaction_colors(fill: u32, foreground: u32) -> (u32, Hsla, Hsla) {
@@ -1104,7 +1140,7 @@ fn filled_button_interaction_colors(fill: u32, foreground: u32) -> (u32, Hsla, H
 /// token moved, they silently kept the old colour. One function, one place to
 /// change.
 pub fn selection_overlay() -> Hsla {
-    to_hsla(theme().selection_tint).alpha(SELECTION_ALPHA)
+    to_hsla(theme().ui_selection_tint()).alpha(SELECTION_ALPHA)
 }
 
 pub fn sync_gpui_component_theme(cx: &mut App) {
@@ -1153,17 +1189,17 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // it reads as "nothing happened" (user report). gpui-component paints the
     // selection *under* the text and caps its own themes at alpha 0.3, so an
     // accent tint at that alpha is both visible and safe for legibility.
-    gc.colors.selection = to_hsla(k.selection_tint).alpha(SELECTION_ALPHA);
+    gc.colors.selection = to_hsla(k.ui_selection_tint()).alpha(SELECTION_ALPHA);
 
     // ── Primary / accent (Checkbox checked, focus ring) ────────
-    gc.colors.primary = to_hsla(k.color_branch);
+    gc.colors.primary = to_hsla(k.ui_accent());
     let primary_foreground = primary_button_foreground(k);
     gc.colors.primary_foreground = to_hsla(primary_foreground);
     // Keep these generic tokens unchanged: outline Primary uses their tint;
     // filled Primary has its own interaction tokens below.
-    gc.colors.primary_hover = to_hsla(k.color_branch);
-    gc.colors.primary_active = to_hsla(k.color_branch);
-    gc.colors.ring = to_hsla(k.color_branch);
+    gc.colors.primary_hover = to_hsla(k.ui_accent());
+    gc.colors.primary_active = to_hsla(k.ui_accent());
+    gc.colors.ring = to_hsla(k.ui_accent());
     // `accent` is gpui-component's inline-code background (TextView) and a
     // hover tint in a few popovers — always a background, never a foreground.
     //
@@ -1200,11 +1236,11 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.button_foreground = to_hsla(k.text_main);
     gc.colors.button_hover = to_hsla(k.selected);
     gc.colors.button_active = to_hsla(k.surface);
-    // Primary (including the Commit button): preserve the branch accent at
+    // Primary (including the Commit button): preserve the chrome accent at
     // rest and the established label when it is legible across every state.
     let (button_primary_foreground, primary_hover, primary_active) =
-        filled_button_interaction_colors(k.color_branch, primary_foreground);
-    gc.colors.button_primary = to_hsla(k.color_branch);
+        filled_button_interaction_colors(k.ui_accent(), primary_foreground);
+    gc.colors.button_primary = to_hsla(k.ui_accent());
     gc.colors.button_primary_foreground = to_hsla(button_primary_foreground);
     gc.colors.button_primary_hover = primary_hover;
     gc.colors.button_primary_active = primary_active;
@@ -1254,7 +1290,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.scrollbar_thumb_hover = to_hsla(k.text_sub);
 
     // ── Drag handle (resizable dividers, future adoption) ───────
-    gc.colors.drag_border = to_hsla(k.color_branch);
+    gc.colors.drag_border = to_hsla(k.ui_accent());
 
     // ── Fonts ───────────────────────────────────────────────────
     // gpui-component's default theme uses `.SystemUIFont` (a macOS alias) for
@@ -1478,7 +1514,7 @@ mod tests {
                 t.text_muted
             };
             assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
-            assert_eq!(gc.colors.ring, to_hsla(t.color_branch));
+            assert_eq!(gc.colors.ring, to_hsla(t.ui_accent()));
             assert_eq!(gc.colors.border, to_hsla(t.text_muted).alpha(0.85));
             if t.slug == "apple-light" {
                 assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
@@ -1534,6 +1570,7 @@ mod tests {
     #[test]
     fn body_link_override_is_independent_of_ref_and_primary_palettes() {
         let mut custom = crate::theme_apple_light::APPLE_LIGHT.clone();
+        custom.slug = Cow::Borrowed("custom-link-test");
         assert_eq!(custom.link, 0x0066cc);
         assert_eq!(custom.color_branch, 0x0088ff);
         custom.link = 0x773399;
@@ -1589,6 +1626,7 @@ mod tests {
     fn incoming_button_fill_tracks_custom_remote_without_changing_status() {
         for base in THEMES {
             let mut custom = base.clone();
+            custom.slug = Cow::Borrowed("custom-remote-test");
             custom.color_remote = 0x7a3da9;
             let mut gc = gpui_component::Theme::default();
             apply_gpui_component_theme(&custom, &mut gc);
@@ -1617,8 +1655,8 @@ mod tests {
             let got = selection_overlay();
             assert_eq!(
                 got,
-                to_hsla(t.selection_tint).alpha(SELECTION_ALPHA),
-                "{}: selection_overlay must be selection_tint, not another token",
+                to_hsla(t.ui_selection_tint()).alpha(SELECTION_ALPHA),
+                "{}: selection_overlay must use the resolved selection tint",
                 t.slug
             );
         }
@@ -1925,12 +1963,12 @@ mod tests {
     fn primary_button_labels_meet_wcag_aa() {
         for t in THEMES {
             let foreground = primary_button_foreground(t);
-            let contrast = contrast_ratio(t.color_branch, foreground);
+            let contrast = contrast_ratio(t.ui_accent(), foreground);
             assert!(
                 contrast >= 4.5,
                 "{}: primary button label {foreground:#08x} is only {contrast:.2}:1 on {:#08x}",
                 t.slug,
-                t.color_branch,
+                t.ui_accent(),
             );
         }
     }
@@ -1938,7 +1976,7 @@ mod tests {
     fn assert_primary_button_interaction_states(t: &Theme) {
         let foreground = primary_button_foreground(t);
         let (foreground, hover, pressed) =
-            filled_button_interaction_colors(t.color_branch, foreground);
+            filled_button_interaction_colors(t.ui_accent(), foreground);
         assert!(
             hover.is_opaque() && pressed.is_opaque(),
             "{}: filled states",
@@ -1950,7 +1988,7 @@ mod tests {
             let (a, b) = (a.to_rgb(), b.to_rgb());
             ((a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs()) * 255.0
         };
-        let rest = to_hsla(t.color_branch);
+        let rest = to_hsla(t.ui_accent());
         for (a, b) in [(rest, hover), (hover, pressed), (rest, pressed)] {
             assert!(
                 distance(a, b) >= 24.0,
@@ -1961,7 +1999,7 @@ mod tests {
         let hover = u32::from(hover.to_rgb()) >> 8;
         let pressed = u32::from(pressed.to_rgb()) >> 8;
         for (state, background) in [
-            ("rest", t.color_branch),
+            ("rest", t.ui_accent()),
             ("hover", hover),
             ("pressed", pressed),
         ] {
@@ -1980,7 +2018,7 @@ mod tests {
             assert_primary_button_interaction_states(t);
             let foreground = primary_button_foreground(t);
             assert_eq!(
-                filled_button_interaction_colors(t.color_branch, foreground).0,
+                filled_button_interaction_colors(t.ui_accent(), foreground).0,
                 foreground,
                 "{}: stock foreground must remain unchanged",
                 t.slug,
@@ -2000,6 +2038,7 @@ mod tests {
                 0x303030, 0xffff80, 0x80ffff, 0x00004d, 0xb3ffff,
             ] {
                 let mut custom = base.clone();
+                custom.slug = Cow::Borrowed("custom-primary-edges");
                 custom.color_branch = accent;
                 assert_primary_button_interaction_states(&custom);
             }
@@ -2081,8 +2120,8 @@ mod accent_text_tests {
                 t.surface,
                 contrast_ratio(fg, t.surface)
             );
-            if contrast_ratio(t.color_branch, t.surface) >= 4.5 {
-                assert_eq!(fg, t.color_branch, "{} keeps its accent", t.slug);
+            if contrast_ratio(t.ui_accent(), t.surface) >= 4.5 {
+                assert_eq!(fg, t.ui_accent(), "{} keeps its accent", t.slug);
             } else {
                 assert_ne!(
                     fg, t.text_main,
@@ -2271,6 +2310,154 @@ mod registry_tests {
     }
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod system_accent_tests {
+    use super::*;
+
+    #[test]
+    fn apple_dark_default_keeps_yellow_chrome() {
+        let _injected = AccentInjection::new(SystemAccent::Blue, None);
+        let dark = &crate::theme_apple_dark::APPLE_DARK;
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(dark, &mut gc);
+        assert_eq!(dark.ui_accent(), dark.color_branch);
+        assert_eq!(gc.colors.button_primary, to_hsla(dark.color_branch));
+        assert_eq!(gc.colors.ring, to_hsla(dark.color_branch));
+        assert_eq!(
+            gc.colors.selection,
+            to_hsla(dark.selection_tint).alpha(SELECTION_ALPHA)
+        );
+        assert_eq!(dark.ui_selected(), dark.selected);
+        let light = &crate::theme_apple_light::APPLE_LIGHT;
+        assert_eq!(light.ui_accent(), SystemAccent::Blue.rgb(false));
+    }
+
+    #[test]
+    fn theme_accent_source_restores_both_preset_palettes() {
+        let _injected = AccentInjection::new(SystemAccent::Purple, Some(false));
+        for theme in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(theme, &mut gc);
+            assert_eq!(theme.ui_accent(), theme.color_branch);
+            assert_eq!(theme.ui_selection_tint(), theme.selection_tint);
+            assert_eq!(theme.ui_selected(), theme.selected);
+            assert_eq!(gc.colors.primary, to_hsla(theme.color_branch));
+            assert_eq!(gc.colors.ring, to_hsla(theme.color_branch));
+            assert_eq!(gc.colors.button_primary, to_hsla(theme.color_branch));
+            assert_eq!(
+                gc.colors.selection,
+                to_hsla(theme.selection_tint).alpha(SELECTION_ALPHA)
+            );
+            let label = u32::from(gc.colors.button_primary_foreground.to_rgb()) >> 8;
+            assert!(contrast_ratio(theme.color_branch, label) >= 4.5);
+            for fill in [
+                gc.colors.button_primary_hover,
+                gc.colors.button_primary_active,
+            ] {
+                assert!(contrast_ratio(u32::from(fill.to_rgb()) >> 8, label) >= 4.5);
+            }
+        }
+    }
+
+    #[test]
+    fn system_accent_chrome_mapping_and_contrast() {
+        let _lock = ACTIVE_THEME_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for value in -2..=6 {
+            let accent = SystemAccent::from_default(Some(value));
+            let _injected = AccentInjection::new(accent, Some(true));
+            for theme in [
+                &crate::theme_apple_light::APPLE_LIGHT,
+                &crate::theme_apple_dark::APPLE_DARK,
+            ] {
+                let mut gc = gpui_component::Theme::default();
+                apply_gpui_component_theme(theme, &mut gc);
+                let expected = accent.rgb(theme.dark);
+                assert_eq!(
+                    gc.colors.ring,
+                    to_hsla(expected),
+                    "{value} dark={}",
+                    theme.dark
+                );
+                assert_eq!(gc.colors.button_primary, to_hsla(expected));
+                assert_eq!(
+                    gc.colors.selection,
+                    to_hsla(expected).alpha(SELECTION_ALPHA)
+                );
+                assert_eq!(theme.ui_selection_tint(), expected);
+                if theme.dark {
+                    assert_eq!(theme.ui_selected(), theme.selected);
+                } else {
+                    let blend = |shift: u32| -> u32 {
+                        (((expected >> shift) & 255_u32) * 15 + 255 * 85 + 50) / 100
+                    };
+                    assert_eq!(
+                        theme.ui_selected(),
+                        (blend(16) << 16) | (blend(8) << 8) | blend(0)
+                    );
+                }
+                let label = u32::from(gc.colors.button_primary_foreground.to_rgb()) >> 8;
+                assert!(contrast_ratio(expected, label) >= 4.5);
+                for fill in [
+                    gc.colors.button_primary_hover,
+                    gc.colors.button_primary_active,
+                ] {
+                    assert!(contrast_ratio(u32::from(fill.to_rgb()) >> 8, label) >= 4.5);
+                }
+                assert!(contrast_ratio(theme.accent_text_on(theme.bg_base), theme.bg_base) >= 4.5);
+                assert!(contrast_ratio(theme.accent_text_on(theme.surface), theme.surface) >= 4.5);
+                assert!(
+                    contrast_ratio(
+                        theme.accent_text_on(theme.ui_selected()),
+                        theme.ui_selected()
+                    ) >= 4.5
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn system_accent_keeps_custom_and_other_theme_palettes() {
+        let _injected = AccentInjection::new(SystemAccent::Purple, Some(true));
+        assert!(
+            !refresh_system_accent(),
+            "injection must bypass native defaults"
+        );
+        for base in THEMES {
+            if !matches!(&*base.slug, "apple-light" | "apple-dark") {
+                assert_eq!(base.ui_accent(), base.color_branch);
+                assert_eq!(base.ui_selection_tint(), base.selection_tint);
+                assert_eq!(base.ui_selected(), base.selected);
+                let mut gc = gpui_component::Theme::default();
+                apply_gpui_component_theme(base, &mut gc);
+                assert_eq!(gc.colors.primary, to_hsla(base.color_branch));
+                assert_eq!(gc.colors.ring, to_hsla(base.color_branch));
+            }
+            let mut custom = base.clone();
+            custom.slug = Cow::Borrowed("custom-accent");
+            custom.color_branch = 0x804020;
+            custom.selection_tint = 0x224466;
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(&custom, &mut gc);
+            assert_eq!(gc.colors.primary, to_hsla(0x804020));
+            assert_eq!(gc.colors.ring, to_hsla(0x804020));
+            assert_eq!(
+                gc.colors.selection,
+                to_hsla(0x224466).alpha(SELECTION_ALPHA)
+            );
+            assert_eq!(gc.colors.success, to_hsla(base.color_success));
+            assert_eq!(gc.colors.button_info, to_hsla(base.color_remote));
+            assert_eq!(custom.lane_hsl, base.lane_hsl);
+        }
+        assert_eq!(crate::theme_apple_light::APPLE_LIGHT.color_branch, 0x0088ff);
+        assert_eq!(crate::theme_apple_dark::APPLE_DARK.color_branch, 0xffd600);
+    }
+}
+
 #[cfg(test)]
 mod inactive_selection_tests {
     use super::*;
@@ -2307,7 +2494,10 @@ mod inactive_selection_tests {
                 theme.selected_for_window(false),
                 rgb(theme.inactive_selected).into()
             );
-            assert_eq!(theme.selected_for_window(true), theme.ui_selected());
+            assert_eq!(
+                theme.selected_for_window(true),
+                to_hsla(theme.ui_selected())
+            );
         }
     }
 
@@ -2322,6 +2512,9 @@ mod inactive_selection_tests {
             theme.selected_for_window(false),
             theme.selected_for_window(true)
         );
-        assert_eq!(theme.selected_for_window(true), theme.ui_selected());
+        assert_eq!(
+            theme.selected_for_window(true),
+            to_hsla(theme.ui_selected())
+        );
     }
 }

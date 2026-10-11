@@ -303,7 +303,7 @@ fn progress(started: std::time::Instant) -> impl IntoElement {
                 .gap_3()
                 .child(super::render_overlay::sync_spinner(
                     16.,
-                    theme().color_branch,
+                    theme().ui_accent(),
                     "clone-progress-spinner",
                 ))
                 .child(div().text_sm().text_color(rgb(theme().text_main)).child(

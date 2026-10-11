@@ -106,7 +106,7 @@ fn tab_rail(palette: &theme::Theme, window_active: bool) -> gpui::Div {
         .right(px(-ring))
         .h(px(2.))
         .bg(rgb(if window_active {
-            palette.color_branch
+            palette.ui_accent()
         } else {
             palette.text_muted
         }))

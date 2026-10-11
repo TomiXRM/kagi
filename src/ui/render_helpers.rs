@@ -225,10 +225,13 @@ pub(crate) fn render_rows(
                         .bottom_0()
                         .w(px(2.))
                         .bg(rgb(if window_active {
-                            theme().color_branch
+                            theme().ui_accent()
                         } else {
                             theme().text_muted
-                        })),
+                        }))
+                        .when(cfg!(feature = "gui-e2e"), |bar| {
+                            bar.child(super::e2e::measure_inside("graph-selection-bar"))
+                        }),
                 )
                 .child(anchor.probe())
             })
@@ -472,8 +475,11 @@ pub(crate) fn render_load_more_row(
                 .justify_center()
                 .cursor_pointer()
                 .text_xs()
-                .text_color(rgb(theme().color_branch))
-                .hover(|s| s.bg(rgb(theme().selected)))
+                .text_color(rgb(theme().accent_text_on(theme().bg_base)))
+                .hover(|s| {
+                    s.bg(rgb(theme().selected))
+                        .text_color(rgb(theme().accent_text_on(theme().selected)))
+                })
                 .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
                     this.load_more_commits(cx);
                 }))

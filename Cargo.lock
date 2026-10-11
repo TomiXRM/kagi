@@ -2350,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=b50a079693ee06084f47db29b570f189fd941fc4#b50a079693ee06084f47db29b570f189fd941fc4"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b#879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2433,7 +2433,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=b50a079693ee06084f47db29b570f189fd941fc4#b50a079693ee06084f47db29b570f189fd941fc4"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b#879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2447,7 +2447,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=b50a079693ee06084f47db29b570f189fd941fc4#b50a079693ee06084f47db29b570f189fd941fc4"
+source = "git+https://github.com/TomiXRM/gpui-kit.git?rev=879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b#879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b"
 dependencies = [
  "proc-macro2",
  "quote",

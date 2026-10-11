@@ -285,6 +285,7 @@ impl KagiApp {
         self.capture_overlay_return_focus(window, cx);
         self.with_ui(|ui| ui.retire_issue_conversation_scope());
         self.menu_overlay = Some(MenuOverlay::Settings);
+        self.settings_scroll.set_offset(gpui::Point::default());
         let trap = self
             .settings_focus
             .get_or_insert_with(|| cx.focus_handle())

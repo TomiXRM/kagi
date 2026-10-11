@@ -374,3 +374,154 @@ Remote Browse's custom default action is Connect when idle in Connect, or
 Open Repository when idle on a repository in Browse; busy tasks offer only
 Cancel. The native tests retain raw Escape from clone-owner focus and check
 the EN/JA Remote action availability.
+## Amendment — 2026-10-11: layout-owned toolbar overflow (#1210)
+
+The existing centered toolbar retains its natural button/caption geometry in
+both `toolbar_display` modes. A canvas inside the toolbar measures its own
+available width; canvases inside its controls record natural widths into a
+fixed-size window-owned cache, normalized to the current zoom and keyed by
+presentation, language and zoom. A key change remeasures natural elements
+before fitting the next frame. These are production layout probes, not
+window-bounds guesses or E2E recorder reads.
+Measurements that change request the next frame; steady paints allocate no
+fit vectors and do not notify. This two-pass choice keeps translated labels
+and wide-window geometry authoritative rather than estimating text advances.
+The row clips intermediate paint while measurements settle.
+
+Fitting reserves existing group spacing and the equal side columns, with
+room for Refresh and the repository identity. Repository commands overflow
+first; workspace-mode/Analyze/Settings controls collapse last, and the selected
+workspace control is the last candidate. Hidden commands omit their interactive
+subtree entirely: GPUI still registers Tab stops when an interactive element
+merely has `display: none`. Growing the row restores commands from cached
+natural widths. The trailing » reuses the header's
+`keyboard_nav::focusable` named, tooltip-bearing, ringed Tab stop. The pinned
+Button cannot independently name a captionless AX node, so the existing
+header helper draws the trigger rather than an unnamed icon Button.
+gpui-kit Popover/PopupMenu owns positioning and menu keyboard navigation.
+The header's existing controls are individual Tab stops, not a roving
+`TabList`, and this preserves that convention.
+
+Popover's mouse-down trigger does not receive GPUI keyboard clicks, so the named
+trigger explicitly opens controlled state on Enter/Space release. Pointer clicks
+still belong to Popover and are not handled twice. Closing returns the prior focus
+only if focus still belongs to the menu (or nothing is focused); action-assigned
+focus such as Terminal's PTY is retained. Widening away a focused overflow control
+hands focus to the root so subsequent app shortcuts still dispatch. The cached
+state holds the popover alive for synchronous dismissal before removing its
+element; a next-frame weak dismissal can be too late to unregister gpui-kit's
+deferred context and would block unrelated text-input right-click menus.
+
+State contract: rest inherits the toolbar panel, hover/open use neutral `surface`,
+the glyph uses `text_main`, and focus-visible uses the header's accent ring.
+Unavailable rows remain reachable
+to explain their localized reason, expose disabled AX state/description and invoke
+only the existing reason footer. Empty overflow has no trigger; loading remains
+the existing operation strip, and Git errors remain in the existing plan/footer
+path. Workspace selection and all theme palettes are unchanged.
+
+While a new style's natural widths are pending, retain the last hidden mask
+intersected with commands still present. Invisible, noninteractive width probes
+measure hidden controls only until their new natural widths are known. This avoids
+temporarily dismissing an open menu or losing trigger focus at each zoom/language
+change. Menu content is cached against the hidden-mask/reasons snapshot and
+rebuilt when it changes, so labels and unavailable reasons do not remain stale.
+Gaps and separators require visible neighbours on both sides; the fitting model
+uses these same predicates rather than reserving dangling separators.
+
+Popup rows retain localized labels, unavailable reasons and action-bound
+shortcut glyphs. Activation uses the same toolbar dispatcher as the ordinary
+buttons, including reason footers and Terminal's tab-specific toggle. Git
+planning, confirmation, logging and theme-bridge colour roles are unchanged.
+The native `toolbar_overflow` scenario covers 940×660 at 167% and 1392×660 at
+100%, EN/JA and both modes with long repository/branch names: exact hidden/menu
+membership, visible control containment, real toolbar Tab traversal with no
+hidden Tab stops, Enter opening the menu, refreshed Undo reason during an open
+language/zoom transition, retained Terminal PTY focus, Create Branch activation,
+and a real text-input right-click path after widening an open menu away.
+The existing count oracle retains every visible glyph's
+size/containment/non-overlap assertion; hidden glyphs must instead be present in
+the actual overflow menu. Real keyboard/VoiceOver delivery and Apple Light JA
+caption-mode visual comparison remain Tier B.
+## Amendment — 2026-10-11: quiet Settings and radio dots (#1199, #1201)
+
+Settings uses the same secondary-label hierarchy as Graph group headers:
+`text_sub`, 12 reference-px semibold. Frame, titlebar and section boundaries
+are literal 1 logical px in `surface`, independent of system accent or zoom.
+Control fills and focus continue through the existing accent/theme bridge.
+
+The pinned gpui-kit Radio previously reused the checkbox check SVG. Its
+selected mark paints a centered contrasting circle approximately 6px inside a
+14px radio, scaled with the control; unchecked radios have no mark. Disabled
+marks retain reduced opacity. Existing RadioGroup selection, focus, keyboard,
+pointer and AX state ownership are unchanged. This is component paint, not a
+hand-made replacement control or a native AppKit implementation.
+
+Native regressions failed before the change: `settings_quiet` recorded the
+accent-coloured heading instead of `text_sub`; `settings_radio_dot` sampled
+the selected circle centre as `[0,122,255,255]`, not white. After the cutover,
+both pass. Quiet Settings coverage includes EN/JA, both Apple themes,
+100%/167%, injected blue/purple, secondary-label contrast ≥4.5:1 and adjacent
+pixels enforcing literal 1px section/titlebar separators. The radio probe
+checks symmetric white-centre and surrounding accent pixels plus unchanged
+empty input fill in both themes/zooms. Fork head
+`13386100eaca38a5759f69fe4596b59f2dff5141` was pushed and matched the remote
+`fix/radio-dot` head before pinning both Cargo patch entries and the lockfile.
+Real pointer/keyboard/VoiceOver delivery remains PM-owned Tier B evidence.
+
+Review correction: the dot uses `primary_foreground` through the theme bridge,
+not hard-coded white: Dark's yellow Theme accent requires a dark dot, as do
+other light fills. The native glyph matrix includes explicit Theme accent and
+blue/purple System accent at both zooms, comparing the foreground pixels and
+requiring ≥4.5:1 contrast. The white-only fork failed with actual
+`[255,255,255,255]` versus expected `[0,0,0]`.
+Fork head `879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b` supersedes `13386100`.
+
+The shared non-E2E `measure_inside` placeholder is absolute and zero-sized,
+so it cannot introduce a third flex item, a gap, or alter `justify_between`.
+The E2E canvas branch is unchanged. A unit test failed on the old placeholder
+(`position: None`, expected `Absolute`) and asserts both position and zero size.
+
+Review validation: the default-build placeholder unit passes (1/1), and the
+scoped native suite `settings_quiet,settings_radio_dot,settings_switches,settings_focus_trap`
+passes (4/4), including settings isolation restoration of `accent_source`.
+## Amendment — 2026-10-11: draggable surface scrollbars (#1202)
+
+Settings' single body and Home's shared virtualized Repositories / PRs / Issues
+list attach the pinned kit's vertical scrollbar to their persistent scroll owner.
+Home Recent, Inspector files and message, plus Activity contributor ranking,
+use the same policy. Operation Log already has a scrollbar and is not changed.
+`Scrolling` overlays without reducing content width; `Hover` and `Always` reserve
+a 16 logical-pixel lane and use `Always`, matching the PR table's #1182 policy.
+No new preference, colour mapping, row allocation or wheel/key dispatcher is added.
+
+Settings retains its application-wide ScrollHandle in KagiApp and resets it on
+each open so the first keyboard control is visible. Inspector and Activity
+positions belong to TabUiState and never carry another repository's offset.
+Home Recent retains its application-wide handle in HomeGithub; the GitHub list
+retains its existing ListState, cached entries, refresh anchoring and keyboard
+row navigation. The pinned kit's ScrollbarState is private: GPUI retains it under
+a stable scrollbar element id instead of application code allocating it each
+render. Thumb interaction delegates to that kit, not a hand-built drag control.
+Rest/hover/pressed visibility is the kit's system policy; empty/non-overflowing
+content needs no thumb. Existing focus/AX list semantics remain unchanged.
+
+Native regressions simulate mouse down/move/up on thumb geometry derived from
+the measured production scrollbar region and owner extent, then assert changed
+offset and repaint retention. Settings and Home target 940×660 Apple Light,
+100%/167%, EN/JA, Scrolling/Always; Home reuses its 60-repository fixture.
+Tier B must additionally inspect Settings wheel then thumb drag, EN/JA and
+100%/167%, including last-section/list-item reachability; native state assertions
+alone do not establish native material parity or VoiceOver delivery.
+
+Audit exclusions: Operation Log already uses `with_vertical_scrollbar`;
+PR navigator (`pr_nav.rs`), commit strip and file list (`pr_mode.rs`), Conflict
+dashboard and context/modal scrollers (`conflict_view.rs`), command/menu
+popovers and modal previews remain unchanged. They have distinct workspace or
+transient-focus/layout owners outside Settings/Home and the specifically
+requested Inspector/oplog/Activity audit; this change does not claim they all
+have thumbs. Diff/editor/terminal scrollers already own independent rendering
+and scrollbar behavior and are likewise not replaced.
+
+Native scenario guards restore disk keys, in-memory zoom/language, active theme,
+synced kit palette and scrollbar policy on Drop, including panic unwinding.

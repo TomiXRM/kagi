@@ -89,6 +89,8 @@ pub(super) fn render_inspector(
     panel_width: f32,
     // W11-AVATAR: resolved GitHub avatar images keyed by author email.
     avatar_images: &std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
+    files_scroll: &gpui::ScrollHandle,
+    message_handle: &gpui::ScrollHandle,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let files = model.files();
@@ -386,6 +388,7 @@ pub(super) fn render_inspector(
         .flex_1()
         .min_h(px(0.))
         .overflow_y_scroll()
+        .track_scroll(files_scroll)
         .flex()
         .flex_col();
 
@@ -427,7 +430,12 @@ pub(super) fn render_inspector(
         .children(compare_banner)
         .children(counts_row)
         .child(files_header)
-        .child(files_list);
+        .child(super::render_helpers::with_system_vertical_scrollbar(
+            "inspector-files-scrollbar",
+            files_scroll,
+            files_list,
+            cx,
+        ));
 
     // Compare files are meaningful without a selected/loaded Graph commit.
     let panel = div()
@@ -932,6 +940,7 @@ pub(super) fn render_inspector(
         .size_full()
         .min_h(px(0.))
         .overflow_y_scroll()
+        .track_scroll(message_handle)
         .child(message_inner)
         .when(cfg!(feature = "gui-e2e"), |scroll| {
             scroll.child(super::e2e::measure_inside("inspector-message-scroll"))
@@ -946,7 +955,12 @@ pub(super) fn render_inspector(
         .flex_shrink(1.)
         .overflow_hidden()
         .px_3()
-        .child(message_scroll);
+        .child(super::render_helpers::with_system_vertical_scrollbar(
+            "inspector-message-scrollbar",
+            message_handle,
+            message_scroll,
+            cx,
+        ));
 
     // ── InspectorSplit divider (absolute-coordinate ratio; see mod.rs) ────
     let split_divider = div()

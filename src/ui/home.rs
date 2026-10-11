@@ -285,35 +285,49 @@ impl KagiApp {
             .bg(rgb(theme().panel))
             .border_r_1()
             .border_color(rgb(theme().surface))
-            .overflow_y_scroll()
-            .child(
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "home-sidebar-scrollbar",
+                &self.home_github.recent_scroll,
                 div()
-                    .id("home-recent-heading")
-                    .relative()
-                    .child(super::e2e::measure_inside("home-recent-heading"))
-                    .px_2()
-                    .py(theme::scaled_px(8.))
-                    .w_full()
-                    .min_w(px(0.))
-                    .text_size(theme::scaled_px(12.))
-                    .line_height(theme::scaled_px(12.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(rgb(theme().text_sub))
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .tooltip(|window, cx| {
-                        gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t()).build(window, cx)
-                    })
+                    .id("home-recent-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.home_github.recent_scroll)
                     .child(
                         div()
+                            .id("home-recent-heading")
                             .relative()
-                            .h(theme::scaled_px(12.))
-                            .child(super::e2e::measure_inside("home-recent-heading-line"))
-                            .child(SharedString::from(Msg::HomeRecent.t())),
-                    ),
-            )
-            .child(list)
+                            .child(super::e2e::measure_inside("home-recent-heading"))
+                            .px_2()
+                            .py(theme::scaled_px(8.))
+                            .w_full()
+                            .min_w(px(0.))
+                            .text_size(theme::scaled_px(12.))
+                            .line_height(theme::scaled_px(12.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(theme().text_sub))
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t())
+                                    .build(window, cx)
+                            })
+                            .child(
+                                div()
+                                    .relative()
+                                    .h(theme::scaled_px(12.))
+                                    .child(super::e2e::measure_inside("home-recent-heading-line"))
+                                    .child(SharedString::from(Msg::HomeRecent.t())),
+                            ),
+                    )
+                    .child(list),
+                cx,
+            ))
             .into_any_element()
     }
 

@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/surface_scrollbars.rs"]
+mod surface_scrollbars;
+#[cfg(target_os = "macos")]
 fn main() {
     std::process::exit(macos::run());
 }
@@ -65,6 +68,10 @@ mod theme_custom;
 #[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
 mod system_accent;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_quiet.rs"]
+mod settings_quiet;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
@@ -247,6 +254,10 @@ mod sidebar_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_panels.rs"]
 mod tab_panels;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_overflow.rs"]
+mod toolbar_overflow;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
@@ -1136,6 +1147,14 @@ mod macos {
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
             ),
             (
+                "settings_quiet",
+                Box::new(crate::settings_quiet::scenario_settings_quiet),
+            ),
+            (
+                "settings_radio_dot",
+                Box::new(crate::settings_quiet::scenario_settings_radio_dot),
+            ),
+            (
                 "inactive_selection",
                 Box::new(crate::inactive_selection::scenario_inactive_selection),
             ),
@@ -1922,6 +1941,10 @@ mod macos {
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
             (
+                "settings_scrollbar_drag",
+                Box::new(crate::surface_scrollbars::scenario_settings_scrollbar_drag),
+            ),
+            (
                 "settings_zoom_bound",
                 Box::new(crate::settings_switches::scenario_settings_zoom_bound),
             ),
@@ -2007,6 +2030,7 @@ mod macos {
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             (
                 "pr_threads_via_gh",
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),

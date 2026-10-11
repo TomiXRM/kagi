@@ -9,6 +9,9 @@ pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
     0x98989d, 0xff453a, 0xff9f0a, 0xffd60a, 0x30d158, 0x0a84ff, 0xbf5af2, 0xff375f,
 ];
 
+/// Quiet identifying boundary: at least 3:1 on the dark base and panel.
+pub const INPUT_BORDER: u32 = 0x67676a;
+
 pub const APPLE_DARK: Theme = Theme {
     slug: Cow::Borrowed("apple-dark"),
     name: Cow::Borrowed("Apple Dark"),

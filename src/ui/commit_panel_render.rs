@@ -1489,7 +1489,11 @@ impl CommitPanelView {
                         // do not have visibly different corners.
                         .rounded(input_radius)
                         .border_1()
-                        .border_color(rgb(theme().text_muted))
+                        .border_color(rgb(if theme().slug == "apple-dark" {
+                            kagi_ui_core::theme_apple_dark::INPUT_BORDER
+                        } else {
+                            theme().text_muted
+                        }))
                         .bg(rgb(theme().bg_base))
                         .child(
                             div()

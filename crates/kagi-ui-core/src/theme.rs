@@ -1176,7 +1176,12 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // near-background neutral by design, which made markdown table rows
     // invisible (user report); a muted-foreground tint reads on both `surface`
     // and `bg_base` in every theme.
-    gc.colors.border = to_hsla(k.text_muted).alpha(0.85);
+    let border = if k.slug == "apple-dark" {
+        crate::theme_apple_dark::INPUT_BORDER
+    } else {
+        k.text_muted
+    };
+    gc.colors.border = to_hsla(border).alpha(0.85);
     gc.colors.muted = to_hsla(k.surface);
     gc.colors.muted_foreground = to_hsla(k.text_muted);
 
@@ -1221,12 +1226,12 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.secondary_active = to_hsla(k.surface);
 
     // ── Input border (Input, Checkbox unchecked) ────────────────
-    // Apple Light separates identifying control boundaries from readable labels.
-    // Dark and custom palettes retain their established boundary/focus contrast.
-    gc.colors.input = to_hsla(if k.slug == "apple-light" {
-        crate::theme_apple_light::INPUT_BORDER
-    } else {
-        k.text_muted
+    // Apple presets separate identifying boundaries from readable labels.
+    // Custom and other palettes retain their existing boundary/focus contrast.
+    gc.colors.input = to_hsla(match &*k.slug {
+        "apple-light" => crate::theme_apple_light::INPUT_BORDER,
+        "apple-dark" => crate::theme_apple_dark::INPUT_BORDER,
+        _ => k.text_muted,
     });
     gc.colors.caret = to_hsla(k.text_main);
 
@@ -1289,7 +1294,12 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
 
     // ── Scrollbar (W12-GCADOPT §2.10) ───────────────────────────
     gc.colors.scrollbar = to_hsla(k.bg_base);
-    gc.colors.scrollbar_thumb = to_hsla(k.text_muted);
+    // Preserve hover/drag feedback even when secondary text roles coincide.
+    gc.colors.scrollbar_thumb = to_hsla(k.text_muted).alpha(if k.text_muted == k.text_sub {
+        0.65
+    } else {
+        1.0
+    });
     gc.colors.scrollbar_thumb_hover = to_hsla(k.text_sub);
 
     // ── Drag handle (resizable dividers, future adoption) ───────
@@ -1412,7 +1422,11 @@ pub fn highlight_theme(k: &Theme) -> std::sync::Arc<gpui_component::highlighter:
         fg = hex(k.text_main),
         active = hex(k.bg_row_alt),
         lineno = hex(k.text_muted),
-        lineno_active = hex(k.text_sub),
+        lineno_active = hex(if k.text_muted == k.text_sub {
+            k.text_main
+        } else {
+            k.text_sub
+        }),
         keyword = hex(s.keyword),
         operator = hex(s.operator),
         punct = hex(s.punctuation),
@@ -1539,21 +1553,52 @@ mod tests {
         for t in THEMES {
             let mut gc = gpui_component::Theme::default();
             apply_gpui_component_theme(t, &mut gc);
-            let expected = if t.slug == "apple-light" {
-                0x8e8e8e
-            } else {
-                t.text_muted
+            let expected = match &*t.slug {
+                "apple-light" => 0x8e8e8e,
+                "apple-dark" => 0x67676a,
+                _ => t.text_muted,
             };
             assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
             assert_eq!(gc.colors.ring, to_hsla(t.ui_accent()));
-            assert_eq!(gc.colors.border, to_hsla(t.text_muted).alpha(0.85));
-            if t.slug == "apple-light" {
+            let border = if t.slug == "apple-dark" {
+                expected
+            } else {
+                t.text_muted
+            };
+            assert_eq!(gc.colors.border, to_hsla(border).alpha(0.85));
+            if matches!(&*t.slug, "apple-light" | "apple-dark") {
                 assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
                 assert!(contrast_ratio(expected, t.panel) >= 3.0);
                 assert!(
                     contrast_ratio(expected, t.bg_base) < contrast_ratio(t.text_muted, t.bg_base)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn equal_secondary_roles_keep_interaction_affordances() {
+        for preset in THEMES {
+            let mut t = preset.clone();
+            t.text_muted = t.text_sub;
+            let mut gc = gpui_component::Theme::default();
+            apply_gpui_component_theme(&t, &mut gc);
+            assert_ne!(
+                gc.colors.scrollbar_thumb, gc.colors.scrollbar_thumb_hover,
+                "{}: scrollbar hover must remain distinct",
+                t.slug
+            );
+            assert_eq!(gc.colors.scrollbar_thumb, to_hsla(t.text_muted).alpha(0.65));
+            let highlight = highlight_theme(&t);
+            assert_ne!(
+                highlight.style.editor_line_number, highlight.style.editor_active_line_number,
+                "{}: active line number must remain distinct",
+                t.slug
+            );
+            assert_eq!(
+                highlight.style.editor_active_line_number,
+                Some(to_hsla(t.text_main))
+            );
         }
     }
 

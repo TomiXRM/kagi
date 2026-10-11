@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Editor buffer tabs retain a zoom-scaled minimum width and scroll horizontally instead of collapsing. Duplicate file names show the shortest distinguishing parent path; every tab exposes its complete path through the pinned tooltip and accessibility name. Active-file selection keeps the tab visible, and dirty-close guards remain unchanged. (#1262)
+- Editor Diff/History and Diff/Snapshot selectors reuse the existing single-stop keyboard tab-list owner with named selected Button segments. Left/Right/Home/End select, Enter/Space activate, and keyboard selection retains selector focus instead of jumping to the root. (#1263)
 - Branch context menus keep at most ten top-level command/submenu rows, with frequent actions first and less common commands in Integrate, Advanced and Worktree submenus. All prior commands and safety guards remain; disabled rows stay keyboard-focusable but inert, with EN/JA reasons in tooltips and accessibility descriptions instead of inline paragraphs. Right/Enter opens a submenu; Left/Escape closes one level. (#1238)
   - Review: pointer cascades wait 200 ms and cancel pending parent changes when entering a child; closing or replacing a keyboard-focused child restores launcher focus. Protected Reset and dirty/conflicted Checkout warnings remain visible, and ADR-0050's no-op label rule is explicitly amended.
 - Commit Panel List/Tree is now one named keyboard tab group: arrows and Home/End move the selection, and Enter/Space activate without losing the selected file, draft or scroll state. Pointer selection preserves the window's diff-file arrow navigation. (#1229)

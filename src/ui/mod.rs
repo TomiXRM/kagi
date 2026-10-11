@@ -42,6 +42,7 @@ mod env_tests;
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
+mod editor_pane_selectors;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 mod external_editor;

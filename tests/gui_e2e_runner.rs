@@ -310,6 +310,10 @@ mod pr_diff_extent_same_selection;
 mod editor_diff_extent_reload;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_tabs.rs"]
+mod editor_tabs;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
 mod pr_threads;
 
@@ -2112,6 +2116,14 @@ mod macos {
             (
                 "editor_diff_extent_unchanged_reload",
                 Box::new(crate::editor_diff_extent_reload::scenario_editor_diff_extent_unchanged_reload),
+            ),
+            (
+                "editor_tab_overflow",
+                Box::new(crate::editor_tabs::scenario_editor_tab_overflow),
+            ),
+            (
+                "editor_toggle_keys",
+                Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),

@@ -234,6 +234,10 @@ mod repo_health;
 mod modal_polish_b;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/destructive_modal_return.rs"]
+mod destructive_modal_return;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/inventory/mod.rs"]
 mod inventory;
 
@@ -260,6 +264,9 @@ mod remote_browse_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
+#[cfg(target_os = "macos")]
+#[path = "recovery/palette_polish.rs"]
+mod palette_polish;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
@@ -1328,6 +1335,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),
             (
+                "destructive_modal_return",
+                Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
+            ),
+            (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
@@ -2098,6 +2109,14 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),
             (
+                "palette_highlight",
+                Box::new(crate::palette_polish::scenario_palette_highlight),
+            ),
+            (
+                "palette_shortcut_glyphs",
+                Box::new(crate::palette_polish::scenario_palette_shortcut_glyphs),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
@@ -2215,6 +2234,7 @@ mod macos {
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
@@ -3242,6 +3262,9 @@ mod macos {
 
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        // Effective bindings are cached at startup, exactly as in the product.
+        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
+            .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

@@ -110,6 +110,35 @@ fn applies(repo: &Path) -> Vec<kagi_git::oplog::OpLogEntry> {
         .collect()
 }
 
+fn root_return_cancels_suggestion(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    repo: &Path,
+) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = kagi_ui_core::i18n::lang();
+    for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        click(cx, window, APPLY);
+        assert_eq!(modal_open(cx, app), Some(0));
+        let before = crate::macos::repo_fingerprint(repo);
+        crate::recovery_operations::press_key(cx, app, window, "enter");
+        wait_idle(cx, app);
+        assert_eq!(
+            modal_open(cx, app),
+            None,
+            "Return cancels destructive suggestion"
+        );
+        assert_eq!(crate::macos::repo_fingerprint(repo), before);
+        assert!(
+            applies(repo).is_empty(),
+            "Return must not record a suggestion write"
+        );
+    }
+    app.update(cx, |app, cx| app.set_lang(previous, cx));
+}
+
 pub fn scenario_pr_suggestion_apply(cx: &mut VisualTestAppContext) {
     let _gh = OfflineGh::install();
     let fixture = build_fixture();
@@ -190,6 +219,7 @@ pub fn scenario_pr_suggestion_apply(cx: &mut VisualTestAppContext) {
     assert_eq!(modal_open(cx, &app), None, "Cancel closes the card");
     assert_eq!(file(), "one\ntwo\nthree\n", "Cancel wrote");
     assert!(applies(&repo).is_empty(), "Cancel recorded an apply");
+    root_return_cancels_suggestion(cx, &app, window, &repo);
 
     // Confirm: exactly the anchored line changes, nothing is staged, and one
     // successful entry carries the backup ref.

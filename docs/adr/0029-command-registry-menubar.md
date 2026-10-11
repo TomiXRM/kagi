@@ -89,3 +89,25 @@ focus／VoiceOver delivery は Tier A の範囲外で PM の Tier B 確認対象
 native regression は 700×500@100%／167%、900×600@167% の EN／JA、
 多数結果と長い custom theme 名で card／input／results bounds、独立 scroll、
 shortcut の水平 containment を測る。既存 selection-scroll regression も維持する。
+
+## Amendment (2026-10-12): one palette target and native shortcuts (#1271 / #1272)
+
+- Spotlight-style selection remains `command_palette_selected`: arrow input and
+  actual pointer movement update the same index. Only the selected row paints
+  `selected`; there is no independent hover wash of equal strength.
+- Opening captures the pointer's current position. Row movement compares against
+  the last position tracked across the panel before updating selection. Replayed
+  stationary coordinates, scrolling content and passive redraws never select.
+  Pointer selection does not request scroll/reveal, preserving #1069.
+- Enter reads the highlighted current result; disabled results can be highlighted
+  with their existing localized reason but remain inert. Existing Escape return
+  focus, MouseDown dispatch and operation safety paths remain unchanged.
+- `commands::display_keystroke` stays the display owner. On macOS it parses the
+  effective GPUI binding and delegates to pinned gpui-kit `Kbd::format`, including
+  native modifier order ⌃⌥⇧⌘ and named keys. Non-macOS retains text notation.
+  The palette reserves its existing shrink-free right-aligned trailing column.
+- EN/JA command labels and disabled reasons keep their existing `Msg` owners;
+  bindings and platform glyphs are language-independent, not translated prose.
+  Native `palette_highlight` and `palette_shortcut_glyphs` cover 940×660 /
+  1392×883, 100% / 167%, EN / JA and Apple Light / Dark. Real pointer/focus,
+  IME and VoiceOver delivery remain PM-owned Tier B checks.

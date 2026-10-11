@@ -1486,12 +1486,29 @@ pub fn register_keybindings(cx: &mut App) {
     ]);
 }
 
-/// Human-readable rendering of a registry keystroke string for the in-app
-/// (Linux/FreeBSD) menu dropdown. The stored notation uses gpui's `secondary`
-/// token (Cmd on macOS, Ctrl elsewhere); expand it and the other modifiers into
-/// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
-/// press. (The macOS native menu derives its accelerator from the keymap, so it
-/// does not go through here.)
+/// Platform rendering of an effective registry keystroke. macOS shares
+/// gpui-kit's native glyph ordering and named keys; in-app menus on other
+/// platforms retain their text notation. Native menus derive it from the keymap.
+#[cfg(target_os = "macos")]
+pub fn display_keystroke(ks: &str) -> String {
+    let mut formatted = String::with_capacity(ks.len());
+    for part in ks.split_whitespace() {
+        let Ok(stroke) = gpui::Keystroke::parse(part) else {
+            return ks.to_owned();
+        };
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        formatted.push_str(&gpui_component::kbd::Kbd::format(&stroke));
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn display_keystroke(ks: &str) -> String {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
@@ -1508,20 +1525,8 @@ pub fn display_keystroke(ks: &str) -> String {
         for m in mods_str.split('-') {
             parts.push(
                 match m {
-                    "secondary" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Ctrl"
-                        }
-                    }
-                    "cmd" | "super" | "win" => {
-                        if cfg!(target_os = "macos") {
-                            "Cmd"
-                        } else {
-                            "Super"
-                        }
-                    }
+                    "secondary" => "Ctrl",
+                    "cmd" | "super" | "win" => "Super",
                     "ctrl" => "Ctrl",
                     "alt" => "Alt",
                     "shift" => "Shift",
@@ -2814,6 +2819,47 @@ mod tests {
 #[cfg(test)]
 mod keybinding_tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_share_native_glyph_order_and_named_keys() {
+        assert_eq!(display_keystroke("secondary-shift-o"), "⇧⌘O");
+        assert_eq!(display_keystroke("ctrl-alt-shift-secondary-k"), "⌃⌥⇧⌘K");
+        for key in ["enter", "escape", "backspace", "delete", "space", "up", "-"] {
+            let binding = format!("secondary-{key}");
+            let stroke = gpui::Keystroke::parse(&binding).unwrap();
+            assert_eq!(
+                display_keystroke(&binding),
+                gpui_component::kbd::Kbd::format(&stroke)
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_format_each_chord_stroke() {
+        assert_eq!(display_keystroke("secondary-k secondary-s"), "⌘K ⌘S");
+        assert_eq!(
+            display_keystroke("secondary-k   ctrl-alt-shift-secondary-s"),
+            "⌘K ⌃⌥⇧⌘S"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_preserve_unformattable_bindings_without_panicking() {
+        for binding in ["not-a-keystroke", "secondary-k bogus-modifier-x", "", "  "] {
+            assert_eq!(display_keystroke(binding), binding);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn display_keystrokes_retain_text_notation() {
+        assert_eq!(display_keystroke("secondary-shift-o"), "Ctrl+Shift+O");
+        assert_eq!(display_keystroke("ctrl-alt-shift-k"), "Ctrl+Alt+Shift+K");
+        assert_eq!(display_keystroke("secondary--"), "Ctrl+-");
+    }
 
     /// Every default keystroke in the registry must be unique — two commands
     /// on one key would make the later binding silently win.

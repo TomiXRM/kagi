@@ -421,7 +421,12 @@ impl KagiApp {
             WorkspaceMode::Editor => 10,
             _ => usize::MAX,
         };
-        let style_key = (icon_only, i18n::lang(), theme::zoom().to_bits());
+        let style_key = (
+            icon_only,
+            i18n::lang(),
+            theme::zoom().to_bits(),
+            theme::ui_font_family(),
+        );
         let pending_widths = self.toolbar_layout.pending(present, style_key);
         let hidden = self.toolbar_layout.hidden(present, selected, style_key);
         let visible = present & !hidden;

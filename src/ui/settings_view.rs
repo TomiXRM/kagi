@@ -517,23 +517,29 @@ fn appearance_section(
             cfg!(target_os = "macos") && matches!(&*theme().slug, "apple-light" | "apple-dark"),
             |section| {
                 let owner = app.clone();
-                section.child(setting_row(
-                    Msg::SettingsAccent.t().into(),
-                    theme::detected_system_accent().detected_label().into(),
-                    RadioGroup::horizontal("settings-accent")
-                        .children([
-                            SharedString::from(Msg::SettingsAccentSystem.t()),
-                            SharedString::from(Msg::SettingsAccentTheme.t()),
-                        ])
-                        .selected_index(Some(usize::from(!theme::follows_system_accent())))
-                        .on_click(move |index: &usize, _, cx| {
-                            theme::set_follows_system_accent(*index == 0);
-                            theme::sync_gpui_component_theme(cx);
-                            cx.refresh_windows();
-                            owner.update(cx, |_, cx| cx.notify());
-                        })
-                        .into_any_element(),
-                ))
+                section
+                    .child(setting_row(
+                        Msg::SettingsAccent.t().into(),
+                        theme::detected_system_accent().detected_label().into(),
+                        RadioGroup::horizontal("settings-accent")
+                            .children([
+                                SharedString::from(Msg::SettingsAccentSystem.t()),
+                                SharedString::from(Msg::SettingsAccentTheme.t()),
+                            ])
+                            .selected_index(Some(usize::from(!theme::follows_system_accent())))
+                            .on_click(move |index: &usize, _, cx| {
+                                theme::set_follows_system_accent(*index == 0);
+                                theme::sync_gpui_component_theme(cx);
+                                cx.refresh_windows();
+                                owner.update(cx, |_, cx| cx.notify());
+                            })
+                            .into_any_element(),
+                    ))
+                    .child(setting_row(
+                        Msg::SettingsUiFont.t().into(),
+                        Msg::SettingsUiFontDesc.t().into(),
+                        ui_font_control(app),
+                    ))
             },
         )
         .child(super::settings_theme_folder::section(app))
@@ -577,6 +583,30 @@ fn appearance_section(
             SharedString::from(Msg::SettingsTerminalAutoLockDesc.t()),
             auto_lock_ctl,
         ))
+}
+
+fn ui_font_control(app: &Entity<KagiApp>) -> AnyElement {
+    let owner = app.clone();
+    RadioGroup::horizontal("settings-ui-font")
+        .children(
+            [Msg::SettingsUiFontSystem, Msg::SettingsUiFontBundled]
+                .map(|msg| SharedString::from(msg.t())),
+        )
+        .selected_index(Some(usize::from(
+            settings::ui_font_source() == settings::UiFontSource::Bundled,
+        )))
+        .on_click(move |index: &usize, _, cx| {
+            settings::set_ui_font_source(if *index == 1 {
+                settings::UiFontSource::Bundled
+            } else {
+                settings::UiFontSource::System
+            });
+            klog!("ui_font: {}", theme::ui_font_family());
+            theme::sync_gpui_component_theme(cx);
+            cx.refresh_windows();
+            owner.update(cx, |_, cx| cx.notify());
+        })
+        .into_any_element()
 }
 
 fn stepper_btn(

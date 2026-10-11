@@ -121,6 +121,8 @@ fn main() {
     // renders.  Priority: KAGI_THEME env → ~/.kagi/settings.json → default
     // (Catppuccin Mocha).  Logs `[kagi] theme: <slug> dark=<bool>`.
     ui::theme::init_active();
+    ui::settings::init_ui_font_source();
+    klog!("ui_font: {}", ui::theme::ui_font_family());
 
     // W27-UIPOLISH: resolve the persisted UI zoom factor (settings.json
     // "ui_zoom", stored as permille) before the first render applies it via

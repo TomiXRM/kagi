@@ -103,7 +103,7 @@ impl Render for Rows {
         let natural = self.natural.clone();
         div()
             .size_full()
-            .font_family(theme::UI_FONT)
+            .font_family(theme::ui_font_family())
             .child(
                 uniform_list("recovery-history", 3, move |range, _, _| {
                     range

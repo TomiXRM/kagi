@@ -1999,6 +1999,7 @@ impl KagiApp {
         }
         let t = theme::theme();
         klog!("theme: {} dark={}", t.slug, t.dark);
+        klog!("ui_font: {}", theme::ui_font_family());
 
         // W12-GCADOPT: push the new kagi palette into gpui-component's global
         // ThemeColor so adopted widgets (Input, Tooltip, Scrollbar, Checkbox)

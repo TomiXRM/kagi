@@ -40,6 +40,46 @@ mod terminal_autolock;
 pub use store::flush;
 pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
 
+/// UI typography preference. System is effective only for macOS Apple presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum UiFontSource {
+    System,
+    Bundled,
+}
+
+impl UiFontSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Bundled => "bundled",
+        }
+    }
+}
+
+static UI_FONT_SOURCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn init_ui_font_source() {
+    UI_FONT_SOURCE.store(
+        Settings::load()
+            .ui_font_source()
+            .unwrap_or(UiFontSource::System) as u8,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+pub fn ui_font_source() -> UiFontSource {
+    match UI_FONT_SOURCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => UiFontSource::Bundled,
+        _ => UiFontSource::System,
+    }
+}
+
+pub fn set_ui_font_source(source: UiFontSource) {
+    write_setting("ui_font_source", Some(source.as_str()));
+    UI_FONT_SOURCE.store(source as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -225,6 +265,19 @@ impl Settings {
         {
             Some("icon_only") => Some(ToolbarDisplay::IconOnly),
             Some("icon_and_text") => Some(ToolbarDisplay::IconAndText),
+            _ => None,
+        }
+    }
+
+    /// UI family preference; missing/unknown values follow the platform/preset.
+    pub fn ui_font_source(&self) -> Option<UiFontSource> {
+        match self
+            .raw
+            .get("ui_font_source")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("system") => Some(UiFontSource::System),
+            Some("bundled") => Some(UiFontSource::Bundled),
             _ => None,
         }
     }
@@ -578,6 +631,23 @@ mod tests {
         assert_eq!(empty.graph_compact(), None);
         assert_eq!(empty.auto_fetch(), None);
         assert_eq!(empty.ui_zoom_permille(), None);
+    }
+
+    #[test]
+    fn ui_font_source_is_a_typed_flat_string_preference() {
+        for (value, expected) in [
+            ("system", Some(UiFontSource::System)),
+            ("bundled", Some(UiFontSource::Bundled)),
+            ("unknown", None),
+        ] {
+            let settings = parse(&format!(
+                r#"{{"ui_font_source":"{value}","future":"keep"}}"#
+            ));
+            assert_eq!(settings.ui_font_source(), expected);
+            assert_eq!(settings.get_str("future").as_deref(), Some("keep"));
+        }
+        assert_eq!(Settings::default().ui_font_source(), None);
+        assert_eq!(parse(r#"{"ui_font_source":true}"#).ui_font_source(), None);
     }
 
     #[test]

@@ -70,6 +70,10 @@ mod theme_custom;
 mod system_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/system_font.rs"]
+mod system_font;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_quiet.rs"]
 mod settings_quiet;
 
@@ -1148,6 +1152,10 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "system_font",
+                Box::new(crate::system_font::scenario_system_font),
             ),
             (
                 "settings_quiet",

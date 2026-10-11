@@ -176,6 +176,8 @@ pub struct ControlPaint {
     /// Resolved inherited text size at the actual paint stage.
     pub font_size: gpui::Pixels,
     pub font_weight: gpui::FontWeight,
+    /// Actual inherited font resolved by the native text backend.
+    pub font_id: gpui::FontId,
     pub text_color: gpui::Hsla,
     pub ellipsis: bool,
 }
@@ -186,7 +188,7 @@ pub fn control_paint(id: gpui::WindowId, name: &str) -> Option<ControlPaint> {
 }
 
 #[cfg(feature = "gui-e2e")]
-fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: &Window) {
+fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: &Window, cx: &App) {
     let order = CONTROL_PAINT_ORDER.with(|value| {
         let next = value.get() + 1;
         value.set(next);
@@ -198,6 +200,7 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         order,
         font_size: window.text_style().font_size.to_pixels(window.rem_size()),
         font_weight: window.text_style().font_weight,
+        font_id: cx.text_system().resolve_font(&window.text_style().font()),
         text_color: window.text_style().color,
         ellipsis: matches!(
             window.text_style().text_overflow.as_ref(),
@@ -271,7 +274,9 @@ pub fn measure_control(
                     move |bounds, window, _| {
                         record_control_bounds(window.window_handle().window_id(), &name, bounds);
                     },
-                    move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
+                    move |bounds, _, window, cx| {
+                        record_control_paint(&paint_name, bounds, window, cx)
+                    },
                 )
                 .absolute()
                 .top_0()
@@ -309,7 +314,7 @@ pub(crate) fn measure_inside(name: impl Into<String>) -> gpui::AnyElement {
                         .insert((window.window_handle().window_id(), name.clone()), bounds);
                 });
             },
-            move |bounds, _, window, _| record_control_paint(&paint_name, bounds, window),
+            move |bounds, _, window, cx| record_control_paint(&paint_name, bounds, window, cx),
         )
         .absolute()
         .top_0()
@@ -485,6 +490,8 @@ pub fn asset_source() -> Arc<dyn AssetSource> {
 /// [`super::commands::setup_app`] instead of re-listing bindings or menus; keep
 /// it after `gpui_component::init`, which several bindings deliberately outrank.
 pub fn init_app(cx: &mut App) {
+    super::settings::init_ui_font_source();
+    klog!("ui_font: {}", theme::ui_font_family());
     fonts::load_bundled_fonts(cx);
     gpui_component::init(cx);
     theme::sync_gpui_component_theme(cx);

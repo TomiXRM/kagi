@@ -69,6 +69,21 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1068 use
+`KAGI_GUI_E2E_ONLY=system_font,toolbar_count_scale,toolbar_overflow,sidebar_panes,header_fit,commit_panel_viewport,home_heading,commit_row_layout`.
+`system_font` verifies native resolution at normal/semibold/bold, the component
+family and the paint-stage inherited `ControlPaint::font_id` for measured Kagi
+containers. It compares Inter/System heights at 100%/167%, EN/JA, Apple Light/Dark
+and both toolbar modes; every height delta must remain ≤1 logical px. A pure
+platform/preset policy assertion covers Linux/non-Apple Inter retention; this
+is not a Linux renderer run. `home_heading` shapes its width oracle with the
+active family rather than hard-coded Inter. Tier B: use the same fixture with
+`theme: apple-light` or `apple-dark`, `ui_scale_base: v2`, `ui_zoom: 1000` or
+`1670`, `lang: en` or `ja`, and `ui_font_source: bundled` / `system` (all JSON
+string values). Appearance switches the same preference live; compare mixed
+Japanese/Latin, small labels, Inputs and Tooltips against Finder/AppKit.
+
+
 For #1199/#1201 use `KAGI_GUI_E2E_ONLY=settings_quiet,settings_radio_dot`.
 `settings_quiet` measures inherited heading colour/size/weight and Metal pixels
 for the frame/titlebar/section hairlines at 100%/167%, EN/JA, both Apple themes

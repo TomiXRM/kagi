@@ -203,7 +203,7 @@ impl KagiApp {
             .flex()
             .flex_col()
             .size_full()
-            .font_family(super::UI_FONT)
+            .font_family(theme::ui_font_family())
             .bg(rgb(theme().bg_base))
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
             // Home shares the native frame; document tabs never host the lights.

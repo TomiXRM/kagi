@@ -70,15 +70,19 @@ user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
-three production macOS host scenarios (EN/JA, 100%/167%). Existing `settings_*`,
-`platform_menu_*` and `filter_menu_then_settings` scenarios deliberately select
-the portable overlay host; none of their assertions are removed. The production
-host is selected only by `SettingsHostForE2e { native: true }` in the new tests;
-ordinary application launches always use the native macOS host.
+six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
+cleanup. Owner-release coverage starts a real fetch ticker, closes its repository
+root and asserts the entity is released and Settings closes while another
+repository stays usable. Position coverage reopens three times; Dock coverage
+uses the production typed-root decision and saved-session restore with only
+Settings remaining. Existing `settings_*`, `platform_menu_*` and
+`filter_menu_then_settings` scenarios deliberately select the portable overlay
+host; none of their assertions are removed. An RAII host guard restores the
+selection even on panic; ordinary launches always use the native macOS host.
 Tier B must list **both** CGWindow IDs for the PID it launched and capture the
 Settings ID with `screencapture -l<id> <path>`; PID-first capture selects the
 repository rather than Settings. Check Cmd-comma raise, Cmd-W independent
-closure, native traffic lights, restored position/pane and live preferences.
+closure, native traffic lights, restored position/pane/height and live preferences.
 Escape is deliberately not a window-dismiss command; check editing-field/IME
 behavior separately. Native hidden-window assertions do not prove OS activation.
 

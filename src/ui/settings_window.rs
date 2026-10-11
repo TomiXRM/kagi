@@ -4,8 +4,8 @@ use super::{commands, i18n::Msg, keyboard_nav, settings, settings_view, theme, K
 use gpui::prelude::*;
 use gpui::{
     div, point, px, size, App, AppContext, Bounds, Context, Entity, FocusHandle, Global,
-    MouseButton, Render, ScrollHandle, Subscription, Window, WindowBounds, WindowHandle,
-    WindowOptions,
+    MouseButton, Render, ScrollHandle, Subscription, WeakEntity, Window, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 use gpui_component::Root;
 
@@ -46,12 +46,16 @@ pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
 }
 
 fn window_options(cx: &App) -> WindowOptions {
-    let height = cx
-        .primary_display()
-        .map_or(720., |display| {
-            f32::from(display.bounds().size.height) * 0.85
-        })
-        .min(720.);
+    let max_height = cx.primary_display().map_or(720., |display| {
+        f32::from(display.bounds().size.height) * 0.85
+    });
+    // Cocoa's setContentSize anchors the bottom edge. Restoring the last
+    // content height avoids a fresh 720 → page-height resize on every reopen.
+    let height = settings::read_setting("settings_window_height")
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|height| height.is_finite())
+        .unwrap_or(720.)
+        .clamp(500_f32.min(max_height), max_height);
     let mut bounds = Bounds::centered(None, size(px(715.), px(height)), cx);
     if let Some((x, y)) = settings::read_setting("settings_window_position")
         .and_then(|value| {
@@ -89,12 +93,13 @@ fn window_options(cx: &App) -> WindowOptions {
 }
 
 struct SettingsWindow {
-    owner: Entity<KagiApp>,
+    owner: WeakEntity<KagiApp>,
     pane: usize,
     focus: FocusHandle,
     tabs: keyboard_nav::TabFocus,
     scroll: ScrollHandle,
     _observe: Subscription,
+    _release: Subscription,
 }
 
 impl SettingsWindow {
@@ -106,20 +111,22 @@ impl SettingsWindow {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         window.on_window_should_close(cx, |window, _| {
-            remember_position(window);
+            remember_geometry(window);
             settings::flush();
             true
         });
         cx.observe_window_bounds(window, |_, window, _| remember_position(window))
             .detach();
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
+        let release = cx.observe_release_in(&owner, window, |_, _, window, _| close(window));
         Self {
-            owner,
+            owner: owner.downgrade(),
             pane,
             focus,
             tabs: Default::default(),
             scroll: Default::default(),
             _observe: observe,
+            _release: release,
         }
     }
 
@@ -185,32 +192,30 @@ impl SettingsWindow {
         }))
     }
 
-    fn page(&self, cx: &Context<Self>) -> gpui::AnyElement {
-        let app = self.owner.read(cx);
+    fn page(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::AnyElement {
+        let app = owner.read(cx);
         match self.pane {
             0 => settings_view::appearance_section(
-                &self.owner,
+                owner,
                 app.theme_select.clone(),
                 &app.settings_switches,
                 cx,
             )
             .into_any_element(),
-            1 => settings_view::language_section(&self.owner).into_any_element(),
+            1 => settings_view::language_section(owner).into_any_element(),
             2 => settings_view::smart_commit_section(
-                &self.owner,
+                owner,
                 &app.smart_commit,
                 &app.settings_switches,
                 cx,
             )
             .into_any_element(),
-            _ => {
-                settings_view::analyze_ignore_section(&self.owner, app.analyze_ignore_input.clone())
-                    .into_any_element()
-            }
+            _ => settings_view::analyze_ignore_section(owner, app.analyze_ignore_input.clone())
+                .into_any_element(),
         }
     }
 
-    fn page_body(&self, cx: &Context<Self>) -> gpui::Div {
+    fn page_body(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::Div {
         let chrome = 46. + f32::from(theme::scaled_px(48.));
         div()
             .relative()
@@ -219,7 +224,7 @@ impl SettingsWindow {
             .flex_shrink_0()
             .px_5()
             .py_4()
-            .child(self.page(cx))
+            .child(self.page(owner, cx))
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -243,10 +248,14 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         keyboard_nav::forget_roving_without_focus(window);
+        let Some(owner) = self.owner.upgrade() else {
+            close(window);
+            return div().into_any_element();
+        };
         window.set_window_title(Msg::SettingsTitle.t());
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
-        let body = self.page_body(cx);
+        let body = self.page_body(&owner, cx);
         div()
             .size_full()
             .flex()
@@ -260,8 +269,12 @@ impl Render for SettingsWindow {
             .on_action(|_: &commands::MinimizeWindow, window, _| window.minimize_window())
             .on_action(|_: &commands::CloseWindow, window, _| close(window))
             .on_action(cx.listener(|this, _: &commands::Quit, window, cx| {
-                if this.owner.update(cx, |app, cx| !app.hold_host_close(cx)) {
-                    remember_position(window);
+                if this
+                    .owner
+                    .update(cx, |app, cx| !app.hold_host_close(cx))
+                    .unwrap_or(false)
+                {
+                    remember_geometry(window);
                     settings::flush();
                     cx.quit();
                 }
@@ -280,7 +293,16 @@ impl Render for SettingsWindow {
                     .child(body),
                 cx,
             ))
+            .into_any_element()
     }
+}
+
+fn remember_geometry(window: &Window) {
+    remember_position(window);
+    settings::write_setting(
+        "settings_window_height",
+        Some(&f32::from(window.viewport_size().height).to_string()),
+    );
 }
 
 fn remember_position(window: &Window) {
@@ -303,7 +325,7 @@ fn raise(window: &mut Window) {
 }
 
 fn close(window: &mut Window) {
-    remember_position(window);
+    remember_geometry(window);
     settings::flush();
     window.remove_window();
 }

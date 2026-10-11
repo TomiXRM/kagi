@@ -1166,6 +1166,22 @@ mod macos {
                 Box::new(crate::settings_window::scenario_settings_window_live_apply),
             ),
             (
+                "settings_window_owner_release",
+                Box::new(crate::settings_window::scenario_settings_window_owner_release),
+            ),
+            (
+                "settings_window_position_restore",
+                Box::new(crate::settings_window::scenario_settings_window_position_restore),
+            ),
+            (
+                "settings_window_dock_reopen",
+                Box::new(crate::settings_window::scenario_settings_window_dock_reopen),
+            ),
+            (
+                "settings_window_host_isolation",
+                Box::new(crate::settings_window::scenario_settings_window_host_isolation),
+            ),
+            (
                 "settings_quiet",
                 Box::new(crate::settings_quiet::scenario_settings_quiet),
             ),

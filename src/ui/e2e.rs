@@ -493,6 +493,12 @@ pub fn init_app(cx: &mut App) {
     cx.set_global(super::settings_view::SettingsHostForE2e::default());
 }
 
+/// Run the production Dock-reopen decision/session restore without activating
+/// a visible window; callers mount the returned state through the normal root.
+pub fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
+    super::dock_reopen_state(cx)
+}
+
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
 /// `kagi_git`, no `git2` token) + a single active tab, as `main.rs` does.
 pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {

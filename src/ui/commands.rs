@@ -1977,11 +1977,8 @@ impl KagiApp {
         cx.defer(move |cx| {
             for handle in cx.windows() {
                 let _ = handle.update(cx, |_, window, cx| {
-                    let Some(app) = window
-                        .root::<gpui_component::Root>()
-                        .flatten()
-                        .and_then(|root| root.read(cx).view().clone().downcast::<KagiApp>().ok())
-                        .filter(|app| app.entity_id() != owner)
+                    let Some(app) =
+                        super::repository_window(window, cx).filter(|app| app.entity_id() != owner)
                     else {
                         return;
                     };

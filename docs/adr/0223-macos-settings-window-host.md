@@ -16,12 +16,13 @@ The 715-logical-point window is non-resizable and non-modal, with standard
 close/minimize lights and disabled zoom. The transparent unified compact frame
 sets app_owns_titlebar_drag and owns dragging only on its blank/title surface,
 not pane controls. General, Language, Smart Commit and Analyze use the existing
-localized groups. Pane selection and position are saved through settings::;
-invalid/missing selections use General, and disconnected-display positions
-recenter. The selected pane determines content height through real layout,
-clamped to 500 logical points and 85% of the current display; oversized pages
-remain reachable through one persistent system-scrollbar owner. Width does not
-scale with UI zoom.
+localized groups. Pane selection, position and the last content height are saved
+through settings::; invalid/missing selections use General, and disconnected-
+display positions recenter. Restoring height avoids Cocoa's bottom-anchored
+initial resize moving the saved frame on each reopen. The selected pane
+determines content height through real layout, clamped to 500 logical points and
+85% of the current display; oversized pages remain reachable through one
+persistent system-scrollbar owner. Width does not scale with UI zoom.
 
 Closing or Cmd-W removes only the Settings window and flushes the existing
 store. It never dispatches repository Close Tab, changes sessions, or exits the
@@ -31,16 +32,29 @@ behavior; an editing text field retains its own Escape/IME handling. No
 repository focus trap or dimming scrim is installed. Repository windows remain
 usable and all windows repaint when global appearance/language/zoom changes.
 
+The host and every reused settings callback hold only weak repository entity
+handles. Releasing its originating repository closes Settings and flushes the
+store; Settings does not keep that repository's watchers, terminal sessions or
+periodic fetch owner alive. Other repository windows remain usable. Dock reopen
+counts repository Roots, not utility windows, using the same typed-root
+predicate as live terminal preference broadcasts, and restores the saved
+repository session when only a utility window remains.
+
 ## Coverage and evidence boundaries
 
 The existing settings_*, platform_menu_* and filter_menu_then_settings native
 scenarios retain every assertion. Their test setup explicitly selects the
 portable non-macOS overlay host, allowing those interaction/focus contracts to
 be rendered and exercised on the macOS test backend. This is a test host
-selection, not a production feature flag. settings_window_open_raise,
-settings_window_close_keeps_repo and settings_window_live_apply explicitly
+selection, not a production feature flag; an RAII guard restores it on normal
+return and panic. settings_window_open_raise, settings_window_close_keeps_repo,
+settings_window_live_apply, settings_window_owner_release,
+settings_window_position_restore and settings_window_dock_reopen explicitly
 select the production macOS host at EN/JA and 100%/167%. Tests check window
-identity/count, independent closure and native repository theme pixels.
+identity/count, independent closure, native repository theme pixels, repository
+entity release after a running fetch ticker, session restoration with only
+Settings open, and stable geometry over three reopen cycles.
+settings_window_host_isolation also exercises guard cleanup during unwinding.
 
 Tier A's hidden windows do not prove real OS activation, dragging, traffic-light
 presentation or text-field IME. Tier B must exercise these on the launched PID,

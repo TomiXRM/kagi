@@ -83,6 +83,17 @@ bounds recorder; default builds retain its pass-through. Shared non-E2E
 `measure_inside_placeholder_is_out_of_flow` prevents flex/gap layout changes.
 These renderer assertions are not real keyboard, VoiceOver or Tier B evidence.
 
+For #1200 use `KAGI_GUI_E2E_ONLY=settings` for the complete Settings matrix.
+`settings_groups` checks semantic card bounds, native base-fill pixels and page
+wheel ownership at 1392×883, EN/JA, 100%/167%; ordinary controls fit when
+reached and the unchanged oversized Analyze editor has separately reachable
+edges. It measures Analyze's vertical padding/gaps and ordinary descriptions
+of at most two lines at 100%. Real mouse-move events plus the Tooltip delay
+exercise avatar/custom-theme/Analyze help builders in both languages.
+`settings_view::take_settings_help_for_e2e` consumes only text actually passed
+to an invoked Tooltip builder; each hover clears old observations first.
+This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \

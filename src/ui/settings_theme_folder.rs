@@ -1,7 +1,8 @@
 //! Settings → Appearance controls for custom-theme files (#922).
 
 use gpui::{
-    div, rgb, AnyElement, Entity, IntoElement, ParentElement as _, SharedString, Styled as _,
+    div, rgb, AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _,
 };
 use gpui_component::button::Button;
 use gpui_component::text::TextView;
@@ -28,6 +29,8 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
         .flex_col()
         .gap_2()
         .py_2()
+        .border_t_1()
+        .border_color(rgb(theme().surface))
         .child(
             div()
                 .text_color(rgb(theme().text_main))
@@ -36,8 +39,19 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
         .child(
             div()
                 .text_sm()
+                .id("settings-custom-themes-help")
+                .tooltip(|window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::settings_view::record_settings_help(
+                        "settings-custom-themes-help",
+                        Msg::SettingsCustomThemesDesc.t(),
+                    );
+                    gpui_component::tooltip::Tooltip::new(Msg::SettingsCustomThemesDesc.t())
+                        .build(window, cx)
+                })
+                .child(e2e::measure_inside("settings-custom-description"))
                 .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(Msg::SettingsCustomThemesDesc.t())),
+                .child(SharedString::from(Msg::SettingsCustomThemesSummary.t())),
         )
         .child(e2e::measure_control(
             "settings-custom-themes-path",
@@ -82,7 +96,10 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                             app_reload.update(cx, |app, cx| app.reload_themes(window, cx));
                         }),
                 ))
-                .child(guide_link()),
+                .child(e2e::measure_control(
+                    "settings-custom-themes-guide-control",
+                    guide_link(),
+                )),
         )
 }
 

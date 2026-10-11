@@ -64,7 +64,7 @@ impl HunkAction {
             .border_color(rgb(theme::theme().selected))
             .text_xs()
             .text_color(rgb(theme::theme().text_sub))
-            .cursor_pointer()
+            .cursor_default()
             .hover(|s| s.bg(rgb(theme::theme().selected)))
             // The header row starts a text selection on mouse down.
             .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())

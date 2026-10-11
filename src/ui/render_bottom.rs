@@ -39,6 +39,12 @@ impl KagiApp {
                 .yield_focus(self.root_focus.as_ref(), window, cx);
             return None;
         }
+        let compact = self.compact.enabled;
+        let active_tab = if !compact && active_tab == BottomTab::Changes {
+            BottomTab::OperationLog
+        } else {
+            active_tab
+        };
 
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
@@ -87,16 +93,21 @@ impl KagiApp {
             );
 
         // Manual activation: focusing Terminal must never start its process.
-        const TABS: [BottomTab; 3] = [
+        const TABS: [BottomTab; 4] = [
             BottomTab::OperationLog,
             BottomTab::Terminal,
             BottomTab::Activity,
+            BottomTab::Changes,
         ];
         let entity = cx.weak_entity();
         let tabs = keyboard_nav::TabList::new(
             &self.bottom_tab_focus,
-            keyboard_nav::slot_keys(TABS.len()),
-            vec![0, 1, 2],
+            keyboard_nav::slot_keys(if compact { 4 } else { 3 }),
+            if compact {
+                vec![3, 0, 1, 2]
+            } else {
+                vec![0, 1, 2]
+            },
             TABS.iter().position(|&tab| tab == active_tab),
             keyboard_nav::Activation::Manual,
             // This selector routes pointer focus itself: Terminal receives
@@ -110,6 +121,9 @@ impl KagiApp {
                     this.bottom_tab = TABS[slot];
                     if this.bottom_tab == BottomTab::Terminal {
                         this.ensure_terminal(window, cx);
+                    }
+                    if this.bottom_tab == BottomTab::Changes {
+                        this.open_compact_changes(window, cx);
                     }
                     // Lazy startup focuses the terminal; keyboard activation
                     // must keep the selector's focus until Tab leaves it.
@@ -126,6 +140,8 @@ impl KagiApp {
             },
             cx,
         );
+        self.bottom_tab_focus
+            .release_closed(self.root_focus.as_ref(), window, cx);
         let cell = |slot: usize, id: &'static str| {
             let tab = TABS[slot];
             let selected = tab == active_tab;
@@ -156,7 +172,8 @@ impl KagiApp {
                     match slot {
                         0 => "tab-oplog-label",
                         1 => "tab-terminal-label",
-                        _ => "tab-activity-label",
+                        2 => "tab-activity-label",
+                        _ => "compact-tab-changes-label",
                     },
                     SharedString::from(tab.label()),
                 ))
@@ -177,6 +194,7 @@ impl KagiApp {
                     .mx_2()
                     .gap_1()
                     .rounded(theme::scaled_px(4.))
+                    .when(compact, |el| el.child(cell(3, "compact-tab-changes")))
                     .child(cell(0, "tab-oplog"))
                     .child(cell(1, "tab-terminal"))
                     .child(cell(2, "tab-activity")),
@@ -193,6 +211,10 @@ impl KagiApp {
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
             BottomTab::Activity => self.render_activity_body(cx),
+            BottomTab::Changes => self
+                .compact_surface(false, cx)
+                .map(IntoElement::into_any_element)
+                .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──

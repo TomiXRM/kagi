@@ -109,8 +109,13 @@ source with `missing compact-rail`, then passed the 16-cell EN/JA, Apple
 Light/Dark, 100%/167%, 940×660/940×1000 matrix. It also checks Catppuccin and
 999→1000→940 logical-width transitions, real filter input, all seven Popovers,
 Escape/outside dismissal and leaf selection without a Git mutation.
-Composer, Changes and shared-state scenario gates are recorded with their own
-functional commits; their result is not inferred from this navigator PASS.
+Changes Tier A `compact_layout_changes` rejected the gated navigator-only source
+with `missing compact-tab-changes`, then passed the same 16-cell matrix with
+equal column bounds, actual independent wheel scrolling, both List/Tree headers
+and original entity/input identity across 940→1392→940. Actual Stage all and
+Unstage all update the fixture's Git index; their empty-column controls remain
+present and inert. Composer and shared-state gates are recorded with their own
+functional commits; their result is not inferred from either preceding PASS.
 The required compact matrix includes 940×660 and 940×1000, EN/JA, 100%/167%,
 Apple Light/Dark and a non-Apple preset; exact-threshold transitions; both toolbar
 modes; graph outer bounds and unchanged row/column/lane geometry; real measured

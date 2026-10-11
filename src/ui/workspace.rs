@@ -39,12 +39,12 @@
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    div, px, AnyElement, Context, IntoElement, ParentElement, SharedString, Styled, Window,
+    div, px, AnyElement, Context, Entity, IntoElement, ParentElement, SharedString, Styled, Window,
 };
 use std::sync::Arc;
 
 use super::inspector_model::{FilesSource, InspectorFiles};
-use super::{commit_list, inspector, CommitId, KagiApp, MainDiffSource};
+use super::{commit_list, inspector, CommitId, CommitPanelView, KagiApp, MainDiffSource};
 
 /// Which layout slot a [`WorkspaceItem`] occupies when active (ADR-0121 B1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -388,6 +388,40 @@ impl KagiApp {
         let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
         self.panel_width.min(available.max(0.))
     }
+
+    /// Publish owner-scoped inputs once for either desktop or compact projection.
+    pub(super) fn prepare_commit_panel_presentation(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<CommitPanelView>> {
+        let entity = self.ui().commit_panel.clone()?;
+        let active_wip = match self
+            .ui()
+            .main_diff
+            .as_ref()
+            .map(|d| d.read(cx).view.source.clone())
+        {
+            Some(MainDiffSource::Unstaged { path }) => Some((false, path)),
+            Some(MainDiffSource::Staged { path }) => Some((true, path)),
+            _ => None,
+        };
+        let smart = self.smart_commit.clone();
+        let smart_ui = &self.ui[&entity.read(cx).owner];
+        let panel_width = self.commit_panel_viewport_width(window);
+        entity.update(cx, |v, _| {
+            v.active_wip = active_wip;
+            v.panel_render_width = panel_width;
+            v.smart_snapshot = smart;
+            v.smart_generating = smart_ui.smart_commit_generating;
+            v.smart_status = smart_ui.smart_commit_status.clone();
+            #[cfg(feature = "gui-e2e")]
+            {
+                v.window_active_override = self.window_active_override;
+            }
+        });
+        Some(entity)
+    }
 }
 
 impl WorkspaceItem for CommitPanelItem {
@@ -410,32 +444,8 @@ impl WorkspaceItem for CommitPanelItem {
         window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
-        let entity = app.ui().commit_panel.clone()?;
-        let active_wip = match app
-            .ui()
-            .main_diff
-            .as_ref()
-            .map(|d| d.read(cx).view.source.clone())
-        {
-            Some(MainDiffSource::Unstaged { path }) => Some((false, path)),
-            Some(MainDiffSource::Staged { path }) => Some((true, path)),
-            _ => None,
-        };
-        let smart = app.smart_commit.clone();
-        let smart_ui = &app.ui[&entity.read(cx).owner];
-        let panel_width = app.commit_panel_viewport_width(window);
-        entity.update(cx, |v, _| {
-            v.active_wip = active_wip;
-            v.panel_render_width = panel_width;
-            v.smart_snapshot = smart;
-            v.smart_generating = smart_ui.smart_commit_generating;
-            v.smart_status = smart_ui.smart_commit_status.clone();
-            #[cfg(feature = "gui-e2e")]
-            {
-                v.window_active_override = app.window_active_override;
-            }
-        });
-        Some(entity.into_any_element())
+        app.prepare_commit_panel_presentation(window, cx)
+            .map(IntoElement::into_any_element)
     }
 }
 

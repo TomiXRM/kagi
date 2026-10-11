@@ -17,7 +17,7 @@ mod paging;
 use gpui::{prelude::*, Context, SharedString};
 
 use super::commit_panel::{CommitPanelState, CommitPanelView};
-use super::{build_tab_view, FooterStatus, KagiApp, WipDiffStat, DEFAULT_COMMIT_LIMIT};
+use super::{build_tab_view, BottomTab, FooterStatus, KagiApp, WipDiffStat, DEFAULT_COMMIT_LIMIT};
 
 impl KagiApp {
     /// Reload all display data from the repository at `repo_path`.
@@ -468,9 +468,12 @@ impl KagiApp {
             )
         });
         if nothing_left && !has_draft {
+            let keep_changes = self.compact.enabled && self.bottom_tab == BottomTab::Changes;
             if let Some(ui) = self.ui_mut() {
                 ui.commit_panel_open = false;
-                ui.commit_panel = None;
+                if !keep_changes {
+                    ui.commit_panel = None;
+                }
             }
         }
     }

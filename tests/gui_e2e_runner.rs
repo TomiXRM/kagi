@@ -2230,6 +2230,10 @@ mod macos {
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),
             (
+                "compact_layout_changes",
+                Box::new(crate::compact_layout::changes::scenario_compact_layout_changes),
+            ),
+            (
                 "compact_layout_geometry",
                 Box::new(crate::compact_layout::scenario_compact_layout_geometry),
             ),

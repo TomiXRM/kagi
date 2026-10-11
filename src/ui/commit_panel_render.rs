@@ -14,11 +14,9 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::button_style::{ButtonRole, KagiButton};
 use super::commit_panel::CommitPanelView;
-use super::render_helpers::*;
 use super::*;
-use crate::ui::button_style::{ButtonRole, KagiButton};
-use gpui_component::Disableable as _;
 
 // ──────────────────────────────────────────────────────────────
 // Commit Panel — virtualized per-row builders (PERF)
@@ -124,7 +122,7 @@ fn cp_tree_layout(
 }
 
 /// The slot of display row `index` in a section laid out by [`cp_tree_layout`].
-fn cp_tree_slot(
+pub(super) fn cp_tree_slot(
     layout: &[(usize, (usize, usize))],
     tree: &'static str,
     index: usize,
@@ -759,7 +757,7 @@ pub(crate) fn render_staged_tree_row(
 /// a downward menu would open off-screen) and wrapped in `gpui::deferred` so it
 /// paints after all of its ancestors. Without that the body box's own border is
 /// drawn over the menu, which overflows that box (user report).
-fn render_coauthor_menu(
+pub(super) fn render_coauthor_menu(
     candidates: Option<&[kagi_git::AuthorCandidate]>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
@@ -881,11 +879,11 @@ impl CommitPanelView {
         });
     }
 
-    fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| app.do_stage_all(owner, cx));
     }
 
-    fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.do_unstage_all(owner, cx)
         });
@@ -902,13 +900,13 @@ impl CommitPanelView {
         });
     }
 
-    fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.open_commit_plan_modal(owner, cx)
         });
     }
 
-    fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.open_discard_all_modal(owner, cx)
         });
@@ -941,19 +939,19 @@ impl CommitPanelView {
         .detach();
     }
 
-    fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.commit_panel_amend(owner, cx)
         });
     }
 
-    fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, window, cx| {
             app.smart_suggest(owner, window, cx);
         });
     }
 
-    fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, window, cx| {
             app.smart_generate(owner, window, cx)
         });
@@ -966,6 +964,14 @@ impl CommitPanelView {
 
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.prepare_render(window, cx);
+        let panel_width = self.panel_render_width;
+        self.render_panel(panel_width, cx)
+    }
+}
+
+impl CommitPanelView {
+    pub(super) fn prepare_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.window_activation_subscription.is_none() {
             self.window_activation_subscription =
                 Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
@@ -980,12 +986,8 @@ impl Render for CommitPanelView {
         // the child's input.
         self.sync_inputs(window, cx);
         self.refresh_tree_layout();
-        let panel_width = self.panel_render_width;
-        self.render_panel(panel_width, cx)
     }
-}
 
-impl CommitPanelView {
     /// Keep the accessible sibling positions in sync with the displayed tree.
     /// The virtual list can render many batches for one scroll; each batch
     /// only indexes the layout cached here.
@@ -1017,514 +1019,8 @@ impl CommitPanelView {
         panel_width: f32,
         cx: &mut Context<CommitPanelView>,
     ) -> impl IntoElement {
-        let panel = &self.state;
-        let title_input = self.title_input.clone();
-        let body_input = self.body_input.clone();
-        let coauthor_menu = if self.coauthor_menu_visible() {
-            self.coauthor_menu.clone()
-        } else {
-            None
-        };
-        let smart = self.smart_snapshot.clone();
-        let smart_ui = (self.smart_generating, self.smart_status.clone());
-        let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
-        let staged_scroll_handle = self.staged_scroll_handle.clone();
-        // #476 slice 3: every commit-panel write — stage, commit, amend,
-        // discard — now resolves the PANEL's repository, so nothing is hidden
-        // on a linked worktree's panel any more. `foreign` is left as what it
-        // always was underneath: the header chip's label + lane colour.
-        let foreign = self.foreign.clone();
-        let tree_view = panel.tree_view;
-        let unstaged_count = panel.unstaged.len();
-        let staged_count = panel.staged.len();
-        // W17-DISCARD: count discard-eligible unstaged files (exclude untracked,
-        // which the panel surfaces as `Added` rows, and conflicted files).
-        // ADR-0083: untracked (`Added`) rows ARE discardable (deleted with backup),
-        // so they count toward enabling "Discard all" — only conflicted rows are
-        // excluded. Must mirror `discard_partition`.
-        let discard_eligible_count = panel
-            .unstaged
-            .iter()
-            .filter(|f| !panel.is_conflicted(&f.path))
-            .count();
-        // T026: the subject line alone decides whether there is a message —
-        // a body without a subject is not a commit.
-        let input_msg_nonempty = title_input
-            .as_ref()
-            .map(|e| !e.read(cx).value().trim().is_empty())
-            .unwrap_or(!panel.commit_msg.trim().is_empty());
-        let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
-        let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-        // PERF: selected_file is read per visible row from the entity inside the
-        // uniform_list processors, not captured here.
-
-        // ── View switch: segmented [List | Tree] (T-UI-002) ──────
-        let list_click = cx.listener(
-            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                view.state.tree_view = false;
-                cx.notify();
-            },
-        );
-        let tree_click = cx.listener(
-            |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                view.state.tree_view = true;
-                cx.notify();
-            },
-        );
-        let seg = |id: &'static str, label: &'static str, active: bool| {
-            div()
-                .id(id)
-                .relative()
-                .child(super::e2e::measure_inside(id))
-                .px_1p5()
-                .py_px()
-                .text_xs()
-                .bg(if active {
-                    theme().selected_for_window(self.window_active)
-                } else {
-                    rgb(theme().surface).into()
-                })
-                .text_color(rgb(if active {
-                    theme().text_main
-                } else {
-                    theme().text_muted
-                }))
-                .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
-                .child(SharedString::from(label))
-        };
-        let toggle_btn = div()
-            .flex()
-            .flex_row()
-            .flex_shrink_0()
-            .rounded_sm()
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(theme().surface))
-            .child(seg("cp-view-list", "List", !tree_view).on_click(list_click))
-            .child(seg("cp-view-tree", "Tree", tree_view).on_click(tree_click));
-
-        // ── Helper: build file rows for a section ────────────────
-        // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
-        // We render inline to avoid capture issues.
-
-        // ── Unstaged section ─────────────────────────────────────
-        // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
-
-        // Unstaged ヘッダ行 (固定 — flex_shrink_0 で高さを保持)
-        let unstaged_header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
-            )
-            // #476: live on a worktree panel too — it stages into the worktree.
-            .when(unstaged_count > 0, |el| {
-                let stage_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_stage_all(window, cx);
-                    },
-                );
-                el.child(
-                    div()
-                        .id("cp-stage-all")
-                        .mr_2()
-                        .px_1p5()
-                        .py_px()
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .text_xs()
-                        .text_color(rgb(theme().color_success))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(stage_all_click)
-                        .child(SharedString::from("Stage all")),
-                )
-            })
-            // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
-            .when(unstaged_count > 0, |el| {
-                let discard_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_open_discard_all(window, cx);
-                    },
-                );
-                let enabled = discard_eligible_count > 0;
-                let mut btn = div()
-                    .id("cp-discard-all")
-                    .mr_2()
-                    .px_1p5()
-                    .py_px()
-                    .rounded_sm()
-                    .bg(rgb(theme().surface))
-                    .text_xs()
-                    .child(SharedString::from("Discard all"));
-                if enabled {
-                    btn = btn
-                        .text_color(rgb(theme().color_blocker))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(discard_all_click);
-                } else {
-                    btn = btn.text_color(rgb(theme().text_muted));
-                }
-                #[cfg(feature = "gui-e2e")]
-                let btn = btn
-                    .relative()
-                    .child(super::e2e::measure_inside("cp-discard-all"));
-                el.child(btn)
-            })
-            .child(toggle_btn);
-
-        // PERF: unstaged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading the entity), not a prebuilt div.
-        let unstaged_row_count = if tree_view {
-            panel.unstaged_tree.len()
-        } else {
-            panel.unstaged_normal_files.len()
-        } + panel.generated_extra_rows(false)
-            + panel.agent_extra_rows(false);
-
-        // ── Staged section ───────────────────────────────────────
-        // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
-
-        // Staged ヘッダ行 (固定)
-        let staged_header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
-                    .text_sm()
-                    .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(format!("Staged ({})", staged_count))),
-            )
-            // #476: live on a worktree panel too — see "Stage all" above.
-            .when(staged_count > 0, |el| {
-                let unstage_all_click = cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.defer_unstage_all(window, cx);
-                    },
-                );
-                el.child(
-                    div()
-                        .id("cp-unstage-all")
-                        .px_1p5()
-                        .py_px()
-                        .rounded_sm()
-                        .bg(rgb(theme().surface))
-                        .text_xs()
-                        .text_color(rgb(theme().color_warning))
-                        .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
-                        .on_click(unstage_all_click)
-                        .child(SharedString::from("Unstage all")),
-                )
-            });
-
-        // PERF: staged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading the entity), not a prebuilt div.
-        let staged_row_count = if tree_view {
-            panel.staged_tree.len()
-        } else {
-            panel.staged_normal_files.len()
-        } + panel.generated_extra_rows(true)
-            + panel.agent_extra_rows(true);
-
-        // ── Commit button ─────────────────────────────────────────
-        // No destination branch in the label: ADR-0134 put it here as "one
-        // place to look", but a real branch name overflows the button. The
-        // header shows the branch at all times and has room for a long one.
-        let commit_label = SharedString::from(i18n::commit_button());
-        let commit_click = cx.listener(
-            |view: &mut CommitPanelView, _event: &gpui::ClickEvent, window, cx| {
-                view.defer_open_commit_plan_modal(window, cx);
-            },
-        );
-        // One Button in both states (`.disabled`), so enabling it does not change
-        // the footer's height, and the disabled form still reads as a button
-        // rather than blending into the footer background.
-        let commit_btn = KagiButton::styled("cp-commit-btn", commit_label, ButtonRole::Primary, cx)
-            .small()
-            .mt_1()
-            .w_full()
-            .disabled(!can_commit)
-            .when(can_commit, |b| b.on_click(commit_click))
-            .into_any_element();
-        let commit_btn = div()
-            .relative()
-            .flex_shrink_0()
-            .child(commit_btn)
-            .child(super::e2e::measure_inside("cp-commit-action"));
-
-        // ── Footer icon row (ADR-0134) ────────────────────────────
-        // Three icon actions replace the old pill toolbar + full-width Amend
-        // button: sparkles = generate a message, person+ = add a co-author,
-        // undo = amend the previous commit.
-        let staged_empty = panel.staged.is_empty();
-        let icon_row = {
-            let icon_btn =
-                |id: &'static str, path: &'static str, tip: String, enabled: bool, accent: u32| {
-                    let mut b = div()
-                        .id(id)
-                        .p_1()
-                        .rounded_sm()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .relative()
-                        .child(super::e2e::measure_inside(id))
-                        .tooltip(move |_w, cx| {
-                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(_w, cx)
-                        })
-                        .child(
-                            gpui::svg()
-                                .path(path)
-                                .w(theme::scaled_px(16.0))
-                                .h(theme::scaled_px(16.0))
-                                .text_color(rgb(if enabled { accent } else { theme().text_muted })),
-                        );
-                    if enabled {
-                        b = b.hover(|s| s.bg(rgb(theme().selected)).cursor_pointer());
-                    }
-                    b
-                };
-
-            // Sparkles — generate a commit message. Uses the local LLM when it is
-            // usable (green), otherwise the rule-based draft.
-            let llm_on = smart.llm_offered();
-            let suggest_enabled = !staged_empty && !smart_ui.0;
-            let suggest_color = if llm_on {
-                theme().color_success
-            } else {
-                theme().accent_text_on(theme().panel)
-            };
-            let suggest_btn: gpui::AnyElement = if smart_ui.0 {
-                // Spin the same icon rather than swapping in a text spinner, so
-                // the row does not change width mid-generation.
-                use gpui::AnimationExt as _;
-                let spinner_base = gpui::svg()
-                    .path("icons/loader-circle.svg")
-                    .w(theme::scaled_px(16.0))
-                    .h(theme::scaled_px(16.0))
-                    .text_color(rgb(suggest_color));
-                // Reduce motion: static loader glyph, no per-frame rotation tick.
-                let spinner: gpui::AnyElement = if theme::reduce_motion() {
-                    spinner_base.into_any_element()
-                } else {
-                    spinner_base
-                        .with_animation(
-                            "cp-smart-spinner",
-                            gpui::Animation::new(Duration::from_millis(900)).repeat(),
-                            |svg, delta| {
-                                svg.with_transformation(gpui::Transformation::rotate(
-                                    gpui::radians(delta * std::f32::consts::TAU),
-                                ))
-                            },
-                        )
-                        .into_any_element()
-                };
-                div()
-                    .id("cp-smart-suggest")
-                    .p_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(spinner)
-                    .into_any_element()
-            } else {
-                let mut b = icon_btn(
-                    "cp-smart-suggest",
-                    "icons/sparkles.svg",
-                    Msg::GenerateMessage.t().to_string(),
-                    suggest_enabled,
-                    suggest_color,
-                );
-                if suggest_enabled {
-                    b = b.on_click(cx.listener(
-                        move |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                            if llm_on {
-                                view.defer_smart_generate(window, cx);
-                            } else {
-                                view.defer_smart_suggest(window, cx);
-                            }
-                        },
-                    ));
-                }
-                b.into_any_element()
-            };
-
-            // Person+ — co-author picker.
-            let coauthor_btn = icon_btn(
-                "cp-coauthor",
-                "icons/user-plus.svg",
-                Msg::AddCoAuthor.t().to_string(),
-                true,
-                theme().text_main,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, _w, cx| {
-                    view.toggle_coauthor_menu(cx);
-                },
-            ));
-
-            // Undo — amend the previous commit (the plan still blocks pushed
-            // commits; this only opens the modal).
-            let amend_btn = icon_btn(
-                "cp-amend-btn",
-                "icons/undo-2.svg",
-                Msg::AmendLastCommit.t().to_string(),
-                true,
-                theme().color_warning,
-            )
-            .on_click(cx.listener(
-                |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                    view.defer_amend(window, cx);
-                },
-            ));
-
-            let row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .child(suggest_btn)
-                .child(coauthor_btn)
-                // #476 slice 3: amend resolves the panel's repository, so it is
-                // offered on a worktree panel too — the confirm names it.
-                .child(amend_btn);
-
-            div()
-                .relative()
-                .child(row)
-                .children(render_coauthor_menu(coauthor_menu.as_deref(), cx))
-        };
-
-        // The radius `Input` gives itself, read once so both boxes match.
-        let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
-
-        // ── commit.template toggle (bottom-left of the body box) ──────
-        // Only offered when the user actually has a `commit.template`; without
-        // one the control would toggle nothing.
-        let template_toggle: gpui::AnyElement = if self.commit_template.is_some() {
-            let on = self.template_active(cx);
-            div()
-                .id("cp-template-toggle")
-                .px_1p5()
-                .py_px()
-                .rounded_sm()
-                .text_xs()
-                .text_color(rgb(if on {
-                    theme().accent_text_on(theme().panel)
-                } else {
-                    theme().text_muted
-                }))
-                .hover(|s| {
-                    let s = s.bg(rgb(theme().selected)).cursor_pointer();
-                    if on {
-                        s.text_color(rgb(theme().accent_text_on(theme().selected)))
-                    } else {
-                        s
-                    }
-                })
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::ToggleCommitTemplate.t())
-                        .build(w, cx)
-                })
-                .on_click(cx.listener(
-                    |view: &mut CommitPanelView, _e: &gpui::ClickEvent, window, cx| {
-                        view.toggle_template(window, cx);
-                    },
-                ))
-                .child(SharedString::from(Msg::Template.t()))
-                .into_any_element()
-        } else {
-            div().into_any_element()
-        };
-
-        // ── Commit message: subject + body (ADR-0134) ─────────────────
-        // Two inputs mirroring git's own shape, replacing the single field and
-        // the six-field template mode. The body is seeded from the user's
-        // `commit.template` on first open and holds the co-author trailers.
-        //
-        // The icon row lives INSIDE the body's box: the box is a plain div
-        // wearing the Input's own border/background, with an unstyled `Input`
-        // and the icons stacked in it. Drawn as a real row rather than absolutely
-        // positioned so it can never overlap a long body.
-        // AutoGrow's inner minimum prevents flex shrinking at high zoom. Keep
-        // its cached visual-row measurement, without imposing that minimum.
-        let body_rows = body_input
-            .as_ref()
-            .map_or(3, |body| body.read(cx).wrap_row_count().clamp(3, 12));
-        let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
-            + gpui_component::Size::Medium.input_py() * 2.;
-        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
-            (Some(title), Some(body)) => div()
-                .flex()
-                .flex_col()
-                .min_h(px(0.))
-                .flex_shrink(1.)
-                .overflow_hidden()
-                .gap_2()
-                .child(Input::new(title).appearance(true).bordered(true))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        // Icon, its p_1, row pb_1, and the body's two borders.
-                        .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
-                        .flex_shrink(1.)
-                        // Same radius the `Input` gives itself, so the two boxes
-                        // do not have visibly different corners.
-                        .rounded(input_radius)
-                        .border_1()
-                        .border_color(rgb(theme().text_muted))
-                        .bg(rgb(theme().bg_base))
-                        .child(
-                            div()
-                                .h(body_height)
-                                .min_h(px(0.))
-                                .flex_shrink(1.)
-                                .overflow_hidden()
-                                .child(Input::new(body).h_full().appearance(false).bordered(false)),
-                        )
-                        .relative()
-                        .child(super::e2e::measure_inside("cp-body"))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .flex_shrink_0()
-                                .px_1()
-                                .pb_1()
-                                .child(template_toggle)
-                                .child(icon_row),
-                        ),
-                )
-                .into_any_element(),
-            // No window yet (headless); the message still flows through
-            // `state.commit_msg`, so this is a placeholder, not a failure.
-            _ => div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(commit message input unavailable)"))
-                .into_any_element(),
-        };
+        let unstaged_header = self.render_unstaged_header(false, cx);
+        let staged_header = self.render_staged_header(false, cx);
 
         // ── Assemble panel ───────────────────────────────────────
         // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
@@ -1540,36 +1036,7 @@ impl CommitPanelView {
             // Header. #473: a worktree panel adds the worktree's chip, in the
             // WIP row's own lane colour, so it is obvious *which* working tree
             // the file list below belongs to.
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .bg(rgb(theme().surface))
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from("Commit Panel"))
-                    .when_some(foreign.clone(), |el, (label, color_idx)| {
-                        let color = theme().lane_color(color_idx);
-                        el.child(
-                            div()
-                                .px_1()
-                                .rounded_sm()
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .truncate()
-                                .border_1()
-                                .border_color(color)
-                                .text_xs()
-                                .text_color(color)
-                                .child(SharedString::from(format!("🌲 {label}"))),
-                        )
-                    }),
-            )
+            .child(self.render_panel_header())
             // File lists share the remaining height with the shrinking composer.
             .child(
                 div()
@@ -1584,176 +1051,46 @@ impl CommitPanelView {
                     // Unstaged ヘッダ (固定)
                     .child(unstaged_header)
                     // Unstaged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(
-                        div()
-                            .id("cp-unstaged-scroll")
-                            .flex_1()
-                            .min_h(px(0.))
-                            .mx_1()
-                            .mb_px()
-                            .border_1()
-                            .border_color(rgb(theme().surface))
-                            .rounded_sm()
-                            .flex()
-                            .flex_col()
-                            .child({
-                                let handle = unstaged_scroll_handle.clone();
-                                let list = with_vertical_scrollbar(
-                                    "cp-unstaged-list-scroll",
-                                    &handle,
-                                    uniform_list(
-                                        "cp-unstaged-list",
-                                        unstaged_row_count,
-                                        cx.processor(
-                                            move |view,
-                                                  range: std::ops::Range<usize>,
-                                                  _window,
-                                                  cx| {
-                                                let layout = view.state.tree_view.then_some(
-                                                    view.unstaged_tree_layout.as_slice(),
-                                                );
-                                                range
-                                                    .filter_map(|i| match &layout {
-                                                        Some(layout) => render_unstaged_tree_row(
-                                                            view,
-                                                            i,
-                                                            cp_tree_slot(
-                                                                layout,
-                                                                "cp-unstaged-tree",
-                                                                i,
-                                                            ),
-                                                            cx,
-                                                        ),
-                                                        None => {
-                                                            render_unstaged_flat_row(view, i, cx)
-                                                        }
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        ),
-                                    )
-                                    .track_scroll(&unstaged_scroll_handle)
-                                    .flex_1()
-                                    .min_h(px(0.)),
-                                    false,
-                                );
-                                if tree_view {
-                                    kagi_ui_core::tree_a11y::tree(
-                                        "cp-unstaged-tree",
-                                        list,
-                                        Msg::A11yUnstagedTree.t(),
-                                    )
-                                } else {
-                                    list
-                                }
-                            }),
-                    )
+                    .child(self.render_unstaged_list(cx))
                     // Staged ヘッダ (固定)
                     .child(staged_header)
                     // Staged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(
-                        div()
-                            .id("cp-staged-scroll")
-                            .flex_1()
-                            .min_h(px(0.))
-                            .mx_1()
-                            .mb_px()
-                            .border_1()
-                            .border_color(rgb(theme().surface))
-                            .rounded_sm()
-                            .flex()
-                            .flex_col()
-                            .child({
-                                let handle = staged_scroll_handle.clone();
-                                let list = with_vertical_scrollbar(
-                                    "cp-staged-list-scroll",
-                                    &handle,
-                                    uniform_list(
-                                        "cp-staged-list",
-                                        staged_row_count,
-                                        cx.processor(
-                                            move |view,
-                                                  range: std::ops::Range<usize>,
-                                                  _window,
-                                                  cx| {
-                                                let layout = view
-                                                    .state
-                                                    .tree_view
-                                                    .then_some(view.staged_tree_layout.as_slice());
-                                                range
-                                                    .filter_map(|i| match &layout {
-                                                        Some(layout) => render_staged_tree_row(
-                                                            view,
-                                                            i,
-                                                            cp_tree_slot(
-                                                                layout,
-                                                                "cp-staged-tree",
-                                                                i,
-                                                            ),
-                                                            cx,
-                                                        ),
-                                                        None => render_staged_flat_row(view, i, cx),
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        ),
-                                    )
-                                    .track_scroll(&staged_scroll_handle)
-                                    .flex_1()
-                                    .min_h(px(0.)),
-                                    false,
-                                );
-                                if tree_view {
-                                    kagi_ui_core::tree_a11y::tree(
-                                        "cp-staged-tree",
-                                        list,
-                                        Msg::A11yStagedTree.t(),
-                                    )
-                                } else {
-                                    list
-                                }
-                            }),
-                    ),
+                    .child(self.render_staged_list(cx)),
             )
             // Commit footer: subject + body, icon actions, commit button.
             // #476 slices 2–3: shown on a worktree panel too — every control in
             // it writes into that worktree.
-            .child(
-                div()
-                    .flex_shrink(1.)
-                    .min_h(px(0.))
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .bg(rgb(theme().surface))
-                    // Subject + body (the icon actions live inside the body box)
-                    .child(msg_inputs)
-                    // Transient smart-commit status. Its own full-width line:
-                    // inside the right-aligned icon group it pushed the icons
-                    // sideways as the text appeared (user report).
-                    .when_some(smart_ui.1, |el, status| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from(status)),
-                        )
-                    })
-                    // Unstaged warning
-                    .when(has_unstaged_warning, |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().color_warning))
-                                .child(SharedString::from(i18n::unstaged_not_included(
-                                    unstaged_count,
-                                ))),
-                        )
-                    })
-                    .child(commit_btn),
-            )
+            .child(self.render_composer(false, cx))
+    }
+
+    pub(super) fn render_panel_header(&self) -> gpui::Div {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .bg(rgb(theme().surface))
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .child(SharedString::from("Commit Panel"))
+            .when_some(self.foreign.clone(), |el, (label, color_idx)| {
+                let color = theme().lane_color(color_idx);
+                el.child(
+                    div()
+                        .px_1()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .truncate()
+                        .border_1()
+                        .border_color(color)
+                        .text_xs()
+                        .text_color(color)
+                        .child(SharedString::from(format!("🌲 {label}"))),
+                )
+            })
     }
 }

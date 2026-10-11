@@ -12,6 +12,8 @@ use kagi::ui::{commit_panel::CommitPanelView, e2e, KagiApp};
 use kagi_ui_core::{i18n, theme};
 use std::{cell::RefCell, path::Path, process::Command, rc::Rc, time::Duration};
 
+#[path = "compact_layout/changes.rs"]
+pub mod changes;
 #[path = "compact_layout/popup.rs"]
 pub mod popup;
 #[path = "compact_layout/rail.rs"]
@@ -44,6 +46,12 @@ const RECORDERS: &[&str] = &[
     "cp-commit-action",
     "cp-row-stage",
     "cp-row-unstage",
+    "cp-view-list",
+    "cp-view-tree",
+    "cp-staged-view-list",
+    "cp-staged-view-tree",
+    "cp-stage-all",
+    "cp-unstage-all",
 ];
 
 #[derive(Clone, Copy, Debug)]

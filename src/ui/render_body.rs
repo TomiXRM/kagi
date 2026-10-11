@@ -694,6 +694,9 @@ impl KagiApp {
         // precedence is unchanged — it stays in `resolve_workspace`. The
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
+        if compact && self.bottom_tab == BottomTab::Changes {
+            let _ = self.prepare_commit_panel_presentation(window, cx);
+        }
         let panel_visible = self.panel_motion.bottom.visible(motion_now);
         let panel_height = self.bottom_panel_height;
         let panel_tab = self.bottom_tab;

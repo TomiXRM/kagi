@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Apple Dark readable secondary labels, counts, captions, timestamps and Commit Panel section headers now reuse `#98989f`, meeting 4.5:1 WCAG contrast on both panel and content backgrounds. Apple Light is unchanged; disabled controls retain their existing opacity behavior. (#1239)
+  - Review: Dark input/composer boundaries use quiet `#67676a` (≥3:1) rather than readable secondary text; generic borders derive from this neutral at 85% alpha. Scrollbar hover/drag and active line numbers remain distinct when secondary text roles coincide; Apple Light paint mappings remain unchanged.
 - Commit Panel selected file rows retain their window-aware selection fill while hovered; conflicted rows retain their diagnostic tint. (#1228)
 - The commit body composer uses the Summary input's theme focus border around the complete body/footer frame without changing its auto-grow layout. (#1232)
 - Non-link Commit Panel actions and file menus, shared menus, hunk actions, Home Recent/GitHub/Work rows and toolbar controls request the native arrow cursor; real URL-link controls retain their hand cursor. (#1241)

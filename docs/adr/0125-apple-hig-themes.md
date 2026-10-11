@@ -815,3 +815,56 @@ window containment to fixed controls and the first Recent repository row;
 compact GitHub action-in-row and name-priority checks remain, along with every
 other heading, fixed-control and wide-layout assertion. Production is unchanged.
 
+## Amendment — 2026-10-12: readable Apple Dark secondary text (#1239)
+
+Apple Dark's readable secondary text uses the existing
+`text_sub = text_label = text_muted = #98989f`. This opaque secondary-label
+approximation uses iOS `secondaryLabel` (`#ebebf5` at 60% on `#1c1c1e`,
+rounded to `#98989f`), rather than assigning systemGray or tertiary-label colours to
+readable captions. It covers counts, timestamps, labels and Unstaged/Staged
+section headings through the existing theme consumers; no new control, role,
+schema, font size, geometry, Git colour or accent is introduced.
+
+WCAG contrast calculated from source sRGB relative luminance (not screenshot
+pixels) is:
+
+| Text token/value | Panel `#161618` | Base `#1c1c1e` |
+|---|---:|---:|
+| Previous `text_muted = #636366` | 3.018:1 | 2.842:1 |
+| Previous `text_label = #7c7c80` | 4.347:1 | 4.093:1 |
+| New readable secondary `#98989f` | 6.305:1 | 5.937:1 |
+
+Tertiary-label alpha (about 25%) belongs to disabled/placeholder content, not
+readable secondary strings. The current Theme has no dedicated disabled or
+placeholder token: gpui-kit controls inherit `muted_foreground` from
+`text_muted`, so their disabled text also becomes somewhat brighter.
+The existing disabled opacity contract is unchanged; no new disabled contrast
+requirement or component patch is added. This is an explicit minimal-cutover
+decision, not preservation of the old disabled painted RGB.
+
+Apple Light is unchanged: `text_sub = text_label = #606060`,
+`text_muted = #666666`, panel `#f7f7f7` and base `#ffffff`.
+The unit regression computes WCAG sRGB contrast for both Apple presets,
+requires all three readable secondary tokens to reach 4.5:1 on panel/base,
+and pins Light's existing values. Existing native `hairline`,
+`settings_quiet`, `settings_radio_dot`, `sidebar_panes` and
+`commit_panel_viewport` scenarios remain unchanged.
+Real-window comparison remains Tier B: Apple Dark Commit Panel open
+(Unstaged/Staged headers and counts), Inspector (labels and metadata), and
+PR list (captions and timestamps), retaining readable/disabled hierarchy.
+
+Review correction: readable text is not a control-boundary role. Apple Dark
+defines the separate neutral `INPUT_BORDER = #67676a`, with source-sRGB
+contrast 3.205:1 on panel and 3.018:1 on base, quieter than secondary labels.
+The proposed `#4a4a4d` would reach only 2.046:1 / 1.927:1, so it is not used.
+The kit bridge maps Dark `colors.input` and the Commit Panel composer frame
+to this neutral; `colors.border` derives from it at 85% alpha, preserving
+quieter generic table/track borders without imposing the identifying-control
+3:1 rule on decorative lines. Apple Light mappings remain unchanged.
+
+Where `text_muted == text_sub`, the resting scrollbar thumb uses muted text
+at 65% alpha while hover/drag keeps opaque secondary text, and the active line
+number uses `text_main` instead of the identical secondary token. Unequal-role
+themes keep their existing mappings. Unit coverage pins both Apple input
+boundaries and checks equal-role hover/active distinction across every preset.
+

@@ -289,7 +289,7 @@ fn render_cp_file_row(
                 .bg(rgb(theme().color_blocker)) // red
                 .text_xs()
                 .text_color(rgb(theme().bg_base))
-                .child(SharedString::from("Conflict")),
+                .child(SharedString::from(Msg::CommitPanelConflict.t())),
         );
     }
     // #476 slice 3: offered on a linked worktree's panel too — Discard resolves
@@ -305,9 +305,9 @@ fn render_cp_file_row(
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
     let (label, role) = if staged {
-        ("Unstage", ButtonRole::Warning)
+        (Msg::EditorTreeUnstage.t(), ButtonRole::Warning)
     } else {
-        ("Stage", ButtonRole::Success)
+        (Msg::EditorTreeStage.t(), ButtonRole::Success)
     };
     let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
         if staged {
@@ -319,6 +319,7 @@ fn render_cp_file_row(
     file_row.child(
         KagiButton::styled((btn_id, fi), label, role, cx)
             .xsmall()
+            .min_h(px(20.))
             .ml_2()
             .flex_shrink_0()
             .relative()
@@ -1074,6 +1075,8 @@ impl CommitPanelView {
         let seg = |id: &'static str, label: &'static str, active: bool| {
             div()
                 .id(id)
+                .min_h(px(20.))
+                .flex_shrink_0()
                 .relative()
                 .child(super::e2e::measure_inside(id))
                 .px_1p5()
@@ -1090,7 +1093,8 @@ impl CommitPanelView {
                     theme().text_muted
                 }))
                 .hover(|st| st.text_color(rgb(theme().text_main)).cursor_pointer())
-                .child(SharedString::from(label))
+                .aria_label(super::e2e::commit_panel_labels::name(id, label))
+                .child(super::e2e::commit_panel_labels::caption(id, label))
         };
         let toggle_btn = div()
             .flex()
@@ -1100,8 +1104,8 @@ impl CommitPanelView {
             .overflow_hidden()
             .border_1()
             .border_color(rgb(theme().surface))
-            .child(seg("cp-view-list", "List", !tree_view).on_click(list_click))
-            .child(seg("cp-view-tree", "Tree", tree_view).on_click(tree_click));
+            .child(seg("cp-view-list", Msg::CommitPanelList.t(), !tree_view).on_click(list_click))
+            .child(seg("cp-view-tree", Msg::CommitPanelTree.t(), tree_view).on_click(tree_click));
 
         // ── Helper: build file rows for a section ────────────────
         // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
@@ -1114,18 +1118,23 @@ impl CommitPanelView {
         let unstaged_header = div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .px_2()
             .py_1()
             .flex_shrink_0()
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
+                    .flex_grow(1.)
+                    .flex_shrink_0()
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-unstaged-heading"))
                     .text_sm()
                     .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(format!("Unstaged ({})", unstaged_count))),
+                    .child(super::e2e::commit_panel_labels::caption(
+                        "cp-unstaged-heading",
+                        i18n::commit_panel_section(false, unstaged_count),
+                    )),
             )
             // #476: live on a worktree panel too — it stages into the worktree.
             .when(unstaged_count > 0, |el| {
@@ -1137,6 +1146,9 @@ impl CommitPanelView {
                 el.child(
                     div()
                         .id("cp-stage-all")
+                        .relative()
+                        .min_h(px(20.))
+                        .flex_shrink_0()
                         .mr_2()
                         .px_1p5()
                         .py_px()
@@ -1146,7 +1158,15 @@ impl CommitPanelView {
                         .text_color(rgb(theme().color_success))
                         .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(stage_all_click)
-                        .child(SharedString::from("Stage all")),
+                        .aria_label(super::e2e::commit_panel_labels::name(
+                            "cp-stage-all",
+                            Msg::CommitPanelStageAll.t(),
+                        ))
+                        .child(super::e2e::measure_inside("cp-stage-all"))
+                        .child(super::e2e::commit_panel_labels::caption(
+                            "cp-stage-all",
+                            Msg::CommitPanelStageAll.t(),
+                        )),
                 )
             })
             // W17-DISCARD: "Discard all" — disabled (muted, no handler) at 0 targets.
@@ -1159,13 +1179,22 @@ impl CommitPanelView {
                 let enabled = discard_eligible_count > 0;
                 let mut btn = div()
                     .id("cp-discard-all")
+                    .min_h(px(20.))
+                    .flex_shrink_0()
                     .mr_2()
                     .px_1p5()
                     .py_px()
                     .rounded_sm()
                     .bg(rgb(theme().surface))
                     .text_xs()
-                    .child(SharedString::from("Discard all"));
+                    .aria_label(super::e2e::commit_panel_labels::name(
+                        "cp-discard-all",
+                        Msg::CommitPanelDiscardAll.t(),
+                    ))
+                    .child(super::e2e::commit_panel_labels::caption(
+                        "cp-discard-all",
+                        Msg::CommitPanelDiscardAll.t(),
+                    ));
                 if enabled {
                     btn = btn
                         .text_color(rgb(theme().color_blocker))
@@ -1198,18 +1227,23 @@ impl CommitPanelView {
         let staged_header = div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .px_2()
             .py_1()
             .flex_shrink_0()
             .child(
                 div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .truncate()
+                    .flex_grow(1.)
+                    .flex_shrink_0()
+                    .relative()
+                    .child(super::e2e::measure_inside("cp-staged-heading"))
                     .text_sm()
                     .text_color(rgb(theme().text_label))
-                    .child(SharedString::from(format!("Staged ({})", staged_count))),
+                    .child(super::e2e::commit_panel_labels::caption(
+                        "cp-staged-heading",
+                        i18n::commit_panel_section(true, staged_count),
+                    )),
             )
             // #476: live on a worktree panel too — see "Stage all" above.
             .when(staged_count > 0, |el| {
@@ -1221,6 +1255,9 @@ impl CommitPanelView {
                 el.child(
                     div()
                         .id("cp-unstage-all")
+                        .relative()
+                        .min_h(px(20.))
+                        .flex_shrink_0()
                         .px_1p5()
                         .py_px()
                         .rounded_sm()
@@ -1229,7 +1266,15 @@ impl CommitPanelView {
                         .text_color(rgb(theme().color_warning))
                         .hover(|st| st.bg(rgb(theme().selected)).cursor_pointer())
                         .on_click(unstage_all_click)
-                        .child(SharedString::from("Unstage all")),
+                        .aria_label(super::e2e::commit_panel_labels::name(
+                            "cp-unstage-all",
+                            Msg::CommitPanelUnstageAll.t(),
+                        ))
+                        .child(super::e2e::measure_inside("cp-unstage-all"))
+                        .child(super::e2e::commit_panel_labels::caption(
+                            "cp-unstage-all",
+                            Msg::CommitPanelUnstageAll.t(),
+                        )),
                 )
             });
 
@@ -1552,7 +1597,10 @@ impl CommitPanelView {
                     .bg(rgb(theme().surface))
                     .text_sm()
                     .text_color(rgb(theme().text_main))
-                    .child(SharedString::from("Commit Panel"))
+                    .child(super::e2e::commit_panel_labels::caption(
+                        "cp-title",
+                        Msg::CommitPanelTitle.t(),
+                    ))
                     .when_some(foreign.clone(), |el, (label, color_idx)| {
                         let color = theme().lane_color(color_idx);
                         el.child(

@@ -28,6 +28,24 @@ fn copy_all_equivalent_command_heading_is_localized() {
 }
 
 #[test]
+fn commit_panel_chrome_has_japanese_without_english_fallbacks() {
+    for (message, japanese) in [
+        (Msg::CommitPanelTitle, "Commit パネル"),
+        (Msg::CommitPanelUnstaged, "未 stage"),
+        (Msg::CommitPanelStaged, "stage 済み"),
+        (Msg::CommitPanelList, "一覧"),
+        (Msg::CommitPanelTree, "ツリー"),
+        (Msg::CommitPanelStageAll, "すべて Stage"),
+        (Msg::CommitPanelUnstageAll, "すべて Unstage"),
+        (Msg::CommitPanelDiscardAll, "すべて破棄"),
+        (Msg::CommitPanelConflict, "競合"),
+    ] {
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+        assert_ne!(message.t_for(Lang::En), japanese);
+    }
+}
+
+#[test]
 fn toolbar_unavailable_reasons_are_japanese_prose() {
     for message in [
         Msg::PullBusy,

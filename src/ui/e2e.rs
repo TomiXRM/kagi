@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
+pub mod palette;
 
 #[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;

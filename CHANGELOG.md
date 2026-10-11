@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
+- macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)
 - Branch context menus keep at most ten top-level command/submenu rows, with frequent actions first and less common commands in Integrate, Advanced and Worktree submenus. All prior commands and safety guards remain; disabled rows stay keyboard-focusable but inert, with EN/JA reasons in tooltips and accessibility descriptions instead of inline paragraphs. Right/Enter opens a submenu; Left/Escape closes one level. (#1238)
   - Review: pointer cascades wait 200 ms and cancel pending parent changes when entering a child; closing or replacing a keyboard-focused child restores launcher focus. Protected Reset and dirty/conflicted Checkout warnings remain visible, and ADR-0050's no-op label rule is explicitly amended.
 - Commit Panel List/Tree is now one named keyboard tab group: arrows and Home/End move the selection, and Enter/Space activate without losing the selected file, draft or scroll state. Pointer selection preserves the window's diff-file arrow navigation. (#1229)

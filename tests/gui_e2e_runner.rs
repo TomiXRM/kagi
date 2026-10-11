@@ -261,6 +261,9 @@ mod remote_browse_focus;
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
 #[cfg(target_os = "macos")]
+#[path = "recovery/palette_polish.rs"]
+mod palette_polish;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
@@ -2005,6 +2008,14 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_palette_viewport),
             ),
             (
+                "palette_highlight",
+                Box::new(crate::palette_polish::scenario_palette_highlight),
+            ),
+            (
+                "palette_shortcut_glyphs",
+                Box::new(crate::palette_polish::scenario_palette_shortcut_glyphs),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),
@@ -3141,6 +3152,13 @@ mod macos {
 
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
+        // Effective bindings are cached at startup, exactly as in the product.
+        let _palette_bindings = selected(
+            "palette_shortcut_glyphs",
+            filters.as_deref(),
+            exact.as_deref(),
+        )
+        .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

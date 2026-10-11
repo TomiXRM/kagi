@@ -1486,12 +1486,17 @@ pub fn register_keybindings(cx: &mut App) {
     ]);
 }
 
-/// Human-readable rendering of a registry keystroke string for the in-app
-/// (Linux/FreeBSD) menu dropdown. The stored notation uses gpui's `secondary`
-/// token (Cmd on macOS, Ctrl elsewhere); expand it and the other modifiers into
-/// a `Ctrl+Shift+O`-style label so the menu shows what the user must actually
-/// press. (The macOS native menu derives its accelerator from the keymap, so it
-/// does not go through here.)
+/// Platform rendering of an effective registry keystroke. macOS shares
+/// gpui-kit's native glyph ordering and named keys; in-app menus on other
+/// platforms retain their text notation. Native menus derive it from the keymap.
+#[cfg(target_os = "macos")]
+pub fn display_keystroke(ks: &str) -> String {
+    let stroke =
+        gpui::Keystroke::parse(ks).expect("effective keybinding must use GPUI keystroke notation");
+    gpui_component::kbd::Kbd::format(&stroke)
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn display_keystroke(ks: &str) -> String {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
@@ -2814,6 +2819,29 @@ mod tests {
 #[cfg(test)]
 mod keybinding_tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn display_keystrokes_share_native_glyph_order_and_named_keys() {
+        assert_eq!(display_keystroke("secondary-shift-o"), "⇧⌘O");
+        assert_eq!(display_keystroke("ctrl-alt-shift-secondary-k"), "⌃⌥⇧⌘K");
+        for key in ["enter", "escape", "backspace", "delete", "space", "up", "-"] {
+            let binding = format!("secondary-{key}");
+            let stroke = gpui::Keystroke::parse(&binding).unwrap();
+            assert_eq!(
+                display_keystroke(&binding),
+                gpui_component::kbd::Kbd::format(&stroke)
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn display_keystrokes_retain_text_notation() {
+        assert_eq!(display_keystroke("secondary-shift-o"), "Ctrl+Shift+O");
+        assert_eq!(display_keystroke("ctrl-alt-shift-k"), "Ctrl+Alt+Shift+K");
+        assert_eq!(display_keystroke("secondary--"), "Ctrl+-");
+    }
 
     /// Every default keystroke in the registry must be unique — two commands
     /// on one key would make the later binding silently win.

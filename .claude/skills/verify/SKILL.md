@@ -139,6 +139,19 @@ exercise avatar/custom-theme/Analyze help builders in both languages.
 to an invoked Tooltip builder; each hover clears old observations first.
 This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
 
+For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
+`palette_highlight` scenario compares native row-fill pixels with the one AX
+selected result, moves the pointer to a different real row, scrolls beneath the
+resting pointer (including same-coordinate move replay), and presses Enter;
+unavailable rows stay inert. `palette_shortcut_glyphs` reads renderer-fed
+captions and measures non-overlapping, right-aligned trailing-column bounds
+at 940×660 / 1392×883, 100% / 167%, EN / JA, Apple Light / Dark.
+The runner installs this scenario's saved remaps/unassignment **before**
+`init_app`, because `effective_keystroke` caches settings during production
+startup; changing settings after keymap registration would not test remapping.
+The guard restores those isolated startup keys after the run. Native pointer
+delivery, IME and VoiceOver remain Tier B, not claims from TestDispatcher.
+
 ```bash
 # One scenario: the substring the scenario name contains.
 KAGI_LOG_DIR="$(mktemp -d)" KAGI_GUI_E2E=1 KAGI_GUI_E2E_ONLY='bottom_panel' \

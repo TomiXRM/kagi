@@ -50,3 +50,34 @@ file tree / hunks を全高に保ち、`EditorWorkspaceElement` が親 `KagiApp`
 panel element を uncached な Editor entity の layout 中に渡す。Editor から
 `KagiApp` への再入はせず、子 entity の更新でも親から新しい panel を描画する。
 Editor entity を `.cached(...)` に変更するとこの受け渡しが失われるため行わない。
+
+## Activity accessibility amendment (2026-10-12, #1301 / #1302)
+
+The Activity period control uses the existing shared automatic TabList: five
+named EN/JA choices (Day / Week / Month / Year / All), one Tab stop,
+Left/Right/Home/End selection and Enter/Space activation. Selected window-aware
+fill wins over hover; hidden Activity controls hand focus back to the root.
+
+The chart retains its commit/merge aggregate and immediate hover readout.
+Each bucket has a focusable Status with UTC date/time and localized commit,
+merge and distinct-author counts. Authors are counted by raw email once per
+bucket in the pure domain aggregate, never from render or extra Git reads.
+One roving Tab stop and arrow/Home/End inspection expose the same readout.
+Solid commit and dashed merge strokes are painted by the same function in the
+chart and legend. Merge gaps first knock out the underlying solid/baseline
+with panel-coloured strokes wider than the commit line; the Activity body
+explicitly paints that same panel fill. Equal/zero segments retain a
+luminance-visible pattern, not alternating series colours or gap rectangles.
+Single buckets retain a solid commit mark and a separate two-dash merge mark
+3 reference px below it, using the same dash/gap cadence as the legend.
+Header wrapping and a 40%-capped ranking preserve the chart at narrow/high-zoom
+layouts. No chart manager, new aggregation owner, write operation or Audio
+Graph API is added.
+
+Native renderer regressions record installed roles/focus handles, compare
+actual selected-fill pixels and coincident dash-gap pixels (the latter against
+nearby unpainted pixels), and exercise 0/1/24-bucket values. Stroke probes count
+commands in successfully painted solid/dash/gap
+paths and record the single-point branch, not the requested encoding. Native
+VoiceOver reading and real Tab traversal remain Tier B checks; renderer
+attributes alone do not establish those platform observations.

@@ -92,12 +92,16 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             Some(!collapsed),
         ),
         SidebarRow::RemoteSubGroup {
+            remote,
             prefix,
             count,
             collapsed,
             ..
         } => (
-            fill(Msg::A11ySidebarGroup, &[prefix, &count.to_string()]),
+            fill(
+                Msg::A11ySidebarGroup,
+                &[&format!("{remote}/{prefix}"), &count.to_string()],
+            ),
             Some(!collapsed),
         ),
         SidebarRow::LocalBranchLeaf { name, is_head, .. } => (
@@ -128,7 +132,10 @@ pub fn tree_item(row: &SidebarRow) -> TreeItemSpec {
             }
             (s, None)
         }
-        SidebarRow::Stash { message, .. } => (fill(Msg::A11yStashRow, &[message]), None),
+        SidebarRow::Stash { index, message, .. } => (
+            fill(Msg::A11ySidebarStash, &[&index.to_string(), message]),
+            None,
+        ),
     };
     TreeItemSpec {
         label,
@@ -210,6 +217,7 @@ mod tests {
             },
             SidebarRow::RemoteSubGroup {
                 key: "remote:x:y".into(),
+                remote: "x".into(),
                 prefix: evil.into(),
                 count: 1,
                 collapsed: false,

@@ -452,6 +452,12 @@ impl RowList {
         self.stop == Some(at)
     }
 
+    /// The remembered row containing focus, including its inline controls.
+    pub(crate) fn focused_stop(&self, window: &Window, cx: &App) -> Option<usize> {
+        self.stop
+            .filter(|&at| self.handles[at].contains_focused(window, cx))
+    }
+
     /// The list's container.
     pub(crate) fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
         el.key_context(ROW_CONTEXT)

@@ -24,7 +24,7 @@ pub(crate) struct ChangesNavigation {
 /// replace the reconciled list or its remembered Tab stop.
 pub(crate) struct ChangesRows {
     rows: Option<Rc<RowList>>,
-    focused: Option<gpui::FocusHandle>,
+    focused_row: Option<usize>,
 }
 
 impl ChangesNavigation {
@@ -94,7 +94,10 @@ impl ChangesNavigation {
         self.drawn = range.clone();
         ChangesRows {
             rows: self.rows.as_ref().map(|rows| Rc::new(rows.as_drawn(range))),
-            focused: window.focused(cx),
+            focused_row: self
+                .rows
+                .as_ref()
+                .and_then(|rows| rows.focused_stop(window, cx)),
         }
     }
 
@@ -231,11 +234,7 @@ pub(crate) fn file_row(
         .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
             rows_click.focus_row(at, window, cx)
         });
-    if drawn
-        .focused
-        .as_ref()
-        .is_some_and(|focused| rows.is_handle(at, focused))
-    {
+    if drawn.focused_row == Some(at) {
         el = el.child(nav.anchor.probe());
     }
     #[cfg(feature = "gui-e2e")]

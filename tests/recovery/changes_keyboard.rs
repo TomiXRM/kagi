@@ -144,7 +144,7 @@ fn file_section_keys(
     press(cx, window, "shift-tab");
     assert_focus(cx, window, &first);
     if count > 5 {
-        remembered_row_tab(cx, window, side, count);
+        remembered_row_tab(cx, app, window, side, count);
         press(cx, window, "home");
         assert_focus(cx, window, &first);
     }
@@ -171,6 +171,7 @@ fn file_section_keys(
 
 fn remembered_row_tab(
     cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
     window: AnyWindowHandle,
     side: &str,
     count: usize,
@@ -201,6 +202,9 @@ fn remembered_row_tab(
         section_holds_focus(cx, window, side, count),
         "remembered row's Stage/Unstage action remains keyboard reachable"
     );
+    if side == "us" {
+        inline_action_menu_anchor(cx, app, window, &remembered);
+    }
     press(cx, window, "tab");
     assert!(
         !section_holds_focus(cx, window, side, count),
@@ -213,6 +217,46 @@ fn remembered_row_tab(
             .unwrap(),
         "Shift+Tab returns to remembered row 5 after forward exit"
     );
+}
+
+fn inline_action_menu_anchor(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    row: &str,
+) {
+    let (width, height) = cx
+        .update_window(window, |_, window, _| {
+            let viewport = window.viewport_size();
+            (f32::from(viewport.width), f32::from(viewport.height))
+        })
+        .unwrap();
+    // Clear the high-zoom pane's responsive width clamp so its left edge moves.
+    for (resized_width, opener) in [(width + 320., "shift-f10"), (width, "menu")] {
+        let old = bounds(window, row);
+        crate::pr_detail_adaptive::resize(cx, window, (resized_width, height));
+        draw(cx, window, (resized_width, height));
+        paint(cx, window);
+        let current = bounds(window, row);
+        assert_ne!(
+            current.origin.x, old.origin.x,
+            "resize moves the row while its Stage button owns focus"
+        );
+        press(cx, window, opener);
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let menu = app.file_menu.as_ref().unwrap();
+            assert_eq!(menu.path, Path::new("changes-005.txt"));
+            assert_eq!(
+                menu.anchor,
+                current.bottom_left(),
+                "context menu uses current row bounds with descendant focus"
+            );
+        });
+        press(cx, window, "escape");
+        assert_focus(cx, window, row);
+        press(cx, window, "tab");
+    }
 }
 
 fn section_holds_focus(

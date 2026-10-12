@@ -394,6 +394,9 @@ mod recovery_modal_compact;
 mod recovery_plan_card_994;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_keyboard.rs"]
+mod recovery_oplog_keyboard;
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
@@ -3170,6 +3173,26 @@ mod macos {
                 Box::new(scenario_commit_panel_survives_reload),
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            (
+                "oplog_keyboard_single",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_single),
+            ),
+            (
+                "oplog_keyboard_many",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_many),
+            ),
+            (
+                "oplog_keyboard_refresh_tail",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_tail),
+            ),
+            (
+                "oplog_keyboard_refresh_top",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_top),
+            ),
+            (
+                "oplog_keyboard_copy_focus",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_copy_focus),
+            ),
             (
                 "oplog_detail_select_copy",
                 Box::new(crate::recovery_oplog_select::scenario_oplog_detail_select_copy),

@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph columns compress before commit subjects at narrow/high-zoom widths: subjects retain a 120-reference-pixel minimum, authors shrink with middle ellipsis and full-name tooltips, and compact times remain visible inside the row. Header, commit, WIP and stash columns share fitted widths without overwriting saved divider preferences; wide-window positions stay unchanged. (#1317)
+  - Review: expanding an already capped divider no longer replaces its larger saved preference with a compressed width. Below the combined column/metadata minima, the subject floor is limited by remaining room instead of displacing author/time; native coverage includes compressed drags and a 1440px-wide window with a 360px Inspector at 167% zoom.
 - Sidebar filtering is a real localized Input from the first frame, reachable by Tab or Cmd+F without a preliminary click. Escape clears the filter and returns focus to the local list; the clear affordance and existing window-owned state remain intact. (#1309)
   - Review: retain one TextInput role on the actual input with a named Group ancestor, rather than a second unfocused TextInput; language changes update the retained field's placeholder before drawing. Direct input naming needs a gpui-kit API not exposed by the pinned revision.
 - Busy status-bar feedback keeps its unchanged spinner beside a single-line truncated label, centered within the fixed-height footer instead of stacking vertically. Branch and feedback minimum-width fitting remain unchanged in EN/JA at 100%/167% zoom. (#1321)

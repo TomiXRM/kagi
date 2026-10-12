@@ -2,11 +2,11 @@
 
 use super::*;
 
-pub(super) fn subject(row: &CommitRow, ix: usize) -> impl IntoElement {
+pub(super) fn subject(row: &CommitRow, ix: usize, min_width: f32) -> impl IntoElement {
     div()
         .id(("graph-subject", ix))
         .flex_1()
-        .min_w(px(0.))
+        .min_w(theme::scaled_px(min_width))
         .text_color(rgb(theme().text_main))
         .truncate()
         .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
@@ -64,12 +64,17 @@ pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
     // Preserve the full, sanitized author in the tooltip and AX row label.
     div()
         .id(("graph-author", ix))
-        .w(theme::scaled_px(96.))
-        .flex_shrink_0()
+        .w(theme::scaled_px(
+            super::super::graph_columns::AUTHOR_PREFERRED,
+        ))
+        .min_w(theme::scaled_px(super::super::graph_columns::AUTHOR_MIN))
+        .flex_shrink(1.)
         .pl(theme::scaled_px(8.))
         .text_xs()
         .text_color(rgb(theme().text_sub))
-        .truncate()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_middle()
         .tooltip({
             let author = row.author.clone();
             move |window, cx| {
@@ -85,7 +90,7 @@ pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
 
 pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
     div()
-        .w(theme::scaled_px(48.))
+        .w(theme::scaled_px(super::super::graph_columns::TIME_WIDTH))
         .flex_shrink_0()
         .flex()
         .items_center()

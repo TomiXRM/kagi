@@ -72,7 +72,7 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub rows: Arc<Vec<DiffRow>>,
     pub scroll: ListState,
     pub item_index: F,
-    pub split: bool,
+    pub projection: Option<Arc<super::super::diff_split::cache::SplitProjection>>,
 }
 
 impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
@@ -104,7 +104,7 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                         .border_color(gpui::rgb(super::super::theme::theme().ui_accent())),
                 )
             })
-            .key_context(if self.split {
+            .key_context(if self.projection.is_some() {
                 "KagiDiffSelection KagiSplitDiffSelection"
             } else {
                 CONTEXT
@@ -118,18 +118,9 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                     cx.propagate();
                     return;
                 }
-                let cursor = if self.split {
-                    let projection = super::super::diff_split::split_projection(&self.rows);
+                let cursor = if let Some(projection) = &self.projection {
                     let distance = if action.page {
-                        let top = self.scroll.logical_scroll_top().item_ix;
-                        let height = self
-                            .scroll
-                            .bounds_for_item(top)
-                            .map_or(super::super::theme::scaled_px(22.), |b| b.size.height);
-                        (f32::from(self.scroll.viewport_bounds().size.height)
-                            / f32::from(height).max(1.))
-                        .floor()
-                        .max(1.) as usize
+                        page_distance(&self.scroll, &projection.rows, &self.item_index)
                     } else {
                         1
                     };
@@ -153,4 +144,38 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                 }
             })
     }
+}
+
+/// Count actual fully visible aligned rows; expansion items consume height,
+/// but must never become keyboard caret stops.
+fn page_distance(
+    scroll: &ListState,
+    rows: &[super::super::diff_split::SplitDiffRow],
+    item_index: &impl Fn(usize) -> usize,
+) -> usize {
+    use super::super::diff_split::SplitDiffRow;
+    let top = scroll.logical_scroll_top().item_ix;
+    let bottom = scroll.viewport_bounds().bottom();
+    let mut visible = 0usize;
+    for row in rows {
+        let source = match row {
+            SplitDiffRow::Full(index) => *index,
+            SplitDiffRow::Pair { left, right } => match left.or(*right) {
+                Some(index) => index,
+                None => continue,
+            },
+        };
+        let item = item_index(source);
+        if item < top {
+            continue;
+        }
+        let Some(bounds) = scroll.bounds_for_item(item) else {
+            break;
+        };
+        if bounds.bottom() > bottom {
+            break;
+        }
+        visible += 1;
+    }
+    visible.saturating_sub(1).max(1)
 }

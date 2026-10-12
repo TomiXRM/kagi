@@ -72,11 +72,16 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
 ## Amendment — 2026-10-13: visual keyboard order (#1373)
 
 Split-body arrows, Home/End and viewport-sized PageUp/PageDown navigate the
-cached aligned visual rows. The caret retains its left/right side where that
-cell exists, falling back to the non-filler cell. Headers remain full-width
-caret targets. Selection still stores unified source indices: Shift retains
+cached aligned visual rows captured by the rendered pane. The caret retains
+its left/right affinity; opposite-side filler fallback that would reverse
+source-index movement is skipped, preserving a monotonic Shift range.
+Headers remain full-width caret targets. Selection still stores unified
+source indices: Shift retains
 the original anchor, and code-only clipboard extraction keeps ADR-0016's
 inclusive source-range semantics. Cmd+A still selects all source rows.
 Unified presentation and its existing bindings remain unchanged. The shared
 body and existing ListState own focus and reveal across all diff embeddings.
-Tier A `split_diff_keyboard_order` covers an unequal five-to-three replacement.
+Tier A `split_diff_keyboard_order` covers an unequal five-to-three replacement,
+right-affinity Shift extension and a wrapped-row page. Page distance counts
+fully visible Row items using their measured bounds; expansion items consume
+viewport space without becoming caret targets.

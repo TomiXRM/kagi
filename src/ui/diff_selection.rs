@@ -172,7 +172,7 @@ fn move_split_rows(
         matches!(split[at], SplitDiffRow::Pair { left, right }
             if right == Some(cursor) && left != Some(cursor))
     });
-    let visual = if action.boundary || action.all {
+    let mut visual = if action.boundary || action.all {
         if action.step > 0 {
             last
         } else {
@@ -186,15 +186,32 @@ fn move_split_rows(
     let target = if action.all {
         source_last
     } else {
-        match split[visual] {
-            SplitDiffRow::Full(index) => index,
-            SplitDiffRow::Pair { left, right: rhs } => {
-                if right {
-                    rhs.or(left)?
-                } else {
-                    left.or(rhs)?
+        loop {
+            let target = match split[visual] {
+                SplitDiffRow::Full(index) => index,
+                SplitDiffRow::Pair { left, right: rhs } => {
+                    if right {
+                        rhs.or(left)?
+                    } else {
+                        left.or(rhs)?
+                    }
                 }
+            };
+            if action.boundary
+                || (action.step > 0 && target >= cursor)
+                || (action.step < 0 && target <= cursor)
+            {
+                break target;
             }
+            let next = if action.step > 0 {
+                visual.saturating_add(1).min(last)
+            } else {
+                visual.saturating_sub(1)
+            };
+            if next == visual {
+                break cursor;
+            }
+            visual = next;
         }
     };
     let anchor = if action.all {

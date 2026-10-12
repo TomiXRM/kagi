@@ -574,7 +574,7 @@ pub(super) fn render_composer(
                 )),
         )
     } else {
-        super::timeline_row::body_input(&input).into_any_element()
+        super::timeline_row::body_input(&input, Msg::A11yCommentBody.t()).into_any_element()
     };
     // #906: the PR's host identity posts the comment, not github.com's.
     let viewer = app.host_login(base_repo).unwrap_or("?");

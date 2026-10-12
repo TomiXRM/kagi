@@ -1,4 +1,4 @@
-//! Initial Graph filter keyboard entry (#1309).
+//! Initial Graph filter keyboard entry and focused Input naming (#1309, #1331).
 use gpui::{Focusable, VisualTestAppContext};
 use kagi::ui::sidebar::SidebarRow;
 
@@ -28,19 +28,12 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
         }
     }
     assert!(reached, "Tab reaches the initial sidebar filter");
-    let (focused_input, ancestor_role, input_role, label) =
-        kagi::ui::sidebar::filter_semantics_for_e2e().expect("rendered filter semantics");
+    paint(cx, window);
     assert_eq!(
-        focused_input, input_id,
-        "semantics belong to the focused Input"
+        cx.read(|cx| input.read(cx).rendered_aria_label()),
+        Some(kagi::ui::i18n::Msg::A11ySidebarFilter.t().into()),
+        "the focused TextInput itself has a name, not merely its Group ancestor"
     );
-    assert_eq!(input_role, gpui::Role::TextInput);
-    assert_eq!(
-        ancestor_role,
-        gpui::Role::Group,
-        "only the actual Input is a TextInput"
-    );
-    assert_eq!(label, kagi::ui::i18n::Msg::HomeGithubFilter.t());
     keys(cx, window, "f i l t e r - t a r g e t");
     paint(cx, window);
     cx.read(|cx| {
@@ -109,13 +102,22 @@ fn assert_live_language(
     for language in [Lang::Ja, Lang::En, Lang::Ja, Lang::En] {
         app.update(cx, |app, cx| app.set_lang(language, cx));
         paint(cx, window);
-        let (id, group, role, label) =
-            kagi::ui::sidebar::filter_semantics_for_e2e().expect("rendered filter semantics");
-        assert_eq!(
-            (id, group, role),
-            (input_id, gpui::Role::Group, gpui::Role::TextInput)
-        );
-        assert_eq!(label, Msg::HomeGithubFilter.t());
+        let input = cx
+            .read(|cx| app.read(cx).sidebar.filter.clone())
+            .expect("the same sidebar Input survives language changes");
+        assert_eq!(input.entity_id(), input_id);
+        cx.update_window(window, |_, window, cx| {
+            assert!(
+                input.read(cx).focus_handle(cx).is_focused(window),
+                "language changes preserve focus on the named TextInput"
+            );
+            assert_eq!(
+                input.read(cx).rendered_aria_label(),
+                Some(Msg::A11ySidebarFilter.t().into()),
+                "the focused Input's own name follows EN/JA on every render"
+            );
+        })
+        .unwrap();
         assert_eq!(
             kagi::ui::sidebar::filter_placeholder_for_e2e(),
             Some(Msg::HomeGithubFilter.t()),

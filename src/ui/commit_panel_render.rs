@@ -413,7 +413,12 @@ impl CommitPanelView {
                 .flex_shrink(1.)
                 .overflow_hidden()
                 .gap_2()
-                .child(Input::new(title).appearance(true).bordered(true))
+                .child(
+                    Input::new(title)
+                        .aria_label(Msg::A11yCommitSummary.t())
+                        .appearance(true)
+                        .bordered(true),
+                )
                 .child(
                     div()
                         .flex()
@@ -450,7 +455,13 @@ impl CommitPanelView {
                                 .min_h(px(0.))
                                 .flex_shrink(1.)
                                 .overflow_hidden()
-                                .child(Input::new(body).h_full().appearance(false).bordered(false)),
+                                .child(
+                                    Input::new(body)
+                                        .aria_label(Msg::A11yCommitDescription.t())
+                                        .h_full()
+                                        .appearance(false)
+                                        .bordered(false),
+                                ),
                         )
                         .relative()
                         .child(super::e2e::measure_inside("cp-body"))

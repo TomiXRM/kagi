@@ -68,9 +68,8 @@ pub(crate) fn render_stash_push_modal(
         cx.notify();
     });
 
-    // A message is optional. The placeholder describes the input; the group
-    // label stays available to assistive technology without a second visual
-    // label pushing the state preview away from the title.
+    // A message is optional. Name the focused input without adding a second
+    // visual label that would push the state preview away from the title.
     let card = modal_card(MODAL_W_MD)
         .bg(rgb(current_theme().bg_base))
         .border_color(rgb(current_theme().surface))
@@ -91,10 +90,9 @@ pub(crate) fn render_stash_push_modal(
         .child(
             div()
                 .id("stash-push-message")
-                .role(gpui::Role::Group)
-                .aria_label(Msg::InputStashMessage.t())
                 .children(modal.input_state.as_ref().map(|state| {
                     gpui_component::input::Input::new(state)
+                        .aria_label(Msg::A11yStashMessage.t())
                         .h(theme::scaled_px(32.))
                         .rounded(theme::scaled_px(8.))
                         .bg(rgb(current_theme().panel))

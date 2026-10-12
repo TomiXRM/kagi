@@ -53,18 +53,20 @@ fn wide_fixture() -> tempfile::TempDir {
     dir
 }
 
-/// Draw one real frame and return the bounds of `id` in it.
+/// Settle native list measurements and return the drawn bounds of `id`.
 fn draw(
     cx: &mut VisualTestAppContext,
     win: AnyWindowHandle,
     id: &str,
 ) -> gpui::Bounds<gpui::Pixels> {
     e2e::clear_control_bounds(win.window_id(), id);
-    cx.update_window(win, |_, window, cx| {
-        window.refresh();
-        window.draw(cx).clear();
-    })
-    .expect("draw window");
+    for _ in 0..3 {
+        cx.update_window(win, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .expect("draw window");
+    }
     e2e::control_bounds(win.window_id(), id).unwrap_or_else(|| panic!("{id} was not drawn"))
 }
 
@@ -123,10 +125,14 @@ pub fn scenario_inspector_derived(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
 
     // >100 files: the tail row renders, and the generated fold holds Cargo.lock.
-    draw(cx, win, "inspector-files-more");
+    // Only viewport rows are mounted: reveal the tail through the real list.
+    let list = draw(cx, win, "inspector-files-scroll");
+    wheel(cx, win, list.center(), -100_000.);
     draw(cx, win, "generated-fold-header");
     assert_stable(cx, win, "inspector-files-more", "tree view");
 
+    let list = draw(cx, win, "inspector-files-scroll");
+    wheel(cx, win, list.center(), 100_000.);
     // Display options choose among derived rows; they re-derive nothing.
     let before = derivations();
     app.update(cx, |app, cx| {
@@ -134,12 +140,14 @@ pub fn scenario_inspector_derived(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     // The fold header sits below 100 rows: scroll the real file list to it.
-    let list = draw(cx, win, "inspector-file-5");
+    let list = draw(cx, win, "inspector-files-scroll");
     wheel(cx, win, list.center(), -100_000.);
     let header = draw(cx, win, "generated-fold-header");
     cx.simulate_click(win, header.center(), Modifiers::none());
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).inspector_generated_expanded));
+    let list = draw(cx, win, "inspector-files-scroll");
+    wheel(cx, win, list.center(), -100_000.);
     draw(cx, win, "inspector-file-0");
     assert_eq!(
         derivations(),
@@ -294,7 +302,7 @@ pub fn scenario_inspector_generated_lockfile_plain(cx: &mut VisualTestAppContext
     })
     .expect("draw window");
     cx.run_until_parked();
-    draw(cx, win, "inspector-files-more");
+    draw(cx, win, "inspector-files-scroll");
 
     let (paths, flags) = cx.read(|cx| {
         let ui = app.read(cx).ui();
@@ -324,6 +332,8 @@ pub fn scenario_inspector_generated_lockfile_plain(cx: &mut VisualTestAppContext
     );
 
     // Tree view: the fold header is drawn and the lockfile is not a plain row.
+    let list = draw(cx, win, "inspector-files-scroll");
+    wheel(cx, win, list.center(), -100_000.);
     draw(cx, win, "generated-fold-header");
     draw(cx, win, "inspector-files-more");
     // Path view: same.
@@ -331,7 +341,7 @@ pub fn scenario_inspector_generated_lockfile_plain(cx: &mut VisualTestAppContext
         app.inspector_tree_view = false;
         cx.notify();
     });
-    let list = draw(cx, win, "inspector-file-5");
+    let list = draw(cx, win, "inspector-files-scroll");
     wheel(cx, win, list.center(), -100_000.);
     draw(cx, win, "generated-fold-header");
 

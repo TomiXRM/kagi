@@ -831,13 +831,23 @@ impl KagiApp {
         let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
             self.panel_motion.inspector_row.and_then(|row| {
                 self.ui_mut()?.sync_inspector_commit_files(row);
-                workspace::render_inspector_body(self, Some(row), None, cx)
+                workspace::render_inspector_body(self, Some(row), None, window, cx)
             })
         } else {
             right_pane
                 .and_then(workspace::right_item)
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
+        if !matches!(
+            right_pane,
+            Some(workspace::RightPane::Inspector | workspace::RightPane::Compare)
+        ) || right_element.is_none()
+        {
+            self.ui()
+                .inspector_model
+                .keyboard
+                .yield_focus(self.root_focus.as_ref(), window, cx);
+        }
         if let Some(el) = right_element {
             let pane = div()
                 .flex()

@@ -48,3 +48,18 @@ series also has a 23.536750 ms Before outlier. These are forced warm-render
 timings, not real-app FPS, an idle-machine guarantee, or a cold-message
 preparation benchmark.
 
+
+## Amendment — 2026-10-13: changed-file keyboard entry (#1375)
+
+The session retains stable full-path row focus for Inspector changed files,
+independent of whether the main diff is visible. One roving stop uses shared
+RowFocus/RowList arrows/Home/End and destination reveal; Enter/Space reuse the
+existing exact-file diff opener, preserving graph selection and Git state.
+Directory headings remain structural. Generated disclosure shares this owner,
+exposes expanded/collapsed state, toggles with Enter/Space and expands with Right.
+Named selected file rows include localized change status and sanitized full path,
+never only a potentially ambiguous basename. Focus-visible uses the shared ring.
+The retained native list virtualizes viewport rows. A scaled height estimate
+gives unmeasured rows a scroll extent; actual measurements replace it, and
+zoom changes remeasure while preserving the scroll anchor. The existing
+100-file display cap and generated grouping remain unchanged.

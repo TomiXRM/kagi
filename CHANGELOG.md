@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
+- File History remembers its focused entry when visiting header actions. Shift+Tab from Back and Tab from Follow Renames reveal and return to that row; list arrows/Home/End update the existing entry and diff without a pointer. (#1376)
 - Escape dismisses actionable operation notices instead of immediately re-presenting them on every render, and restores focus to the opener. Dismissal discards any armed release approval but keeps the reconcile requirement, write restrictions and durable Operation Log detail; a new explicit write refusal can offer Inspect again. Unread queued notices and notices displaced by another dialog remain available. (#1366)
   - Review: queued Checkout/Commit/Merge requests restore the blocking Inspect notice when their session is already waiting for reconciliation, without duplicating an active or queued notice for the same requirement or recreating it during queue ticks.
 - Empty-query command palettes separate Actions, Appearance and Language with localized headings and named accessibility groups. Headings are not keyboard or activation targets; fuzzy-search ranking, disabled reasons, single-row highlighting and the native shortcut column are unchanged. (#1370)

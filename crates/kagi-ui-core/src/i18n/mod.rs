@@ -650,6 +650,8 @@ pub enum Msg {
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
     MenuShowFileHistory,
+    A11yInspectorFiles,
+    A11yFileHistory,
     /// Context menus: open the file in the user's external editor.
     OpenInExternalEditor,
     DiffStageHunk,
@@ -2975,6 +2977,10 @@ impl Msg {
             (En, MenuOpenInEditor) => "Open in Editor",
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
+            (En, A11yInspectorFiles) => "Changed files",
+            (Ja, A11yInspectorFiles) => "変更されたファイル",
+            (En, A11yFileHistory) => "File History",
+            (Ja, A11yFileHistory) => "ファイルの履歴",
             (En, OpenInExternalEditor) => "Open in External Editor",
             (En, DiffStageHunk) => "Stage hunk",
             (En, DiffUnstageHunk) => "Unstage hunk",

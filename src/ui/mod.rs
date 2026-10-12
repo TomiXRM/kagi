@@ -103,6 +103,7 @@ mod home_recent;
 pub mod home_work;
 mod home_work_list;
 pub mod inspector;
+mod inspector_files;
 mod inspector_metadata;
 mod inspector_model;
 pub(crate) mod keyboard_nav;

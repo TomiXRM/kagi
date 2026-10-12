@@ -429,6 +429,9 @@ mod recovery_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/file_history_open.rs"]
 mod file_history_open;
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_history_keyboard.rs"]
+mod inspector_history_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
@@ -2840,6 +2843,14 @@ mod macos {
             (
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
+            ),
+            (
+                "inspector_files_keyboard",
+                Box::new(crate::inspector_history_keyboard::inspector),
+            ),
+            (
+                "file_history_focus_return",
+                Box::new(crate::inspector_history_keyboard::history),
             ),
             (
                 "header_fit",

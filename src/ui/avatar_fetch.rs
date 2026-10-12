@@ -249,7 +249,7 @@ fn write_disk_cache(url: &str, bytes: &[u8]) {
 ///
 /// Returns `None` for unrecognised / corrupt data so callers fall back to the
 /// initial circle instead of handing gpui bytes it cannot decode.
-fn detect_format(bytes: &[u8]) -> Option<ImageFormat> {
+pub(crate) fn detect_format(bytes: &[u8]) -> Option<ImageFormat> {
     if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
         Some(ImageFormat::Png)
     } else if bytes.len() >= 3 && bytes[..3] == [0xff, 0xd8, 0xff] {

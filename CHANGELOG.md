@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- File History's Open File opens the selected entry's exact path in the Editor workspace and closes History only after the worktree file is available. Binary or missing paths show the existing EN/JA Editor reason and keep History open; followed pre-rename paths never silently fall back to the current name. Existing Editor tabs and dirty buffers are retained, and Back remains dismiss-only. (#1308)
+  - Review: supported raster images pass the same allocation-free magic-byte recognition used by the Editor, rather than being refused as generic binary files. Missing pre-rename paths explain the rename and name the current path in EN/JA without opening it automatically.
 - Clone confirmation cards use the shared viewport-capped modal frame with one scrolling body and a pinned Cancel/Clone/Hide footer, keeping long plans reachable at high zoom. (#1296)
 - Clone shows the resolved destination, with middle truncation, full-path tooltip/accessibility text, localized Change and Copy Location actions, and the same destination in its plan summary. The system picker and approved clone request remain unchanged. (#1297)
   - Review: the scrolling body reserves a fixed 3px focus-band inset, so Change and Copy Location retain all four edges of the pinned Button's outside ring at both zoom levels. Native pixel coverage compares focused/unfocused edges in EN/JA and Apple Light/Dark.

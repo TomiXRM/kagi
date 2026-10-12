@@ -366,6 +366,10 @@ mod pr_suggestion_apply;
 mod recovery_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/file_history_open.rs"]
+mod file_history_open;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
 mod editor_snapshot_readonly;
 
@@ -2636,6 +2640,10 @@ mod macos {
                     crate::recovery_layout::scenario_file_history_virtualized(cx, fixture.path());
                     assert_eq!(before, repo_fingerprint(fixture.path()));
                 }),
+            ),
+            (
+                "file_history_open_file",
+                Box::new(crate::file_history_open::scenario),
             ),
             (
                 "header_fit",

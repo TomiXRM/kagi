@@ -1505,6 +1505,8 @@ pub enum Msg {
     /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
     /// finding #6).
     EditorWorkspaceUndecodable,
+    /// File History unavailable pre-rename path; `{path}` is its current name.
+    FileHistoryPathRenamed,
 
     // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──────
     /// Banner shown above a dirty buffer when the FS watcher sees the file
@@ -3912,6 +3914,8 @@ impl Msg {
             (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
             (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
             (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
+            (En, FileHistoryPathRenamed) => "File was renamed; open {path} instead.",
+            (Ja, FileHistoryPathRenamed) => "ファイル名が変更されています。{path} を開いてください。",
 
             // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──
             (En, EditorWorkspaceExternalChanged) => "File changed on disk.",
@@ -4395,6 +4399,11 @@ pub fn commit_button() -> &'static str {
         Lang::En => "Commit",
         Lang::Ja => "commit",
     }
+}
+
+/// A missing pre-rename history path, with the current filename left verbatim.
+pub fn file_history_renamed_fmt(path: &str) -> String {
+    Msg::FileHistoryPathRenamed.t().replace("{path}", path)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

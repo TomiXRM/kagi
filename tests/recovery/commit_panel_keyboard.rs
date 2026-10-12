@@ -23,6 +23,10 @@ pub use changes_keyboard::{
     scenario_changes_rows_keyboard,
 };
 
+#[path = "smart_footer_provider.rs"]
+mod smart_footer_provider;
+pub use smart_footer_provider::scenario_smart_commit_footer_provider;
+
 const TEMPLATE: &str = "# Keyboard regression template\n";
 
 #[derive(Clone, Copy)]

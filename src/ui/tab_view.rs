@@ -370,6 +370,7 @@ pub struct TabUiState {
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
     pub smart_commit_generating: bool,
+    pub smart_commit_generation: Option<super::smart_commit::SmartGeneration>,
     pub smart_commit_status: Option<String>,
     /// Identifies the published model, independently of read-request revisions.
     pub view_publish_gen: u64,
@@ -531,6 +532,7 @@ impl Default for TabUiState {
             inspector_message_scroll: gpui::ScrollHandle::new(),
             activity_ranking_scroll: gpui::ScrollHandle::new(),
             smart_commit_generating: false,
+            smart_commit_generation: None,
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),
             branch_cleanup_open: false,

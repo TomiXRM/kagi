@@ -4210,7 +4210,7 @@ impl Msg {
             (En, SmartGeneratingLocal) => "Generating with local LLM…",
             (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
             (En, SmartGeneratingProvider) => "Generating with {}…",
-            (Ja, SmartGeneratingProvider) => "{}で生成中…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
             (En, SmartGeneratedLocal) => "Generated with local LLM",
             (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
             (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
@@ -4632,6 +4632,27 @@ pub fn smart_model_switch_note(model: &str) -> String {
     match lang() {
         Lang::En => format!("{} — start Ollama to switch", model),
         Lang::Ja => format!("{}。切り替えるには Ollama を起動してください", model),
+    }
+}
+
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
     }
 }
 

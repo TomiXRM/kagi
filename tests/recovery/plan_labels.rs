@@ -229,6 +229,7 @@ pub fn scenario_plan_footer_long_branch(cx: &mut VisualTestAppContext) {
             let branch = "b".repeat(length);
             for (replay, armed) in [(false, false), (true, false), (true, true)] {
                 for blocked in [false, true] {
+                    e2e::clear_control_bounds(window.window_id(), "plan-confirm-caption");
                     app.update(cx, |app, cx| {
                         app.set_rebase_current_onto_modal(modal(
                             fixture.path(),
@@ -248,17 +249,27 @@ pub fn scenario_plan_footer_long_branch(cx: &mut VisualTestAppContext) {
                         assert!(bounds.left() >= footer.left() - px(1.) && bounds.right() <= footer.right() + px(1.), "{length}/{replay}/{armed}/{blocked}: action outside footer: {bounds:?} footer {footer:?}");
                     }
                     assert!(cancel.right() <= confirm.left(), "actions overlap");
-                    let caption =
-                        e2e::control_bounds(window.window_id(), "plan-confirm-caption").unwrap();
-                    assert!(caption.size.width <= theme::scaled_px(160.) + px(1.));
                     let action = button_style::recorded_modal_button("plan-confirm").unwrap();
                     assert_eq!(action.role, Role::Button);
                     assert_eq!(action.disabled, blocked);
-                    let detail = action.description.unwrap();
-                    assert!(
-                        detail.contains(&branch) && detail.contains("main"),
-                        "full source/destination AX identity"
-                    );
+                    if armed {
+                        assert_eq!(action.label, i18n::Msg::PlanReplayOntoArmed.t());
+                        assert!(
+                            e2e::control_bounds(window.window_id(), "plan-confirm-caption")
+                                .is_none(),
+                            "the complete armed warning must use the unellipsized button"
+                        );
+                    } else {
+                        let caption =
+                            e2e::control_bounds(window.window_id(), "plan-confirm-caption")
+                                .unwrap();
+                        assert!(caption.size.width <= theme::scaled_px(160.) + px(1.));
+                        let detail = action.description.unwrap();
+                        assert!(
+                            detail.contains(&branch) && detail.contains("main"),
+                            "full source/destination AX identity"
+                        );
+                    }
                     if replay && !blocked {
                         let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
                         cx.update_window(window, |_, window, cx| window.focus(&root, cx))

@@ -990,7 +990,9 @@ fn render_plan_modal_card_styled(
         .blockers
         .first()
         .map(|blocker| SharedString::from(plan_note_text(blocker)));
-    let button = if matches!(plan.title, kagi_domain::plan_note::PlanTitle::Rebase(_)) {
+    let button = if matches!(plan.title, kagi_domain::plan_note::PlanTitle::Rebase(_))
+        && stage != ConfirmStage::Armed
+    {
         let detail = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
             &format!("{confirm_label}\n{title_text}"),
         ));

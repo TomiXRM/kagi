@@ -48,3 +48,5 @@ plan title remain available in the action tooltip/accessibility description.
 This relaxes the original requirement to repeat both full names in every
 visible action, not the requirement to disclose operation direction.
 Replay retains its warning caption and existing two-stage approval gate.
+The armed warning has no branch name and uses the ordinary, unellipsized
+button so its complete safety wording remains visible in both languages.

@@ -29,6 +29,8 @@ pub mod compare_pane;
 pub mod conflict_abort;
 pub mod conflict_binary_view;
 pub mod conflict_editor;
+pub mod conflict_editor_a11y;
+mod conflict_editor_keys;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
@@ -81,6 +83,7 @@ pub mod pr_mode;
 pub mod pr_nav;
 pub mod pr_page;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
+mod graph_columns;
 mod graph_solo;
 pub mod graph_squash;
 pub mod graph_view;
@@ -140,6 +143,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod settings_controls;
 mod settings_theme_folder;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
@@ -211,6 +215,7 @@ actions!(
     kagi,
     [
         ToggleBottomPanel,
+        FocusSidebarFilter,
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
@@ -1095,6 +1100,8 @@ pub struct KagiApp {
     /// Unlike the sidebar width, these follow the actual clipped pane position.
     badge_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     graph_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    /// Fitted widths and viewport budget for the currently rendered Graph.
+    graph_column_fit: graph_columns::Fit,
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
@@ -1164,6 +1171,7 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    pub(crate) settings_controls: settings_controls::SettingsControls,
     /// Settings' single scroll owner survives control updates and redraws.
     pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
@@ -1487,6 +1495,7 @@ impl KagiApp {
                 .unwrap_or(GRAPH_COL_DEFAULT),
             badge_col_origin_x: Default::default(),
             graph_col_origin_x: Default::default(),
+            graph_column_fit: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),
@@ -1510,6 +1519,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_controls: Default::default(),
             settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
@@ -1722,7 +1732,12 @@ impl KagiApp {
 
     /// Apply a horizontal wheel delta to the graph column scroll offset.
     /// Vertical deltas are ignored (the commit list owns vertical scroll).
-    fn scroll_graph_by(&mut self, delta: &gpui::ScrollDelta, cx: &mut Context<Self>) {
+    fn scroll_graph_by(
+        &mut self,
+        delta: &gpui::ScrollDelta,
+        graph_col_w: f32,
+        cx: &mut Context<Self>,
+    ) {
         let dx = match delta {
             gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
             // W28: one "line" step = one zoom-scaled lane pitch.
@@ -1734,7 +1749,7 @@ impl KagiApp {
         let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
-        let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
+        let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.0);
         let current = self.ui().graph_scroll_x;
         let next = (current - dx).clamp(0.0, max);
         if (next - current).abs() > 0.1 {
@@ -3243,23 +3258,6 @@ impl KagiApp {
             self.commit_list_index(index),
             row_height(self.graph_compact),
         )
-    }
-
-    /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
-    ///
-    /// Called from the on_click handler on the filter placeholder area.
-    /// No-op if already created.
-    pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar.filter.is_none() {
-            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
-            self.sidebar.filter = Some(input_entity);
-        }
-        // Focus the input after creation (or if already exists).
-        if let Some(ref ent) = self.sidebar.filter {
-            ent.update(cx, |state, cx| {
-                state.focus(window, cx);
-            });
-        }
     }
 }
 

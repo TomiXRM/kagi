@@ -50,3 +50,14 @@ tooltip and AX carry the sanitized full destination, and the plan summary
 names that same destination. EN/JA Change opens the existing parent picker;
 Copy Location is keyboard-reachable and copies the original destination without
 starting clone. While running, Change remains disabled and Copy stays read-only.
+
+## Amendment (2026-10-12): running clone status (#1341)
+
+The existing elapsed-time label exposes `Role::Status` and an EN/JA name
+containing the clone operation and elapsed seconds. Visible mm:ss is retained;
+Reduce Motion does not hide the operation state. Its stable element identity
+makes every-second elapsed changes queryable without an explicit announcement
+request. Completion/error still uses the existing toast path and receipt.
+GPUI's pinned accessibility API has no live-region setter, so native start/
+terminal speech is not claimed. Hide dismisses the card without stopping or
+releasing its running owner, and no determinate percentage is fabricated.

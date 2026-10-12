@@ -101,15 +101,7 @@ impl KagiApp {
     /// toast entity) exists.
     pub(super) fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
-        let mut stack = div()
-            .absolute()
-            .bottom(theme::scaled_px(34.))
-            .left(theme::scaled_px(super::TOAST_INSET_PX))
-            .w(theme::scaled_px(460.))
-            .max_w(gpui::relative(0.9))
-            .flex()
-            .flex_col()
-            .gap_2();
+        let mut stack = toast_container();
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup. A slow
@@ -257,4 +249,17 @@ mod tests {
             assert_eq!(writer, None);
         }
     }
+}
+
+/// Shared out-of-flow toast placement for repository and Settings windows.
+pub(super) fn toast_container() -> gpui::Div {
+    div()
+        .absolute()
+        .bottom(theme::scaled_px(34.))
+        .left(theme::scaled_px(super::TOAST_INSET_PX))
+        .w(theme::scaled_px(460.))
+        .max_w(gpui::relative(0.9))
+        .flex()
+        .flex_col()
+        .gap_2()
 }

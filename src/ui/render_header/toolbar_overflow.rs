@@ -743,8 +743,6 @@ mod tests {
 
 #[cfg(test)]
 mod spacing_tests {
-    use super::*;
-
     #[test]
     fn toolbar_overflow_spacing_requires_visible_neighbours() {
         let scale = 1.;

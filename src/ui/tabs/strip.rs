@@ -273,7 +273,7 @@ fn close_button(
 ) -> Button {
     // A visible child, not Button.label: the kit's label would overwrite the
     // independent name with × during RenderOnce.
-    super::super::button_style::named_button_described(
+    super::super::button_style::named_button_with_description(
         Button::new(id)
             .child("×")
             .ghost()
@@ -282,7 +282,7 @@ fn close_button(
             .min_h(px(20.))
             .ml(theme::scaled_px(4.))
             .tab_stop(false),
-        name,
+        name.into(),
         None,
         path,
     )

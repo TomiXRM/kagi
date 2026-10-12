@@ -71,6 +71,8 @@ const ROW_CONTEXT: &str = "KagiRowList";
 /// runs, and every list forgets its arrowed-to cell.
 pub(crate) fn bind_keys(cx: &mut App) {
     super::diff_selection::keyboard::bind_keys(cx);
+    super::sidebar_focus::bind_keys(cx);
+    super::conflict_editor_keys::bind_keys(cx);
     kagi_ui_core::keyboard_nav::bind_keys(cx);
     cx.bind_keys([
         KeyBinding::new("up", TabListPrev, Some("KagiCommitPanelView")),
@@ -423,9 +425,7 @@ impl RowFocus {
         true
     }
 
-    /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
-    /// without walking the whole window).
-    #[cfg(feature = "gui-e2e")]
+    /// Restore focus to the row `key`, including after an owned popup closes.
     pub(crate) fn focus(&self, key: &str, window: &mut Window, cx: &mut App) {
         if let Some(at) = self.keys.iter().position(|(k, _)| k == key) {
             self.handles[at].focus(window, cx);
@@ -478,6 +478,11 @@ impl RowList {
         }
     }
 
+    /// Reveal a control inside a virtualized row without changing its focus.
+    pub(crate) fn reveal_entry(&self, entry: usize) {
+        self.scroll.reveal(entry);
+    }
+
     /// This list as a `uniform_list` draws it this frame, `visible` being
     /// the items its processor was asked for: those are on screen now, so the
     /// stop moves to the first of them when the one picked from last frame's
@@ -506,6 +511,11 @@ impl RowList {
             .clone()
             .tab_index(0)
             .tab_stop(self.stop == Some(at));
+        self.navigation(at, with_ring(el.track_focus(&handle)))
+    }
+
+    /// Arrow navigation shared by a row's independently focused controls.
+    pub(crate) fn navigation(&self, at: usize, el: Stateful<Div>) -> Stateful<Div> {
         let move_to = |to: usize| {
             let (rows, handles, scroll) =
                 (self.rows.clone(), self.handles.clone(), self.scroll.clone());
@@ -522,8 +532,7 @@ impl RowList {
         let end = move_to(last);
         let page_up = move_to(at.saturating_sub(page));
         let page_down = move_to(at.saturating_add(page));
-        with_ring(el.track_focus(&handle))
-            .on_key_down(stop_activation_keys)
+        el.on_key_down(stop_activation_keys)
             .on_action(move |_: &RowListPrev, window, cx| prev(window, cx))
             .on_action(move |_: &RowListNext, window, cx| next(window, cx))
             .on_action(move |_: &RowListFirst, window, cx| first(window, cx))

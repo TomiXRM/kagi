@@ -6,6 +6,23 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn palette_descriptions_use_localized_sentence_boundaries() {
+    assert_eq!(
+        command_palette_description(Lang::En, "Actions", Some("Unavailable")),
+        "Actions. Unavailable"
+    );
+    assert_eq!(
+        command_palette_description(Lang::Ja, "操作", Some("実行できません")),
+        "操作。実行できません"
+    );
+    assert_eq!(
+        command_palette_description(Lang::En, "Appearance", None),
+        "Appearance"
+    );
+    assert_eq!(command_palette_description(Lang::Ja, "外観", None), "外観");
+}
+
+#[test]
 fn editor_find_controls_have_semantic_names_in_both_languages() {
     for (message, english, japanese) in [
         (Msg::EditorFindPrevious, "Previous match", "前の一致"),

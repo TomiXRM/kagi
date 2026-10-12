@@ -58,10 +58,11 @@ impl PaletteRow {
     }
 
     fn description(&self) -> String {
-        match &self.disabled_reason {
-            Some(reason) => format!("{}. {reason}", self.section().label()),
-            None => self.section().label().to_string(),
-        }
+        i18n::command_palette_description(
+            i18n::lang(),
+            self.section().label(),
+            self.disabled_reason.as_deref(),
+        )
     }
 }
 
@@ -526,6 +527,11 @@ impl KagiApp {
                     palette_section(section, start..end).children((start..end).map(|i| {
                         self.render_palette_row(i, rows.len(), &rows[i], i == selected, cx)
                     }));
+                let group = group.into_any_element();
+                let group = match &self.command_palette_scroll {
+                    Some(scroll) => scroll.measure_group(start, group),
+                    None => group,
+                };
                 list = list.child(group);
                 start = end;
             }

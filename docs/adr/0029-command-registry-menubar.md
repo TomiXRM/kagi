@@ -132,6 +132,13 @@ prepaint applies the container offset. Wheel scroll/passive redraw remain indepe
 changes and boundary arrows still reveal the current real row. Shortcut captions
 and the shrink-free trailing column retain #1271/#1272's owners.
 
+Review correction: for a requested section-first row, capture its Group layout
+ID as well as the selectable leaf. Upward reveal aligns the group top so the
+heading is not clipped; requesting index zero restores offset zero, including
+after clearing a query. Other destinations still reveal only their actual row.
+Description joining belongs to UI-core i18n: EN `{section}. {reason}` and
+JA `{section}。{reason}`, keeping the unavailable reason verbatim.
+
 States: static headings have rest only; hover, pressed, focus, selected and
 disabled are not applicable. Existing rows retain selected/disabled/empty/many
 results behavior, with no new loading or error state. Geometry and spacing use

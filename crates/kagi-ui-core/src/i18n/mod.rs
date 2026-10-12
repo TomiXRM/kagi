@@ -4390,6 +4390,15 @@ pub fn issue_comments(count: usize) -> String {
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Palette section and unavailable reason share language-appropriate punctuation.
+pub fn command_palette_description(language: Lang, section: &str, reason: Option<&str>) -> String {
+    match (language, reason) {
+        (Lang::En, Some(reason)) => format!("{section}. {reason}"),
+        (Lang::Ja, Some(reason)) => format!("{section}。{reason}"),
+        (_, None) => section.to_string(),
+    }
+}
+
 /// Help-overlay sections for the Analyze view: `(heading, body)` in the active
 /// language. Kept here so EN/JA stay side by side (ADR-0119).
 pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {

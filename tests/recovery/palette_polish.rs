@@ -337,6 +337,7 @@ pub fn scenario_palette_sections(cx: &mut VisualTestAppContext) {
         let ids: std::collections::HashSet<_> = rows.iter().map(|row| &row.id).collect();
         assert_eq!(ids.len(), rows.len(), "each action appears exactly once");
         assert_section_model(&rows, locale);
+        assert_heading_reveal(cx, &app, window);
         for index in 0..rows.len() {
             assert_selection(&app, cx, &rows, index);
             if index + 1 < rows.len() {
@@ -381,6 +382,60 @@ pub fn scenario_palette_sections(cx: &mut VisualTestAppContext) {
     }
     assert_eq!(repo_fingerprint(fixture.path()), before);
     eprintln!("[gui-e2e] PASS palette_sections");
+}
+
+fn assert_heading_reveal(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let sections = e2e::palette::recorded_sections();
+    for id in ["actions", "appearance", "language"] {
+        let first = sections[id].rows.start;
+        keys(
+            cx,
+            window,
+            &std::iter::repeat_n("down", first + 1)
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        let scroll = cx.read(|cx| e2e::command_palette_scroll(app.read(cx)).unwrap());
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: scroll.bounds().center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-100_000.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        keys(cx, window, "up");
+        assert_eq!(cx.read(|cx| app.read(cx).command_palette_selected), first);
+        assert_heading_visible(window, &scroll, id);
+        if first == 0 {
+            query(cx, app, window, "theme");
+            query(cx, app, window, "");
+            assert_heading_visible(window, &scroll, id);
+        }
+        keys(cx, window, "escape cmd-p");
+    }
+}
+
+fn assert_heading_visible(
+    window: AnyWindowHandle,
+    scroll: &kagi::ui::command_palette::PaletteScroll,
+    id: &str,
+) {
+    let heading =
+        e2e::control_bounds(window.window_id(), &format!("palette-heading-{id}")).unwrap();
+    assert!(
+        heading.top() >= scroll.bounds().top() - px(1.),
+        "{id} heading clipped above viewport"
+    );
+    assert!(
+        heading.bottom() <= scroll.bounds().bottom() + px(1.),
+        "{id} heading clipped below viewport"
+    );
 }
 
 fn assert_section_model(rows: &[PaletteRow], locale: &str) {

@@ -16,6 +16,7 @@ pub struct PaletteScroll {
 struct RowScrollState {
     requested: Option<usize>,
     destination: Option<LayoutId>,
+    section_top: Option<LayoutId>,
     #[cfg(feature = "gui-e2e")]
     layouts: Vec<Option<LayoutId>>,
     #[cfg(feature = "gui-e2e")]
@@ -58,6 +59,20 @@ impl PaletteScroll {
             row,
             index,
             scroll: self.clone(),
+            group: false,
+        }
+        .into_any_element()
+    }
+
+    pub(super) fn measure_group(&self, first: usize, group: AnyElement) -> AnyElement {
+        if self.state.borrow().requested != Some(first) {
+            return group;
+        }
+        PaletteRowLayout {
+            row: group,
+            index: first,
+            scroll: self.clone(),
+            group: true,
         }
         .into_any_element()
     }
@@ -65,6 +80,7 @@ impl PaletteScroll {
     pub(super) fn wrap(&self, list: AnyElement, count: usize) -> AnyElement {
         let mut state = self.state.borrow_mut();
         state.destination = None;
+        state.section_top = None;
         #[cfg(feature = "gui-e2e")]
         {
             state.layouts.resize(count, None);
@@ -89,17 +105,23 @@ impl PaletteScroll {
                 state.rows[index] = window.layout_bounds(layout);
             }
         }
-        if state.requested.take().is_none() {
+        let Some(index) = state.requested.take() else {
             return;
-        }
+        };
         let Some(layout) = state.destination.take() else {
             return;
         };
+        let section_top = state.section_top.take();
         drop(state);
         let row = window.layout_bounds(layout);
         let mut offset = self.offset();
-        if row.size.height > viewport.size.height || row.top() + offset.y < viewport.top() {
-            offset.y = viewport.top() - row.top();
+        let top = section_top
+            .map(|layout| window.layout_bounds(layout).top())
+            .unwrap_or(row.top());
+        if index == 0 {
+            offset.y = gpui::px(0.);
+        } else if row.size.height > viewport.size.height || top + offset.y < viewport.top() {
+            offset.y = viewport.top() - top;
         } else if row.bottom() + offset.y > viewport.bottom() {
             offset.y = viewport.bottom() - row.bottom();
         }
@@ -112,6 +134,7 @@ struct PaletteRowLayout {
     row: AnyElement,
     index: usize,
     scroll: PaletteScroll,
+    group: bool,
 }
 
 impl IntoElement for PaletteRowLayout {
@@ -139,10 +162,14 @@ impl Element for PaletteRowLayout {
         let layout = self.row.request_layout(window, cx);
         let mut state = self.scroll.state.borrow_mut();
         if state.requested == Some(self.index) {
-            state.destination = Some(layout);
+            if self.group {
+                state.section_top = Some(layout);
+            } else {
+                state.destination = Some(layout);
+            }
         }
         #[cfg(feature = "gui-e2e")]
-        {
+        if !self.group {
             state.layouts[self.index] = Some(layout);
         }
         (layout, ())

@@ -2708,6 +2708,18 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
             ),
             (
+                "changes_rows_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
+            ),
+            (
+                "changes_discard_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_discard_keyboard),
+            ),
+            (
+                "changes_file_menu_viewport",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_file_menu_viewport),
+            ),
+            (
                 "commit_panel_segment_keys",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_segment_keys),
             ),

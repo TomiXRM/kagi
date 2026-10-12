@@ -443,6 +443,10 @@ pub(crate) struct RowList {
 }
 
 impl RowList {
+    pub(crate) fn focus_handle(&self, at: usize) -> &FocusHandle {
+        &self.handles[at]
+    }
+
     /// The list's container.
     pub(crate) fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
         el.key_context(ROW_CONTEXT)

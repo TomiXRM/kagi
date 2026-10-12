@@ -68,3 +68,14 @@ backup が 1 ファイルでも失敗したら **discard 自体を中止**(blob 
 - ODB に discard backup blob が溜まるが、サイズは捨てた WT 内容ぶんのみで、ユーザーデータ保全の
   対価として妥当。将来「oplog から restore」UI の土台になる
 - untracked 削除は引き続き不可能(git clean 非実装の規約を保つ)
+
+## Amendment — 2026-10-12: keyboard file menu (#1333–#1335)
+
+The single-file menu is reachable from its Unstaged row using Shift+F10 or
+the Menu key as well as right-click. Stable path/section focus, roving row
+navigation and the shared MenuKeys preserve the frozen session owner and
+repository-relative path. Escape returns to the launching row; choosing
+Discard still only plans the operation. The destructive confirmation retains
+root Return = Cancel and explicit danger-button approval. All three compact
+menu rows fit the actual viewport at the current zoom. Backend semantics,
+mandatory backups, preflight, verification and oplog ownership are unchanged.

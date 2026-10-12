@@ -150,8 +150,40 @@ impl CommitPanelView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (staged, index) = match file_ref {
+            CommitPanelFileRef::Staged { index } => (true, index),
+            CommitPanelFileRef::Unstaged { index } => (false, index),
+        };
+        let files = if staged {
+            &self.state.staged
+        } else {
+            &self.state.unstaged
+        };
+        let Some(path) = files.get(index).map(|file| file.path.clone()) else {
+            return;
+        };
+        let source_repo = self.repo_path.clone();
         self.defer_owned(window, cx, move |app, owner, _w, cx| {
-            app.select_commit_panel_file(owner, file_ref, cx)
+            let index = app.ui().commit_panel.as_ref().and_then(|panel| {
+                let panel = panel.read(cx);
+                if panel.owner != owner || panel.repo_path != source_repo {
+                    return None;
+                }
+                let files = if staged {
+                    &panel.state.staged
+                } else {
+                    &panel.state.unstaged
+                };
+                files.iter().position(|file| file.path == path)
+            });
+            if let Some(index) = index {
+                let file_ref = if staged {
+                    CommitPanelFileRef::Staged { index }
+                } else {
+                    CommitPanelFileRef::Unstaged { index }
+                };
+                app.select_commit_panel_file(owner, file_ref, cx);
+            }
         });
     }
 
@@ -235,6 +267,22 @@ impl Render for CommitPanelView {
         self.reconcile_coauthor_menu(window, cx);
         controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
+        self.unstaged_navigation.reconcile(
+            &self.state,
+            false,
+            self.unstaged_scroll_handle.clone(),
+            self.pointer_root_focus.as_ref(),
+            window,
+            cx,
+        );
+        self.staged_navigation.reconcile(
+            &self.state,
+            true,
+            self.staged_scroll_handle.clone(),
+            self.pointer_root_focus.as_ref(),
+            window,
+            cx,
+        );
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, window, cx)
     }
@@ -485,8 +533,8 @@ impl CommitPanelView {
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    // Keep both section headers while sharing space with editing.
-                    .min_h(theme::scaled_px(80.))
+                    // Intrinsic section headers plus one complete keyboard row
+                    // per list set the minimum; the composer gives up space first.
                     .flex()
                     .flex_col()
                     .relative()
@@ -497,8 +545,17 @@ impl CommitPanelView {
                     .child(
                         div()
                             .id("cp-unstaged-scroll")
+                            .relative()
+                            .when_some(self.unstaged_navigation.rows.as_ref(), |el, rows| {
+                                rows.list(el)
+                            })
+                            .when(!tree_view, |el| {
+                                el.role(gpui::Role::ListBox)
+                                    .aria_label(Msg::A11yUnstagedTree.t())
+                            })
+                            .child(super::e2e::measure_inside("cp-us-viewport"))
                             .flex_1()
-                            .min_h(px(0.))
+                            .min_h(theme::scaled_px(26.) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()
@@ -519,6 +576,7 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
+                                                view.unstaged_navigation.drawn(&range);
                                                 let layout = view.state.tree_view.then_some(
                                                     view.unstaged_tree_layout.as_slice(),
                                                 );
@@ -564,8 +622,17 @@ impl CommitPanelView {
                     .child(
                         div()
                             .id("cp-staged-scroll")
+                            .relative()
+                            .when_some(self.staged_navigation.rows.as_ref(), |el, rows| {
+                                rows.list(el)
+                            })
+                            .when(!tree_view, |el| {
+                                el.role(gpui::Role::ListBox)
+                                    .aria_label(Msg::A11yStagedTree.t())
+                            })
+                            .child(super::e2e::measure_inside("cp-st-viewport"))
                             .flex_1()
-                            .min_h(px(0.))
+                            .min_h(theme::scaled_px(26.) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()
@@ -586,6 +653,7 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
+                                                view.staged_navigation.drawn(&range);
                                                 let layout = view
                                                     .state
                                                     .tree_view

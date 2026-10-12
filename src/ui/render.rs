@@ -457,6 +457,7 @@ impl Render for KagiApp {
         // #985: a menu that just opened takes the focus; one that closed
         // gives it back. The selected row records where it is drawn anew.
         self.sync_menu_keys(window, cx);
+        self.sync_file_menu_keys(window, cx);
         self.context_anchor.clear();
         let commit_menu_overlay = self
             .commit_menu

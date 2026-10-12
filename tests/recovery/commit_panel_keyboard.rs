@@ -12,10 +12,16 @@ use kagi_ui_core::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "changes_keyboard.rs"]
+mod changes_keyboard;
 #[path = "commit_panel_coauthor_tab.rs"]
 mod commit_panel_coauthor_tab;
 #[path = "commit_panel_keyboard_focus.rs"]
 mod focus_regressions;
+pub use changes_keyboard::{
+    scenario_changes_discard_keyboard, scenario_changes_file_menu_viewport,
+    scenario_changes_rows_keyboard,
+};
 
 const TEMPLATE: &str = "# Keyboard regression template\n";
 

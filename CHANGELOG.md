@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Changes file rows use stable path-and-section keyboard focus, one roving stop per section, arrows/Home/End and Enter/Space diff selection. Shift+F10/Menu opens the same file-action menu as right-click; keyboard menu navigation preserves the frozen owner/path and Discard's plan/confirmation with root Return cancelling. All three menu items fit inside the viewport, including at 167% zoom. (#1333–#1335)
+  - Both section scrollers reserve one complete row before the composer shrinks; high-zoom keyboard focus no longer lands in a shorter-than-row viewport. Tree metadata and flat accessibility names share the localized status/full-path label.
 - Main windows publish the active repository and branch as their native title, returning to `Kagi` on Home. View menus offer localized Show/Hide Sidebar and Enter/Exit Full Screen labels; Window adds previous/next repository-tab navigation and Bring All to Front. About uses the single named dialog slot with a Close button, trapped focus and selectable version/copyright text. (#1312–#1315)
   - Review: match macOS's normalized brace-key tab shortcuts, preserve native window stacking and the invoking frontmost window when bringing main windows forward, and retain menu ownership while the application is inactive.
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)

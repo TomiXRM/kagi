@@ -714,7 +714,12 @@ impl KagiApp {
                 LayerKind::FileMenu => el
                     // ── Unstaged file context menu (right-click → Discard) ──
                     .when_some(file_menu.take(), |el, menu| {
-                        el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+                        el.child(render_file_menu_overlay(
+                            menu,
+                            self.file_menu_keys.clone(),
+                            window,
+                            cx,
+                        ))
                     }),
                 LayerKind::CommitPlan => el
                     // ── Commit plan modal overlay (T025) ─────────────

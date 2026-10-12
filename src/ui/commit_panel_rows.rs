@@ -19,7 +19,7 @@ pub(crate) struct CpTreeSlot {
 fn cp_tree_item(
     el: gpui::Stateful<gpui::Div>,
     slot: Option<CpTreeSlot>,
-    label: impl FnOnce() -> String,
+    label: impl FnOnce() -> SharedString,
     expanded: Option<bool>,
     selected: Option<bool>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -36,30 +36,6 @@ fn cp_tree_item(
         ),
         None => el,
     }
-}
-
-/// Accessible name of a file tree row: its base name (plus the convention
-/// badge when shown) and its localized status. Filled by splitting the
-/// template so a `{}` inside a file name is never taken for a placeholder.
-fn cp_file_label(
-    name: &str,
-    change: Option<&kagi_git::ChangeKind>,
-    is_conflicted: bool,
-    convention: bool,
-) -> String {
-    let status = kagi_ui_core::tree_a11y::file_status(change, is_conflicted);
-    let mut parts = Msg::A11yFileTreeFile.t().splitn(3, "{}");
-    let mut s = String::from(parts.next().unwrap_or_default());
-    s.push_str(name);
-    if convention {
-        s.push_str(" (");
-        s.push_str(Msg::AgentConventionBadge.t());
-        s.push(')');
-    }
-    s.push_str(parts.next().unwrap_or_default());
-    s.push_str(status);
-    s.push_str(parts.next().unwrap_or_default());
-    s
 }
 
 /// Level and sibling position/size of every tree-view row of a section, in
@@ -161,6 +137,8 @@ fn render_cp_file_row(
         &state.unstaged[fi]
     };
     let full_path = SharedString::from(file.path.to_string_lossy().into_owned());
+    let row_name =
+        super::super::commit_panel_navigation::file_name(&file.path, change, is_conflicted);
     let file_ref = if staged {
         CommitPanelFileRef::Staged { index: fi }
     } else {
@@ -179,15 +157,7 @@ fn render_cp_file_row(
     };
     let mut file_row = div()
         .id((row_id, fi))
-        .map(|el| {
-            cp_tree_item(
-                el,
-                slot,
-                || cp_file_label(&name, change, is_conflicted, convention),
-                None,
-                Some(is_sel),
-            )
-        })
+        .map(|el| cp_tree_item(el, slot, || row_name.clone(), None, Some(is_sel || wip_hit)))
         .aria_description(full_path.clone())
         .w_full()
         .flex()
@@ -258,6 +228,15 @@ fn render_cp_file_row(
             if staged { fi + 100_000 } else { fi },
             stat,
         ));
+    file_row = super::super::commit_panel_navigation::file_row(
+        view,
+        staged,
+        fi,
+        tree,
+        (row_name, is_sel || wip_hit),
+        file_row,
+        cx,
+    );
     if is_conflicted {
         // Conflicted rows can be neither staged nor discarded from here.
         return file_row.child(
@@ -340,7 +319,7 @@ fn render_cp_dir_row(
             cp_tree_item(
                 el,
                 slot,
-                || Msg::A11yFileTreeDir.t().replacen("{}", name, 1),
+                || Msg::A11yFileTreeDir.t().replacen("{}", name, 1).into(),
                 None,
                 None,
             )
@@ -433,7 +412,7 @@ fn render_cp_fold_header(
             cp_tree_item(
                 el,
                 slot,
-                || format!("{section_label} ({count})"),
+                || format!("{section_label} ({count})").into(),
                 Some(expanded),
                 None,
             )

@@ -457,7 +457,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
         (1, None, 1, 2)
     );
     let fix = item(&unstaged, "Fix {}.txt");
-    assert_eq!(fix.label, "ファイル Fix {}.txt、変更");
+    assert_eq!(fix.label, "変更 src/Fix {}.txt");
     assert_eq!(
         (fix.level, fix.position, fix.size, fix.selected),
         (2, 1, 2, Some(true))
@@ -563,12 +563,9 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
     assert_eq!(unstaged.label, "Unstaged files");
     assert_eq!(
         item(&unstaged, "Fix {}.txt").label,
-        "File Fix {}.txt, modified"
+        "modified src/Fix {}.txt"
     );
-    assert_eq!(
-        item(&unstaged, "Cargo.lock").label,
-        "File Cargo.lock, added"
-    );
+    assert_eq!(item(&unstaged, "Cargo.lock").label, "added Cargo.lock");
     // A status rebuild invalidates the cached layout even when disclosure
     // flags stay unchanged; all siblings, including off-screen ones, count.
     std::fs::write(repo.join("src/zeta.txt"), "new\n").unwrap();

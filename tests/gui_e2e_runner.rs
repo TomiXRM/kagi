@@ -332,6 +332,10 @@ mod editor_tabs;
 mod pr_threads;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/github_text.rs"]
+mod github_text;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_suggestion_apply.rs"]
 mod pr_suggestion_apply;
 
@@ -2255,6 +2259,8 @@ mod macos {
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
+            ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),

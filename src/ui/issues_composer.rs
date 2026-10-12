@@ -312,9 +312,12 @@ pub(super) fn render_composer(
         .base_repo
         .clone()
         .unwrap_or_else(|| Msg::IssueRepoUnavailable.t().into());
-    let mut content = super::timeline_row::content_column().gap(theme::scaled_px(10.));
+    let mut content = super::timeline_row::content_column()
+        .gap(theme::scaled_px(10.))
+        .when(editor.focused, |content| content.h_full().min_h(px(0.)));
     content = content.child(
         div()
+            .flex_none()
             .self_start()
             .h(theme::scaled_px(28.))
             .px(theme::scaled_px(10.))
@@ -341,6 +344,7 @@ pub(super) fn render_composer(
         let paste_body = input.clone();
         content = content.child(
             div()
+                .flex_none()
                 .h(theme::scaled_px(32.))
                 .on_action(cx.listener(|_, action: &Enter, _, cx| {
                     if action.secondary || action.shift {
@@ -418,13 +422,24 @@ pub(super) fn render_composer(
     } else {
         let paste_input = input.clone();
         div()
-            .h(px(if editor.focused {
+            .relative()
+            .child(super::e2e::measure_inside("issue-composer-body"))
+            .h(theme::scaled_px(if editor.focused {
                 420.
             } else if editor.draft.body.lines().count() > 3 || editor.draft.body.contains("```") {
                 220.
             } else {
                 100.
             }))
+            .when(editor.focused, |body| {
+                // Flex gives the Input only space left after the nonshrinking
+                // fields/footer. Short panes scroll the frame's intrinsic
+                // minimum; the Input's own scroll handles longer drafts.
+                body.h_auto()
+                    .flex_1()
+                    .min_h(theme::scaled_px(25.5 * 2.))
+                    .max_h(theme::scaled_px(420.))
+            })
             // #909: Tab and Shift+Tab move focus out of the body like every
             // other field (title → body → Labels → Assignees → Create), so the
             // controls below are reachable from the keyboard. Indentation keeps
@@ -466,10 +481,8 @@ pub(super) fn render_composer(
     if !empty_create {
         content = content.child(body);
         if number.is_none() {
-            content = content.child(super::issue_fields::render_issue_fields(
-                app,
-                &editor.fields,
-                cx,
+            content = content.child(div().flex_none().child(
+                super::issue_fields::render_issue_fields(app, &editor.fields, cx),
             ));
         }
     }
@@ -502,6 +515,7 @@ pub(super) fn render_composer(
     }
     content = content.child(
         div()
+            .flex_none()
             .flex()
             .justify_between()
             .items_center()
@@ -566,6 +580,7 @@ pub(super) fn render_composer(
     if let Some(error) = editor.save_error.as_ref() {
         content = content.child(
             div()
+                .flex_none()
                 .text_xs()
                 .text_color(rgb(theme().color_blocker))
                 .child(error.clone()),
@@ -574,6 +589,7 @@ pub(super) fn render_composer(
     if let Some(error) = state.repo_error.as_ref() {
         content = content.child(
             div()
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -595,11 +611,14 @@ pub(super) fn render_composer(
     } else if editor.save_error.is_none()
         && (!editor.draft.body.trim().is_empty() || !editor.draft.title.trim().is_empty())
     {
-        content = content.child(super::timeline_row::draft_status(if editor.saving {
-            Msg::ComposerDraftSaving.t()
-        } else {
-            Msg::ComposerDraftSaved.t()
-        }));
+        content = content.child(
+            super::timeline_row::draft_status(if editor.saving {
+                Msg::ComposerDraftSaving.t()
+            } else {
+                Msg::ComposerDraftSaved.t()
+            })
+            .flex_none(),
+        );
     }
     // Lets Tier A read whose avatar the composer draws. Absolute, so it adds
     // no gap; compiled out of normal builds, where it would be a flow child.
@@ -614,11 +633,17 @@ pub(super) fn render_composer(
         &app.avatars.images,
         content,
     )
+    .when(editor.focused, |composer| {
+        composer.h_auto().flex_grow(1.).flex_shrink_0()
+    })
     .border_b_1()
     .border_color(rgb(theme().selected))
     .key_context("IssueComposer")
     .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
         app.toggle_issue_focus(number, window, cx)
     }));
-    super::e2e::measure_control(id, composer).into_any_element()
+    composer
+        .relative()
+        .child(super::e2e::measure_inside(id))
+        .into_any_element()
 }

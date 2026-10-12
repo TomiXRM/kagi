@@ -7,6 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Review hunks retain their last twelve lines with an EN/JA Show previous lines / Collapse button, preserve full-hunk copying, and expose long lines through a horizontal system scrollbar without replacing the virtualized PR feed. Copy is outside the code, and vertical wheels only move the feed. (#1258)
+  - Integrates PR detail accessibility: the header Copy icon retains its localized name, explicit Tab stop, 24-reference-pixel target and selection-safe mouse-down handling.
+- Issue composer body heights scale with the text line height, preserving the ordinary visible-line budget at 100% and 167% zoom. Focused composition fits the remaining pane around nonshrinking fields/footer with a two-line minimum and an internally scrolling Input. (#1261)
+  - Focused composition keeps its actual pane as the scroll viewport, without an auto-height content wrapper; flow-neutral probes check the window viewport and a long draft's usable height.
 - Analyze mode, period, view and export selectors expose selected keyboard tabs; Copy, Help and Close are named buttons, and coupling disclosures report expanded state and support Enter/Space. (#1265)
   - Review: Hotspots and Coupling keep their original dense row height and content inset; a separate neutral separator remains visible before and after keyboard focus. Analyze Help follows the typed modal getter/setter/clear convention.
 - Hotspots shows numeric risk alongside relative bars and explains the 0–1 scale; Map tooltips and accessibility text include path, risk, LOC and commit count. (#1266)

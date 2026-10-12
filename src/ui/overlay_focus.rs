@@ -225,13 +225,16 @@ impl KagiApp {
                 }
             }
         }
-        // The menu overlays that hold no focus of their own (Info, the
-        // branch picker) route their keys through the root, so a pending
-        // focus lands while they are open too.
+        // Focus-owning overlays retain their opener until they close; Info
+        // alone continues routing its keys through the root.
         if !menu_visible
             && !matches!(
                 self.menu_overlay,
-                Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+                Some(
+                    MenuOverlay::Settings
+                        | MenuOverlay::CommandPalette
+                        | MenuOverlay::BranchPicker { .. }
+                )
             )
         {
             self.apply_pending_focus(window, cx);

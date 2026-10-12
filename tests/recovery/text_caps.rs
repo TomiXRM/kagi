@@ -314,12 +314,7 @@ fn scroll_message_tail(
         e2e::control_bounds(window.window_id(), "inspector-files-frame").unwrap(),
         "changed-files frame is independent of message scroll"
     );
-    let tail = e2e::control_bounds(window.window_id(), "inspector-trailer-tail").unwrap();
-    assert!(
-        tail.top() >= scroll.top() - gpui::px(1.)
-            && tail.bottom() <= scroll.bottom() + gpui::px(1.),
-        "last complete trailer is visibly reachable: {tail:?} in {scroll:?}"
-    );
+    assert_trailer_edges(cx, window, scroll);
     let before = KagiApp::inspector_derivations_for_e2e();
     for _ in 0..3 {
         paint(cx, window);
@@ -329,6 +324,47 @@ fn scroll_message_tail(
         before,
         "warm draws reuse prepared full message and metadata"
     );
+}
+
+fn assert_trailer_edges(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    scroll: gpui::Bounds<gpui::Pixels>,
+) {
+    let tail = e2e::control_bounds(window.window_id(), "inspector-trailer-tail").unwrap();
+    assert!(
+        tail.bottom() <= scroll.bottom() + gpui::px(1.) && tail.bottom() > scroll.top(),
+        "last trailer's end is visibly reachable: {tail:?} in {scroll:?}"
+    );
+    if tail.size.height <= scroll.size.height {
+        assert!(
+            tail.top() >= scroll.top() - gpui::px(1.),
+            "last complete trailer is visibly reachable: {tail:?} in {scroll:?}"
+        );
+    } else {
+        // At the fitted 160px Inspector width a complete value may wrap to
+        // more than one viewport. Reach both edges, never truncate the model
+        // or demand impossible simultaneous containment of an oversized row.
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: scroll.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(
+                    gpui::px(0.),
+                    scroll.top() - tail.top() + gpui::px(1.),
+                )),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        cx.run_until_parked();
+        paint(cx, window);
+        let top = e2e::control_bounds(window.window_id(), "inspector-trailer-tail").unwrap();
+        assert!(
+            top.top() >= scroll.top() - gpui::px(1.) && top.top() < scroll.bottom(),
+            "oversized trailer's beginning is visibly reachable: {top:?} in {scroll:?}"
+        );
+    }
 }
 
 pub fn scenario_inspector_full_message(cx: &mut VisualTestAppContext) {

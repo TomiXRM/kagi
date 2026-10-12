@@ -66,6 +66,26 @@ focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
 These probes are not native VoiceOver or Full Keyboard Access evidence.
 Tier B inspects the live ComboBox and option names and both zoom button/value
 nodes at 100%, 70% and 167%, including disabled announcements.
+For #1336/#1337/#1338/#1341 use
+`KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
+with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and
+renderer-applied sanitized AX description while preserving header/hunk bounds.
+Its fixture uses supported 160px sidebar/240px Inspector widths so the high-zoom
+940px leg has a usable center slot; it does not claim to repair workspace
+overcommit with two default-wide side panes.
+Toast coverage checks four kinds and six consecutive arrivals per kind, stable
+newest-arrival role/name/identity through hover/ticks/animation and no focus
+stealing. The pinned GPUI API has no live-region/priority setter; these are
+Status metadata assertions, not native speech or exactly-once announcements.
+Clone checks operation-named elapsed Status across Reduce Motion and running
+ticks, keyboard Hide owner retention, and real success/error settlement.
+Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
+Enter/Space once-only activation, inner-focus retention, Escape row return,
+owner departure, no-port absence, painted extra-small URL chip text and native
+Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
+100%/167% and Apple Light/Dark. Neighbor filter:
+`KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
+Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
 
 For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
 `status_bar_fit` mounts the production footer at 700×500 and 940×660 with
@@ -358,6 +378,23 @@ rows/header and palette frame/divider; it is not a screenshot-pixel sample.
 Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
 and toolbar scenarios. Real fading, macOS preference changes and JA IME are
 Tier B comparisons, not TestDispatcher assertions.
+
+For #1352 use `KAGI_GUI_E2E_ONLY='pr_dashboard_'` with KEEP_GOING and a
+120-second child timeout. The draft-contrast matrix is split into four
+Light/Dark × narrow/wide children so every native capture fits the timeout,
+without dropping EN/JA, 100%/167% or rest/hover × active/inactive coverage.
+Production cell bounds select actual Metal glyph-interior and blank-background
+pixels for titles, number, author, age and the localized Draft state; inherited
+row opacity is included in the captured pixel, not replaced with theme RGB.
+Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
+There is no selected dashboard row state. Pair with the ui-core
+`apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
+Tier B remains a real-window comparison of draft/ready rows and opening a draft
+in Apple Light/Dark; native VoiceOver and Full Keyboard Access are not proven
+by the recorder or image contrast.
 
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three

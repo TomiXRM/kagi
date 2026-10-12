@@ -447,7 +447,8 @@ pub(super) fn with_keyboard_group_reveal(
         gpui::anchored()
             .position_mode(gpui::AnchoredPositionMode::Local)
             .position(gpui::point(
-                theme::scaled_px(app.sidebar.width),
+                // RowList's transparent focus border is always in the layout.
+                theme::scaled_px(app.pane_fit.sidebar) - gpui::px(super::keyboard_nav::RING),
                 gpui::px(0.),
             ))
             .snap_to_window_with_margin(gpui::px(8.))

@@ -157,9 +157,20 @@ impl KagiApp {
         } else {
             self.panel_width
         };
-        let center_width = f32::from(window.viewport_size().width)
-            - theme::scaled(self.sidebar.width + 4.) * sidebar_fraction
-            - theme::scaled(right_width + 4.) * right_fraction;
+        self.pane_fit = super::pane_budget::fit(
+            self.sidebar.width,
+            right_width,
+            f32::from(window.viewport_size().width),
+            sidebar_shown || sidebar_fraction > 0.,
+            right_shown || right_fraction > 0.,
+            right_pane != Some(workspace::RightPane::CommitPanel),
+        );
+        let sidebar_width = self.pane_fit.sidebar;
+        let right_width = self.pane_fit.right;
+        let center_width = (f32::from(window.viewport_size().width)
+            - theme::scaled(sidebar_width + 4.) * sidebar_fraction
+            - theme::scaled(right_width + 4.) * right_fraction)
+            .max(0.);
         let columns = super::graph_columns::fit(
             self.badge_col_w,
             self.graph_col_w,
@@ -678,7 +689,7 @@ impl KagiApp {
                     "sidebar-clip",
                     super::panel_motion::Axis::Horizontal,
                     super::panel_motion::Anchor::End,
-                    theme::scaled_px(self.sidebar.width + 4.),
+                    theme::scaled_px(sidebar_width + 4.),
                     sidebar_fraction,
                     sidebar,
                 )

@@ -522,6 +522,7 @@ impl KagiApp {
             // WIP, stash and commit rows share one scroll origin.
             .child({
                 if self.loading_tab().is_none()
+                    && self.remote_view.is_none()
                     && self.view().status_summary.is_unborn
                     && prefix_count + row_count == 0
                 {

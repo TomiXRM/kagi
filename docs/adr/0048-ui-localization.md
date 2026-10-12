@@ -136,3 +136,5 @@ The primary `Changes` action keeps its English domain label and opens the existi
 Commit Panel; it does not create files, stage content or write a commit. Dirty
 unborn repositories retain their WIP row. The icon/title/hint/action layout reuses
 the Terminal empty-state block (#1273), with theme tokens and scaled icon geometry.
+The guidance is local-only: SSH remote views remain read-only and retain their
+existing empty list, without a Changes action that requires a local repository.

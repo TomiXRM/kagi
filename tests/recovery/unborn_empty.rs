@@ -151,6 +151,37 @@ fn loading_and_failed_read(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+fn remote_empty(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let unborn = tempfile::tempdir().unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .current_dir(unborn.path())
+        .status()
+        .unwrap()
+        .success());
+    let snapshot = kagi_git::Backend::open(unborn.path())
+        .unwrap()
+        .snapshot(100)
+        .unwrap();
+    let (app, window) = mount(cx, fixture.path());
+    let host = kagi_domain::remote::RemoteHost::parse("example.test").unwrap();
+    app.update(cx, |app, cx| {
+        app.enter_remote_view(host, "/srv/unborn".into(), snapshot, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).remote_view.is_some()));
+    assert!(cx.read(|cx| app.read(cx).view().status_summary.is_unborn));
+    assert!(cx.read(|cx| app.read(cx).repo_path.is_none()));
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "unborn-open-changes").is_none(),
+        "read-only remote unborn view must not offer local Changes"
+    );
+    assert!(e2e::unborn::take().is_none());
+    unmount(cx, app, window);
+}
+
 pub fn scenario_unborn_empty_state(cx: &mut VisualTestAppContext) {
     let _globals = crate::recovery_layout::GlobalSettings::capture();
     for lang in [Lang::En, Lang::Ja] {
@@ -161,6 +192,7 @@ pub fn scenario_unborn_empty_state(cx: &mut VisualTestAppContext) {
             clean(cx, lang);
             ordinary_empty(cx);
             loading_and_failed_read(cx);
+            remote_empty(cx);
         }
     }
     eprintln!("[gui-e2e] PASS unborn_empty_state");

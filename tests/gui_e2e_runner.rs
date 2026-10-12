@@ -300,6 +300,10 @@ mod status_controls;
 mod toolbar_overflow;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_overflow_priority.rs"]
+mod toolbar_overflow_priority;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -2320,6 +2324,10 @@ mod macos {
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
+            (
+                "toolbar_overflow_priority",
+                Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
+            ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
                 "pr_threads_via_gh",

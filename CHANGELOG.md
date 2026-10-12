@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Narrow toolbars move Update, Settings and inactive workspace modes into » before Git commands. Pull/Push remain visible longest among Git actions, with the selected mode collapsing last; widening restores the reverse order. Existing overflow menu order, accessibility names/roles, shortcuts and hidden-mode keyboard/palette routes are unchanged. (#1316)
+  - Tiny-window review: icon-only fitting includes the controls' fixed focus borders, the workspace group retains its measured minimum, and repository identity explicitly shrinks to its readable minimum. Native group probes no longer insert a test-only layout wrapper; 700×500 long-name coverage checks outer control/group nonintersection.
 - Alert-style confirmations, including the Editor dirty guard, Delete, Discard, Abort, Amend and Trust, reuse the named-dialog focus trap so Tab and Shift+Tab stay inside the dialog instead of reaching the Editor's Code Input. Root Return and Escape cancellation, explicit danger approval and modal accessors are unchanged. (#1292)
   - Review: alert dismissal restores the still-drawn opener (or root fallback), with an independent screen-scoped return target. Escape/Return resumes Editor typing, and Delete cancellation preserves root shortcut dispatch without stealing a newer modal's focus.
   - Review: retain the actual alert trap across reload's modal-focus reset; when a queued non-input notice replaces an alert, return keyboard ownership to the root instead of leaving focus on the unmounted card. Named input frames retain their own focus, with exhaustive modal classification requiring an explicit ownership decision for new variants.

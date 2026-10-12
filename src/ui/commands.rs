@@ -119,6 +119,9 @@ actions!(
         // Window
         MinimizeWindow,
         ZoomWindow,
+        PreviousTab,
+        NextTab,
+        BringAllToFront,
         NewWindow,
         CloseWindow,
         // Help
@@ -400,6 +403,11 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("window.minimize"),
             MenuNode::Command("window.zoom"),
             MenuNode::Separator,
+            MenuNode::Command("window.previousTab"),
+            MenuNode::Command("window.nextTab"),
+            MenuNode::Separator,
+            MenuNode::Command("window.bringAllToFront"),
+            MenuNode::Separator,
             MenuNode::Command("window.new"),
             MenuNode::Command("window.close"),
         ],
@@ -467,7 +475,7 @@ pub enum CommandState {
 pub const COMMANDS: &[Command] = &[
     Command {
         id: "app.about",
-        label: "About kagi",
+        label: "About Kagi",
         keystroke: None,
         dangerous: false,
     },
@@ -745,6 +753,24 @@ pub const COMMANDS: &[Command] = &[
         dangerous: false,
     },
     Command {
+        id: "window.previousTab",
+        label: "Show Previous Tab",
+        keystroke: Some("secondary-shift-["),
+        dangerous: false,
+    },
+    Command {
+        id: "window.nextTab",
+        label: "Show Next Tab",
+        keystroke: Some("secondary-shift-]"),
+        dangerous: false,
+    },
+    Command {
+        id: "window.bringAllToFront",
+        label: "Bring All to Front",
+        keystroke: None,
+        dangerous: false,
+    },
+    Command {
         id: "window.new",
         label: "New Window",
         keystroke: None,
@@ -867,6 +893,13 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         "view.togglePrSwimlane" => Disabled(Msg::NoPrOpen.t()),
         #[cfg(target_os = "macos")]
         "app.hide" | "app.hideOthers" | "app.showAll" => Enabled,
+        "window.previousTab" | "window.nextTab" => {
+            if app.tabs.len() + usize::from(app.home.is_some()) > 1 {
+                Enabled
+            } else {
+                Disabled(Msg::NoOtherTabs.t())
+            }
+        }
         // ── Always available ────────────────────────────────────────────
         "app.about"
         | "app.settings"
@@ -888,6 +921,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "view.reloadThemes"
         | "window.minimize"
         | "window.zoom"
+        | "window.bringAllToFront"
         | "window.close"
         | "help.shortcuts"
         | "help.documentation"
@@ -1007,9 +1041,10 @@ pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
 /// An id present in [`MENU_BAR`] but missing here is a wiring bug; we
 /// `debug_assert!` so it's caught in dev, and fall back to a non-dispatching
 /// item (`About`, which is always available) so release builds stay usable.
-fn action_menu_item(id: &str) -> MenuItem {
-    let label: SharedString = command(id)
-        .map(|c| SharedString::from(c.label))
+fn action_menu_item(id: &str, state: super::window_menu::ViewMenuState) -> MenuItem {
+    let label: SharedString = super::window_menu::state_label(id, state)
+        .or_else(|| command(id).map(|c| c.label))
+        .map(SharedString::from)
         .unwrap_or_else(|| SharedString::from(id.to_string()));
     match id {
         // kagi (app menu)
@@ -1076,6 +1111,9 @@ fn action_menu_item(id: &str) -> MenuItem {
         // Window
         "window.minimize" => MenuItem::action(label, MinimizeWindow),
         "window.zoom" => MenuItem::action(label, ZoomWindow),
+        "window.previousTab" => MenuItem::action(label, PreviousTab),
+        "window.nextTab" => MenuItem::action(label, NextTab),
+        "window.bringAllToFront" => MenuItem::action(label, BringAllToFront),
         "window.new" => MenuItem::action(label, NewWindow),
         "window.close" => MenuItem::action(label, CloseWindow),
         // Help
@@ -1105,12 +1143,14 @@ fn os_edit_menu_item(kind: &OsEditItem) -> MenuItem {
     }
 }
 
-/// Build the full macOS menu bar by walking [`MENU_BAR`] (ADR-0085 §2).  Pure
-/// function of the canonical tree + [`COMMANDS`] — no app state is read here;
-/// availability is applied later by gpui's per-item validation against the
-/// dispatch tree (see module docs).  Called unconditionally on every OS;
-/// `cx.set_menus` is a no-op outside macOS, so this stays cross-platform.
-pub fn build_menus() -> Vec<Menu> {
+/// Build the shared canonical tree with the active window's presentation labels.
+/// Availability remains GPUI's dispatch-tree validation, not a second state map.
+pub fn build_menus(cx: &App) -> Vec<Menu> {
+    let state = super::window_menu::current_state(cx);
+    menus_for_state(state)
+}
+
+pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
     MENU_BAR
         .iter()
         .map(|section| {
@@ -1118,7 +1158,7 @@ pub fn build_menus() -> Vec<Menu> {
                 .items
                 .iter()
                 .map(|node| match node {
-                    MenuNode::Command(id) => action_menu_item(id),
+                    MenuNode::Command(id) => action_menu_item(id, state),
                     MenuNode::Separator => MenuItem::separator(),
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
@@ -1418,6 +1458,7 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
 pub(crate) fn setup_app(cx: &mut App) {
     bind_app_keys(cx);
     register_keybindings(cx);
+    cx.on_action(|_: &BringAllToFront, cx| super::window_menu::bring_all_to_front(cx));
     #[cfg(target_os = "macos")]
     {
         cx.bind_keys([
@@ -1428,7 +1469,7 @@ pub(crate) fn setup_app(cx: &mut App) {
         cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
         cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
     }
-    cx.set_menus(build_menus());
+    cx.set_menus(build_menus(cx));
 }
 
 pub(super) fn quit_app(cx: &mut App) {
@@ -1485,10 +1526,14 @@ pub fn register_keybindings(cx: &mut App) {
         "repo.fetch" => Fetch,
         "repo.pull" => Pull,
         "repo.push" => Push,
+        "window.previousTab" => PreviousTab,
+        "window.nextTab" => NextTab,
     );
-    // The `+` alias for zoom-in has no command id of its own; keep it fixed.
+    // Fixed aliases match native normalization without changing registry display.
     cx.bind_keys([
         KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-{", PreviousTab, None),
+        KeyBinding::new("secondary-}", NextTab, None),
         KeyBinding::new("secondary-m", MinimizeWindow, None),
     ]);
 }
@@ -1618,7 +1663,7 @@ pub enum MenuOverlay {
         mode: BranchPickerMode,
         branches: Vec<String>,
     },
-    /// Read-only info panel (About / Keyboard Shortcuts), titled with body lines.
+    /// Read-only Keyboard Shortcuts panel, titled with body lines.
     Info {
         title: SharedString,
         lines: Vec<SharedString>,
@@ -1632,7 +1677,7 @@ pub enum MenuOverlay {
     CommandPalette,
 }
 
-const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
+pub(super) const GITHUB_URL: &str = "https://github.com/TomiXRM/kagi";
 const ISSUES_URL: &str = "https://github.com/TomiXRM/kagi/issues";
 
 /// The confirmation requested after a successful, admitted upstream fetch.
@@ -1825,7 +1870,7 @@ impl KagiApp {
         }
         match id {
             // ── kagi ────────────────────────────────────────────────
-            "app.about" => self.open_about_overlay(),
+            "app.about" => self.open_about_modal(window, cx),
             // Settings uses the platform's non-modal window or portable overlay.
             "app.settings" => self.open_settings(window, cx),
             "app.quit" => {
@@ -1959,6 +2004,9 @@ impl KagiApp {
             // ── Window ──────────────────────────────────────────────
             "window.minimize" => window.minimize_window(),
             "window.zoom" => window.zoom_window(),
+            "window.previousTab" => self.show_adjacent_tab(false, window, cx),
+            "window.nextTab" => self.show_adjacent_tab(true, window, cx),
+            "window.bringAllToFront" => super::window_menu::bring_all_to_front(cx),
             "window.close" => {
                 if !self.hold_host_close(cx) {
                     window.remove_window();
@@ -2052,7 +2100,7 @@ impl KagiApp {
         self.apply_terminal_config(cx);
 
         // Rebuild the menu bar (active marker moved).
-        cx.set_menus(build_menus());
+        cx.set_menus(build_menus(cx));
         cx.refresh_windows();
         cx.notify();
     }
@@ -2068,7 +2116,7 @@ impl KagiApp {
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
         klog!("lang: {}", l.slug());
-        cx.set_menus(build_menus());
+        cx.set_menus(build_menus(cx));
         cx.refresh_windows();
         if let Some(select) = self.theme_select.as_ref() {
             select.update(cx, |_, cx| cx.notify());
@@ -2572,19 +2620,6 @@ impl KagiApp {
         self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
     }
 
-    /// Build the About info overlay.
-    fn open_about_overlay(&mut self) {
-        self.leave_settings_for_overlay();
-        self.menu_overlay = Some(MenuOverlay::Info {
-            title: SharedString::from("About kagi"),
-            lines: vec![
-                SharedString::from("kagi — a safe Git GUI client"),
-                SharedString::from(format!("version {}", env!("CARGO_PKG_VERSION"))),
-                SharedString::from(GITHUB_URL),
-            ],
-        });
-    }
-
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
     fn open_shortcuts_overlay(&mut self) {
         self.leave_settings_for_overlay();
@@ -2624,6 +2659,8 @@ impl KagiApp {
                 self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
+                &self.settings_controls,
+                self.analyze_ignore_dirty(cx),
                 self.settings_scroll.clone(),
                 window,
                 cx,
@@ -2969,7 +3006,7 @@ mod standard_app_menu_tests {
 
     #[test]
     fn standard_app_menu_order() {
-        let menus = build_menus();
+        let menus = menus_for_state(super::super::window_menu::ViewMenuState::default());
         let items = &menus[0].items;
         let labels: Vec<&str> = items
             .iter()
@@ -2983,7 +3020,7 @@ mod standard_app_menu_tests {
         assert_eq!(
             labels,
             [
-                "About kagi",
+                Msg::AboutTitle.t(),
                 "---",
                 "Settings…",
                 "---",
@@ -3052,7 +3089,7 @@ mod standard_app_action_tests {
             ("app.hideOthers", HideOtherApps.name()),
             ("app.showAll", ShowAllApps.name()),
         ] {
-            match action_menu_item(id) {
+            match action_menu_item(id, super::super::window_menu::ViewMenuState::default()) {
                 MenuItem::Action {
                     action, os_action, ..
                 } => {

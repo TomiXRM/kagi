@@ -69,6 +69,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_window.rs"]
+mod menus_window;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -289,6 +293,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_controls.rs"]
+mod settings_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
@@ -1367,6 +1374,26 @@ mod macos {
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
             ),
             (
+                "window_title_identity",
+                Box::new(crate::menus_window::scenario_window_title_identity),
+            ),
+            (
+                "view_menu_state_labels",
+                Box::new(crate::menus_window::scenario_view_menu_state_labels),
+            ),
+            (
+                "window_menu_items",
+                Box::new(crate::menus_window::scenario_window_menu_items),
+            ),
+            (
+                "window_menu_front_order",
+                Box::new(crate::menus_window::scenario_window_menu_front_order),
+            ),
+            (
+                "about_dialog",
+                Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
                 "settings_window_open_raise",
                 Box::new(crate::settings_window::scenario_settings_window_open_raise),
             ),
@@ -2244,6 +2271,14 @@ mod macos {
             (
                 "settings_hidden_return_target",
                 Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
+                "settings_provider_keys",
+                Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_analyze_ignore_feedback",
+                Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
             (
                 "settings_switches",

@@ -144,3 +144,22 @@ IDs through the same platform API selection before ordinary command dispatch.
 Native visibility labels use the palette's registry label path; Japanese
 registry translations resolve the corresponding `Msg` values rather than
 maintaining another translation table.
+
+## Amendment — 2026-10-12: stateful View and Window navigation (#1313 / #1314)
+
+`MENU_BAR` remains the only layout and action-ID source. Menu construction now
+reads the active main window's presentation snapshot: Sidebar and Full Screen
+offer their localized next action (Show/Hide, Enter/Exit), retaining the same
+actions and keymap. Native menu metadata is rebuilt on owner/state changes;
+theme, language and toolbar-display rebuilds retain that snapshot. The in-app
+dropdown uses the same state-label resolver.
+
+Window groups Minimize/Zoom, Previous/Next Tab, Bring All to Front, then the
+existing New/Close entries. Tab commands reuse the repository/Home switch paths
+and are not registered in Settings. Fixed brace-key aliases match macOS's
+normalized shifted-bracket events without changing displayed registry shortcuts.
+Bring All to Front raises registered main windows back-to-front in their native
+stack order, restoring the original frontmost window last without changing the
+selected repository. Inactive renders retain the last menu owner; only the first
+publication may occur without an active main window.
+

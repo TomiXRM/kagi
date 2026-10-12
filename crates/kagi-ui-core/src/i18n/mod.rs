@@ -182,6 +182,16 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AboutTitle,
+    AboutDescription,
+    MenuHideSidebar,
+    MenuShowSidebar,
+    MenuEnterFullScreen,
+    MenuExitFullScreen,
+    MenuPreviousTab,
+    MenuNextTab,
+    MenuBringAllToFront,
+    NoOtherTabs,
     MenuHideApp,
     MenuHideOthers,
     MenuShowAll,
@@ -996,6 +1006,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreSave,
     /// Analyze-ignore → Reset-to-defaults button.
     SettingsAnalyzeIgnoreReset,
+    SettingsAnalyzeIgnoreUnsaved,
+    SettingsAnalyzeIgnoreSaved,
+    SettingsAnalyzeIgnoreFailed,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -1771,6 +1784,26 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, AboutTitle) => "About Kagi",
+            (Ja, AboutTitle) => "Kagiについて",
+            (En, AboutDescription) => "A safety-first Git GUI client",
+            (Ja, AboutDescription) => "安全を優先する Git GUI クライアント",
+            (En, MenuHideSidebar) => "Hide Sidebar",
+            (Ja, MenuHideSidebar) => "サイドバーを非表示",
+            (En, MenuShowSidebar) => "Show Sidebar",
+            (Ja, MenuShowSidebar) => "サイドバーを表示",
+            (En, MenuEnterFullScreen) => "Enter Full Screen",
+            (Ja, MenuEnterFullScreen) => "フルスクリーンにする",
+            (En, MenuExitFullScreen) => "Exit Full Screen",
+            (Ja, MenuExitFullScreen) => "フルスクリーンを解除",
+            (En, MenuPreviousTab) => "Show Previous Tab",
+            (Ja, MenuPreviousTab) => "前のタブを表示",
+            (En, MenuNextTab) => "Show Next Tab",
+            (Ja, MenuNextTab) => "次のタブを表示",
+            (En, MenuBringAllToFront) => "Bring All to Front",
+            (Ja, MenuBringAllToFront) => "すべてを手前に移動",
+            (En, NoOtherTabs) => "No other tabs",
+            (Ja, NoOtherTabs) => "ほかのタブがありません",
             (En, MenuHideApp) => "Hide Kagi",
             (Ja, MenuHideApp) => "Kagiを隠す",
             (En, MenuHideOthers) => "Hide Others",
@@ -3490,6 +3523,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
             (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
             (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+            (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
+            (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
+            (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -4401,6 +4440,11 @@ pub fn commit_button() -> &'static str {
     }
 }
 
+/// Analyze settings failure; the filesystem path and OS cause stay verbatim.
+pub fn analyze_ignore_failed_fmt(detail: &str) -> String {
+    format!("{}: {detail}", Msg::SettingsAnalyzeIgnoreFailed.t())
+}
+
 /// A missing pre-rename history path, with the current filename left verbatim.
 pub fn file_history_renamed_fmt(path: &str) -> String {
     Msg::FileHistoryPathRenamed.t().replace("{path}", path)
@@ -4623,7 +4667,7 @@ pub fn graph_detached_worktree_label(short_oid: &str) -> String {
 /// command table, and translations belong with the rest of the i18n table.
 pub fn command_label_ja(id: &str) -> Option<&'static str> {
     Some(match id {
-        "app.about" => "kagi について",
+        "app.about" => Msg::AboutTitle.t_for(Lang::Ja),
         "app.settings" => "設定…",
         "app.quit" => "kagi を終了",
         "app.hide" => Msg::MenuHideApp.t_for(Lang::Ja),
@@ -4662,6 +4706,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "commit.compareWorkingTree" => "作業ツリーと比較",
         "window.minimize" => "最小化",
         "window.zoom" => "ズーム",
+        "window.previousTab" => Msg::MenuPreviousTab.t_for(Lang::Ja),
+        "window.nextTab" => Msg::MenuNextTab.t_for(Lang::Ja),
+        "window.bringAllToFront" => Msg::MenuBringAllToFront.t_for(Lang::Ja),
         "window.new" => "新規ウィンドウ",
         "window.close" => "ウィンドウを閉じる",
         "help.shortcuts" => "キーボードショートカット",

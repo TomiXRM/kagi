@@ -6,6 +6,32 @@ thread_local! {
     static DESCRIPTION: RefCell<Option<String>> = const { RefCell::new(None) };
     static CONFLICT_SCROLL: RefCell<Option<gpui::ScrollHandle>> = const { RefCell::new(None) };
     static IMAGE_CAPTIONS: RefCell<HashMap<&'static str, String>> = RefCell::default();
+    static HEADER: RefCell<Option<HeaderIdentity>> = const { RefCell::new(None) };
+    static HEADER_TOOLTIP: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeaderIdentity {
+    pub displayed: String,
+    pub role: Option<gpui::Role>,
+    pub description: Option<String>,
+}
+pub(crate) fn record_header(text: &str, role: Option<gpui::Role>, description: Option<&str>) {
+    HEADER.with(|slot| {
+        *slot.borrow_mut() = Some(HeaderIdentity {
+            displayed: text.to_owned(),
+            role,
+            description: description.map(str::to_owned),
+        })
+    });
+}
+pub fn header() -> Option<HeaderIdentity> {
+    HEADER.with(|slot| slot.borrow().clone())
+}
+pub(crate) fn record_header_tooltip(text: &str) {
+    HEADER_TOOLTIP.with(|slot| *slot.borrow_mut() = Some(text.to_owned()));
+}
+pub fn take_header_tooltip() -> Option<String> {
+    HEADER_TOOLTIP.with(|slot| slot.borrow_mut().take())
 }
 pub(crate) fn record_mode(id: &'static str, role: gpui::Role, label: &'static str, selected: bool) {
     MODES.with(|values| values.borrow_mut().insert(id, (role, label, selected)));
@@ -36,4 +62,6 @@ pub fn clear() {
     DESCRIPTION.with(|value| *value.borrow_mut() = None);
     CONFLICT_SCROLL.with(|value| *value.borrow_mut() = None);
     IMAGE_CAPTIONS.with(|values| values.borrow_mut().clear());
+    HEADER.with(|slot| *slot.borrow_mut() = None);
+    HEADER_TOOLTIP.with(|slot| *slot.borrow_mut() = None);
 }

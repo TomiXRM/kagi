@@ -86,14 +86,7 @@ impl DiffHeader {
             .when_some(leading, |el, btn| el.child(btn))
             // File name: gives up its width before any button does
             // (`truncate` clips, so its flex min width is 0).
-            .child(
-                div()
-                    .flex_1()
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .truncate()
-                    .child(title),
-            )
+            .child(title_identity(title))
             // History button (导线 #3)
             .when_some(trailing, |el, btn| el.child(btn))
             .child(modes)
@@ -101,6 +94,41 @@ impl DiffHeader {
             .children(probes.into_iter().flatten())
             .into_any_element()
     }
+}
+
+/// Layout shortens paint only; hover and AX retain the same complete identity.
+fn title_identity(title: SharedString) -> gpui::Stateful<gpui::Div> {
+    // Most paths are clean. Keep their SharedString instead of allocating a
+    // second copy on every render; use the shared sanitizer for control bytes.
+    let title = if title
+        .chars()
+        .any(|ch| ch.is_control() && ch != '\t' && ch != '\n')
+    {
+        super::safe_text(&title)
+    } else {
+        title
+    };
+    let role = gpui::Role::Label;
+    let tooltip = title.clone();
+    #[cfg(feature = "gui-e2e")]
+    super::super::e2e::diff_presentation::record_header(&title, Some(role), Some(&title));
+    div()
+        .id("main-diff-title")
+        .role(role)
+        .aria_label(title.clone())
+        .aria_description(title.clone())
+        .tooltip(move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::super::e2e::diff_presentation::record_header_tooltip(&tooltip);
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .flex_1()
+        .text_sm()
+        .text_color(rgb(theme().text_main))
+        .truncate()
+        .relative()
+        .child(super::super::e2e::measure_inside("main-diff-title"))
+        .child(title)
 }
 
 fn mode_segments<V: 'static>(

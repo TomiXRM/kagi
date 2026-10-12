@@ -476,8 +476,9 @@ fn dirty_editor_survives_merge_in_worktree(
         assert!(editor.read(cx).dirty, "the unsaved edit survives");
     });
 
-    // Leaving for the graph destroys the editor, so that path still prompts;
-    // discarding returns to the graph the rest of the scenario drags on.
+    // Leaving for the graph destroys the editor, so that path still prompts.
+    // Root Return cancels the destructive guard (ADR-0125 / #1277), preserving
+    // the same dirty buffer; only explicitly focused Discard returns to Graph.
     app.update(cx, |app, cx| app.show_graph_mode(cx));
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
@@ -486,7 +487,26 @@ fn dirty_editor_survives_merge_in_worktree(
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(app.editor_dirty_guard_modal().is_none());
+        let retained = app.ui().editor_workspace.as_ref().unwrap();
+        assert_eq!(retained.entity_id(), editor.entity_id());
+        assert!(editor.read(cx).dirty, "Return must not discard the edit");
+        assert_eq!(
+            app.workspace_mode(),
+            kagi::ui::workspace_mode::WorkspaceMode::Editor
+        );
+    });
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+    crate::destructive_modal_return::focused_confirm(cx, app, window, "editor-dirty-guard-discard");
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(app.editor_dirty_guard_modal().is_none());
         assert!(app.ui().editor_workspace.is_none());
+        assert_eq!(
+            app.workspace_mode(),
+            kagi::ui::workspace_mode::WorkspaceMode::Graph
+        );
     });
 }
 

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)
 - Analyze Ownership displays author names, falling back to the email local part for unnamed authors; full identities remain available through tooltips and accessibility labels. Email-based aggregation, stable ranking and EN/JA captions are unchanged. (#1052)
   - Review: untrusted author names and emails escape display-control bytes before reaching visible labels, tooltips or accessibility names; raw aggregation/export identities remain unchanged.
 - Worktree creation from a branch context menu preserves the branch name in its text Input and derives the suggested path from that name, in EN/JA. (#1045)

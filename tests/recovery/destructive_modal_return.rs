@@ -24,7 +24,9 @@ fn focused_activation(
     press_key(cx, app, window, "f19");
     for _ in 0..80 {
         kagi::ui::button_style::modal_focus_probe();
-        cx.simulate_keystrokes(window, "tab");
+        // Walk backward from the root: a live code Input beneath the alert
+        // consumes forward Tab as indentation before the modal footer is reached.
+        cx.simulate_keystrokes(window, "shift-tab");
         cx.run_until_parked();
         paint(cx, window);
         cx.simulate_keystrokes(window, "f19");
@@ -34,7 +36,7 @@ fn focused_activation(
             return;
         }
     }
-    panic!("{id} is not reachable through Tab");
+    panic!("{id} is not reachable through Shift+Tab");
 }
 
 pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {

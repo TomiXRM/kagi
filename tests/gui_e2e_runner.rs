@@ -250,6 +250,9 @@ mod conflict_continue_cache;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_file_selection.rs"]
 mod conflict_file_selection;
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_text_keyboard.rs"]
+mod conflict_text_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/repo_health.rs"]
@@ -2138,6 +2141,18 @@ mod macos {
             (
                 "conflict_file_selection",
                 Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
+            ),
+            (
+                "conflict_text_keyboard",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_text_keyboard),
+            ),
+            (
+                "conflict_resolver_rebuild",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_rebuild),
+            ),
+            (
+                "conflict_resolver_roles",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_roles),
             ),
             (
                 "modal_polish_editor_fs",

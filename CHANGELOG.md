@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Conflict resolver adoption controls are named EN/JA Buttons with keyboard-only focus rings. One roving hunk list uses Up/Down between hunks and Left/Right between side, order and line controls; Enter/Space share pointer activation. Selection remains buffer-only and the conflict FSM and Save boundary are unchanged. (#1311)
+  - Review: rebuild roving ownership when a retained path's hunk/line structure changes, including consecutive operation steps. AX names use sanitized operation-dependent roles/identities; order controls announce selected output order, never adoption.
 - Graph columns compress before commit subjects at narrow/high-zoom widths: subjects retain a 120-reference-pixel minimum, authors shrink with middle ellipsis and full-name tooltips, and compact times remain visible inside the row. Header, commit, WIP and stash columns share fitted widths without overwriting saved divider preferences; wide-window positions stay unchanged. (#1317)
   - Review: expanding an already capped divider no longer replaces its larger saved preference with a compressed width. Below the combined column/metadata minima, the subject floor is limited by remaining room instead of displacing author/time; native coverage includes compressed drags and a 1440px-wide window with a 360px Inspector at 167% zoom.
 - Sidebar filtering is a real localized Input from the first frame, reachable by Tab or Cmd+F without a preliminary click. Escape clears the filter and returns focus to the local list; the clear affordance and existing window-owned state remain intact. (#1309)

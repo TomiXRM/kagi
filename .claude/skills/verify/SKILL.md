@@ -115,6 +115,23 @@ real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
 both ends with the keyboard, verify the selected fill on hover and the
 dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
+For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
+`conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
+Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
+and compares Enter adoption with the measured pointer control. It exercises
+Space, both orders, line-level Partial state, file-side Use all, Result
+undo/redo, viewport containment and zero repository writes/receipts at
+940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+The F19 probe observes only the actual focused owner; AX metadata records
+renderer-supplied role/name/state, not native VoiceOver delivery.
+`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
+and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
+checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
+operation, and order selection is announced independently of adoption.
+Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
+the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
+and read live EN/JA adoption names in Accessibility Inspector. Do not Save
+while comparing buffer-only adoption with pointer behavior.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
 `graph_columns_fit` reproduces the default-column 940×660/167% zero-width
 subject, then requires a scaled 120px subject minimum, contained author/time,

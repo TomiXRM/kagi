@@ -30,6 +30,7 @@ pub mod activity;
 pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
+mod conflict;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
@@ -595,6 +596,9 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    EditorSelectionNone,
+    EditorSelectionPartial,
+    EditorSelectionAll,
     /// Inspector file context menu: open the file in the Editor Workspace.
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
@@ -2749,6 +2753,12 @@ impl Msg {
             // blocks land in the result when both sides are taken.
             (En | Ja, EditorCurrentFirst) => "Current → Incoming",
             (En | Ja, EditorIncomingFirst) => "Incoming → Current",
+            (En, EditorSelectionNone) => "Not adopted",
+            (Ja, EditorSelectionNone) => "未採用",
+            (En, EditorSelectionPartial) => "Partially adopted",
+            (Ja, EditorSelectionPartial) => "一部を採用",
+            (En, EditorSelectionAll) => "Fully adopted",
+            (Ja, EditorSelectionAll) => "すべて採用済み",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",

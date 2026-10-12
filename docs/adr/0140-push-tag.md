@@ -71,10 +71,15 @@ discoverable.
 ## Amendment (2026-10-12): unloaded sidebar targets (#1304)
 
 Tag navigation is separate from tag write availability. A target absent from
-the current commit window remains activatable: its row uses the muted theme
-label and exposes the same EN/JA reason in the TreeItem description and
-tooltip. Click and Enter share one read-only path that first reports
-“Commit not loaded; load more history.”, then invokes existing history paging.
-Once loaded, activation jumps normally; paging does not silently change the
-current selection or create a tag-operation receipt. Push/Delete menu plans,
-approval targets and safety checks remain unchanged.
+the loaded commit window (including Branch Solo's saved window) remains
+activatable: its row uses the muted theme label and exposes the same EN/JA
+reason in the TreeItem description and tooltip. Click and Enter share one
+read-only path that first reports “Commit not loaded; load more history.”,
+then invokes existing history paging only when its positive limit has been
+reached. During Solo, this check uses saved rows, not the filtered rows.
+Exhausted or disabled paging leaves the explanation without issuing a request.
+A loaded target hidden only by Branch Solo instead reports a localized filter
+hint and preserves Solo without paging. Once visible and loaded, activation
+jumps normally; paging does not silently change the current selection or
+create a tag-operation receipt. Push/Delete menu plans, approval targets and
+safety checks remain unchanged.

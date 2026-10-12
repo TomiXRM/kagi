@@ -207,6 +207,15 @@ impl KagiApp {
                 self.sidebar.focus.card = None;
             }
         }
+        if let Some(key) = &self.sidebar.focus.group_reveal {
+            let held = self.sidebar.focus.rows.iter().any(|rows| {
+                rows.focused(window)
+                    .is_some_and(|focused| focused.strip_prefix("group:") == Some(key.as_str()))
+            });
+            if !held {
+                self.sidebar.focus.group_reveal = None;
+            }
+        }
     }
 
     /// The panes are not drawn this frame (Home in front, Conflict Mode, the
@@ -227,6 +236,7 @@ impl KagiApp {
         }
         self.sidebar.focus.away = true;
         self.sidebar.focus.card = None;
+        self.sidebar.focus.group_reveal = None;
     }
 
     /// Enter / Space on a collapsed pane's header: open it, and its first row

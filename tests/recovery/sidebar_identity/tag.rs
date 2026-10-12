@@ -49,7 +49,7 @@ fn truncate_history(
     snapshot
 }
 
-fn install_history_page(
+pub(super) fn install_history_page(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     repo: &Path,

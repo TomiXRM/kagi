@@ -109,14 +109,30 @@ fn section_header_chevron_id(section: &str) -> &'static str {
 
 /// The loaded read model is the sole availability source for tag navigation.
 pub(super) fn tag_navigation_reason(app: &KagiApp, target: &CommitId) -> Option<Msg> {
-    (!app.view().commit_row_index.contains_key(target)).then_some(Msg::SidebarTagCommitNotLoaded)
+    let view = app.view();
+    let loaded = view.commit_row_index.contains_key(target)
+        || view
+            .branch_solo
+            .as_ref()
+            .is_some_and(|solo| solo.saved_row_index.contains_key(target));
+    (!loaded).then_some(Msg::SidebarTagCommitNotLoaded)
 }
 
 impl KagiApp {
     pub(super) fn activate_sidebar_tag(&mut self, target: &CommitId, cx: &mut Context<Self>) {
         if let Some(reason) = tag_navigation_reason(self, target) {
             self.push_toast(ToastKind::Info, reason.t(), cx);
-            self.load_more_commits(cx);
+            let view = self.view();
+            let row_count = view
+                .branch_solo
+                .as_ref()
+                .map_or(view.rows.len(), |solo| solo.saved_rows.len());
+            let limit = self.ui().commit_limit;
+            if limit > 0 && row_count >= limit {
+                self.load_more_commits(cx);
+            }
+        } else if !self.view().commit_row_index.contains_key(target) {
+            self.push_toast(ToastKind::Info, Msg::SidebarTagHiddenBySolo.t(), cx);
         } else {
             self.jump_to_commit(target);
         }

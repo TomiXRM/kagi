@@ -2257,6 +2257,14 @@ mod macos {
                 Box::new(crate::sidebar_identity::scenario_remote_group_header_fit),
             ),
             (
+                "tag_unloaded_target_solo",
+                Box::new(crate::sidebar_identity::scenario_tag_unloaded_target_solo),
+            ),
+            (
+                "sidebar_group_reveal_lifetime",
+                Box::new(crate::sidebar_identity::scenario_sidebar_group_reveal_lifetime),
+            ),
+            (
                 "tag_unloaded_target_en_light_100_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
             ),

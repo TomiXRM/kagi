@@ -117,3 +117,12 @@ stdin をブロック書き込みすると **パイプ・デッドロック**す
   静かに rule-based ドラフトへフォールバックする。
 - `src/ui/` の git2 直アクセス禁止ゲートは維持(サブプロセス起動は
   `src/git/message_gen.rs` 側)。
+
+## Amendment — 2026-10-12: Settings choice accessibility (#1298)
+
+Provider and saved-model chips retain their appearance but reuse the shared
+manual TabList: named selected tabs, one roving Tab stop, Left/Right/Home/End
+focus movement and Enter/Space activation. Unavailable CLI choices remain
+focusable for their localized unavailability reason but activation is inert.
+The existing setters alone persist selection; choosing a provider never starts
+generation and the cost/quota/privacy warning remains unchanged.

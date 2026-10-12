@@ -446,25 +446,32 @@ pub fn read_analyze_ignore_text() -> String {
     };
     match std::fs::read_to_string(&path) {
         Ok(s) => s,
-        Err(_) => {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        Err(error) => {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                let _ = write_analyze_ignore(DEFAULT_ANALYZE_IGNORE);
             }
-            let _ = std::fs::write(&path, DEFAULT_ANALYZE_IGNORE);
             DEFAULT_ANALYZE_IGNORE.to_string()
         }
     }
 }
 
-/// Persist new `analyze_ignore` contents (the Settings pane editor). Best-effort.
-pub fn write_analyze_ignore(content: &str) {
-    let Some(path) = analyze_ignore_path() else {
-        return;
-    };
+/// Persist Analyze ignore text through its settings owner, returning the OS cause.
+pub fn write_analyze_ignore(content: &str) -> std::io::Result<()> {
+    let path = analyze_ignore_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "Analyze ignore settings directory unavailable",
+        )
+    })?;
+    write_analyze_ignore_at(&path, content)
+        .map_err(|error| std::io::Error::new(error.kind(), format!("{}: {error}", path.display())))
+}
+
+fn write_analyze_ignore_at(path: &std::path::Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
-    let _ = std::fs::write(&path, content);
+    std::fs::write(path, content)
 }
 
 /// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
@@ -643,6 +650,23 @@ mod tests {
                 "a read must not rewrite malformed user settings"
             );
         }
+    }
+
+    #[test]
+    fn analyze_ignore_writer_reports_directory_and_parent_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("analyze_ignore");
+        std::fs::create_dir(&path).unwrap();
+        let original = path.join("original");
+        std::fs::write(&original, b"saved bytes").unwrap();
+        assert!(write_analyze_ignore_at(&path, "draft").is_err());
+        assert_eq!(std::fs::read(&original).unwrap(), b"saved bytes");
+        std::fs::remove_file(&original).unwrap();
+        std::fs::remove_dir(&path).unwrap();
+        write_analyze_ignore_at(&path, "draft").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+        assert!(write_analyze_ignore_at(&path.join("child"), "draft").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
     }
 
     #[test]

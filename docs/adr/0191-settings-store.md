@@ -110,3 +110,13 @@ store は自分が load した path を持ち、**別 path へ転用されない
   set / remove するため。process global と公開 API を通る経路 (stat 不可視の
   外部編集、実 trailing thread、graceful quit、強制終了、path 切替) は
   `settings/store_env_tests.rs` が子プロセスで検証する。
+
+## Amendment — 2026-10-12: Analyze ignore write feedback (#1299)
+
+The sibling Analyze ignore document remains owned by `settings::`, not a UI
+filesystem path or a settings.json key. Its public writer returns a Result with
+the OS cause and target path. Save/Reset advance the editor's saved baseline
+only on success; failed Reset does not replace the draft. An EN/JA unsaved
+marker and bounded toast/inline error distinguish failure from quiet successful
+confirmation. First-run seeding uses this same writer only for a missing file;
+an unreadable existing file is never overwritten by defaults.

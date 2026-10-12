@@ -199,11 +199,18 @@ impl SettingsWindow {
                 owner,
                 &app.smart_commit,
                 &app.settings_switches,
+                &app.settings_controls,
+                Some(self.focus.clone()),
                 cx,
             )
             .into_any_element(),
-            _ => settings_view::analyze_ignore_section(owner, app.analyze_ignore_input.clone())
-                .into_any_element(),
+            _ => settings_view::analyze_ignore_section(
+                owner,
+                app.analyze_ignore_input.clone(),
+                app.analyze_ignore_dirty(cx),
+                app.settings_controls.ignore_error.as_deref(),
+            )
+            .into_any_element(),
         }
     }
 
@@ -248,8 +255,24 @@ impl Render for SettingsWindow {
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
         let body = self.page_body(&owner, cx);
+        owner.update(cx, |app, cx| {
+            let models_shown = self.pane == 2
+                && matches!(
+                    app.smart_commit.provider,
+                    super::smart_commit::SmartProvider::Ollama
+                )
+                && !app.smart_commit.detected_models.is_empty();
+            app.settings_controls.repair_focus(
+                self.pane == 2,
+                models_shown,
+                Some(&self.focus),
+                window,
+                cx,
+            );
+        });
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .bg(gpui::rgb(theme::theme().panel))
@@ -285,6 +308,9 @@ impl Render for SettingsWindow {
                     .child(body),
                 cx,
             ))
+            .when_some(owner.read(cx).toast_stack.clone(), |el, stack| {
+                el.child(super::busy::toast_container().child(stack))
+            })
             .into_any_element()
     }
 }

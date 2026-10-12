@@ -157,6 +157,38 @@ The AX recorder proves the renderer assignment, not native VoiceOver delivery.
 Tier B remains a real-window comparison of Japanese headers, batch actions and
 unchanged user Template text; `commit_panel_viewport` retains composer geometry.
 
+For #1306/#1307 use
+`KAGI_GUI_E2E_ONLY='graph_subject_identity,inspector_full_message'` and retain
+`graph_,inspector_,detail_` as the neighboring filter. The subject scenario
+compares complete sanitized 71/72/73/300-character and CJK/emoji identities,
+drawn AX names, 29-reference-px row density, author/time geometry, and real
+row-hover Tooltip content and viewport-contained bounds in EN/JA, Apple
+Light/Dark, 100/167%, at 940×660 and 1392×883. The 300-character subject
+must wrap rather than overflow the narrow viewport. The row-wide Tooltip
+also works when existing narrow, high-zoom column widths leave the visible
+subject no space; this does not claim to fix that pre-existing column layout.
+
+The Inspector scenario keeps 1,999/2,000/2,001/10,000-character messages plus
+an 85-paragraph sanitized CJK/emoji message. Its renderer-fed source/HTML,
+complete co-author/trailer counts and full-message clipboard assertions run
+over the same matrix. A real wheel reaches the last trailer inside the
+bounded message frame while the changed-files frame stays fixed; warm draws
+leave SHA-keyed derivation counters unchanged. Native VoiceOver and real
+selectable-text keyboard behavior remain Tier B.
+
+For an opt-in stress measurement, set
+`KAGI_TEXT_CAPS_STRESS_REPO=<read-only 121-local-branch fixture>` and select
+only `KAGI_GUI_E2E_ONLY=text_caps_warm_render`. The native runner mounts that
+real repository, selects its top commit, settles 20 draws, then prints the
+median of 31 batches of ten forced warm draws (milliseconds per frame).
+Compare the same fixture, harness, build profile and presentation state;
+alternate frozen before/after binaries three times each after gates finish
+to mitigate concurrent-compilation noise. This is warm render evidence,
+not application FPS or a cold-load benchmark.
+Without `KAGI_TEXT_CAPS_STRESS_REPO`, the stress scenario prints
+`[gui-e2e] SKIP text_caps_warm_render` and returns before opening a window;
+broader substring filters such as `caps` or `warm` do not require that fixture.
+
 For #1229–#1231 use
 `KAGI_GUI_E2E_ONLY='commit_panel_segment_keys,commit_panel_footer_tab_order,commit_panel_coauthor_keys'`
 with `KAGI_GUI_E2E_KEEP_GOING=1`. The regressions deliver simulated keys to

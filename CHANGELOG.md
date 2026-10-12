@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph commit rows retain complete sanitized subjects for accessibility and hover tooltips; only their one-line layout ellipsizes. Tooltips constrain their width and wrap long subjects inside the viewport. An explicit 4 KiB UTF-8-safe display bound replaces the old 72-character cut. (#1306)
+- Inspector retains and copies the complete sanitized commit message, including late co-authors and trailers. Metadata is prepared once per commit, and the existing independent message scroller keeps long bodies and trailer tables reachable without displacing changed files or the footer. (#1307)
 - Activity period selection uses named EN/JA keyboard tabs with one Tab stop, arrow/Home/End navigation and Enter/Space activation; the selected fill remains visible on hover in active and inactive windows. (#1301)
 - Activity chart buckets expose localized UTC dates, commits, merges and distinct-author counts, with arrow-key inspection sharing the existing instant hover readout. Solid commit and dashed merge strokes use the same encoding in the legend, including equal/zero series and single buckets. (#1302)
   - Review: merge dash gaps knock out underlying commit/baseline strokes with the Activity body's explicit panel fill, preserving a luminance-visible pattern at equal/zero values without contrasting gap rectangles. A single merge bucket paints two genuine dashes below its separate commit mark; native gap pixels match nearby unpainted background, and probes count actual painted dash/knockout segments.

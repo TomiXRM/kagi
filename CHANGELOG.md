@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Split diff keyboard navigation follows aligned visual rows rather than revisiting the top of replacement blocks; Home/End and viewport-sized PageUp/PageDown use the same order. Unified navigation and inclusive selection/copy semantics remain unchanged. (#1373)
+  - Review: retain monotonic source ranges when a right-column caret crosses left-only fillers, count measured visible Row bounds for wrapped/expanded pages, and reuse the pane's captured split projection.
+  - Second review: Up reverses the same affinity-side replacement route as Down, preserving one-sided additions/deletions; page counting visits only visible list items.
 - Status-bar chips expose localized explanatory tooltips and accessibility names, including ahead/behind counts, unavailable counts, upstream identity and full fetch ages. Stale fetches add a visible `!` cue rather than relying on warning colour alone; informational chips remain outside the Tab order and existing rounded-up text fitting is retained. (#1377)
   - Review: sanitize upstream identity once per footer render rather than once per chip; the fresh-fetch regression uses a midpoint within its minute to avoid a wall-clock boundary flake.
 - Bottom-panel divider resizing starts from the pressed body height, including the rendered tab strip without a start jump; scaled pointer deltas clamp without drift and the final height is saved through the settings store on release. The existing divider has no focus handle, so its pointer-only keyboard scope is unchanged. (#1372)

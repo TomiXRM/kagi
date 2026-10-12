@@ -109,18 +109,14 @@ pub fn recorded_disclosure(i: usize) -> Option<RecordedDisclosure> {
 pub fn recorded_copy(i: usize) -> Option<(Role, String)> {
     COPIES.with(|map| map.borrow().get(&i).cloned())
 }
-pub(in crate::ui) fn copy_button(
-    el: gpui_component::button::Button,
-    i: usize,
-    name: String,
-) -> gpui_component::button::Button {
+pub(in crate::ui) fn copy_button(el: Stateful<Div>, i: usize, name: String) -> Stateful<Div> {
     #[cfg(feature = "gui-e2e")]
     COPIES.with(|map| {
         map.borrow_mut().insert(i, (Role::Button, name.clone()));
     });
     #[cfg(not(feature = "gui-e2e"))]
     let _ = i;
-    super::super::button_style::named_button(el, name, None)
+    el.role(Role::Button).aria_label(SharedString::from(name))
 }
 
 #[cfg(feature = "gui-e2e")]

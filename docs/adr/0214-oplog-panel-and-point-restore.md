@@ -313,12 +313,21 @@ Operation Log keeps the variable-height list and the selectable-detail threshold
 The existing `RowFocus` / `RowList` owner provides one roving summary Tab stop,
 arrow/Home/End movement and an inset focus-visible ring. Each summary is a named
 EN/JA Button with expanded state and absolute set position; Enter/Space uses the
-same single-entry expansion/reflog path as a click. The quiet pinned Copy Button
-becomes a Tab stop on the expanded row and copies the entire original entry text.
+same single-entry expansion/reflog path as a click. The quiet Copy Button becomes
+a Tab stop on the expanded row and copies the entire original entry text.
 Disclosure and Copy callbacks resolve the rendered entry's identity (including
 repository/worktree), never a captured list index. A newly pushed receipt shifts
 the expanded identity and retained focus rather than displaying or copying its
 neighbour. Existing callers that deliberately collapse on a receipt still do so.
 Tier A records installed attributes and dispatches keys; native Tab/VoiceOver
 delivery remains a separate Tier B observation.
+
+Review: the constructor seeds `ListState` with its actual count; receipt insertion
+and retention trimming splice those measured items, preserving a scrolled reading
+anchor instead of resetting it when the count changes. Copy reuses the existing
+`keyboard_nav::focusable` quiet-copy pattern: transparent inset border at rest,
+fully opaque accent border/glyph on keyboard focus, and full glyph opacity on
+hover. The pinned kit Button's low-alpha outer ring and built-in hover style do
+not fit this dense quiet-copy contract. The list container uses `RowList::list`
+rather than duplicating its key context.
 

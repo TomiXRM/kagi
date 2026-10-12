@@ -346,3 +346,179 @@ pub fn scenario_oplog_keyboard_single(cx: &mut VisualTestAppContext) {
 pub fn scenario_oplog_keyboard_many(cx: &mut VisualTestAppContext) {
     matrix(cx, 200);
 }
+
+pub fn scenario_oplog_keyboard_refresh_tail(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = BottomTab::OperationLog;
+        app.bottom_panel_height = 360.;
+        cx.notify();
+    });
+    let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+    for copy in [false, true] {
+        panel.update(cx, |panel, cx| {
+            *panel = OpLogPanel::from_entries(
+                (0..50)
+                    .map(|i| entry(fixture.path(), i, 1, false))
+                    .collect(),
+            );
+            cx.notify();
+        });
+        paint(cx, window);
+        activate(cx, &panel, window);
+        press(cx, window, "end");
+        paint(cx, window);
+        assert_eq!(focused(cx, &panel, window), Some(49));
+        assert!(cx.read(|cx| panel.read(cx).scroll_handle().logical_scroll_top().item_ix) > 0);
+        let selected = cx.read(|cx| panel.read(cx).entries()[49].clone());
+        if copy {
+            press(cx, window, "enter");
+            paint(cx, window);
+            press(cx, window, "tab");
+            paint(cx, window);
+        }
+        let held = cx
+            .update_window(window, |_, window, cx| window.focused(cx).unwrap())
+            .unwrap();
+        panel.update(cx, |panel, cx| {
+            panel.push(entry(fixture.path(), 999, 0, false));
+            cx.notify();
+        });
+        paint(cx, window);
+        paint(cx, window);
+        let after = cx
+            .update_window(window, |_, window, cx| window.focused(cx).unwrap())
+            .unwrap();
+        assert_eq!(
+            after, held,
+            "a receipt preserves the offscreen-tail entry's summary/Copy focus"
+        );
+        if copy {
+            press(cx, window, "enter");
+            assert_eq!(clipboard(cx), oplog_panel::entry_clipboard_text(&selected));
+            assert_eq!(expanded(cx, &panel), Some(50));
+            press(cx, window, "shift-tab");
+            paint(cx, window);
+        } else {
+            press(cx, window, "enter");
+            paint(cx, window);
+            assert_eq!(expanded(cx, &panel), Some(50));
+        }
+        assert_eq!(focused(cx, &panel, window), Some(50));
+        assert_eq!(cx.read(|cx| panel.read(cx).entries()[50].id), selected.id);
+    }
+    drop(panel);
+    unmount(cx, app, window);
+}
+
+fn copy_pixels(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) -> ([u8; 3], i32) {
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("native Copy focus pixels");
+        let scale = window.scale_factor();
+        let pixel = image
+            .get_pixel(
+                (f32::from(bounds.right() - gpui::px(1.)) * scale) as u32,
+                (f32::from(bounds.center().y) * scale) as u32,
+            )
+            .0;
+        let color = theme::theme().text_sub;
+        let foreground = [
+            (color >> 16) as i32,
+            ((color >> 8) & 255) as i32,
+            (color & 255) as i32,
+        ];
+        let mut closest = i32::MAX;
+        // The measure wrapper includes the leading margin; the trailing 19px
+        // target is the button, and its central inset contains only the glyph.
+        for x in ((f32::from(bounds.right()) - theme::scaled(19.) + 3.) * scale) as u32
+            ..((f32::from(bounds.right()) - 3.) * scale) as u32
+        {
+            for y in ((f32::from(bounds.top()) + 3.) * scale) as u32
+                ..((f32::from(bounds.bottom()) - 3.) * scale) as u32
+            {
+                let rgba = image.get_pixel(x, y).0;
+                let distance = (0..3).map(|i| (rgba[i] as i32 - foreground[i]).abs()).sum();
+                closest = closest.min(distance);
+            }
+        }
+        ([pixel[0], pixel[1], pixel[2]], closest)
+    })
+    .unwrap()
+}
+
+pub fn scenario_oplog_keyboard_copy_focus(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom"]);
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    let old_theme = theme::theme().slug.to_string();
+    let fixture = build_fixture();
+    for slug in ["apple-light", "apple-dark"] {
+        for zoom in [1., 1.67] {
+            let (app, window) = mount(cx, fixture.path());
+            theme::set_zoom(zoom);
+            app.update(cx, |app, cx| {
+                app.set_theme(slug, cx);
+                app.bottom_panel_open = true;
+                app.bottom_tab = BottomTab::OperationLog;
+                app.bottom_panel_height = 360.;
+                cx.notify();
+            });
+            let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+            panel.update(cx, |panel, cx| {
+                *panel = OpLogPanel::from_entries([entry(fixture.path(), 0, 1, false)].into());
+                cx.notify();
+            });
+            paint(cx, window);
+            activate(cx, &panel, window);
+            press(cx, window, "space");
+            paint(cx, window);
+            cx.simulate_mouse_move(
+                window,
+                gpui::point(gpui::px(0.), gpui::px(0.)),
+                None,
+                Modifiers::none(),
+            );
+            paint(cx, window);
+            let bounds = e2e::control_bounds(window.window_id(), "oplog-copy-0").unwrap();
+            let rest = copy_pixels(cx, window, bounds);
+            press(cx, window, "tab");
+            paint(cx, window);
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "oplog-copy-0").unwrap(),
+                bounds
+            );
+            let focused = copy_pixels(cx, window, bounds);
+            let accent = theme::theme().ui_accent();
+            let expected = [(accent >> 16) as u8, (accent >> 8) as u8, accent as u8];
+            assert!(
+                focused
+                    .0
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| actual.abs_diff(expected) <= 2),
+                "Copy has an opaque accent focus-visible ring: {:?} versus {:?}",
+                focused.0,
+                expected
+            );
+            assert!(
+                focused.1 < rest.1,
+                "focused glyph is no longer opacity-dimmed"
+            );
+            press(cx, window, "shift-tab");
+            cx.simulate_mouse_move(window, bounds.center(), None, Modifiers::none());
+            paint(cx, window);
+            paint(cx, window);
+            let hovered = copy_pixels(cx, window, bounds);
+            assert!(hovered.1 < rest.1, "hover restores glyph opacity");
+            drop(panel);
+            unmount(cx, app, window);
+        }
+    }
+    theme::set_active(&old_theme);
+    cx.update(theme::sync_gpui_component_theme);
+}

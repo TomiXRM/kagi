@@ -3162,6 +3162,14 @@ mod macos {
                 Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_many),
             ),
             (
+                "oplog_keyboard_refresh_tail",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_tail),
+            ),
+            (
+                "oplog_keyboard_copy_focus",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_copy_focus),
+            ),
+            (
                 "oplog_detail_select_copy",
                 Box::new(crate::recovery_oplog_select::scenario_oplog_detail_select_copy),
             ),

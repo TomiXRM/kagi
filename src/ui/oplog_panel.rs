@@ -126,8 +126,8 @@ pub fn entry_worktree(entry: &OpLogEntry) -> &str {
 /// syncs it to the real entry count each frame, the lifecycle documented on
 /// `render_helpers::render_diff_list`). `px(1000.)` overdraw matches the diff
 /// list, the other variable-height list in the app.
-fn new_oplog_list_state() -> gpui::ListState {
-    gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(1000.))
+fn new_oplog_list_state(count: usize) -> gpui::ListState {
+    gpui::ListState::new(count, gpui::ListAlignment::Top, gpui::px(1000.))
 }
 
 impl OpLogPanel {
@@ -165,10 +165,11 @@ impl OpLogPanel {
 
     /// Initialize from a pre-loaded tail (read from disk on tab open).
     pub fn from_entries(entries: VecDeque<OpLogEntry>) -> Self {
+        let scroll_handle = new_oplog_list_state(entries.len());
         Self {
             entries,
             expanded: None,
-            scroll_handle: new_oplog_list_state(),
+            scroll_handle,
             reflog: None,
             reflog_generation: 0,
             keyboard: keyboard::OpLogKeyboard::default(),
@@ -178,7 +179,11 @@ impl OpLogPanel {
     /// Push a new entry to the front; drop the oldest if over the cap.
     pub fn push(&mut self, entry: OpLogEntry) {
         self.entries.push_front(entry);
+        // Preserve measured rows and the reading anchor as receipt positions shift.
+        self.scroll_handle.splice(0..0, 1);
         if self.entries.len() > OP_ENTRIES_MAX {
+            let last = self.entries.len() - 1;
+            self.scroll_handle.splice(last..last + 1, 0);
             self.entries.pop_back();
         }
         self.keyboard.invalidate();

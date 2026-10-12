@@ -9,9 +9,9 @@
 //!    row's height, so an expanded row's detail block — N lines, each free to
 //!    soft-wrap — painted straight over the rows below. The list is now
 //!    `gpui::list` + a `gpui::ListState`, the same swap T-DIFF-WRAP-001 made
-//!    for the diff panes (`render_helpers::render_diff_list`); the item count
-//!    is synced once per render, the lifecycle documented there. With a
-//!    variable height the detail lines are free to wrap, so they do (no
+//!    for the diff panes (`render_helpers::render_diff_list`). The panel seeds
+//!    the count once and splices new receipts/retention cuts, preserving the
+//!    measured rows and scrolled focus. Detail lines are free to wrap (no
 //!    truncation) — a 200-char `error:` is readable instead of clipped. The
 //!    summary row stays one fixed-height truncated line.
 //! 2. **Selection + copy.** The detail block renders through a selectable
@@ -24,14 +24,14 @@
 //!
 //! Never read this entity back through `cx` inside the list closure (it runs
 //! while the entity is borrowed → panic). The row data is snapshotted before
-//! the list is built; the click handlers run on mouse events, well after.
+//! the list is built; activation handlers run after the entity borrow ends.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     div, px, rgb, App, ClickEvent, Context, Element as _, Entity, InteractiveElement, IntoElement,
     MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::{Disableable as _, Sizable as _};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_git::oplog::{Actor, OpLogEntry, OpOutcome};
@@ -91,16 +91,13 @@ impl gpui::Render for oplog_panel::OpLogPanel {
         }
 
         let scroll_handle = self.scroll_handle();
-        // ListState lifecycle (see `render_helpers::render_diff_list`): sync the
-        // item count here, once per render. Every mutation path (`push`, the
-        // disk seed) calls `cx.notify()`, so the next render sees the new count.
-        if scroll_handle.item_count() != entry_count {
-            scroll_handle.reset(entry_count);
-        }
+        // Constructors and push() keep the count in sync through ListState::splice,
+        // retaining measured row heights and a scrolled keyboard reading anchor.
         // W12-GCADOPT (§2.10): scrollbar overlay on the Operation Log list.
         // gpui-component implements `ScrollbarHandle` for `ListState` directly.
         let scrollbar_handle = scroll_handle.clone();
         let rows = std::rc::Rc::new(self.keyboard_rows(window, cx));
+        let list_container = rows.list(rows_container());
 
         // Snapshot before the closure — capped at OP_ENTRIES_MAX (200), and the
         // previous `uniform_list` cloned the same vec on every range callback.
@@ -122,7 +119,7 @@ impl gpui::Render for oplog_panel::OpLogPanel {
 
         super::list_a11y::plain_list(
             "oplog-list",
-            rows_container().child(with_vertical_scrollbar(
+            list_container.child(with_vertical_scrollbar(
                 "oplog-list-scroll",
                 &scrollbar_handle,
                 oplog_list,
@@ -137,7 +134,6 @@ impl gpui::Render for oplog_panel::OpLogPanel {
 fn rows_container() -> gpui::Stateful<gpui::Div> {
     div()
         .id("oplog-list")
-        .key_context("KagiRowList")
         .flex()
         .flex_col()
         .flex_1()
@@ -301,32 +297,38 @@ fn render_copy(
 ) -> gpui::AnyElement {
     let copy_entity = entity.clone();
     let key = oplog_panel::EntryKey::of(entry);
-    let button = oplog_panel::keyboard::copy_button(Button::new(stable_key), i, name)
-        .ghost()
-        .tab_stop(expanded)
-        .on_key_down(super::keyboard_nav::stop_activation_keys)
-        .w(theme_mod::scaled_px(19.))
-        .h(theme_mod::scaled_px(19.))
-        .flex_shrink_0()
-        .ml(theme_mod::scaled_px(6.))
-        .p_1()
-        .rounded_sm()
-        .cursor_pointer()
-        .opacity(0.55)
-        .tooltip(Msg::OpLogCopyEntry.t())
-        // Swallow the press as well, so it cannot start detail-text selection.
-        .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-        .on_click(move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-            cx.stop_propagation();
-            copy_entity.update(cx, |this, cx| this.copy_entry_key(&key, cx));
-        })
-        .child(
-            gpui::svg()
-                .path("icons/copy.svg")
-                .w(theme_mod::scaled_px(11.))
-                .h(theme_mod::scaled_px(11.))
-                .text_color(rgb(theme().text_sub)),
-        );
+    // Reuse the quiet-copy focus owner rather than the kit's low-alpha outer
+    // ring; a second hover style on the pinned Button also conflicts with its own.
+    let button = super::keyboard_nav::focusable(oplog_panel::keyboard::copy_button(
+        div().id(stable_key),
+        i,
+        name,
+    ))
+    .tab_stop(expanded)
+    .w(theme_mod::scaled_px(19.))
+    .h(theme_mod::scaled_px(19.))
+    .flex_shrink_0()
+    .ml(theme_mod::scaled_px(6.))
+    .p(super::keyboard_nav::inset(4.))
+    .rounded_sm()
+    .cursor_pointer()
+    .opacity(0.55)
+    .hover(|style| style.bg(rgb(theme().selected)).opacity(1.0))
+    .focus_visible(|style| style.opacity(1.0).border_color(rgb(theme().ui_accent())))
+    .tooltip(|w, cx| gpui_component::tooltip::Tooltip::new(Msg::OpLogCopyEntry.t()).build(w, cx))
+    // Swallow the press as well, so it cannot start detail-text selection.
+    .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+    .on_click(move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+        cx.stop_propagation();
+        copy_entity.update(cx, |this, cx| this.copy_entry_key(&key, cx));
+    })
+    .child(
+        gpui::svg()
+            .path("icons/copy.svg")
+            .w(theme_mod::scaled_px(11.))
+            .h(theme_mod::scaled_px(11.))
+            .text_color(rgb(theme().text_sub)),
+    );
     super::e2e::measure_control(format!("oplog-copy-{i}"), button)
 }
 

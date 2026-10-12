@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Alert-style confirmations, including the Editor dirty guard, Delete, Discard, Abort, Amend and Trust, reuse the named-dialog focus trap so Tab and Shift+Tab stay inside the dialog instead of reaching the Editor's Code Input. Root Return and Escape cancellation, explicit danger approval and modal accessors are unchanged. (#1292)
+  - Review: alert dismissal restores the still-drawn opener (or root fallback), with an independent screen-scoped return target. Escape/Return resumes Editor typing, and Delete cancellation preserves root shortcut dispatch without stealing a newer modal's focus.
 - Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)
 - Analyze Ownership displays author names, falling back to the email local part for unnamed authors; full identities remain available through tooltips and accessibility labels. Email-based aggregation, stable ranking and EN/JA captions are unchanged. (#1052)
   - Review: untrusted author names and emails escape display-control bytes before reaching visible labels, tooltips or accessibility names; raw aggregation/export identities remain unchanged.

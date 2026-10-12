@@ -129,6 +129,15 @@ impl KagiApp {
     /// Settings yields to a visible modal that arrives while it is open
     /// (#976 review). Its return target is dropped rather than applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_modal_needs_alert_trap()
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.alert_return_focus.is_none()
+        {
+            self.alert_return_focus = window.focused(cx).map(|focus| PendingFocus {
+                focus,
+                screen: self.focus_screen(),
+            });
+        }
         // A restored control may remain drawn during its close animation and
         // unmount later. Only rescue that exact focus; user-directed focus
         // changes must never be stolen by an old restore target.
@@ -222,6 +231,28 @@ impl KagiApp {
             let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
             if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
                 window.focus(focus, cx);
+            }
+        }
+        if !self.active_modal_needs_alert_trap() {
+            if let Some(opener) = self.alert_return_focus.take() {
+                let trapped = self.modal_focus.as_ref().is_some_and(|focus| {
+                    focus.is_focused(window) || focus.contains_focused(window, cx)
+                });
+                // Do not steal focus from a newer modal or another key owner.
+                if trapped && !self.has_active_modal() && !menu_visible {
+                    let valid = opener.screen == self.focus_screen()
+                        && self
+                            .root_focus
+                            .as_ref()
+                            .is_some_and(|root| root.contains(&opener.focus, window));
+                    if let Some(focus) = valid
+                        .then_some(opener.focus)
+                        .or_else(|| self.root_focus.clone())
+                    {
+                        window.focus(&focus, cx);
+                        self.restored_focus = Some(focus);
+                    }
+                }
             }
         }
     }

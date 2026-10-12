@@ -109,9 +109,46 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
             assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
             assert!(cx.read(|cx| editor.read(cx).dirty));
             assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+            paint(cx, window);
+            let buffer_before = cx.read(|cx| input.read(cx).value().to_string());
+            cx.simulate_keystrokes(window, "z");
+            cx.run_until_parked();
+            assert_ne!(
+                cx.read(|cx| input.read(cx).value().to_string()),
+                buffer_before,
+                "{lang:?}: typing after {cancel_key} must return to the Editor Input"
+            );
         }
         drop(input);
         drop(editor);
+        app.update(cx, |app, cx| app.show_graph_mode(cx));
+        cx.run_until_parked();
+        paint(cx, window);
+        focused_confirm(cx, &app, window, "editor-dirty-guard-discard");
+        git_fixture::git(repo, &["branch", "focus-cancel-target"]);
+        app.update(cx, |app, cx| {
+            app.open_delete_branch_modal("focus-cancel-target", cx)
+        });
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_some()));
+        cx.simulate_keystrokes(window, "escape");
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(cx.read(|cx| app.read(cx).delete_branch_modal().is_none()));
+        assert!(
+            !git_fixture::git_output(repo, &["branch", "--list", "focus-cancel-target"]).is_empty()
+        );
+        let sidebar_before = cx.read(|cx| app.read(cx).sidebar.visible);
+        cx.simulate_keystrokes(window, "secondary-b");
+        cx.run_until_parked();
+        assert_ne!(
+            cx.read(|cx| app.read(cx).sidebar.visible),
+            sidebar_before,
+            "Delete cancellation must restore root shortcut dispatch"
+        );
+        cx.simulate_keystrokes(window, "secondary-b");
+        cx.run_until_parked();
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS dirty_guard_focus_trap");

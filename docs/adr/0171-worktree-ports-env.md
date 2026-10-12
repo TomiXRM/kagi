@@ -197,3 +197,14 @@ range is unchanged.
    Terminal start refreshes an existing linked row when it has one.
 4. **Configurable env-var name / bind-to-reserve** — if the `KAGI_PORT` convention
    or the numbers-only race proves insufficient.
+
+## Amendment (2026-10-12): inspection-card keyboard actions (#1338)
+
+The existing inspection card's Refresh and stored local URL actions reuse the
+pinned focusable Button. The URL's EN/JA name describes opening the exact
+`http://localhost:<port>` in the browser; an unassigned worktree has no URL
+action and rendering still assigns no ports. A keyboard-opened card remains
+mounted while its worktree row or a card control holds focus. Tab orders
+Refresh before URL; Enter/Space use the same callbacks as pointer input.
+Escape returns focus to the owning row. Owner/surface departure closes the
+card rather than restoring its actions in a different repository.

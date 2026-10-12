@@ -77,6 +77,18 @@ mod menus_window;
 mod toast_dismiss;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/feedback_status.rs"]
+mod feedback_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/clone_progress_status.rs"]
+mod clone_progress_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_inspection_actions.rs"]
+mod worktree_inspection_actions;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
 mod system_accent;
 
@@ -2079,6 +2091,22 @@ mod macos {
             (
                 "toast_dismiss",
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
+            ),
+            (
+                "toast_live_status",
+                Box::new(crate::feedback_status::scenario_toast_live_status),
+            ),
+            (
+                "diff_header_identity",
+                Box::new(crate::feedback_status::scenario_diff_header_identity),
+            ),
+            (
+                "clone_progress_status",
+                Box::new(crate::clone_progress_status::scenario_clone_progress_status),
+            ),
+            (
+                "worktree_inspection_actions",
+                Box::new(crate::worktree_inspection_actions::scenario),
             ),
             (
                 "fetch_failure_oplog",

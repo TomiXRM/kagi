@@ -113,3 +113,19 @@ and activates it with Enter, and checks focus repair after keyboard dismissal
 and focused Info expiry. Six-line/long-single-line inputs exercise truncation;
 JA uses Japanese preview text. Button measurement wraps the component without
 adding children that would change its production icon geometry.
+
+## Status metadata amendment (#1337, 2026-10-12)
+
+The retained toast entity owns a single stable `toast-stack` Status node.
+Push records the newest preview's ID and text; that text names the node.
+Timer, hover, enter/exit animation, cap eviction and dismissal never promote
+an older notification into a new arrival. The latest arrival metadata drains
+when the stack becomes empty. No focus changes accompany arrival.
+
+The pinned GPUI fork (`caf5007`) has no `aria_live`, live-region priority or
+announcement setter in its stateful accessibility API. Therefore the node
+exposes Status and its updated label, but neither polite/assertive delivery
+nor exactly-once native VoiceOver speech is guaranteed. Tier A observes
+renderer-applied role/name and stable arrival identity, not announcements.
+The bounded previews, persistent errors, hover pause, keyboard dismissal and
+durable Operation Log ownership above are unchanged.

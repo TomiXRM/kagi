@@ -156,6 +156,10 @@ dropdown uses the same state-label resolver.
 
 Window groups Minimize/Zoom, Previous/Next Tab, Bring All to Front, then the
 existing New/Close entries. Tab commands reuse the repository/Home switch paths
-and are not registered in Settings. Bring All to Front raises registered main
-windows through GPUI without changing their selected repository.
+and are not registered in Settings. Fixed brace-key aliases match macOS's
+normalized shifted-bracket events without changing displayed registry shortcuts.
+Bring All to Front raises registered main windows back-to-front in their native
+stack order, restoring the original frontmost window last without changing the
+selected repository. Inactive renders retain the last menu owner; only the first
+publication may occur without an active main window.
 

@@ -137,6 +137,14 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
             labels(cx, "View").contains(&show.to_string()),
             "returning to A restores A's label"
         );
+        app.update(cx, |a, cx| a.set_window_active_for_e2e(false, cx));
+        other_app.update(cx, |a, cx| a.set_window_active_for_e2e(false, cx));
+        assert!(cx.read(|cx| cx.active_window().is_none()));
+        draw(cx, other_win);
+        assert!(
+            labels(cx, "View").contains(&show.to_string()),
+            "inactive renders retain the last foreground menu owner"
+        );
         let fullscreen = commands::menus_for_state(window_menu::ViewMenuState {
             sidebar_visible: false,
             fullscreen: true,
@@ -188,6 +196,16 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     assert_eq!(cx.read(|cx| app.read(cx).active_tab), 1);
     cx.simulate_keystrokes(win, "cmd-shift-]");
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| app.read(cx).active_tab), 2);
+    cx.simulate_keystrokes(win, "cmd-{");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_tab),
+        1,
+        "native shifted bracket representation switches to the previous tab"
+    );
+    cx.simulate_keystrokes(win, "cmd-}");
     cx.run_until_parked();
     assert_eq!(cx.read(|cx| app.read(cx).active_tab), 2);
     invoke(cx, &app, win, "file.newTab");
@@ -254,6 +272,40 @@ fn check_window_owners(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win
         "Settings leaves the main title alone"
     );
     unmount(cx, other_app, other_win);
+}
+pub fn scenario_window_menu_front_order(cx: &mut VisualTestAppContext) {
+    let first = build_fixture();
+    let second = build_fixture();
+    let (app, win) = mount_short(cx, first.path());
+    let (other_app, other_win) = mount_short(cx, second.path());
+    for handle in [other_win, win] {
+        cx.update_window(handle, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+    }
+    let before = cx.read(|cx| cx.window_stack().expect("native window stack"));
+    assert_eq!(before, vec![win, other_win]);
+    let key_before = cx.read(|cx| cx.active_window());
+    let activation_order = cx.read(window_menu::bring_all_activation_order);
+    assert_eq!(
+        activation_order,
+        vec![other_win, win],
+        "raise back-to-front, restoring the invoking/frontmost window last"
+    );
+    assert_eq!(activation_order.last(), before.first());
+    invoke(cx, &app, win, "window.bringAllToFront");
+    assert_eq!(
+        cx.read(|cx| cx.window_stack()),
+        Some(before),
+        "Bring All to Front preserves main-window front-to-back order"
+    );
+    assert_eq!(
+        cx.read(|cx| cx.active_window()),
+        key_before,
+        "Bring All to Front preserves native key-window ownership"
+    );
+    unmount(cx, other_app, other_win);
+    unmount(cx, app, win);
 }
 pub fn scenario_about_dialog(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "theme", "ui_zoom"]);

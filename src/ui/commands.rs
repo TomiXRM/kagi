@@ -1529,9 +1529,11 @@ pub fn register_keybindings(cx: &mut App) {
         "window.previousTab" => PreviousTab,
         "window.nextTab" => NextTab,
     );
-    // The `+` alias for zoom-in has no command id of its own; keep it fixed.
+    // Fixed aliases match native normalization without changing registry display.
     cx.bind_keys([
         KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-{", PreviousTab, None),
+        KeyBinding::new("secondary-}", NextTab, None),
         KeyBinding::new("secondary-m", MinimizeWindow, None),
     ]);
 }

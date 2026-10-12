@@ -1354,6 +1354,10 @@ mod macos {
                 Box::new(crate::menus_window::scenario_window_menu_items),
             ),
             (
+                "window_menu_front_order",
+                Box::new(crate::menus_window::scenario_window_menu_front_order),
+            ),
+            (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
             ),

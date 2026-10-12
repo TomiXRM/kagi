@@ -88,8 +88,11 @@ impl KagiApp {
             window.set_window_title(title.as_ref());
             self.native_window_title = title;
         }
-        // Inactive background reads must not replace the foreground window's menu.
-        if !self.window_active_for_render(window) && cx.active_window().is_some() {
+        // Inactive renders retain the last owner, even while the app is inactive.
+        // Only initial publication may occur without an active main window.
+        if !self.window_active_for_render(window)
+            && (cx.active_window().is_some() || cx.global::<WindowMenus>().owner.is_some())
+        {
             return;
         }
         self.publish_window_menu_state(window, cx);
@@ -140,16 +143,39 @@ impl KagiApp {
 }
 /// Raise only main windows; utility hosts are never registered here.
 pub(crate) fn bring_all_to_front(cx: &mut App) {
-    let Some(menus) = cx.try_global::<WindowMenus>() else {
+    let targets = activation_order(cx);
+    if targets.is_empty() {
         return;
-    };
-    let targets = menus.main_windows.clone();
+    }
     // Defer so the invoking window is no longer on GPUI's update stack.
     cx.defer(move |cx| {
         for target in targets {
             let _ = target.update(cx, |_, window, _| window.activate_window());
         }
     });
+}
+fn activation_order(cx: &App) -> Vec<AnyWindowHandle> {
+    let Some(menus) = cx.try_global::<WindowMenus>() else {
+        return Vec::new();
+    };
+    let stack = cx.window_stack();
+    let frontmost = stack
+        .as_ref()
+        .and_then(|stack| stack.first().copied())
+        .or_else(|| cx.active_window());
+    let mut targets = stack.unwrap_or_else(|| menus.main_windows.clone());
+    targets.retain(|target| menus.main_windows.contains(target) && Some(*target) != frontmost);
+    targets.reverse();
+    // Preserve the invoking/frontmost window, including a Settings utility host.
+    if let Some(frontmost) = frontmost {
+        targets.push(frontmost);
+    }
+    targets
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn bring_all_activation_order(cx: &App) -> Vec<AnyWindowHandle> {
+    activation_order(cx)
 }
 #[cfg(feature = "gui-e2e")]
 pub fn main_window_targets(cx: &App) -> Vec<AnyWindowHandle> {

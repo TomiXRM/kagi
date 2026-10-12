@@ -7,6 +7,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Diff headers retain the full sanitized path in their tooltip and accessibility description without enlarging the title or displacing header controls. (#1336)
+- Toast feedback exposes a stable Status node named by the newest arrival; animation, hover and timer paints do not replace its arrival identity. The pinned GPUI API has no live-region/priority setter, so automatic VoiceOver delivery is not claimed. (#1337)
+- Running Clone exposes an operation-named EN/JA Status label with elapsed seconds; Hide remains non-cancelling and the existing completion/error feedback is unchanged. (#1341)
+- Worktree inspection Refresh and local URL actions are named keyboard Buttons; Tab reaches them without closing the card, and Escape returns to the owning worktree row. (#1338)
+  - Review: pointer-only hover-card actions stay outside native Tab traversal; only explicitly keyboard-opened cards register action stops. The local URL chip retains its original extra-small text sizing.
 - Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
 - Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
 - Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)

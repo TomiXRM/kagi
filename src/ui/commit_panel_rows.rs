@@ -1,5 +1,6 @@
 //! Virtualized Commit Panel file rows and accessible tree positions.
 #![allow(clippy::too_many_arguments)]
+use super::super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
 use crate::ui::button_style::{ButtonRole, KagiButton};
 
@@ -104,6 +105,7 @@ pub(super) fn cp_tree_slot(
 ///   its `fi + 100_000` id seed so the two lists never collide.
 fn render_cp_file_row(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     staged: bool,
     tree: bool,
     fi: usize,
@@ -137,8 +139,6 @@ fn render_cp_file_row(
         &state.unstaged[fi]
     };
     let full_path = SharedString::from(file.path.to_string_lossy().into_owned());
-    let row_name =
-        super::super::commit_panel_navigation::file_name(&file.path, change, is_conflicted);
     let file_ref = if staged {
         CommitPanelFileRef::Staged { index: fi }
     } else {
@@ -157,7 +157,15 @@ fn render_cp_file_row(
     };
     let mut file_row = div()
         .id((row_id, fi))
-        .map(|el| cp_tree_item(el, slot, || row_name.clone(), None, Some(is_sel || wip_hit)))
+        .map(|el| {
+            cp_tree_item(
+                el,
+                slot,
+                || row_name(view, staged, fi),
+                None,
+                Some(is_sel || wip_hit),
+            )
+        })
         .aria_description(full_path.clone())
         .w_full()
         .flex()
@@ -230,10 +238,10 @@ fn render_cp_file_row(
         ));
     file_row = super::super::commit_panel_navigation::file_row(
         view,
+        drawn,
         staged,
         fi,
-        tree,
-        (row_name, is_sel || wip_hit),
+        is_sel || wip_hit,
         file_row,
         cx,
     );
@@ -292,6 +300,11 @@ fn render_cp_file_row(
             cx,
         )
         .xsmall()
+        // Only the remembered row's inline action participates in Tab;
+        // preceding rows must not intercept Shift+Tab out of the section.
+        .tab_stop(super::super::commit_panel_navigation::action_tab_stop(
+            view, drawn, staged, fi,
+        ))
         .min_h(px(20.))
         .ml_2()
         .flex_shrink_0()
@@ -448,6 +461,7 @@ fn is_convention(path: &std::path::Path) -> bool {
 /// rows (issue #348).
 fn cp_unstaged_file_element(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     fi: usize,
     slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
@@ -466,6 +480,7 @@ fn cp_unstaged_file_element(
     Some(
         render_cp_file_row(
             view,
+            drawn,
             false,
             false,
             fi,
@@ -488,6 +503,7 @@ fn cp_unstaged_file_element(
 /// One staged file row (flat style) by index `fi` into `staged` (issue #348).
 fn cp_staged_file_element(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     fi: usize,
     slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
@@ -506,6 +522,7 @@ fn cp_staged_file_element(
     Some(
         render_cp_file_row(
             view,
+            drawn,
             true,
             false,
             fi,
@@ -528,15 +545,16 @@ fn cp_staged_file_element(
 /// One file row (flat style) for either side, dispatched by `staged`.
 fn cp_file_element(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     staged: bool,
     fi: usize,
     slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     if staged {
-        cp_staged_file_element(view, fi, slot, cx)
+        cp_staged_file_element(view, drawn, fi, slot, cx)
     } else {
-        cp_unstaged_file_element(view, fi, slot, cx)
+        cp_unstaged_file_element(view, drawn, fi, slot, cx)
     }
 }
 
@@ -546,6 +564,7 @@ fn cp_file_element(
 /// is the row's tree position in tree view.
 fn render_cp_fold_regions(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     j: usize,
     staged: bool,
     slot: Option<CpTreeSlot>,
@@ -569,7 +588,7 @@ fn render_cp_fold_regions(
             ));
         }
         let fi = *gen_files.get(j - 1)?;
-        return cp_file_element(view, staged, fi, slot, cx);
+        return cp_file_element(view, drawn, staged, fi, slot, cx);
     }
     // Agent-artifacts fold, immediately after the generated region.
     let k = j - gen_extra;
@@ -583,22 +602,23 @@ fn render_cp_fold_regions(
         ));
     }
     let fi = *art_files.get(k - 1)?;
-    cp_file_element(view, staged, fi, slot, cx)
+    cp_file_element(view, drawn, staged, fi, slot, cx)
 }
 
 /// PERF: build one unstaged row in flat view. `i` is a display-row index:
 /// normal files first, then the "Generated" / "Agent artifacts" folds.
 pub(crate) fn render_unstaged_flat_row(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     i: usize,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
     let normal = &panel.unstaged_normal_files;
     if i < normal.len() {
-        return cp_unstaged_file_element(view, normal[i], None, cx);
+        return cp_unstaged_file_element(view, drawn, normal[i], None, cx);
     }
-    render_cp_fold_regions(view, i - normal.len(), false, None, cx)
+    render_cp_fold_regions(view, drawn, i - normal.len(), false, None, cx)
 }
 
 /// PERF: build one unstaged tree row. `i` indexes the pruned tree first, then
@@ -606,6 +626,7 @@ pub(crate) fn render_unstaged_flat_row(
 /// `cp-unstaged-tree` (#354).
 pub(crate) fn render_unstaged_tree_row(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     i: usize,
     slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
@@ -613,7 +634,7 @@ pub(crate) fn render_unstaged_tree_row(
     let panel = &view.state;
     let tree_len = panel.unstaged_tree.len();
     if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, false, slot, cx);
+        return render_cp_fold_regions(view, drawn, i - tree_len, false, slot, cx);
     }
     match panel.unstaged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -636,6 +657,7 @@ pub(crate) fn render_unstaged_tree_row(
             Some(
                 render_cp_file_row(
                     view,
+                    drawn,
                     false,
                     true,
                     fi,
@@ -661,15 +683,16 @@ pub(crate) fn render_unstaged_tree_row(
 /// normal files first, then the "Generated (N)" fold (issue #348).
 pub(crate) fn render_staged_flat_row(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     i: usize,
     cx: &mut Context<CommitPanelView>,
 ) -> Option<gpui::AnyElement> {
     let panel = &view.state;
     let normal = &panel.staged_normal_files;
     if i < normal.len() {
-        return cp_staged_file_element(view, normal[i], None, cx);
+        return cp_staged_file_element(view, drawn, normal[i], None, cx);
     }
-    render_cp_fold_regions(view, i - normal.len(), true, None, cx)
+    render_cp_fold_regions(view, drawn, i - normal.len(), true, None, cx)
 }
 
 /// PERF: build one staged tree row. `i` indexes the pruned tree first, then the
@@ -677,6 +700,7 @@ pub(crate) fn render_staged_flat_row(
 /// `cp-staged-tree` (#354).
 pub(crate) fn render_staged_tree_row(
     view: &CommitPanelView,
+    drawn: &ChangesRows,
     i: usize,
     slot: Option<CpTreeSlot>,
     cx: &mut Context<CommitPanelView>,
@@ -684,7 +708,7 @@ pub(crate) fn render_staged_tree_row(
     let panel = &view.state;
     let tree_len = panel.staged_tree.len();
     if i >= tree_len {
-        return render_cp_fold_regions(view, i - tree_len, true, slot, cx);
+        return render_cp_fold_regions(view, drawn, i - tree_len, true, slot, cx);
     }
     match panel.staged_tree.get(i)? {
         file_tree::TreeRow::Dir { depth, name } => {
@@ -706,6 +730,7 @@ pub(crate) fn render_staged_tree_row(
             Some(
                 render_cp_file_row(
                     view,
+                    drawn,
                     true,
                     true,
                     fi,

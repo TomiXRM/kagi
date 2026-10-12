@@ -318,6 +318,49 @@ fn fixture_files(repo: &Path) {
     std::fs::write(repo.join("Cargo.lock"), "# generated\n").unwrap();
 }
 
+fn assert_fold_file_roles(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    panel: &Entity<kagi::ui::commit_panel::CommitPanelView>,
+    window: gpui::AnyWindowHandle,
+    repo: &Path,
+) {
+    std::fs::write(repo.join(".mcp.json"), "{}\n").unwrap();
+    git(repo, &["add", "Cargo.lock", ".mcp.json"]);
+    std::fs::write(repo.join("Cargo.lock"), "# generated changed\n").unwrap();
+    std::fs::write(repo.join(".mcp.json"), "{\"changed\":true}\n").unwrap();
+    panel.update(cx, |view, cx| {
+        view.state.reload_status(repo);
+        view.state.generated_expanded = true;
+        view.state.agent_expanded = true;
+        cx.notify();
+    });
+    for language in [Lang::Ja, Lang::En] {
+        i18n::set_lang(language);
+        draw(cx, app, window);
+        cx.read(|cx| {
+            let state = &panel.read(cx).state;
+            for (side, files) in [("us", &state.unstaged), ("st", &state.staged)] {
+                for path in ["Cargo.lock", ".mcp.json"] {
+                    let fi = files
+                        .iter()
+                        .position(|file| file.path == Path::new(path))
+                        .unwrap();
+                    let id = format!("cp-{side}-row-{fi}");
+                    assert_eq!(
+                        e2e::commit_panel_labels::accessible_role(&id),
+                        Some(gpui::Role::TreeItem),
+                        "expanded generated/agent files remain real TreeItems"
+                    );
+                    assert!(e2e::commit_panel_labels::accessible_name(&id)
+                        .unwrap()
+                        .ends_with(path));
+                }
+            }
+        });
+    }
+}
+
 fn draw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: gpui::AnyWindowHandle) {
     clear_recorded_trees();
     app.update(cx, |_, cx| cx.notify());
@@ -566,6 +609,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
         "modified src/Fix {}.txt"
     );
     assert_eq!(item(&unstaged, "Cargo.lock").label, "added Cargo.lock");
+    assert_fold_file_roles(cx, &app, &panel, window, &repo);
     // A status rebuild invalidates the cached layout even when disclosure
     // flags stay unchanged; all siblings, including off-screen ones, count.
     std::fs::write(repo.join("src/zeta.txt"), "new\n").unwrap();

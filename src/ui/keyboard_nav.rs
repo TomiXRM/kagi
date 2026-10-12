@@ -443,8 +443,13 @@ pub(crate) struct RowList {
 }
 
 impl RowList {
+    #[cfg(feature = "gui-e2e")]
     pub(crate) fn focus_handle(&self, at: usize) -> &FocusHandle {
         &self.handles[at]
+    }
+
+    pub(crate) fn is_tab_stop(&self, at: usize) -> bool {
+        self.stop == Some(at)
     }
 
     /// The list's container.
@@ -509,7 +514,7 @@ impl RowList {
         let handle = self.handles[at]
             .clone()
             .tab_index(0)
-            .tab_stop(self.stop == Some(at));
+            .tab_stop(self.is_tab_stop(at));
         let move_to = |to: usize| {
             let (rows, handles, scroll) =
                 (self.rows.clone(), self.handles.clone(), self.scroll.clone());

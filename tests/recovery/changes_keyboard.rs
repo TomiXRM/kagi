@@ -143,6 +143,11 @@ fn file_section_keys(
     press(cx, window, "tab");
     press(cx, window, "shift-tab");
     assert_focus(cx, window, &first);
+    if count > 5 {
+        remembered_row_tab(cx, window, side, count);
+        press(cx, window, "home");
+        assert_focus(cx, window, &first);
+    }
     if count > 1 {
         app.update(cx, |app, cx| {
             app.ui()
@@ -162,6 +167,67 @@ fn file_section_keys(
         paint(cx, window);
         assert_focus(cx, window, &first);
     }
+}
+
+fn remembered_row_tab(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    side: &str,
+    count: usize,
+) {
+    focus(cx, window, &format!("cp-{side}-row-0"));
+    for _ in 0..5 {
+        press(cx, window, "down");
+    }
+    let remembered = format!("cp-{side}-row-5");
+    assert!(
+        cx.update_window(window, |_, window, _| labels::focused(&remembered, window))
+            .unwrap(),
+        "row 5 focused after five Down keys"
+    );
+    press(cx, window, "shift-tab");
+    assert!(
+        !section_holds_focus(cx, window, side, count),
+        "Shift+Tab must leave the section from remembered row 5"
+    );
+    press(cx, window, "tab");
+    assert!(
+        cx.update_window(window, |_, window, _| labels::focused(&remembered, window))
+            .unwrap(),
+        "Tab returns to remembered row 5 after backward exit"
+    );
+    press(cx, window, "tab");
+    assert!(
+        section_holds_focus(cx, window, side, count),
+        "remembered row's Stage/Unstage action remains keyboard reachable"
+    );
+    press(cx, window, "tab");
+    assert!(
+        !section_holds_focus(cx, window, side, count),
+        "Tab after the inline action leaves the section"
+    );
+    press(cx, window, "shift-tab");
+    press(cx, window, "shift-tab");
+    assert!(
+        cx.update_window(window, |_, window, _| labels::focused(&remembered, window))
+            .unwrap(),
+        "Shift+Tab returns to remembered row 5 after forward exit"
+    );
+}
+
+fn section_holds_focus(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    side: &str,
+    count: usize,
+) -> bool {
+    cx.update_window(window, |_, window, cx| {
+        (0..count).any(|fi| {
+            labels::focus_handle(&format!("cp-{side}-row-{fi}"))
+                .is_some_and(|handle| handle.contains_focused(window, cx))
+        })
+    })
+    .unwrap()
 }
 
 fn select_file_once(

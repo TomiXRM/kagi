@@ -576,7 +576,9 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                view.unstaged_navigation.drawn(&range);
+                                                let rows = view
+                                                    .unstaged_navigation
+                                                    .drawn(&range, _window, cx);
                                                 let layout = view.state.tree_view.then_some(
                                                     view.unstaged_tree_layout.as_slice(),
                                                 );
@@ -584,6 +586,7 @@ impl CommitPanelView {
                                                     .filter_map(|i| match &layout {
                                                         Some(layout) => render_unstaged_tree_row(
                                                             view,
+                                                            &rows,
                                                             i,
                                                             cp_tree_slot(
                                                                 layout,
@@ -592,9 +595,9 @@ impl CommitPanelView {
                                                             ),
                                                             cx,
                                                         ),
-                                                        None => {
-                                                            render_unstaged_flat_row(view, i, cx)
-                                                        }
+                                                        None => render_unstaged_flat_row(
+                                                            view, &rows, i, cx,
+                                                        ),
                                                     })
                                                     .collect::<Vec<_>>()
                                             },
@@ -653,7 +656,9 @@ impl CommitPanelView {
                                                   range: std::ops::Range<usize>,
                                                   _window,
                                                   cx| {
-                                                view.staged_navigation.drawn(&range);
+                                                let rows = view
+                                                    .staged_navigation
+                                                    .drawn(&range, _window, cx);
                                                 let layout = view
                                                     .state
                                                     .tree_view
@@ -662,6 +667,7 @@ impl CommitPanelView {
                                                     .filter_map(|i| match &layout {
                                                         Some(layout) => render_staged_tree_row(
                                                             view,
+                                                            &rows,
                                                             i,
                                                             cp_tree_slot(
                                                                 layout,
@@ -670,7 +676,9 @@ impl CommitPanelView {
                                                             ),
                                                             cx,
                                                         ),
-                                                        None => render_staged_flat_row(view, i, cx),
+                                                        None => render_staged_flat_row(
+                                                            view, &rows, i, cx,
+                                                        ),
                                                     })
                                                     .collect::<Vec<_>>()
                                             },

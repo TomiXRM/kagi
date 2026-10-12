@@ -46,7 +46,7 @@ fn launch(cx: &mut VisualTestAppContext) -> Bounds<Pixels> {
 
 pub(crate) fn scenario_window_restore_position(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["window_frame", "window_size"]);
-    let display = cx.update(|app| app.primary_display().expect("main display").bounds());
+    let (uuid, display) = main_display_geometry(cx);
     let expected = Bounds {
         origin: point(display.origin.x + px(40.), display.origin.y + px(50.)),
         size: size(px(640.), px(480.)),
@@ -54,7 +54,7 @@ pub(crate) fn scenario_window_restore_position(cx: &mut VisualTestAppContext) {
     settings::write_setting(
         "window_frame",
         Some(&format!(
-            "{},{},640,480,disconnected-id",
+            "{},{},640,480,{uuid}",
             f32::from(expected.origin.x),
             f32::from(expected.origin.y)
         )),
@@ -62,13 +62,13 @@ pub(crate) fn scenario_window_restore_position(cx: &mut VisualTestAppContext) {
     assert_eq!(
         launch(cx),
         expected,
-        "a visible saved origin and size must restore exactly, even after display identity changes"
+        "a reachable saved origin and size restore exactly on the matching display"
     );
     settings::write_setting(
         "window_frame",
         Some("100000,100000,640,480,disconnected-id"),
     );
-    let centered = cx.update(|app| Bounds::centered(None, size(px(640.), px(480.)), app));
+    let centered = centered_in(display, 640., 480.);
     assert_eq!(
         launch(cx),
         centered,
@@ -89,14 +89,7 @@ pub(crate) fn scenario_window_restore_position(cx: &mut VisualTestAppContext) {
         default,
         "corrupt rectangles use the safe default"
     );
-    settings::write_setting("window_frame", Some("-600,50,640,480,id"));
-    let partial = cx.update(|app| window_restore::initial_bounds(app));
-    assert_eq!(
-        partial.origin.x,
-        px(-600.),
-        "a positive partial intersection remains restorable"
-    );
-    settings::write_setting("window_frame", Some("40,50,640,480,id"));
+    settings::write_setting("window_frame", Some(&format!("40,50,640,480,{uuid}")));
     check_persistence(cx, default);
 }
 
@@ -163,5 +156,120 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
         settings::read_setting("window_frame"),
         before_skip,
         "NO_RESTORE does not save"
+    );
+}
+
+fn main_display_geometry(cx: &mut VisualTestAppContext) -> (String, Bounds<Pixels>) {
+    cx.update(|app| {
+        let display = app.primary_display().expect("main display");
+        (
+            display.uuid().expect("display UUID").to_string(),
+            display.visible_bounds(),
+        )
+    })
+}
+
+fn centered_in(visible: Bounds<Pixels>, width: f32, height: f32) -> Bounds<Pixels> {
+    let width = px(width).min(visible.size.width);
+    let height = px(height).min(visible.size.height);
+    Bounds {
+        origin: point(
+            (visible.origin.x + (visible.size.width - width) / 2.).round(),
+            (visible.origin.y + (visible.size.height - height) / 2.).round(),
+        ),
+        size: size(width, height),
+    }
+}
+
+pub(crate) fn scenario_window_restore_display_identity(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["window_frame", "window_size"]);
+    let (_, visible) = main_display_geometry(cx);
+    settings::write_setting("window_frame", Some("40,50,640,480,disconnected-id"));
+    let options = cx.update(|app| window_restore::options(app));
+    let primary = cx.update(|app| app.primary_display().unwrap().id());
+    assert_eq!(
+        options.display_id,
+        Some(primary),
+        "missing display UUID selects the primary display"
+    );
+    assert_eq!(
+        launch(cx),
+        centered_in(visible, 640., 480.),
+        "display-local coordinates from a disconnected display must not restore on another display"
+    );
+    settings::write_setting("window_frame", Some("40,50,640,480,"));
+    assert_eq!(
+        launch(cx),
+        centered_in(visible, 640., 480.),
+        "unavailable UUID also centres on primary"
+    );
+    // The secondary monitor may physically sit left/above primary: its saved
+    // local frame remains positive and only its identity can select it.
+    let secondary = settings::MainWindowFrame {
+        x: 40.,
+        y: 50.,
+        width: 640.,
+        height: 480.,
+        display: "secondary".into(),
+    };
+    let secondary_visible = Bounds {
+        origin: point(px(0.), px(33.)),
+        size: size(px(1920.), px(1040.)),
+    };
+    assert_eq!(
+        window_restore::restore_on_display(&secondary, "secondary", secondary_visible),
+        Some(Bounds {
+            origin: point(px(40.), px(50.)),
+            size: size(px(640.), px(480.))
+        })
+    );
+    assert!(
+        window_restore::restore_on_display(&secondary, "primary", visible).is_none(),
+        "secondary local coordinates must not qualify against primary"
+    );
+}
+
+pub(crate) fn scenario_window_restore_fit(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["window_frame", "window_size"]);
+    let (uuid, visible) = main_display_geometry(cx);
+    settings::write_setting("window_frame", Some(&format!("100,100,2560,1440,{uuid}")));
+    assert_eq!(
+        launch(cx),
+        Bounds {
+            origin: visible.origin,
+            size: visible.size
+        },
+        "restored size and origin must fit the target display's usable area"
+    );
+}
+
+pub(crate) fn scenario_window_restore_titlebar(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["window_frame", "window_size"]);
+    let (uuid, visible) = main_display_geometry(cx);
+    let x = f32::from(visible.origin.x) - 600.;
+    let y = f32::from(visible.origin.y) + 30.;
+    settings::write_setting("window_frame", Some(&format!("{x},{y},640,480,{uuid}")));
+    assert_eq!(
+        launch(cx),
+        centered_in(visible, 640., 480.),
+        "40px of titlebar intersection is not enough to retrieve the window"
+    );
+    let x = f32::from(visible.origin.x) - 500.;
+    settings::write_setting("window_frame", Some(&format!("{x},{y},640,480,{uuid}")));
+    assert_eq!(
+        launch(cx),
+        Bounds {
+            origin: point(visible.origin.x, px(y)),
+            size: size(px(640.), px(480.))
+        },
+        "140px of reachable titlebar qualifies, then the complete window moves inward"
+    );
+    let x = f32::from(visible.origin.x) + 40.;
+    let y = f32::from(visible.origin.y) - 1.;
+    settings::write_setting("window_frame", Some(&format!("{x},{y},640,480,{uuid}")));
+    assert_eq!(
+        launch(cx),
+        centered_in(visible, 640., 480.),
+        "the complete 28px titlebar band must be reachable"
     );
 }

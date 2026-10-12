@@ -16,18 +16,15 @@ fn frame_bounds(frame: &settings::MainWindowFrame) -> Bounds<Pixels> {
     }
 }
 
-/// Shared native options keep restored logical frames identical to saved frames.
+/// Shared options keep display choice and geometry in one restore decision.
 pub fn options(cx: &App) -> gpui::WindowOptions {
-    let bounds = initial_bounds(cx);
-    let display_id = display_for_bounds(bounds, cx);
-    // GPUI's macOS native host takes/returns display-local window origins;
-    // persisted frames and connected-display intersection use desktop space.
-    #[cfg(target_os = "macos")]
+    let (bounds, display_id) = initial_placement(cx);
+    #[cfg(not(target_os = "macos"))]
     let bounds = cx
         .displays()
         .iter()
         .find(|display| Some(display.id()) == display_id)
-        .map_or(bounds, |display| bounds - display.bounds().origin);
+        .map_or(bounds, |display| bounds + display.bounds().origin);
     gpui::WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         display_id,
@@ -40,65 +37,108 @@ pub fn options(cx: &App) -> gpui::WindowOptions {
     }
 }
 
-pub fn initial_bounds(cx: &App) -> Bounds<Pixels> {
+fn visible_bounds(display: &dyn gpui::PlatformDisplay) -> Bounds<Pixels> {
+    let visible = display.visible_bounds();
+    #[cfg(not(target_os = "macos"))]
+    let visible = visible - display.bounds().origin;
+    visible
+}
+
+/// UUID and a reachable titlebar qualify a frame before fitting its full rect.
+pub fn restore_on_display(
+    frame: &settings::MainWindowFrame,
+    uuid: &str,
+    visible: Bounds<Pixels>,
+) -> Option<Bounds<Pixels>> {
+    if frame.display.is_empty() || frame.display != uuid {
+        return None;
+    }
+    let bounds = frame_bounds(frame);
+    let titlebar_width = bounds.right().min(visible.right()) - bounds.left().max(visible.left());
+    if bounds.top() < visible.top()
+        || bounds.top() + px(28.) > visible.bottom()
+        || titlebar_width < px(100.)
+    {
+        return None;
+    }
+    let width = bounds.size.width.min(visible.size.width);
+    let height = bounds.size.height.min(visible.size.height);
+    Some(Bounds {
+        origin: point(
+            bounds
+                .origin
+                .x
+                .clamp(visible.left(), visible.right() - width),
+            bounds
+                .origin
+                .y
+                .clamp(visible.top(), visible.bottom() - height),
+        ),
+        size: size(width, height),
+    })
+}
+
+fn initial_placement(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
+    let primary = cx.primary_display();
     if let Some((w, h)) = std::env::var("KAGI_WINDOW").ok().and_then(|raw| {
         let (w, h) = raw.split_once('x')?;
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
     }) {
-        return Bounds::centered(None, size(px(w), px(h)), cx);
+        let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
+        #[cfg(not(target_os = "macos"))]
+        let bounds = primary
+            .as_ref()
+            .map_or(bounds, |display| bounds - display.bounds().origin);
+        return (bounds, primary.map(|display| display.id()));
     }
     let frame = enabled().then(settings::main_window_frame).flatten();
     if let Some(frame) = &frame {
-        let bounds = frame_bounds(frame);
-        if cx
-            .displays()
-            .iter()
-            .any(|display| bounds.intersects(&display.bounds()))
-        {
-            return bounds;
+        for display in cx.displays() {
+            let Ok(uuid) = display.uuid() else {
+                continue;
+            };
+            if let Some(bounds) =
+                restore_on_display(frame, &uuid.to_string(), visible_bounds(display.as_ref()))
+            {
+                return (bounds, Some(display.id()));
+            }
         }
     }
     let restored = frame.map(|frame| (frame.width, frame.height)).or_else(|| {
         enabled()
             .then(|| settings::Settings::load().window_size())
             .flatten()
-            .filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 400. && *h >= 300.)
+            .filter(|(w, h)| {
+                w.is_finite()
+                    && h.is_finite()
+                    && (400. ..=16384.).contains(w)
+                    && (300. ..=16384.).contains(h)
+            })
     });
     let ((w, h), (min_w, min_h)) = match restored {
         Some(wh) => (wh, (400_f32, 300_f32)),
         None => ((1440., 920.), (900_f32, 600_f32)),
     };
-    let (w, h) = match cx.primary_display() {
-        Some(display) => {
-            let bounds = display.bounds();
-            let max_w = f32::from(bounds.size.width) * 0.92;
-            let max_h = f32::from(bounds.size.height) * 0.90;
-            (
-                w.clamp(min_w.min(max_w), max_w),
-                h.clamp(min_h.min(max_h), max_h),
-            )
-        }
-        None => (w, h),
+    let Some(primary) = primary else {
+        return (Bounds::centered(None, size(px(w), px(h)), cx), None);
     };
-    Bounds::centered(None, size(px(w), px(h)), cx)
-}
-
-pub fn display_for_bounds(bounds: Bounds<Pixels>, cx: &App) -> Option<DisplayId> {
-    let saved = enabled().then(settings::main_window_frame).flatten();
-    let displays = cx.displays();
-    let visible = |display: &&Rc<dyn gpui::PlatformDisplay>| bounds.intersects(&display.bounds());
-    displays
-        .iter()
-        .filter(visible)
-        .find(|display| {
-            saved.as_ref().is_some_and(|frame| {
-                display
-                    .uuid()
-                    .is_ok_and(|uuid| uuid.to_string() == frame.display)
-            })
-        })
-        .or_else(|| displays.iter().find(visible))
-        .map(|display| display.id())
+    let visible = visible_bounds(primary.as_ref());
+    let (max_w, max_h) = (
+        f32::from(visible.size.width),
+        f32::from(visible.size.height),
+    );
+    let width = px(w.clamp(min_w.min(max_w), max_w));
+    let height = px(h.clamp(min_h.min(max_h), max_h));
+    (
+        Bounds {
+            origin: point(
+                (visible.left() + (visible.size.width - width) / 2.).round(),
+                (visible.top() + (visible.size.height - height) / 2.).round(),
+            ),
+            size: size(width, height),
+        },
+        Some(primary.id()),
+    )
 }
 
 fn capture(window: &Window, cx: &App) -> Option<settings::MainWindowFrame> {
@@ -106,10 +146,10 @@ fn capture(window: &Window, cx: &App) -> Option<settings::MainWindowFrame> {
         return None;
     };
     let display = window.display(cx);
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "macos"))]
     let bounds = display
         .as_ref()
-        .map_or(bounds, |display| bounds + display.bounds().origin);
+        .map_or(bounds, |display| bounds - display.bounds().origin);
     Some(settings::MainWindowFrame {
         x: f32::from(bounds.origin.x),
         y: f32::from(bounds.origin.y),

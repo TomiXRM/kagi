@@ -24,9 +24,9 @@ fn parse_frame(raw: &str) -> Option<MainWindowFrame> {
         && frame.y.is_finite()
         && frame.width.is_finite()
         && frame.height.is_finite()
-        && frame.width >= 400.
-        && frame.height >= 300.)
-        .then_some(frame)
+        && (400. ..=16384.).contains(&frame.width)
+        && (300. ..=16384.).contains(&frame.height))
+    .then_some(frame)
 }
 
 pub fn main_window_frame() -> Option<MainWindowFrame> {
@@ -62,6 +62,8 @@ mod tests {
             "1,2,0,480,id",
             "1,2,640,299,id",
             "1,2,640,480,id,extra",
+            "1,2,16385,480,id",
+            "1,2,640,16385,id",
         ] {
             assert!(parse_frame(raw).is_none(), "{raw}");
         }

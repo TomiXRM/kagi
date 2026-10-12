@@ -1465,6 +1465,18 @@ mod macos {
                 Box::new(crate::window_restore::scenario_window_restore_position),
             ),
             (
+                "window_restore_display_identity",
+                Box::new(crate::window_restore::scenario_window_restore_display_identity),
+            ),
+            (
+                "window_restore_fit",
+                Box::new(crate::window_restore::scenario_window_restore_fit),
+            ),
+            (
+                "window_restore_titlebar",
+                Box::new(crate::window_restore::scenario_window_restore_titlebar),
+            ),
+            (
                 "settings_window_open_raise",
                 Box::new(crate::settings_window::scenario_settings_window_open_raise),
             ),

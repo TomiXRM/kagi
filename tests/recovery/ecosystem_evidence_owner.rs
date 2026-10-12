@@ -11,6 +11,7 @@ fn raw(path: &str) -> RawEcosystem {
         commits: vec![CommitChanges {
             time: 1,
             author: "evidence@example.test".into(),
+            author_name: String::new(),
             files: vec![FileChange {
                 path: path.into(),
                 insertions: 7,

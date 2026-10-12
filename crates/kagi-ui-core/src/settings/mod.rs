@@ -32,12 +32,14 @@
 //! *repeated* write of one key (a column-divider drag) updates memory and is
 //! collapsed into one file write; every other write still lands immediately.
 
+mod main_window_frame;
 mod store;
 #[cfg(test)]
 mod store_env_tests;
 mod terminal_autolock;
 mod window_frame;
 
+pub use main_window_frame::{main_window_frame, write_main_window_frame, MainWindowFrame};
 pub use store::flush;
 pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
 pub use window_frame::{settings_window_frame, write_settings_window_frame, SettingsWindowFrame};

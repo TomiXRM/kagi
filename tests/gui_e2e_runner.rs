@@ -108,6 +108,10 @@ mod settings_quiet;
 mod settings_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_restore.rs"]
+mod window_restore;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -158,6 +162,10 @@ mod activity_a11y;
 #[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/unborn_empty.rs"]
+mod recovery_unborn_empty;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
@@ -327,6 +335,9 @@ mod diff_highlight;
 #[path = "recovery/binary_diff_owner.rs"]
 mod binary_diff_owner;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/modal_viewports.rs"]
+mod modal_viewports;
 #[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
@@ -1273,6 +1284,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
             ),
             (
+                "unborn_empty_state",
+                Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
+            ),
+            (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
@@ -1471,6 +1486,22 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "window_restore_position",
+                Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_restore_display_identity",
+                Box::new(crate::window_restore::scenario_window_restore_display_identity),
+            ),
+            (
+                "window_restore_fit",
+                Box::new(crate::window_restore::scenario_window_restore_fit),
+            ),
+            (
+                "window_restore_titlebar",
+                Box::new(crate::window_restore::scenario_window_restore_titlebar),
             ),
             (
                 "settings_window_open_raise",
@@ -2365,6 +2396,14 @@ mod macos {
             (
                 "cherry_pick_abort_sequence",
                 Box::new(crate::conflict_abort_slot::scenario_cherry_pick_abort_sequence),
+            ),
+            (
+                "remote_browse_viewport",
+                Box::new(crate::modal_viewports::scenario_remote_browse_viewport),
+            ),
+            (
+                "trust_prompt_viewport",
+                Box::new(crate::modal_viewports::scenario_trust_prompt_viewport),
             ),
             (
                 "remote_browse_escape_focus",

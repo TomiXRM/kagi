@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
+- Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
+- Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)
 - Conflict resolver adoption controls are named EN/JA Buttons with keyboard-only focus rings. One roving hunk list uses Up/Down between hunks and Left/Right between side, order and line controls; Enter/Space share pointer activation. Selection remains buffer-only and the conflict FSM and Save boundary are unchanged. (#1311)
   - Review: rebuild roving ownership when a retained path's hunk/line structure changes, including consecutive operation steps. AX names use sanitized operation-dependent roles/identities; order controls announce selected output order, never adoption.
 - Graph columns compress before commit subjects at narrow/high-zoom widths: subjects retain a 120-reference-pixel minimum, authors shrink with middle ellipsis and full-name tooltips, and compact times remain visible inside the row. Header, commit, WIP and stash columns share fitted widths without overwriting saved divider preferences; wide-window positions stay unchanged. (#1317)

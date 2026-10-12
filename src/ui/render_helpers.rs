@@ -27,6 +27,7 @@ pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 mod diff_header;
 pub(crate) mod diff_state;
 mod metadata;
+pub(crate) use metadata::subject_tooltip;
 pub(crate) mod row_overlay;
 
 /// issue #414: chokepoint that neutralizes terminal control bytes in remote-origin

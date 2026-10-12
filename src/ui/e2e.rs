@@ -28,6 +28,9 @@ pub mod inspector_metadata;
 pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]
+pub mod plan_subjects;
+
+#[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]

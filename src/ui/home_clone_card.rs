@@ -189,6 +189,10 @@ fn header(modal: &CloneModal) -> impl IntoElement {
                     .px_2()
                     .rounded_md()
                     .bg(rgb(theme().surface))
+                    .when(theme().slug == "apple-dark", |chip| {
+                        chip.border_1()
+                            .border_color(rgb(theme().elevated_border(theme().surface)))
+                    })
                     .text_xs()
                     .text_color(rgb(theme().text_sub))
                     .child(SharedString::from(label)),

@@ -187,7 +187,7 @@ pub fn render_settings_overlay(
                 .px_4()
                 .py_3()
                 .border_b_1()
-                .border_color(rgb(theme().surface))
+                .border_color(rgb(theme().elevated_border(theme().surface)))
                 .child(super::e2e::measure_inside("settings-titlebar"))
                 .child(
                     div()
@@ -271,7 +271,7 @@ fn section_header(name: &'static str, title: SharedString) -> impl IntoElement {
         .text_color(rgb(theme().text_sub))
         .pb_1()
         .border_b_1()
-        .border_color(rgb(theme().surface))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
         .child(super::e2e::measure_inside(name))
         .child(title)
 }
@@ -311,7 +311,8 @@ fn setting_row(
         .gap_4()
         .py_2()
         .when(!first, |row| {
-            row.border_t_1().border_color(rgb(theme().surface))
+            row.border_t_1()
+                .border_color(rgb(theme().elevated_border(theme().surface)))
         })
         .child(
             div()

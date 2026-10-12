@@ -917,10 +917,10 @@ their existing semantic accent colours; the floating card outline is neutral.
 The Apple-only resolution methods preserve every prior caller-specific
 fill/border for Apple Light, other presets and custom themes, including themes
 derived from Apple Dark with explicit overrides. The component bridge uses
-the same elevated fill and neutral boundary for popovers/menus/tooltips, and
-the same chrome fill for its title bar. Geometry, keyboard/AX handlers,
-single-modal ownership and plan/confirmation semantics remain unchanged,
-apart from Dark chrome's one-pixel boundary.
+the same elevated fill for popovers/menus/tooltips and the same chrome fill
+for its title bar. Kagi-owned floating outlines resolve `ELEVATED_BORDER`;
+the pinned library retains its stronger shared neutral border. Keyboard/AX
+handlers, single-modal ownership and plan/confirmation semantics are unchanged.
 
 The #1239 WCAG relative-luminance helper is reused, not duplicated. Opaque
 secondary labels `#98989f` have 6.631:1 on the new base, 6.305:1 on panel,
@@ -932,8 +932,24 @@ increases from 65% to 80%; composited on base it is `#7d7d83`, 4.646:1,
 with opaque secondary hover/drag remaining distinct. Other themes' alpha
 and identifying input boundary (`#67676a` on Dark) remain unchanged.
 
-The floating boundary mapping supersedes #1239's earlier generic Dark border
-at 85% input-border alpha; the identifying Input token itself is unchanged.
+Review correction: preserve #1239's generic component border
+`#67676a` at 85% alpha, rather than weakening Markdown tables, Kbd outlines
+and scrollbar tracks by globally assigning `ELEVATED_BORDER`. The library
+has no separate popover-border token; its popup/Tooltip borders retain this
+stronger neutral. Kagi-owned cards and menus set their floating boundaries
+individually.
+
+Inside elevated cards, Settings/palette/platform-menu separators use
+`ELEVATED_BORDER`, not the nearly identical `surface = #2c2c2e`.
+The Settings native oracle pins `#414144` and requires at least 16 channel
+steps between line and fill, well outside both ±2 RGB tolerance bands:
+missing or thickened lines cannot masquerade as a 1px separator.
+Clone/worktree/remote repository chips retain their `surface` fill, with a
+Dark-only `ELEVATED_BORDER` outline; secondary labels therefore keep 4.863:1
+contrast instead of becoming unreadable on an opaque border-coloured fill.
+Remote directory selection and hover use `selected = #3a3a3c` in Dark.
+Trust Repo, the co-author menu and full-hash Tooltip also use the single
+elevated fill with identifying boundaries; their Light styling is unchanged.
 
 Native Tier A `dark_elevation_palette`, `dark_elevation_modal`,
 `dark_elevation_menu`, `dark_elevation_popover`, `dark_elevation_toast`
@@ -950,6 +966,11 @@ chrome. All six elevation scenarios and the neighboring Settings, radio,
 sidebar, pane-hairline, primary-button, system-accent and Commit Panel viewport
 scenarios passed the scoped native runner. Palette/modal Before runs observed
 `#161618` where the new fill oracle requires `#2a2a2c`.
+Review Tier A also passes `remote_browse_dark_elevation`: real native row
+pixels pin accepted selection and pointer hover to `#3a3a3c`, idle rows to
+`#2a2a2c`, and restored idle fill after pointer exit. The tightened Settings
+Before run observed `[44, 44, 46, 255]` instead of separator `#414144`;
+the corrected separators pass the full Light/Dark/zoom matrix.
 
 ### AppKit reference measurement and limitations
 

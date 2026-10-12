@@ -1094,7 +1094,12 @@ impl gpui::Render for HashTooltip {
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(theme().surface))
+            .bg(rgb(theme().elevated_surface(theme().surface)))
+            .when(theme().slug == "apple-dark", |tooltip| {
+                tooltip
+                    .border_1()
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
+            })
             .text_xs()
             .text_color(rgb(theme().text_main));
         for line in self.sha.as_ref().split('\n') {

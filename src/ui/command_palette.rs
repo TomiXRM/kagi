@@ -421,7 +421,7 @@ impl KagiApp {
                             .child(super::e2e::measure_inside("palette-input"))
                     })
                     .border_b_1()
-                    .border_color(rgb(theme().surface))
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
                     .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
                     .child(Input::new(input).appearance(true)),
             );

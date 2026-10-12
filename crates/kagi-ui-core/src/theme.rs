@@ -1206,11 +1206,12 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     // near-background neutral by design, which made markdown table rows
     // invisible (user report); a muted-foreground tint reads on both `surface`
     // and `bg_base` in every theme.
-    gc.colors.border = if k.slug == "apple-dark" {
-        to_hsla(k.elevated_border(k.text_muted))
+    let border = if k.slug == "apple-dark" {
+        crate::theme_apple_dark::INPUT_BORDER
     } else {
-        to_hsla(k.text_muted).alpha(0.85)
+        k.text_muted
     };
+    gc.colors.border = to_hsla(border).alpha(0.85);
     gc.colors.muted = to_hsla(k.surface);
     gc.colors.muted_foreground = to_hsla(k.text_muted);
 
@@ -1598,12 +1599,15 @@ mod tests {
         ] {
             assert!(contrast_ratio(foreground, dark.modal) >= 4.5);
         }
+        // Chip outlines separate the inset without sacrificing label contrast.
+        assert!(contrast_ratio(dark.text_sub, dark.surface) >= 4.5);
+        assert!(contrast_ratio(dark.text_main, dark.selected) >= 4.5);
         assert!(contrast_ratio(dark.elevated_border(dark.surface), chrome) >= 1.3);
         assert!(contrast_ratio(dark.elevated_border(dark.surface), dark.modal) >= 1.3);
         let mut dark_gc = gpui_component::Theme::default();
         apply_gpui_component_theme(dark, &mut dark_gc);
         assert_eq!(dark_gc.colors.popover, to_hsla(dark.modal));
-        assert_eq!(dark_gc.colors.border, to_hsla(0x414144));
+        assert_eq!(dark_gc.colors.border, to_hsla(0x67676a).alpha(0.85));
         let light = &crate::theme_apple_light::APPLE_LIGHT;
         assert_eq!(
             [
@@ -1678,7 +1682,7 @@ mod tests {
             assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
             assert_eq!(gc.colors.ring, to_hsla(t.ui_accent()));
             let border = if t.slug == "apple-dark" {
-                to_hsla(0x414144)
+                to_hsla(0x67676a).alpha(0.85)
             } else {
                 to_hsla(t.text_muted).alpha(0.85)
             };

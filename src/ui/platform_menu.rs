@@ -143,7 +143,7 @@ impl KagiApp {
                             )))
                             .my_1()
                             .h(px(1.0))
-                            .bg(rgb(theme().surface)),
+                            .bg(rgb(theme().elevated_border(theme().surface))),
                     );
                 }
                 commands::MenuNode::Command(id) => {

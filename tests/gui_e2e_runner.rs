@@ -2152,6 +2152,10 @@ mod macos {
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_keyboard_read_ownership),
             ),
             (
+                "remote_browse_dark_elevation",
+                Box::new(crate::remote_browse_focus::scenario_remote_browse_dark_elevation),
+            ),
+            (
                 "palette_push_modal_keys",
                 Box::new(crate::overlay_focus::scenario_palette_push_modal_keys),
             ),

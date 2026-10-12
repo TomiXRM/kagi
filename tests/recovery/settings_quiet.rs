@@ -43,6 +43,19 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                     } else {
                         0xf7f7f7
                     };
+                    let separator = if slug == "apple-dark" {
+                        0x414144
+                    } else {
+                        0xe5e5e5
+                    };
+                    for shift in [16, 8, 0] {
+                        let line_channel = ((separator >> shift) & 255) as u8;
+                        let fill_channel = ((card_fill >> shift) & 255) as u8;
+                        assert!(
+                            line_channel.abs_diff(fill_channel) >= 16,
+                            "separator and fill must exceed both RGB tolerance bands"
+                        );
+                    }
                     let (label, panel) = (luminance(theme::theme().text_sub), luminance(card_fill));
                     assert!(
                         (label.max(panel) + 0.05) / (label.min(panel) + 0.05) >= 4.5,
@@ -82,7 +95,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                     ((f32::from(b.bottom()) + 0.5) * scale) as u32,
                                 )
                                 .0;
-                            let color = theme::theme().surface;
+                            let color = separator;
                             for (got, expected) in p[..3].iter().zip([
                                 (color >> 16) as u8,
                                 (color >> 8) as u8,

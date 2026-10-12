@@ -230,10 +230,12 @@ impl KagiApp {
         };
         match settings::write_analyze_ignore(&text) {
             Ok(()) => {
-                self.settings_controls.saved_ignore = Some(text.clone());
+                self.settings_controls.saved_ignore = Some(text);
                 self.settings_controls.ignore_error = None;
                 if reset {
-                    input.update(cx, |s, cx| s.set_value(text, window, cx));
+                    input.update(cx, |s, cx| {
+                        s.set_value(settings::DEFAULT_ANALYZE_IGNORE, window, cx)
+                    });
                 }
                 self.push_toast(ToastKind::Info, Msg::SettingsAnalyzeIgnoreSaved.t(), cx);
             }

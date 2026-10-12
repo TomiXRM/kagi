@@ -112,8 +112,10 @@ values and no generation modal. Analyze clicks actual visible/scroll-reachable
 Save/Reset controls against a directory at the target path and a mode-000
 settings directory: errors retain the draft/dirty marker and original bytes;
 removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
-uses the real named close control, not direct stack mutation. Tier B still
-owns real Tab/Left/Right/Enter/Space, focus-visible rings, VoiceOver names,
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
 selected/unavailable state and native toast appearance.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the

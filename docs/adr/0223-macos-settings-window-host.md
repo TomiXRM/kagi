@@ -84,3 +84,9 @@ Save/Reset outcomes use the originating app's existing bounded ToastStack,
 placed with the repository window's shared out-of-flow toast container so
 feedback cannot change page layout or content-height measurement. The saved
 editor baseline and full inline failure remain on KagiApp, not on this window.
+
+Since both hosts render the same ToastStack, each card retains its rendered
+close handle per window rather than overwriting one global handle. Both hosts
+subscribe to card removal in their own window and repair retired close-button
+focus to their own root, preserving pane navigation and native host commands
+after either pointer or keyboard dismissal.

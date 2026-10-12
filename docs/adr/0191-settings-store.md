@@ -120,3 +120,7 @@ only on success; failed Reset does not replace the draft. An EN/JA unsaved
 marker and bounded toast/inline error distinguish failure from quiet successful
 confirmation. First-run seeding uses this same writer only for a missing file;
 an unreadable existing file is never overwritten by defaults.
+
+Replacement uses the existing same-directory atomic-file helper: temp write,
+content sync, then rename. A failed write leaves the saved file intact and
+returns its OS cause through this same owner; no UI persistence path is added.

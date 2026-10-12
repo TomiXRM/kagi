@@ -60,8 +60,14 @@ fn matrix(
                         .unwrap()
                 });
                 leg(cx, &app, window);
-                cx.update_window(window, |_, w, _| w.remove_window())
-                    .unwrap();
+                if cx.read(|cx| {
+                    cx.windows()
+                        .iter()
+                        .any(|w| w.window_id() == window.window_id())
+                }) {
+                    cx.update_window(window, |_, w, _| w.remove_window())
+                        .unwrap();
+                }
                 unmount(cx, app, repo);
             }
         }
@@ -223,6 +229,87 @@ fn dismiss_feedback(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
     draw(cx, window);
 }
 
+fn dismissal_keeps_settings_commands(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    draw(cx, window);
+    let close = kagi::ui::toast_stack::take_close_focus_for_e2e().expect("Settings close control");
+    let repo = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|w| w.window_id() != window.window_id())
+            .unwrap()
+    });
+    // Each host must retain its own close handle for the removal event.
+    draw(cx, repo);
+    assert!(
+        cx.read(|cx| {
+            let stack = app.read(cx).toast_stack.as_ref().unwrap().read(cx);
+            let hosts = stack.toasts().last().unwrap().close_focus.borrow();
+            hosts.iter().any(|(id, _)| *id == window.window_id())
+                && hosts.iter().any(|(id, _)| *id == repo.window_id())
+        }),
+        "shared toast retains both host close controls"
+    );
+    for _ in 0..20 {
+        if cx
+            .update_window(window, |_, w, _| close.is_focused(w))
+            .unwrap()
+        {
+            break;
+        }
+        keys(cx, window, "tab");
+    }
+    assert!(
+        cx.update_window(window, |_, w, _| close.is_focused(w))
+            .unwrap(),
+        "Tab reaches Settings toast close"
+    );
+    keys(cx, window, "enter");
+    cx.advance_clock(std::time::Duration::from_millis(400));
+    cx.run_until_parked();
+    draw(cx, window);
+    let id = cx.read(|cx| {
+        app.read(cx)
+            .toast_stack
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .toasts()
+            .last()
+            .map(|t| t.id)
+    });
+    assert!(id.is_none(), "keyboard close removes the final toast");
+    assert!(
+        !cx.update_window(window, |_, w, _| close.is_focused(w))
+            .unwrap(),
+        "retired close control releases Settings focus before further input"
+    );
+    keys(cx, window, "tab");
+    keys(cx, window, "left");
+    assert_eq!(
+        settings::read_setting("settings_pane").as_deref(),
+        Some("2"),
+        "pane arrows work after toast removal"
+    );
+    keys(cx, window, "right");
+    assert_eq!(
+        settings::read_setting("settings_pane").as_deref(),
+        Some("3")
+    );
+    cx.simulate_keystrokes(window, "cmd-w");
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| cx
+            .windows()
+            .iter()
+            .any(|w| w.window_id() == window.window_id())),
+        "Cmd-W still reaches Settings after focused toast removal"
+    );
+}
+
 fn unwritable_directory(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -350,6 +437,7 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
         std::fs::remove_file(&path).unwrap();
     }
     drop(input);
+    dismissal_keeps_settings_commands(cx, app, window);
 }
 
 pub fn scenario_settings_analyze_ignore_feedback(cx: &mut VisualTestAppContext) {

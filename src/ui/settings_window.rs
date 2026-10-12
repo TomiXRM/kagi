@@ -92,6 +92,7 @@ struct SettingsWindow {
     scroll: ScrollHandle,
     _observe: Subscription,
     _release: Subscription,
+    _toast_removed: Option<Subscription>,
 }
 
 impl SettingsWindow {
@@ -111,6 +112,20 @@ impl SettingsWindow {
             .detach();
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
         let release = cx.observe_release_in(&owner, window, |_, _, window, _| close(window));
+        let toast_removed = owner.read(cx).toast_stack.clone().map(|stack| {
+            cx.subscribe_in(
+                &stack,
+                window,
+                |this, _, removed: &super::toast_stack::ToastRemoved, window, cx| {
+                    if removed.was_focused(window)
+                        || window.focused(cx).is_none()
+                        || !this.focus.contains_focused(window, cx)
+                    {
+                        this.focus.focus(window, cx);
+                    }
+                },
+            )
+        });
         Self {
             owner: owner.downgrade(),
             pane,
@@ -119,6 +134,7 @@ impl SettingsWindow {
             scroll: Default::default(),
             _observe: observe,
             _release: release,
+            _toast_removed: toast_removed,
         }
     }
 

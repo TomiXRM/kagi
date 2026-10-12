@@ -471,7 +471,7 @@ fn write_analyze_ignore_at(path: &std::path::Path, content: &str) -> std::io::Re
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, content)
+    crate::atomic_file::write_atomic(path, content.as_bytes())
 }
 
 /// The Analyze exclude patterns (gitignore syntax, one per line) — comments /
@@ -667,6 +667,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
         assert!(write_analyze_ignore_at(&path.join("child"), "draft").is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+    }
+
+    #[test]
+    fn analyze_ignore_failed_atomic_replacement_preserves_saved_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("analyze_ignore");
+        write_analyze_ignore_at(&path, "saved bytes").unwrap();
+        let temp = dir
+            .path()
+            .join(format!(".analyze_ignore.{}.tmp", std::process::id()));
+        std::fs::create_dir(&temp).unwrap();
+        assert!(write_analyze_ignore_at(&path, "draft").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved bytes");
+        std::fs::remove_dir(&temp).unwrap();
+        write_analyze_ignore_at(&path, "draft").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft");
+        assert!(!temp.exists());
     }
 
     #[test]

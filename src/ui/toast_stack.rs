@@ -27,7 +27,15 @@ pub const TOAST_REMOVE_MS: u64 = 300;
 pub const TOAST_ROUTINE_LIFETIME: Duration = Duration::from_secs(4);
 
 /// A card was removed, including cap eviction; the parent repairs lost focus.
-pub(super) struct ToastRemoved(pub Option<gpui::FocusHandle>);
+pub(super) struct ToastRemoved(Vec<(gpui::WindowId, gpui::FocusHandle)>);
+impl ToastRemoved {
+    pub fn was_focused(&self, window: &gpui::Window) -> bool {
+        let id = window.window_handle().window_id();
+        self.0
+            .iter()
+            .any(|(host, focus)| *host == id && focus.is_focused(window))
+    }
+}
 impl gpui::EventEmitter<ToastRemoved> for ToastStack {}
 
 fn error_preview(message: &str) -> String {
@@ -53,7 +61,7 @@ fn error_preview(message: &str) -> String {
 pub(super) struct ToastCloseButton(
     pub gpui_component::button::Button,
     pub u64,
-    pub std::rc::Rc<std::cell::RefCell<Option<gpui::FocusHandle>>>,
+    pub super::types::ToastCloseFocus,
 );
 
 impl gpui::InteractiveElement for ToastCloseButton {
@@ -72,7 +80,14 @@ impl gpui::RenderOnce for ToastCloseButton {
             .clone();
         #[cfg(feature = "gui-e2e")]
         CLOSE_FOCUS.with(|slot| *slot.borrow_mut() = Some(focus.clone()));
-        *self.2.borrow_mut() = Some(focus);
+        let id = window.window_handle().window_id();
+        let mut hosts = self.2.borrow_mut();
+        if let Some((_, previous)) = hosts.iter_mut().find(|(host, _)| *host == id) {
+            *previous = focus;
+        } else {
+            hosts.push((id, focus));
+        }
+        drop(hosts);
         self.0.render(window, cx)
     }
 }
@@ -94,7 +109,7 @@ pub struct ToastStack {
     /// True while the auto-dismiss ticker task is running (so we never spawn a
     /// second one). Reset when the stack drains.
     ticker_alive: bool,
-    removed_focus: Option<gpui::FocusHandle>,
+    removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
 }
 
 impl ToastStack {
@@ -103,7 +118,7 @@ impl ToastStack {
             toasts: Vec::new(),
             next_id: 1,
             ticker_alive: false,
-            removed_focus: None,
+            removed_focus: Vec::new(),
         }
     }
 
@@ -154,7 +169,7 @@ impl ToastStack {
                 .position(|t| t.kind != ToastKind::Error && t.id != id)
                 .unwrap_or(0);
             let removed = self.toasts.remove(oldest);
-            self.removed_focus = removed.close_focus.borrow_mut().take();
+            self.removed_focus = std::mem::take(&mut *removed.close_focus.borrow_mut());
         }
     }
 
@@ -173,7 +188,7 @@ impl ToastStack {
     /// Remove a toast by id (after the exit animation has played).
     pub fn remove(&mut self, id: u64) {
         if let Some(toast) = self.toasts.iter().find(|t| t.id == id) {
-            self.removed_focus = toast.close_focus.borrow_mut().take();
+            self.removed_focus = std::mem::take(&mut *toast.close_focus.borrow_mut());
         }
         self.toasts.retain(|t| t.id != id);
     }
@@ -237,7 +252,7 @@ impl ToastStack {
         let evicts = self.toasts.len() == TOASTS_MAX;
         self.push(kind, message);
         if evicts {
-            cx.emit(ToastRemoved(self.removed_focus.take()));
+            cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));
         }
         self.ensure_ticker(cx);
         cx.notify();
@@ -254,7 +269,7 @@ impl ToastStack {
                 .await;
             let _ = this.update(acx, |stack, cx| {
                 stack.remove(id);
-                cx.emit(ToastRemoved(stack.removed_focus.take()));
+                cx.emit(ToastRemoved(std::mem::take(&mut stack.removed_focus)));
                 cx.notify();
             });
         })

@@ -285,6 +285,7 @@ fn close_button(
         name.into(),
         None,
         path,
+        false,
     )
 }
 

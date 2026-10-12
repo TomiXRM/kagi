@@ -32,3 +32,26 @@
 - toast / busy_op はアプリ全域の状態として tab 切替後も維持(busy 中の switch は許可するが、
   busy 操作の finish はその repo_path に対して記録されるため安全)
 - 既存 headless 経路(引数1つで起動)は「初期 tab が1枚ある状態」として互換維持
+
+## Amendment — 2026-10-12: bounded document strip (#1339 / #1340)
+
+The document-count visibility rule and zoom-scaled strip height remain unchanged.
+Tabs keep their previous natural widths while they fit. When the measured natural
+widths exceed the strip capacity, tab widths are capped progressively toward a
+scaled 80px minimum with middle ellipsis, then the viewport scrolls horizontally.
+Active selection and roving keyboard focus reveal their actual child bounds.
+Only the constrained strip shows a trailing named » menu listing all repository
+tabs and Home, reusing the toolbar's overflow affordance and gpui-kit
+PopupMenu/Popover keyboard/focus contract. The unconstrained two-tab appearance
+is protected by Apple Light / JA / 167% native pixel pins.
+Repository menu items retain ☁/🌲 markers and full-path accessibility descriptions.
+Duplicate names display a parent-directory qualifier (the full repository path
+when the parent itself is shared). Vertical wheel input is not remapped to tab
+scrolling; only horizontal wheel input scrolls this viewport.
+This is independent of compact workspace-pane width breakpoints (#1225).
+
+The visible × remains a non-Tab-stop kit Button. Its independent accessibility
+name is `Close <repo>` / `<repo> を閉じる` (Home uses `Close Home` /
+`ホーム を閉じる`). Each repository close Button also describes its full path.
+Repository close callbacks resolve their frozen session identity,
+not a stale strip index; existing dirty-close guards and Cmd+W remain authoritative.

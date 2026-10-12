@@ -194,11 +194,12 @@ pub(super) fn body_markdown(
         .into_any_element()
 }
 
-/// The composer's text box: borderless, at the feed's reading size. The
-/// entity is the caller's — this only styles the box it is drawn in, so a
+/// The composer's named text box: borderless, at the feed's reading size.
+/// The caller supplies the contextual field name and owns the entity, so its
 /// single-line/multi-line or auto-grow choice made at creation still stands.
-pub(super) fn body_input(input: &gpui::Entity<InputState>) -> Input {
+pub(super) fn body_input(input: &gpui::Entity<InputState>, label: &'static str) -> Input {
     Input::new(input)
+        .aria_label(label)
         .appearance(false)
         .bordered(false)
         .focus_bordered(false)

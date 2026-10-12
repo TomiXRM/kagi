@@ -351,55 +351,33 @@ impl gpui::RenderOnce for OverflowTrigger {
         super::toolbar_a11y::record_label("tb-overflow", Msg::ToolbarOverflow.t());
         let pointer_state = self.state.clone();
         let trigger = keyboard_nav::focusable(
-            div()
-                .id("tb-overflow")
-                .role(gpui::Role::Button)
-                .aria_label(Msg::ToolbarOverflow.t())
-                .track_focus(&self.focus.tab_index(0).tab_stop(true))
-                .w(theme::scaled_px(36.))
-                .h(theme::scaled_px(28.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(rgb(theme().text_main))
-                .rounded_md()
-                .cursor_pointer()
-                .when(self.selected, |el| el.bg(rgb(theme().surface)))
-                .hover(|style| style.bg(rgb(theme().surface)))
-                .when(!self.selected, |el| {
-                    el.tooltip(|window, cx| {
-                        Tooltip::element(|_, _| {
-                            super::super::e2e::measure_control(
-                                "tb-overflow-tooltip",
-                                div().child(Msg::ToolbarOverflow.t()),
-                            )
-                        })
-                        .build(window, cx)
-                    })
-                })
-                .child("»")
-                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                    let focus = window.focused(cx);
-                    let _ = pointer_state.update(cx, |state, _| {
-                        if !state.open {
-                            state.previous_focus = focus;
-                        }
-                    });
-                })
-                // Popover opens on mouse-down; a GPUI keyboard click has no
-                // mouse-down. Control its open state for Enter/Space explicitly.
-                .on_click(move |event, window, cx| {
-                    if !event.is_keyboard() {
-                        return;
-                    }
-                    let focus = window.focused(cx);
-                    let _ = self.state.update(cx, |state, _| {
+            super::overflow_trigger::trigger(
+                "tb-overflow",
+                Msg::ToolbarOverflow.t(),
+                self.selected,
+                &self.focus,
+            )
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                let focus = window.focused(cx);
+                let _ = pointer_state.update(cx, |state, _| {
+                    if !state.open {
                         state.previous_focus = focus;
-                        state.open = true;
-                    });
-                    let _ = self.app.update(cx, |_, cx| cx.notify());
-                }),
+                    }
+                });
+            })
+            // Popover opens on mouse-down; a GPUI keyboard click has no
+            // mouse-down. Control its open state for Enter/Space explicitly.
+            .on_click(move |event, window, cx| {
+                if !event.is_keyboard() {
+                    return;
+                }
+                let focus = window.focused(cx);
+                let _ = self.state.update(cx, |state, _| {
+                    state.previous_focus = focus;
+                    state.open = true;
+                });
+                let _ = self.app.update(cx, |_, cx| cx.notify());
+            }),
         );
         #[cfg(feature = "gui-e2e")]
         let trigger = trigger.on_key_down(|event, _, _| {
@@ -765,8 +743,6 @@ mod tests {
 
 #[cfg(test)]
 mod spacing_tests {
-    use super::*;
-
     #[test]
     fn toolbar_overflow_spacing_requires_visible_neighbours() {
         let scale = 1.;

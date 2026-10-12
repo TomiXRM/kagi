@@ -111,3 +111,37 @@ shortcut の水平 containment を測る。既存 selection-scroll regression �
   Native `palette_highlight` and `palette_shortcut_glyphs` cover 940×660 /
   1392×883, 100% / 167%, EN / JA and Apple Light / Dark. Real pointer/focus,
   IME and VoiceOver delivery remain PM-owned Tier B checks.
+
+## Amendment (2026-10-13): empty-query sections (#1370)
+
+The dense search overlay borrows related-command headings from macOS menus
+([HIG Menus](https://developer.apple.com/design/human-interface-guidelines/menus)),
+not native materials or a new command taxonomy. Empty queries show Actions,
+Appearance and Language as EN/JA headings and named `Group` ancestors. The
+palette has no recent-command history, so no Recents section or storage is added.
+
+Headings are static text, not list options, focus stops or activation targets.
+The selectable model remains commands followed by every registered theme and
+language exactly once; Up/Down/Enter and pointer selection retain their existing
+indices. Filtered queries remain a single score-ranked list; option descriptions
+include their localized section and preserve the complete unavailable reason.
+
+Semantic nesting must not turn a whole section into the scrolling destination:
+measure descendant row layout bounds and honor one-shot reveal before GPUI
+prepaint applies the container offset. Wheel scroll/passive redraw remain independent of selection; query
+changes and boundary arrows still reveal the current real row. Shortcut captions
+and the shrink-free trailing column retain #1271/#1272's owners.
+
+Review correction: for a requested section-first row, capture its Group layout
+ID as well as the selectable leaf. Upward reveal aligns the group top so the
+heading is not clipped; requesting index zero restores offset zero, including
+after clearing a query. Other destinations still reveal only their actual row.
+Description joining belongs to UI-core i18n: EN `{section}. {reason}` and
+JA `{section}。{reason}`, keeping the unavailable reason verbatim.
+
+States: static headings have rest only; hover, pressed, focus, selected and
+disabled are not applicable. Existing rows retain selected/disabled/empty/many
+results behavior, with no new loading or error state. Geometry and spacing use
+the palette's theme tokens and scaled pixels. `palette_sections` covers heading
+bounds, Group/name inputs, row uniqueness, section-boundary keyboard navigation
+and filtered ranking. Real-window Tab, IME and native VoiceOver remain Tier B.

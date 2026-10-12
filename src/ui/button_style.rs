@@ -172,7 +172,7 @@ pub(crate) fn named_disabled_button(
     named_button_with_description(button, label.into(), None, None, disabled)
 }
 
-fn named_button_with_description(
+pub(crate) fn named_button_with_description(
     button: Button,
     label: SharedString,
     toggled: Option<bool>,

@@ -38,12 +38,21 @@ Cmd+F focuses it in Graph, and Escape clears it and returns to the local
 list's first available stop (the header when empty/collapsed). This does not
 change the window-global ownership in decision 3 or copy state on tab switches.
 
-Review clarification: only the gpui-kit Input carries TextInput; its immediate
-Group ancestor carries the EN/JA filter name. The pinned Input has no direct
-accessible-name API, so naming its focused inner node requires an upstream
-gpui-kit seam. Do not simulate that name with a second unfocused TextInput.
+Initial review clarification (#1309, superseded by #1331 below): only the
+gpui-kit Input carried TextInput; its immediate Group ancestor carried the
+EN/JA filter name because the pinned Input had no direct accessible-name API.
 The placeholder uses a language cache and updates the retained state before
 drawing after a language switch.
+
+## Amendment — 2026-10-13: focused Input names (#1331)
+
+The fork's `Input::aria_label` API puts the localized EN/JA accessible name on
+the actual focused TextInput, including the sidebar filter. This supersedes
+the #1309 Group-ancestor naming workaround: remove naming-only Group wrappers,
+but retain genuine container semantics. Every gpui-component Input uses the
+same direct naming API and existing localization conventions; no second
+unfocused TextInput is introduced. Filter ownership, first-frame availability,
+keyboard behavior and language-switch placeholder updates remain unchanged.
 
 ## Amendment — 2026-10-12: horizontal pane budget (#1355)
 

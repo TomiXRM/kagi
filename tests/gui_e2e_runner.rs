@@ -3121,6 +3121,14 @@ mod macos {
                 Box::new(crate::activity_a11y::scenario_activity_bucket_a11y),
             ),
             (
+                "activity_equal_series_encoding",
+                Box::new(crate::activity_a11y::scenario_activity_equal_series_encoding),
+            ),
+            (
+                "activity_single_bucket_encoding",
+                Box::new(crate::activity_a11y::scenario_activity_single_bucket_encoding),
+            ),
+            (
                 "bottom_panel_tab_hover",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_tab_hover),
             ),

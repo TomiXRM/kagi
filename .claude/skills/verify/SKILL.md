@@ -76,10 +76,14 @@ handles, Left/Right/Home/End/Enter/Space dispatch and native selected-fill
 pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
 0/1/24 buckets' Status names against UTC date/time + commits/merges/authors,
 one roving stop, arrow/Home/End boundary inspection and identical immediate
-hover/keyboard readouts. The actual chart/legend painter records its
-solid/dashed encoding and visible segment counts, including equal/zero
-series and single buckets. Both scenarios cover 940×660 / 1392×883,
-100%/167%, EN/JA and Apple Light/Dark; axes and legend must fit.
+hover/keyboard readouts. The actual chart/legend painter records successful
+solid/dash/gap/knockout segment counts and the single-point fallback branch.
+`activity_equal_series_encoding` compares native panel-fill pixels in merge
+gaps over equal commit/merge values and 0/0 baseline segments, including the
+legend. `activity_single_bucket_encoding` requires a genuine two-dash merge
+mark and knockout gap, not the former solid fallback or a clamped counter.
+All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
+Apple Light/Dark; axes and legend must fit.
 Pair with `cargo test -p kagi-domain activity` for per-bucket distinct raw
 email aggregation, and `cargo test -p kagi-ui-core activity_bucket` for
 localized 0/1/plural units. Renderer metadata is not native VoiceOver or

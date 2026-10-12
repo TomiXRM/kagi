@@ -311,11 +311,12 @@ pub fn scenario_activity_bucket_a11y(cx: &mut VisualTestAppContext) {
                         e2e::activity::painted_stroke(&format!("{part}-commits")).unwrap();
                     let merges = e2e::activity::painted_stroke(&format!("{part}-merges")).unwrap();
                     assert!(
-                        !commits.0 && merges.0,
+                        commits.solid_segments > 0 && merges.dash_segments > 0,
                         "series have solid/dashed encodings in chart and legend"
                     );
                     assert!(
-                        commits.1 > 0 && merges.1 > 0,
+                        commits.solid_segments + commits.dash_segments > 0
+                            && merges.solid_segments + merges.dash_segments > 0,
                         "single and zero series paint visible strokes"
                     );
                 }
@@ -328,4 +329,92 @@ pub fn scenario_activity_bucket_a11y(cx: &mut VisualTestAppContext) {
         });
     });
     eprintln!("[gui-e2e] PASS activity_bucket_a11y");
+}
+
+fn install_encoding_case(
+    app: &Entity<KagiApp>,
+    cx: &mut VisualTestAppContext,
+    count: usize,
+    value: u32,
+) {
+    app.update(cx, |app, cx| {
+        let data = &mut app.view_mut().activity.week;
+        data.buckets = (0..count)
+            .map(|i| {
+                let commits = if count > 1 && i >= 2 { 1 } else { value };
+                kagi_domain::activity::ActivityBucket {
+                    commits,
+                    merges: commits,
+                    authors: u32::from(commits > 0),
+                }
+            })
+            .collect();
+        data.total_commits = data.buckets.iter().map(|bucket| bucket.commits).sum();
+        data.total_merges = data.total_commits;
+        app.activity_hover = None;
+        cx.notify();
+    });
+}
+
+fn gap_pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str, zero: bool) {
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+        let bounds = e2e::control_bounds(window.window_handle().window_id(), id).unwrap();
+        let (x, y) = if id == "activity-chart" {
+            (bounds.left() + theme::scaled_px(17.),
+                if zero { bounds.bottom() - theme::scaled_px(10.) } else { bounds.top() + theme::scaled_px(10.) })
+        } else {
+            (bounds.left() + theme::scaled_px(7.), bounds.center().y)
+        };
+        let image = window.render_to_image().expect("native dash-gap capture");
+        let scale = window.scale_factor();
+        let pixel = image.get_pixel((f32::from(x) * scale) as u32, (f32::from(y) * scale) as u32).0;
+        let panel = theme::theme().panel;
+        let expected = [((panel >> 16) & 255) as u8, ((panel >> 8) & 255) as u8, (panel & 255) as u8];
+        for channel in 0..3 {
+            assert!(pixel[channel].abs_diff(expected[channel]) <= 2,
+                "dash gap clears coincident commit/baseline pixels: {id} {pixel:?}, expected {expected:?}");
+        }
+    }).unwrap();
+}
+
+pub fn scenario_activity_equal_series_encoding(cx: &mut VisualTestAppContext) {
+    matrix(cx, |cx, app, window| {
+        for value in [0, 1] {
+            install_encoding_case(app, cx, 4, value);
+            draw(cx, window);
+            for part in ["chart", "legend"] {
+                let painted = e2e::activity::painted_stroke(&format!("{part}-merges")).unwrap();
+                assert!(
+                    painted.knockout_segments > 0,
+                    "coincident series paint actual knockout gaps"
+                );
+                assert_eq!(painted.knockout_segments, painted.gap_segments);
+            }
+            gap_pixel(cx, window, "activity-chart", value == 0);
+            gap_pixel(cx, window, "activity-legend-merges", false);
+        }
+    });
+    eprintln!("[gui-e2e] PASS activity_equal_series_encoding");
+}
+
+pub fn scenario_activity_single_bucket_encoding(cx: &mut VisualTestAppContext) {
+    matrix(cx, |cx, app, window| {
+        install_encoding_case(app, cx, 1, 1);
+        draw(cx, window);
+        let painted = e2e::activity::painted_stroke("chart-merges").unwrap();
+        assert!(painted.single_point);
+        assert!(
+            painted.dash_segments >= 2,
+            "single merge mark paints two actual dashes"
+        );
+        assert_eq!(
+            painted.solid_segments, 0,
+            "merge fallback is never a solid mark"
+        );
+        assert_eq!(painted.gap_segments, 1);
+        assert_eq!(painted.knockout_segments, 1);
+    });
+    eprintln!("[gui-e2e] PASS activity_single_bucket_encoding");
 }

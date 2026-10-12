@@ -1,121 +1,16 @@
 //! Activity presentation: the existing aggregate, chart, period selector and ranking.
 use super::{
+    activity_chart::{activity_chart, paint_series},
     commit_list, e2e, keyboard_nav,
     theme::{self, theme},
     KagiApp,
 };
 use gpui::{
-    canvas, div, point, prelude::*, px, AnyElement, Bounds, Canvas, Context, PathBuilder, Pixels,
-    Role, SharedString, Window,
+    canvas, div, point, prelude::*, px, AnyElement, Bounds, Context, Pixels, Role, SharedString,
+    Window,
 };
-use kagi_domain::activity::{ActivityBucket, Contributor, Granularity, GranularityData};
+use kagi_domain::activity::{Contributor, Granularity, GranularityData};
 use kagi_ui_core::i18n::{activity as activity_text, Msg};
-
-/// Commits use a solid stroke; merges use a dashed stroke, also in the legend.
-pub fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
-    canvas(
-        |_, _, _| {},
-        move |bounds: Bounds<Pixels>, (), window, _cx| {
-            if buckets.is_empty() {
-                return;
-            }
-            let pad = theme::scaled_px(10.);
-            let left = bounds.left() + pad;
-            let right = bounds.right() - pad;
-            let top = bounds.top() + pad;
-            let bottom = bounds.bottom() - pad;
-            let max = buckets.iter().map(|b| b.commits).max().unwrap_or(1).max(1) as f32;
-            let position = |i: usize, value: u32| {
-                let x = if buckets.len() == 1 {
-                    (left + right) / 2.
-                } else {
-                    left + (right - left) * (i as f32 / (buckets.len() - 1) as f32)
-                };
-                point(x, bottom - (bottom - top) * (value as f32 / max))
-            };
-            let mut base = PathBuilder::stroke(theme::scaled_px(1.));
-            base.move_to(point(left, bottom));
-            base.line_to(point(right, bottom));
-            if let Ok(path) = base.build() {
-                window.paint_path(path, hsla(theme().text_muted));
-            }
-            for merges in [false, true] {
-                let points = buckets
-                    .iter()
-                    .enumerate()
-                    .map(|(i, b)| position(i, if merges { b.merges } else { b.commits }));
-                paint_series(points, merges, window, "chart");
-            }
-        },
-    )
-}
-
-/// Paint one path, with subpaths for dash gaps rather than one allocation per dash.
-/// The legend uses this exact stroke encoding; a single bucket remains visible.
-fn paint_series(
-    points: impl IntoIterator<Item = gpui::Point<Pixels>>,
-    merges: bool,
-    window: &mut Window,
-    _probe: &str,
-) {
-    let mut points = points.into_iter();
-    let Some(mut from) = points.next() else {
-        return;
-    };
-    let mut path = PathBuilder::stroke(theme::scaled_px(if merges { 1.5 } else { 1.8 }));
-    path.move_to(from);
-    let mut segments = 0;
-    let dash = theme::scaled(5.);
-    let period = theme::scaled(9.);
-    let mut phase = 0.;
-    for to in points {
-        if merges {
-            let dx = f32::from(to.x - from.x);
-            let dy = f32::from(to.y - from.y);
-            let length = dx.hypot(dy);
-            let mut offset = 0.;
-            while offset < length {
-                let draw = phase < dash;
-                let span = if draw { dash - phase } else { period - phase };
-                let end = (offset + span.max(0.01)).min(length);
-                let at = |distance: f32| {
-                    from + point(px(dx * distance / length), px(dy * distance / length))
-                };
-                if draw {
-                    path.move_to(at(offset));
-                    path.line_to(at(end));
-                    segments += 1;
-                }
-                phase = (phase + end - offset) % period;
-                offset = end;
-            }
-        } else {
-            path.line_to(to);
-            segments += 1;
-        }
-        from = to;
-    }
-    if segments == 0 {
-        path.move_to(from - point(theme::scaled_px(2.), px(0.)));
-        path.line_to(from + point(theme::scaled_px(2.), px(0.)));
-    }
-    if let Ok(path) = path.build() {
-        window.paint_path(
-            path,
-            hsla(if merges {
-                theme().color_head
-            } else {
-                theme().color_success
-            }),
-        );
-        #[cfg(feature = "gui-e2e")]
-        e2e::activity::stroke(
-            &format!("{_probe}-{}", if merges { "merges" } else { "commits" }),
-            merges,
-            segments.max(1),
-        );
-    }
-}
 
 fn legend(merges: bool, text: String) -> impl IntoElement {
     div()
@@ -149,12 +44,6 @@ fn legend(merges: bool, text: String) -> impl IntoElement {
                 "activity-legend-commits"
             }))
         })
-}
-
-/// `0xRRGGBB` → opaque [`gpui::Hsla`] (what `paint_path` takes).
-#[inline]
-fn hsla(hex: u32) -> gpui::Hsla {
-    gpui::rgb(hex).into()
 }
 
 /// One compact contributor ranking row: `#rank  name … commits·merges` with a

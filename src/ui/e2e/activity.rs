@@ -10,9 +10,17 @@ pub struct Node {
     pub tab_stop: bool,
     pub focus: Option<FocusHandle>,
 }
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Stroke {
+    pub solid_segments: usize,
+    pub dash_segments: usize,
+    pub gap_segments: usize,
+    pub knockout_segments: usize,
+    pub single_point: bool,
+}
 thread_local! {
     static NODES: RefCell<std::collections::HashMap<String, Node>> = RefCell::default();
-    static STROKES: RefCell<std::collections::HashMap<String, (bool, usize)>> = RefCell::default();
+    static STROKES: RefCell<std::collections::HashMap<String, Stroke>> = RefCell::default();
     static READOUT: RefCell<String> = RefCell::default();
 }
 pub(crate) fn begin() {
@@ -35,14 +43,10 @@ pub fn nodes(prefix: &str) -> Vec<(String, Node)> {
             .collect()
     })
 }
-pub(crate) fn stroke(id: &str, dashed: bool, segments: usize) {
-    STROKES.with(|strokes| {
-        strokes
-            .borrow_mut()
-            .insert(id.to_string(), (dashed, segments))
-    });
+pub(crate) fn stroke(id: &str, stroke: Stroke) {
+    STROKES.with(|strokes| strokes.borrow_mut().insert(id.to_string(), stroke));
 }
-pub fn painted_stroke(id: &str) -> Option<(bool, usize)> {
+pub fn painted_stroke(id: &str) -> Option<Stroke> {
     STROKES.with(|strokes| strokes.borrow().get(id).copied())
 }
 pub(crate) fn record_readout(text: &str) {

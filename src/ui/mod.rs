@@ -4,6 +4,7 @@
 //! functions, never Git bindings directly; bypassing that boundary breaks layering.
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
+mod activity_chart;
 pub mod activity_view;
 mod analyze_help;
 pub mod assets;

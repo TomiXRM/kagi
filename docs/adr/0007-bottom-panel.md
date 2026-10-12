@@ -64,11 +64,18 @@ merge and distinct-author counts. Authors are counted by raw email once per
 bucket in the pure domain aggregate, never from render or extra Git reads.
 One roving Tab stop and arrow/Home/End inspection expose the same readout.
 Solid commit and dashed merge strokes are painted by the same function in the
-chart and legend; single buckets have visible marks. Header wrapping and a
-40%-capped ranking preserve the chart at narrow/high-zoom layouts. No chart
-manager, new aggregation owner, write operation or Audio Graph API is added.
+chart and legend. Merge gaps first knock out the underlying solid/baseline
+with panel-coloured strokes wider than the commit line, so equal/zero
+segments retain a luminance-visible pattern, not alternating series colours.
+Single buckets retain a solid commit mark and a separate two-dash merge mark
+3 reference px below it, using the same dash/gap cadence as the legend.
+Header wrapping and a 40%-capped ranking preserve the chart at narrow/high-zoom
+layouts. No chart manager, new aggregation owner, write operation or Audio
+Graph API is added.
 
 Native renderer regressions record installed roles/focus handles, compare
-actual selected-fill pixels, and exercise 0/1/24-bucket values. Native
+actual selected-fill and coincident dash-gap pixels, and exercise 0/1/24-bucket
+values. Stroke probes count commands in successfully painted solid/dash/gap
+paths and record the single-point branch, not the requested encoding. Native
 VoiceOver reading and real Tab traversal remain Tier B checks; renderer
 attributes alone do not establish those platform observations.

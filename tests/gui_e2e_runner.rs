@@ -152,6 +152,10 @@ mod activity_a11y;
 mod recovery_terminal_states;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/unborn_empty.rs"]
+mod recovery_unborn_empty;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
 mod bottom_panel_motion;
 
@@ -1259,6 +1263,10 @@ mod macos {
             (
                 "worktree_lock_reason",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
+            ),
+            (
+                "unborn_empty_state",
+                Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
             (
                 "terminal_states",

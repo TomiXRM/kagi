@@ -48,6 +48,9 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
 }
 
 #[cfg(feature = "gui-e2e")]
+pub mod unborn;
+
+#[cfg(feature = "gui-e2e")]
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
     static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };

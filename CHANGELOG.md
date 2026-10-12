@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Long status-bar branch names shrink to a zoom-scaled readable minimum and end ellipsis, with the complete name retained in the tooltip and accessibility label. Status chips and refresh time keep their natural widths; feedback truncates before the nonshrinking Terminal / Operation Log cluster in both toolbar presentations. (#1310)
+  - Review: short branch names keep their measured natural widths, nonempty feedback reserves up to 80 reference pixels before branch identity within the actual remaining footer budget, and labels/tooltips/AX share the existing control-byte sanitizer without changing raw refs or klog.
+  - Pixel-rounding review: round each natural text width up like GPUI layout, preserving unellipsized short branch names and the right footer padding even with every status chip at 167% zoom.
 - File History's Open File opens the selected entry's exact path in the Editor workspace and closes History only after the worktree file is available. Binary or missing paths show the existing EN/JA Editor reason and keep History open; followed pre-rename paths never silently fall back to the current name. Existing Editor tabs and dirty buffers are retained, and Back remains dismiss-only. (#1308)
   - Review: supported raster images pass the same allocation-free magic-byte recognition used by the Editor, rather than being refused as generic binary files. Missing pre-rename paths explain the rename and name the current path in EN/JA without opening it automatically.
 - Clone confirmation cards use the shared viewport-capped modal frame with one scrolling body and a pinned Cancel/Clone/Hide footer, keeping long plans reachable at high zoom. (#1296)

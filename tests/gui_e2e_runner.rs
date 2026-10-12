@@ -303,6 +303,9 @@ mod sidebar_rows;
 mod tab_panels;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/status_bar_fit.rs"]
+mod status_bar_fit;
+#[cfg(target_os = "macos")]
 #[path = "recovery/status_controls.rs"]
 mod status_controls;
 #[cfg(target_os = "macos")]
@@ -2471,6 +2474,9 @@ mod macos {
                 Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
+            ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
+            ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
+            ("status_bar_short_branch", Box::new(crate::status_bar_fit::scenario_status_bar_short_branch)),
             (
                 "pr_threads_via_gh",
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),

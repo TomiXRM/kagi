@@ -47,6 +47,7 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
+    static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -62,6 +63,20 @@ pub(crate) fn record_status_control(
 #[cfg(feature = "gui-e2e")]
 pub fn status_control(id: &str) -> Option<(gpui::Role, &'static str, gpui::Toggled)> {
     STATUS_CONTROLS.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_branch_identity(
+    label: gpui::SharedString,
+    tooltip: gpui::SharedString,
+) {
+    STATUS_BRANCH_IDENTITY.with(|identity| *identity.borrow_mut() = Some((label, tooltip)));
+}
+
+/// Renderer-fed full AX name and tooltip for the status bar's branch.
+#[cfg(feature = "gui-e2e")]
+pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
+    STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to

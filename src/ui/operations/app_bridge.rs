@@ -250,15 +250,7 @@ impl KagiApp {
                 Some(guard.for_op(name))
             }
             Err(error) => {
-                let message = if error == app::AdmissionError::Busy {
-                    Msg::OpInProgress.t().to_string()
-                } else {
-                    error.to_string()
-                };
-                self.status_footer = FooterStatus::Failed(message.clone().into());
-                self.push_toast(ToastKind::Error, message.clone(), cx);
-                self.app_notices.push_back(message.into());
-                cx.notify();
+                self.report_admission_refusal(error, cx);
                 None
             }
         }

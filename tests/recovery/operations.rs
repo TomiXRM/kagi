@@ -1186,9 +1186,9 @@ pub fn scenario_window_modal_exclusivity(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS window_modal_exclusivity");
 }
 
-/// #718: modal displacement preserves every unread AppNotice, while explicit
-/// user dismissal requeues only actionable notices. Remote Browse and Update
-/// exercise unrelated setters; the final plain notice distinguishes the events.
+/// #718: modal displacement preserves every unread AppNotice, while #1366
+/// makes explicit user dismissal acknowledge the presentation only. Remote
+/// Browse and Update exercise unrelated setters without dismissing the notice.
 pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, fixture.path());

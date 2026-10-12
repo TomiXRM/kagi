@@ -50,6 +50,9 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
 }
 
 #[cfg(feature = "gui-e2e")]
+pub mod unborn;
+
+#[cfg(feature = "gui-e2e")]
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
     static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
@@ -487,6 +490,14 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
     });
     app.present_app_notice();
     true
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn enqueue_checkout(app: &mut KagiApp, branch: &str, cx: &mut gpui::Context<KagiApp>) -> bool {
+    app.enqueue_checkout(
+        &super::modals::CheckoutPlanTarget::Branch(branch.into()),
+        cx,
+    )
 }
 
 #[cfg(feature = "gui-e2e")]

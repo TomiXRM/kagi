@@ -160,6 +160,10 @@ mod activity_a11y;
 mod recovery_terminal_states;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/unborn_empty.rs"]
+mod recovery_unborn_empty;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
 mod bottom_panel_motion;
 
@@ -1272,6 +1276,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
             ),
             (
+                "unborn_empty_state",
+                Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
+            ),
+            (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
@@ -1573,6 +1581,18 @@ mod macos {
             (
                 "app_notice_modal_replacement",
                 Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
+            ),
+            (
+                "app_notice_escape_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_escape_dismiss),
+            ),
+            (
+                "app_notice_acknowledge_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_acknowledge_dismiss),
+            ),
+            (
+                "app_notice_queue_recurrence",
+                Box::new(crate::op_queue::scenario_app_notice_queue_recurrence),
             ),
             (
                 "reconcile_unobservable_release",

@@ -242,6 +242,9 @@ Close, Replace and Replace all remain real Buttons with their existing
 callbacks, icon geometry, unavailable states and theme styling. Accessible
 Button names and lazily constructed hover help share the localized text;
 case and replacement disclosure additionally expose `aria_toggled`.
+Both `gpui-component` and `gpui-component-assets` are pinned to the published
+TomiXRM/gpui-kit revision `3dad9fccedc6a858ecb5a0def1b044bfc5750976`; the
+production dependency graph contains no local development path patch.
 
 The search field precedes case/disclosure/navigation/Close in focus traversal;
 the replacement field precedes Replace/Replace all. Escape from any Find-bar

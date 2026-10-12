@@ -114,18 +114,9 @@ pub(crate) fn render_trust_repo_modal(
         this.confirm_trust_repo(cx);
     });
 
-    let card = div()
-        .w(theme::scaled_px(460.))
-        .bg(rgb(current_theme().elevated_surface(current_theme().panel)))
-        .when(current_theme().slug == "apple-dark", |card| {
-            card.border_1()
-                .border_color(rgb(current_theme().elevated_border(current_theme().surface)))
-        })
-        .rounded_lg()
-        .p_4()
-        .flex()
-        .flex_col()
-        .gap_3()
+    let body = super::modal_shell::modal_scroll_body()
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-body"))
         .child(render_modal_title_row(
             SharedString::from(Msg::TrustRepoTitle.t()),
             Some((
@@ -140,15 +131,15 @@ pub(crate) fn render_trust_repo_modal(
                 .child(SharedString::from(Msg::TrustRepoBody.t())),
         )
         .child(
-            div()
+            trust_path(SharedString::from(modal.repo_path.display().to_string()))
                 .text_xs()
-                .text_color(rgb(current_theme().text_label))
-                .child(SharedString::from(modal.repo_path.display().to_string())),
+                .text_color(rgb(current_theme().text_label)),
         )
         .when_some(modal.error.clone(), |card, error| {
             card.child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .flex_row()
                     .items_start()
                     .gap_2()
@@ -157,11 +148,14 @@ pub(crate) fn render_trust_repo_modal(
                             .id("trust-repo-error")
                             .flex_1()
                             .min_w_0()
-                            .max_h(theme::scaled_px(180.))
-                            .overflow_y_scroll()
+                            .flex_shrink_0()
                             .text_sm()
                             .text_color(rgb(current_theme().color_blocker))
-                            .child(SharedString::from(error.clone())),
+                            .child(SharedString::from(error.clone()))
+                            .child(super::e2e::measure_control(
+                                "trust-repo-error-tail",
+                                div().h(theme::scaled_px(1.)),
+                            )),
                     )
                     .child(super::modal_copy::modal_copy_button(
                         "trust-repo-copy-error",
@@ -170,9 +164,14 @@ pub(crate) fn render_trust_repo_modal(
                         cx,
                     )),
             )
-        })
+        });
+    let card = super::modal_shell::modal_card(460.)
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-card"))
+        .child(body)
         .child(
             super::button_style::modal_button_row()
+                .flex_shrink_0()
                 .child(super::e2e::measure_control(
                     "trust-repo-cancel",
                     modal_button(
@@ -202,4 +201,22 @@ pub(crate) fn render_trust_repo_modal(
         );
 
     modal_overlay(card).into_any_element()
+}
+
+fn trust_path(full: SharedString) -> gpui::Stateful<gpui::Div> {
+    let tooltip = full.clone();
+    div()
+        .id("trust-repo-path")
+        .role(gpui::Role::Label)
+        .aria_label(full.clone())
+        .aria_description(full.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_middle()
+        .relative()
+        .child(super::e2e::measure_inside("trust-repo-path"))
+        .child(full)
 }

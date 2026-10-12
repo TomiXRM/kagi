@@ -141,7 +141,15 @@ pub fn fetch_age_chip(s: &StatusBarSummary, now_secs: i64) -> Option<StatusChip>
     };
     Some(StatusChip {
         role,
-        text: format!("\u{21e3} {}", age_label(age)), // ⇣ 3m
+        text: format!(
+            "{}⇣ {}",
+            if role == StatusChipRole::FetchStale {
+                "! "
+            } else {
+                ""
+            },
+            age_label(age)
+        ),
     })
 }
 
@@ -334,11 +342,11 @@ mod tests {
         // Exactly at the threshold → stale.
         let chip = fetch_age_chip(&remote_summary(Some(now - FETCH_STALE_WARN_SECS)), now).unwrap();
         assert_eq!(chip.role, FetchStale);
-        assert_eq!(chip.text, "\u{21e3} 15m");
+        assert_eq!(chip.text, "! \u{21e3} 15m");
         // Two days of silence → stale, day label.
         let chip = fetch_age_chip(&remote_summary(Some(now - 2 * 86_400)), now).unwrap();
         assert_eq!(chip.role, FetchStale);
-        assert_eq!(chip.text, "\u{21e3} 2d");
+        assert_eq!(chip.text, "! \u{21e3} 2d");
     }
 
     #[test]

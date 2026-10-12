@@ -65,6 +65,141 @@ pub fn scenario_diff_keyboard_selection(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS diff_keyboard_selection EN/JA unified/split");
 }
 
+pub fn scenario_split_diff_keyboard_order(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
+    theme::set_diff_split(true);
+    let temp = fixture();
+    std::fs::write(
+        temp.path().join("f.txt"),
+        (0..100)
+            .filter(|i| !(2..7).contains(i))
+            .map(|i| {
+                if i == 7 {
+                    format!("replacement a\nreplacement b\nreplacement c\nline {i}\n")
+                } else {
+                    format!("line {i}\n")
+                }
+            })
+            .collect::<String>(),
+    )
+    .unwrap();
+    let repo = temp.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    open(cx, &app);
+    draw(cx, window);
+    let (key, _) = surface(cx, &app);
+    tab_to_body(cx, window, key);
+    for _ in 0..7 {
+        keys(cx, window, "down");
+    }
+    keys(cx, window, "cmd-c");
+    assert_eq!(clipboard(cx), "line 6\n", "last left replacement row");
+    keys(cx, window, "down");
+    keys(cx, window, "cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "line 7\n",
+        "Down from last left row moves to the next visual row, never back up"
+    );
+    keys(cx, window, "up");
+    keys(cx, window, "cmd-c");
+    assert_eq!(clipboard(cx), "line 6\n");
+    keys(cx, window, "shift-down cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "line 6\nreplacement a\nreplacement b\nreplacement c\nline 7\n",
+        "Shift preserves the unified anchor and code-only copy range"
+    );
+    keys(cx, window, "home");
+    draw(cx, window);
+    assert_header_caret(key, true);
+    keys(cx, window, "end cmd-c");
+    assert_eq!(clipboard(cx), "line 9\n");
+    keys(cx, window, "pageup");
+    draw(cx, window);
+    assert_header_caret(key, true);
+    keys(cx, window, "pagedown cmd-c");
+    assert_eq!(clipboard(cx), "line 9\n");
+    keys(cx, window, "home");
+    draw(cx, window);
+    let right = e2e::control_bounds(window.window_id(), "split-cell-17").unwrap();
+    cx.simulate_click(window, right.center(), gpui::Modifiers::none());
+    keys(cx, window, "shift-down shift-down shift-down cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "replacement a\nreplacement b\nreplacement c\nline 7\n",
+        "right-affinity Shift+Down skips opposite-side fillers without shrinking"
+    );
+    for expected in [
+        "replacement c\n",
+        "replacement b\n",
+        "replacement a\n",
+        "line 1\n",
+    ] {
+        keys(cx, window, "up cmd-c");
+        assert_eq!(clipboard(cx), expected, "right-affinity Up reverses Down");
+    }
+    unmount(cx, app, window);
+    split_page_wrapped(cx);
+}
+
+fn split_page_wrapped(cx: &mut VisualTestAppContext) {
+    let temp = fixture();
+    let contents: String = (0..100)
+        .map(|i| {
+            if i == 0 {
+                format!("wrapped {}\n", "long content ".repeat(40))
+            } else {
+                format!("replacement {i}\n")
+            }
+        })
+        .collect();
+    std::fs::write(temp.path().join("f.txt"), contents).unwrap();
+    let repo = temp.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    open(cx, &app);
+    draw(cx, window);
+    let (key, _) = surface(cx, &app);
+    tab_to_body(cx, window, key);
+    let last = cx.read(|cx| {
+        let pane = app.read(cx).ui().main_diff.as_ref().unwrap().read(cx);
+        let (viewport, _) = pane.diff_row_bounds_for_e2e(0);
+        (0..101)
+            .take_while(|index| {
+                pane.diff_row_bounds_for_e2e(*index)
+                    .1
+                    .is_some_and(|row| row.bottom() <= viewport.bottom())
+            })
+            .last()
+            .unwrap()
+    });
+    keys(cx, window, "pagedown cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        format!("line {}\n", last - 1),
+        "PageDown lands on the last fully visible Row despite wrapped cells"
+    );
+    draw(cx, window);
+    assert_row_visible(cx, &app, last);
+    let base: String = (0..100).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(temp.path().join("f.txt"), format!("{base}added only\n")).unwrap();
+    open(cx, &app);
+    draw(cx, window);
+    keys(cx, window, "home down down down down cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "added only\n",
+        "one-sided additions remain navigable"
+    );
+    unmount(cx, app, window);
+}
+
 fn selection_cell(cx: &mut VisualTestAppContext) {
     let temp = fixture();
     let repo = temp.path().canonicalize().unwrap();

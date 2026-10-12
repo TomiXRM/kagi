@@ -103,6 +103,31 @@ fn status_text_width(text: SharedString, window: &Window) -> gpui::Pixels {
         .ceil()
 }
 
+fn chip_description(
+    role: view_models::StatusChipRole,
+    summary: &StatusBarSummary,
+    now: i64,
+    upstream: &str,
+) -> String {
+    use kagi_ui_core::i18n::status_chips::{description, Chip};
+    use view_models::StatusChipRole::*;
+    let chip = match role {
+        Dirty => Chip::Dirty,
+        Staged => Chip::Staged(summary.staged),
+        Unstaged => Chip::Unstaged(summary.unstaged),
+        Conflict => Chip::Conflict(summary.conflict_count),
+        Stash => Chip::Stash(summary.stash_count),
+        AheadBehind => Chip::AheadBehind(summary.ahead.zip(summary.behind)),
+        NoUpstream => Chip::NoUpstream,
+        UpstreamName => Chip::Upstream,
+        FetchAge | FetchStale => Chip::Fetch {
+            age: now.saturating_sub(summary.last_fetch_secs.unwrap_or(now)),
+            stale: role == FetchStale,
+        },
+    };
+    description(chip, upstream)
+}
+
 impl KagiApp {
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
@@ -142,11 +167,13 @@ impl KagiApp {
         // Repaints ride the auto-fetch cycle: `fetch_async` notifies on every
         // completion — including silent failures — so the age stays honest
         // even when the network is down.
-        if let Some(chip) =
-            view_models::fetch_age_chip(&summary, super::commit_list::now_unix_secs())
-        {
+        let now = super::commit_list::now_unix_secs();
+        if let Some(chip) = view_models::fetch_age_chip(&summary, now) {
             status_vm.chips.push(chip);
         }
+        let upstream = kagi_domain::text_safety::sanitize_control_bytes(&summary.upstream_name);
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_status_chips(Vec::new());
         let branch_text = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
             &status_vm.branch,
         ));
@@ -296,9 +323,22 @@ impl KagiApp {
                 FetchStale => (theme().color_warning, 6.),
             };
             let text = SharedString::from(chip.text.clone());
+            let description =
+                SharedString::from(chip_description(chip.role, &summary, now, &upstream));
+            let tip = description.clone();
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::record_status_chip(
+                text.to_string(),
+                description.to_string(),
+                tip.to_string(),
+            );
             fixed_width += status_text_width(text.clone(), window) + theme::scaled_px(margin);
             bar = bar.child(
                 div()
+                    .id(("status-chip", chip.role as usize))
+                    .role(gpui::Role::Label)
+                    .aria_label(description)
+                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                     .relative()
                     .ml(theme::scaled_px(margin))
                     .text_color(rgb(color))

@@ -54,6 +54,7 @@ pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
+pub mod status_chips;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
     auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,
@@ -394,6 +395,8 @@ pub enum Msg {
     TerminalNotStartedHint,
     TerminalRestartHint,
     TerminalRestart,
+    UnbornEmptyTitle,
+    UnbornEmptyHint,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -1730,6 +1733,8 @@ pub enum Msg {
     /// issue #350: blame legend tooltip for the `?` marker on an unblamable
     /// (uncommitted) line.
     BlameUnblamableMarkTip,
+    /// Live buffer text with no unchanged HEAD line attribution.
+    BlameUncommitted,
     /// issue #350: the Editor Workspace's inline-blame toggle chip. "Blame"
     /// is a Git term of art (ADR-0048) — verbatim in both languages.
     EditorWorkspaceBlame,
@@ -2583,6 +2588,10 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
+            (En, UnbornEmptyTitle) => "No commits yet",
+            (Ja, UnbornEmptyTitle) => "まだ commit がありません",
+            (En, UnbornEmptyHint) => "Add files and create the first commit",
+            (Ja, UnbornEmptyHint) => "ファイルを追加して最初の commit を作成してください",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",
@@ -4248,6 +4257,8 @@ impl Msg {
             (Ja, BlameIgnoredMarkTip) => "* commit は .git-blame-ignore-revs に含まれます",
             (En, BlameUnblamableMarkTip) => "? line is not yet committed",
             (Ja, BlameUnblamableMarkTip) => "? まだ commit されていない行",
+            (En, BlameUncommitted) => "Uncommitted",
+            (Ja, BlameUncommitted) => "未 commit",
             (En, EditorWorkspaceBlame) => "Blame",
             (Ja, EditorWorkspaceBlame) => "Blame",
             // #1016 PR B — modal controls, validation and AFTER-state chips.

@@ -4,7 +4,7 @@
 
 use super::*;
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::{Icon, IconName};
+use gpui_component::IconName;
 
 impl KagiApp {
     #[cfg(feature = "gui-e2e")]
@@ -88,6 +88,16 @@ impl KagiApp {
                 }
             })
             .cursor_row_resize()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
+                    this.bottom_panel_drag_origin = Some((
+                        f32::from(event.position.y),
+                        height,
+                        this.bottom_panel_height,
+                    ));
+                }),
+            )
             .on_drag(
                 DividerDrag {
                     kind: DividerKind::BottomPanel,
@@ -350,56 +360,24 @@ impl KagiApp {
         terminal::record_empty_state_for_e2e(state, &title, &hint, restart_name);
         #[cfg(feature = "gui-e2e")]
         let restart = terminal::RestartButton(restart);
-        div()
-            .id("terminal-empty-state")
-            .flex_1()
-            .min_h(px(0.))
-            .min_w(px(0.))
-            .w_full()
-            .overflow_y_scroll()
-            .bg(rgb(theme().panel))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_3()
-                    .p_3()
-                    .child(e2e::measure_control(
-                        "terminal-state-icon",
-                        Icon::new(icon).size(theme::scaled_px(20.)).text_color(rgb(
-                            if matches!(state, TerminalState::Failed { .. }) {
-                                theme().color_blocker
-                            } else {
-                                theme().text_sub
-                            },
-                        )),
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.))
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(e2e::measure_control(
-                                "terminal-state-title",
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_color(rgb(theme().text_main))
-                                    .child(title),
-                            ))
-                            .child(e2e::measure_control(
-                                "terminal-state-hint",
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(theme().text_sub))
-                                    .child(hint),
-                            )),
-                    )
-                    .child(e2e::measure_control("terminal-restart", restart)),
-            )
-            .into_any()
+        super::render_helpers::empty_state(
+            "terminal-empty-state",
+            [
+                "terminal-state-icon",
+                "terminal-state-title",
+                "terminal-state-hint",
+                "terminal-restart",
+            ],
+            title,
+            hint,
+            icon,
+            if matches!(state, TerminalState::Failed { .. }) {
+                theme().color_blocker
+            } else {
+                theme().text_sub
+            },
+            restart,
+        )
     }
 }
 

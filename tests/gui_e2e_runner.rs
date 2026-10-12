@@ -316,6 +316,9 @@ mod diff_highlight;
 mod binary_diff_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_viewports.rs"]
+mod modal_viewports;
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -2329,6 +2332,14 @@ mod macos {
             (
                 "cherry_pick_abort_sequence",
                 Box::new(crate::conflict_abort_slot::scenario_cherry_pick_abort_sequence),
+            ),
+            (
+                "remote_browse_viewport",
+                Box::new(crate::modal_viewports::scenario_remote_browse_viewport),
+            ),
+            (
+                "trust_prompt_viewport",
+                Box::new(crate::modal_viewports::scenario_trust_prompt_viewport),
             ),
             (
                 "remote_browse_escape_focus",

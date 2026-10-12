@@ -120,3 +120,17 @@ Native `trust_failure_feedback` covers directory-store failure, untrusted write
 refusal, copy, repaired-store retry and a removed-git-directory reopen failure
 with retained session in EN/JA. Real-window Apple Light 100%/167% review remains
 the integrating agent's responsibility.
+
+## Amendment — 2026-10-13: viewport-bounded security confirmation (#1369)
+
+Trust uses `modal_shell::modal_card` and one `modal_scroll_body` for the
+repository identity, permission prose and complete error. The action row is
+pinned outside that body; there is no nested error scroller. Only displayed
+identity layout uses middle ellipsis: Tooltip and the Label's AX name and
+description retain the full path, and approval still uses the frozen exact
+`repo_path`. Existing Return, Escape, focus-trap, grant and reopen policies
+remain unchanged. Reference: macOS permission dialog/HIG layout — retain
+visible approval/refusal actions, not native material or a native-sheet claim.
+The open-density state contract keeps rest/hover/pressed/focus-visible on the
+existing buttons; error and long identity remain inspectable without pushing
+actions off-screen. Loading, selected and disabled remain inapplicable.

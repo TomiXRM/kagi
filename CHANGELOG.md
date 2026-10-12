@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Remote SSH Connect/Browse and repository Trust confirmations cap their cards to the viewport and keep action buttons pinned while long diagnostics scroll. Long directory/repository identities use middle ellipsis with their full values in tooltips and accessibility labels; directory keyboard ownership and Trust's Return policy are unchanged. (#1368, #1369)
 - Find/Replace controls in the Editor, conflict Result editor and Issue composer expose localized Button names and hover help, with case/replacement toggled state. Keyboard traversal reaches the actions after the field; Escape and Close return focus to the same editable buffer. Find Buttons consume inherited editing actions, and clicking bar padding focuses its query rather than allowing hidden code/draft edits. Query, undo history and guarded Save remain owned by the existing inputs. (#1348)
 - Settings' theme picker exposes a localized ComboBox name, current theme value and open/closed state, with named options. UI zoom controls announce localized decrease/increase actions with the current percentage; the value is a named Status and bound buttons are disabled. (#1349, #1350)
   - Review: theme semantics belong to the actual focused Select trigger, not an unfocused wrapper. Reaching a zoom bound keeps keyboard focus on the opposite stepper, and the next Tab continues beside the zoom row; Japanese announcements use the visible UI ズーム term.

@@ -124,6 +124,13 @@ pub(crate) fn render_create_branch_modal(
         // both states using the same stacked comparison as every plan card.
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
+        if !p.warnings.is_empty() {
+            body = body.child(super::plan_card_rows::render_warnings_list(
+                "create-branch-warning",
+                &p.warnings,
+            ));
+        }
+
         // Field validation belongs beside the input; every other safety
         // blocker remains in the plan area and still blocks confirmation.
         let mut block_col = div().flex().flex_col().gap_1();

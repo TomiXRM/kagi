@@ -20,8 +20,26 @@ pub(crate) fn render_note_row(
     text: &str,
     chip: bool,
 ) -> gpui::AnyElement {
+    render_note_row_with_role(
+        id,
+        super::dialog_a11y::note_role(blocker),
+        glyph,
+        color,
+        text,
+        chip,
+    )
+}
+
+fn render_note_row_with_role(
+    id: SharedString,
+    role: gpui::Role,
+    glyph: &'static str,
+    color: u32,
+    text: &str,
+    chip: bool,
+) -> gpui::AnyElement {
     if !chip {
-        return super::dialog_a11y::apply_note(id.clone(), div().id(id), blocker, text)
+        return super::dialog_a11y::apply_note_role(id.clone(), div().id(id), role, text)
             .text_sm()
             .text_color(rgb(color))
             .overflow_hidden()
@@ -29,7 +47,7 @@ pub(crate) fn render_note_row(
             .into_any_element();
     }
     let (bg, border, _) = theme::badge_style(color);
-    super::dialog_a11y::apply_note(id.clone(), div().id(id), blocker, text)
+    super::dialog_a11y::apply_note_role(id.clone(), div().id(id), role, text)
         .flex()
         .flex_row()
         .items_start()
@@ -56,6 +74,33 @@ pub(crate) fn render_note_row(
                 .child(SharedString::from(text.to_string())),
         )
         .into_any_element()
+}
+
+/// Advisory form-plan warnings: wrap full localized text and announce Status.
+pub(crate) fn render_warnings_list(
+    prefix: &'static str,
+    warnings: &[kagi_domain::plan_note::PlanNote],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_shrink_0()
+        .children(warnings.iter().enumerate().map(|(index, warning)| {
+            let id: SharedString = format!("{prefix}-{index}").into();
+            let text = kagi_ui_core::i18n::plan_note_text(warning);
+            super::e2e::measure_control(
+                id.clone(),
+                render_note_row_with_role(
+                    id,
+                    gpui::Role::Status,
+                    "\u{26a0}",
+                    current_theme().color_warning,
+                    &text,
+                    true,
+                ),
+            )
+        }))
 }
 
 /// One "commits to push" preview row (T-HT-004). Plain (`accent: None`):

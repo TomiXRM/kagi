@@ -10,3 +10,12 @@
 - path 衝突は既存 plan_create_worktree の blocker をそのまま使用。作成後 Navigator の
   WORKTREES を refresh(既存 reload で充足)
 - 「Create worktree from here」(commit menu 由来)と handler を共有(二重実装禁止)
+
+## Amendment — 2026-10-13: Create Branch warnings (#1385)
+
+Create Branch displays all existing `plan.warnings` in the scrollable plan
+body before approval, using the shared warning-row icon and theme warning
+colour with localized EN/JA text and `Role::Status`. Cancel/Create remain
+outside that body. Warnings are advisory: only existing blockers, pending
+plans or failed plans disable Create. This presentation change does not
+fetch rulesets, modify `plan_*`, or alter checkout-after safety policy.

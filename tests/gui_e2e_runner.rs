@@ -132,6 +132,10 @@ mod tab_strip;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_warnings.rs"]
+mod create_branch_warnings;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
 mod smart_picker;
 
@@ -2791,6 +2795,10 @@ mod macos {
             (
                 "create_branch_input_confirm_ime",
                 Box::new(crate::recovery_operations::scenario_create_branch_input_confirm_ime),
+            ),
+            (
+                "create_branch_warnings",
+                Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
             ),
             (
                 "stash_push_stacked_preview",

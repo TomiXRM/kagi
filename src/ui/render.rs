@@ -141,16 +141,6 @@ impl Render for KagiApp {
             self.show_compare(view, cx);
         }
 
-        // Remember the live window size (persisted on quit → restored next
-        // launch). Only plain Windowed: a maximized/fullscreen size would
-        // restore as a giant floating window.
-        if let gpui::WindowBounds::Windowed(b) = window.window_bounds() {
-            let w = f32::from(b.size.width).round().max(0.0) as u32;
-            let h = f32::from(b.size.height).round().max(0.0) as u32;
-            super::LAST_WIN_W.store(w, std::sync::atomic::Ordering::Relaxed);
-            super::LAST_WIN_H.store(h, std::sync::atomic::Ordering::Relaxed);
-        }
-
         // A published read owes the retained panes a pass (#722; no-op unless
         // queued), and a replaced view re-arms the scans that decorate it.
         self.revalidate_retained_panes(cx);
@@ -648,6 +638,15 @@ impl Render for KagiApp {
             }))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
+            .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, _, _| {
+                if event.button == MouseButton::Left {
+                    this.finish_bottom_panel_resize();
+                }
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.finish_bottom_panel_resize()),
+            )
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
             .on_action(

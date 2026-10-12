@@ -25,6 +25,8 @@ struct Selection {
     cursor: usize,
     /// Headers show a caret only for keyboard navigation, not mouse selection.
     keyboard_caret: bool,
+    /// Split navigation keeps its column affinity across filler/header rows.
+    split_right: Option<bool>,
     /// Extracted at mouse-up (and single click) — what ⌘C puts on the clipboard.
     text: String,
 }
@@ -52,6 +54,7 @@ pub(crate) fn begin(key: u64, ix: usize) {
         anchor: ix,
         cursor: ix,
         keyboard_caret: false,
+        split_right: None,
         text: String::new(),
     });
 }
@@ -141,9 +144,106 @@ fn move_rows(
     };
     *selection = Some(Selection {
         key,
+        split_right: None,
         anchor,
         cursor: target,
         keyboard_caret: true,
+        text: build_text(rows, anchor.min(target), anchor.max(target)),
+    });
+    Some(target)
+}
+
+/// A wholly one-sided add/delete run remains navigable from either affinity.
+/// Only an unequal replacement's filler skips the missing preferred column.
+fn replacement_row(rows: &[super::diff_split::SplitDiffRow], at: usize) -> bool {
+    use super::diff_split::SplitDiffRow;
+    let boundary = |row: &SplitDiffRow| {
+        matches!(row, SplitDiffRow::Full(_))
+            || matches!(row, SplitDiffRow::Pair { left, right } if left == right)
+    };
+    rows[..at]
+        .iter()
+        .rev()
+        .take_while(|row| !boundary(row))
+        .chain(rows[at..].iter().take_while(|row| !boundary(row)))
+        .any(|row| {
+            matches!(row,
+            SplitDiffRow::Pair { left: Some(left), right: Some(right) } if left != right)
+        })
+}
+
+/// Navigate aligned rows, retaining unified indices for anchor and clipboard.
+fn move_split_rows(
+    key: u64,
+    rows: &[DiffRow],
+    split: &[super::diff_split::SplitDiffRow],
+    action: &keyboard::SelectRows,
+    distance: usize,
+) -> Option<usize> {
+    use super::diff_split::SplitDiffRow;
+    let last = split.len().checked_sub(1)?;
+    let source_last = rows.len().checked_sub(1)?;
+    let mut selection = selection();
+    let current = selection.as_ref().filter(|s| s.key == key);
+    let cursor = current.map_or(0, |s| s.cursor.min(source_last));
+    let at = super::diff_split::split_index_of(split, cursor).unwrap_or(0);
+    let right = current.and_then(|s| s.split_right).unwrap_or_else(|| {
+        matches!(split[at], SplitDiffRow::Pair { left, right }
+            if right == Some(cursor) && left != Some(cursor))
+    });
+    let mut visual = if action.boundary || action.all {
+        if action.step > 0 {
+            last
+        } else {
+            0
+        }
+    } else if action.step > 0 {
+        at.saturating_add(distance).min(last)
+    } else {
+        at.saturating_sub(distance)
+    };
+    let target = if action.all {
+        source_last
+    } else {
+        loop {
+            let target = match split[visual] {
+                SplitDiffRow::Full(index) => Some(index),
+                SplitDiffRow::Pair { left, right: rhs } => {
+                    let preferred = if right { rhs } else { left };
+                    preferred.or_else(|| {
+                        (!replacement_row(split, visual))
+                            .then(|| left.or(rhs))
+                            .flatten()
+                    })
+                }
+            };
+            if let Some(target) = target {
+                break target;
+            }
+            let next = if action.step > 0 {
+                visual.saturating_add(1).min(last)
+            } else {
+                visual.saturating_sub(1)
+            };
+            if next == visual {
+                break cursor;
+            }
+            visual = next;
+        }
+    };
+    let anchor = if action.all {
+        0
+    } else if action.extend {
+        current.map_or(0, |s| s.anchor.min(source_last))
+    } else {
+        target
+    };
+    *selection = Some(Selection {
+        key,
+        anchor,
+        cursor: target,
+        keyboard_caret: true,
+        split_right: Some(right),
         text: build_text(rows, anchor.min(target), anchor.max(target)),
     });
     Some(target)

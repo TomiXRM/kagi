@@ -54,6 +54,7 @@ pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
+pub mod status_chips;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
     auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,
@@ -394,6 +395,8 @@ pub enum Msg {
     TerminalNotStartedHint,
     TerminalRestartHint,
     TerminalRestart,
+    UnbornEmptyTitle,
+    UnbornEmptyHint,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -2583,6 +2586,10 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
+            (En, UnbornEmptyTitle) => "No commits yet",
+            (Ja, UnbornEmptyTitle) => "まだ commit がありません",
+            (En, UnbornEmptyHint) => "Add files and create the first commit",
+            (Ja, UnbornEmptyHint) => "ファイルを追加して最初の commit を作成してください",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",

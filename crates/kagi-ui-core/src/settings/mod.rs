@@ -32,12 +32,14 @@
 //! *repeated* write of one key (a column-divider drag) updates memory and is
 //! collapsed into one file write; every other write still lands immediately.
 
+mod main_window_frame;
 mod store;
 #[cfg(test)]
 mod store_env_tests;
 mod terminal_autolock;
 mod window_frame;
 
+pub use main_window_frame::{main_window_frame, write_main_window_frame, MainWindowFrame};
 pub use store::flush;
 pub use terminal_autolock::{init_terminal_auto_lock, set_terminal_auto_lock, terminal_auto_lock};
 pub use window_frame::{settings_window_frame, write_settings_window_frame, SettingsWindowFrame};
@@ -246,6 +248,15 @@ impl Settings {
         let raw = self.get_str("window_size")?;
         let (w, h) = raw.trim().split_once('x')?;
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
+    }
+
+    /// Bottom-panel body height in unscaled reference pixels (#1372).
+    /// The UI applies its minimum and viewport-dependent maximum.
+    pub fn bottom_panel_height(&self) -> Option<f32> {
+        self.get_str("bottom_panel_height")?
+            .parse::<f32>()
+            .ok()
+            .filter(|height| height.is_finite() && *height > 0.)
     }
 
     /// UI zoom, stored as a permille integer string (`"ui_zoom"`). Returns the
@@ -528,6 +539,20 @@ mod tests {
 
     fn parse(text: &str) -> Settings {
         serde_json::from_str(text).unwrap_or_default()
+    }
+
+    #[test]
+    fn bottom_panel_body_height_is_finite_and_positive() {
+        assert_eq!(
+            parse(r#"{"bottom_panel_height":"202.5"}"#).bottom_panel_height(),
+            Some(202.5)
+        );
+        for value in ["NaN", "inf", "-inf", "0", "-2", "invalid"] {
+            let mut settings = Settings::default();
+            settings.set_str("bottom_panel_height", value);
+            assert_eq!(settings.bottom_panel_height(), None, "{value}");
+        }
+        assert_eq!(Settings::default().bottom_panel_height(), None);
     }
 
     #[test]

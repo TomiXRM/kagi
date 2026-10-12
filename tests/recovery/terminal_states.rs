@@ -36,6 +36,16 @@ fn assert_block(
         e2e::control_bounds(window.window_id(), "terminal-restart").is_some(),
         "Exited(3) must paint a Restart button"
     );
+    crate::recovery_unborn_empty::assert_centered_block(
+        window,
+        "terminal-empty-state",
+        [
+            "terminal-state-icon",
+            "terminal-state-title",
+            "terminal-state-hint",
+            "terminal-restart",
+        ],
+    );
     let rendered = terminal::take_rendered_state_for_e2e().expect("empty state rendered");
     assert_eq!(rendered.state, state);
     assert_eq!(rendered.title.as_ref(), title);

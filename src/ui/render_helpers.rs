@@ -25,6 +25,8 @@ pub(crate) use diff_header::DiffHeader;
 pub(crate) use kagi_ui_core::header_fit::{header_button, HeaderFit};
 
 mod diff_header;
+mod empty_state;
+pub(crate) use empty_state::empty_state;
 pub(crate) mod diff_state;
 mod metadata;
 pub(crate) use metadata::subject_tooltip;
@@ -687,6 +689,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     focus_key,
                     rows,
                     scroll: selection_scroll,
+                    projection: selection_projection.clone(),
+                    items: selection_items.clone(),
                     item_index: move |row| {
                         let base = selection_projection
                             .as_ref()

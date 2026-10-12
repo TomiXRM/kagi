@@ -776,6 +776,9 @@ fn render_plan_modal_card_styled(
     // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
     let mut body = modal_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    if let Some(entry) = super::modal_renderers_stash::stash_entry_label(&plan) {
+        body = body.child(entry);
+    }
 
     // ── Warnings ─────────────────────────────────────────
     // #625: a warning carrying a path list renders as sentence + list, the

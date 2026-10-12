@@ -766,6 +766,12 @@ pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
             plan.warnings
         );
     });
+    e2e::clear_control_bounds(window.window_id(), "stash-apply-warning");
+    crate::recovery_operations::paint(cx, window);
+    assert!(
+        e2e::control_paint(window.window_id(), "stash-apply-warning").is_some(),
+        "Apply's warning must render outside the collapsed recovery disclosure (#652)"
+    );
 
     unmount(cx, app, window);
 }

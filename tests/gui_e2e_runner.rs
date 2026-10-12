@@ -222,6 +222,10 @@ mod app_remove;
 mod app_stash;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/stash_entry_identity.rs"]
+mod stash_entry_identity;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
 mod busy_label;
 
@@ -2763,6 +2767,10 @@ mod macos {
             (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_entry_identity",
+                Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
             ),
             (
                 "stash_push_plan_accuracy",

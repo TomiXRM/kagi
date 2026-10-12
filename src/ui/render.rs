@@ -112,6 +112,7 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_window_presentation(window, cx);
         self.poll_app_jobs(cx);
         self.present_app_notice();
         // #914: modal button closures bypass root Enter/Escape. A real exit

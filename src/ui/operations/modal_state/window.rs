@@ -7,6 +7,26 @@ use gpui::{AppContext as _, Context, Focusable as _, Window};
 use gpui_component::input::InputState;
 
 impl KagiApp {
+    pub fn about_modal(&self) -> Option<&crate::ui::about::AboutModal> {
+        match &self.active_modal {
+            Some(ActiveModal::About(modal)) => Some(modal),
+            _ => None,
+        }
+    }
+    pub fn set_about_modal(&mut self, modal: crate::ui::about::AboutModal) {
+        self.replace_modal_from_user(ActiveModal::About(modal));
+    }
+    pub fn clear_about_modal(&mut self) {
+        if let Some(opener) = self.about_modal().map(|modal| modal.opener.clone()) {
+            self.active_modal = None;
+            if let Some(opener) = opener {
+                self.restore_control_focus(opener);
+            } else {
+                self.focus_root_for_modal();
+            }
+        }
+    }
+
     /// ADR-0197 決定 1: the two **window-global single slots** that can only
     /// describe the tab on screen, closed when that tab is left. Everything else
     /// a tab shows is owned by its session and survives the switch.

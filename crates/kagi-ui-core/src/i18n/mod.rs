@@ -181,6 +181,16 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AboutTitle,
+    AboutDescription,
+    MenuHideSidebar,
+    MenuShowSidebar,
+    MenuEnterFullScreen,
+    MenuExitFullScreen,
+    MenuPreviousTab,
+    MenuNextTab,
+    MenuBringAllToFront,
+    NoOtherTabs,
     MenuHideApp,
     MenuHideOthers,
     MenuShowAll,
@@ -1756,6 +1766,26 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, AboutTitle) => "About Kagi",
+            (Ja, AboutTitle) => "Kagiについて",
+            (En, AboutDescription) => "A safety-first Git GUI client",
+            (Ja, AboutDescription) => "安全を優先する Git GUI クライアント",
+            (En, MenuHideSidebar) => "Hide Sidebar",
+            (Ja, MenuHideSidebar) => "サイドバーを非表示",
+            (En, MenuShowSidebar) => "Show Sidebar",
+            (Ja, MenuShowSidebar) => "サイドバーを表示",
+            (En, MenuEnterFullScreen) => "Enter Full Screen",
+            (Ja, MenuEnterFullScreen) => "フルスクリーンにする",
+            (En, MenuExitFullScreen) => "Exit Full Screen",
+            (Ja, MenuExitFullScreen) => "フルスクリーンを解除",
+            (En, MenuPreviousTab) => "Show Previous Tab",
+            (Ja, MenuPreviousTab) => "前のタブを表示",
+            (En, MenuNextTab) => "Show Next Tab",
+            (Ja, MenuNextTab) => "次のタブを表示",
+            (En, MenuBringAllToFront) => "Bring All to Front",
+            (Ja, MenuBringAllToFront) => "すべてを手前に移動",
+            (En, NoOtherTabs) => "No other tabs",
+            (Ja, NoOtherTabs) => "ほかのタブがありません",
             (En, MenuHideApp) => "Hide Kagi",
             (Ja, MenuHideApp) => "Kagiを隠す",
             (En, MenuHideOthers) => "Hide Others",
@@ -4578,7 +4608,7 @@ pub fn graph_detached_worktree_label(short_oid: &str) -> String {
 /// command table, and translations belong with the rest of the i18n table.
 pub fn command_label_ja(id: &str) -> Option<&'static str> {
     Some(match id {
-        "app.about" => "kagi について",
+        "app.about" => Msg::AboutTitle.t_for(Lang::Ja),
         "app.settings" => "設定…",
         "app.quit" => "kagi を終了",
         "app.hide" => Msg::MenuHideApp.t_for(Lang::Ja),
@@ -4617,6 +4647,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "commit.compareWorkingTree" => "作業ツリーと比較",
         "window.minimize" => "最小化",
         "window.zoom" => "ズーム",
+        "window.previousTab" => Msg::MenuPreviousTab.t_for(Lang::Ja),
+        "window.nextTab" => Msg::MenuNextTab.t_for(Lang::Ja),
+        "window.bringAllToFront" => Msg::MenuBringAllToFront.t_for(Lang::Ja),
         "window.new" => "新規ウィンドウ",
         "window.close" => "ウィンドウを閉じる",
         "help.shortcuts" => "キーボードショートカット",

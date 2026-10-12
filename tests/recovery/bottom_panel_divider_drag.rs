@@ -109,6 +109,88 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<Kag
     );
 }
 
+fn preserve_preference(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+) {
+    theme::set_zoom(1.);
+    app.update(cx, |app, cx| {
+        app.bottom_panel_height = 400.;
+        cx.notify();
+    });
+    kagi_ui_core::settings::write_setting("bottom_panel_height", Some("400"));
+    resize(cx, window, 1392., 883.);
+    let full = e2e::control_bounds(window.window_id(), "bottom-panel")
+        .unwrap()
+        .size
+        .height;
+    resize(cx, window, 1392., 500.);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).bottom_panel_height),
+        400.,
+        "a smaller viewport must not replace the preferred body height"
+    );
+    let capped = e2e::control_bounds(window.window_id(), "bottom-panel")
+        .unwrap()
+        .size
+        .height;
+    assert!(
+        capped < full,
+        "presentation height fits the temporary smaller viewport"
+    );
+    let start = e2e::control_bounds(window.window_id(), "divider-bottom-panel")
+        .unwrap()
+        .center();
+    cx.simulate_mouse_move(window, start, None, Modifiers::none());
+    cx.simulate_mouse_down(window, start, MouseButton::Left, Modifiers::none());
+    assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 400.);
+    move_to(cx, window, point(start.x, start.y + px(theme::scaled(20.))));
+    let effective = 500. * 0.6 / theme::scaled(1.);
+    assert!(
+        (cx.read(|cx| app.read(cx).bottom_panel_height) - effective + 20.).abs() <= 0.5,
+        "a capped divider drag starts from its presented height"
+    );
+    move_to(cx, window, start);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).bottom_panel_height),
+        400.,
+        "returning to the origin restores the capped preference"
+    );
+    cx.simulate_mouse_up(window, start, MouseButton::Left, Modifiers::none());
+    draw(cx, window);
+    resize(cx, window, 1392., 883.);
+    assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 400.);
+    assert_eq!(
+        e2e::control_bounds(window.window_id(), "bottom-panel")
+            .unwrap()
+            .size
+            .height,
+        full,
+        "widening restores the full preferred body height"
+    );
+    assert_eq!(
+        kagi_ui_core::settings::read_setting("bottom_panel_height").as_deref(),
+        Some("400")
+    );
+    theme::set_zoom(1.67);
+    draw(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).bottom_panel_height),
+        400.,
+        "zoom-induced compression must not replace the preference"
+    );
+    theme::set_zoom(1.);
+    draw(cx, window);
+    assert_eq!(
+        e2e::control_bounds(window.window_id(), "bottom-panel")
+            .unwrap()
+            .size
+            .height,
+        full
+    );
+}
+
 pub fn scenario_bottom_panel_divider_drag(cx: &mut VisualTestAppContext) {
     let _saved =
         crate::gui_isolation::SavedKeys::keep(&["bottom_panel_height", "ui_zoom", "reduce_motion"]);
@@ -122,6 +204,9 @@ pub fn scenario_bottom_panel_divider_drag(cx: &mut VisualTestAppContext) {
             theme::set_zoom(zoom);
             let (app, window) = mount(cx, &repo);
             resize(cx, window, width, height);
+            if width == 1392. && zoom == 1. {
+                preserve_preference(cx, window, &app);
+            }
             for mode in 0..4 {
                 app.update(cx, |app, cx| {
                     match mode {

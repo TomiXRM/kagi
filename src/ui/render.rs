@@ -205,12 +205,6 @@ impl Render for KagiApp {
                 viewport_h
             );
         }
-        let max_bottom_height = (f32::from(window.viewport_size().height) * BOTTOM_PANEL_MAX_FRAC
-            / theme::scaled(1.))
-        .max(BOTTOM_PANEL_MIN_H);
-        self.bottom_panel_height = self
-            .bottom_panel_height
-            .clamp(BOTTOM_PANEL_MIN_H, max_bottom_height);
         self.window_active = self.window_active_for_render(window);
         theme::sync_window_selection_theme(self.window_active, cx);
         if self.window_activation_subscription.is_none() {

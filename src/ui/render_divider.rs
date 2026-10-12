@@ -7,7 +7,7 @@ use super::*;
 
 impl KagiApp {
     pub(super) fn finish_bottom_panel_resize(&mut self) {
-        if let Some((_, original_height)) = self.bottom_panel_drag_origin.take() {
+        if let Some((_, _, original_height)) = self.bottom_panel_drag_origin.take() {
             if (self.bottom_panel_height - original_height).abs() > 0.5 {
                 settings::write_setting(
                     "bottom_panel_height",
@@ -138,7 +138,9 @@ impl KagiApp {
                 // already includes its divider and tab strip. Applying the
                 // pointer delta also preserves an off-centre grab, and keeping
                 // the origin immutable prevents drift after clamp overshoot.
-                let Some((origin_y, origin_height)) = self.bottom_panel_drag_origin else {
+                let Some((origin_y, origin_height, preferred_height)) =
+                    self.bottom_panel_drag_origin
+                else {
                     return;
                 };
                 let viewport_h = f32::from(window.viewport_size().height);
@@ -146,6 +148,14 @@ impl KagiApp {
                 let max_h = ((viewport_h * BOTTOM_PANEL_MAX_FRAC) / z).max(BOTTOM_PANEL_MIN_H);
                 let new_h =
                     (origin_height + (origin_y - cursor_y) / z).clamp(BOTTOM_PANEL_MIN_H, max_h);
+                // Returning to the press position restores a preference that
+                // was larger than its fitted presentation; a stationary frame
+                // must never convert that cap into a new preference.
+                let new_h = if (cursor_y - origin_y).abs() <= 0.5 * z {
+                    preferred_height
+                } else {
+                    new_h
+                };
                 if (new_h - self.bottom_panel_height).abs() > 0.5 {
                     self.bottom_panel_height = new_h;
                     cx.notify();

@@ -19,6 +19,10 @@ the tab strip nor a grab off the divider centre can introduce a start jump.
 The body retains its 80-reference-pixel minimum and viewport-height × 60%
 maximum (converted back from screen space). Clamping does not replace the
 press origin, so returning from either bound does not accumulate drift.
+Viewport and zoom caps affect only the rendered height, never the preferred
+height. Press captures both the fitted body height (for pointer deltas) and
+the preference (for release change detection and an exact return to origin).
+Shrinking then restoring a window therefore restores the larger panel.
 
 Live moves change only UI state. Release writes the final changed body height
 once through the settings store, whose repeated-key writes coalesce; subsequent

@@ -1113,10 +1113,11 @@ pub struct KagiApp {
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
-    /// Current height of the bottom panel in pixels (clamped 80 .. viewport*0.6).
+    /// Preferred body height in reference pixels; presentation fits the viewport.
     pub bottom_panel_height: f32,
-    /// Pointer Y and body height at press; kept unchanged through clamp overshoot.
-    bottom_panel_drag_origin: Option<(f32, f32)>,
+    /// Pointer Y, presented body height and preferred height at press.
+    /// Kept unchanged through clamp overshoot.
+    bottom_panel_drag_origin: Option<(f32, f32, f32)>,
     /// How the bottom panel, the sidebar and the right pane slide open and
     /// closed toward their toggles (#950, #955).
     pub(crate) panel_motion: panel_motion::PanelMotions,

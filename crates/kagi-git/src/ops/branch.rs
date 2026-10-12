@@ -33,11 +33,36 @@ pub fn create_branch_name_errors(repo: &Repository, name: &str) -> Vec<BranchNam
     }
 
     // Already-exists check.
-    if !name.is_empty() && repo.find_branch(name, BranchType::Local).is_ok() {
+    if !name.is_empty() && repo.find_reference(&format!("refs/heads/{name}")).is_ok() {
         errs.push(BranchNameError::CreateExists(name.to_string()));
     }
 
     errs
+}
+
+/// Check the logical ref namespace, including packed refs (never filesystem paths).
+pub(super) fn ref_namespace_collision(
+    repo: &Repository,
+    requested: &str,
+) -> Result<Option<String>, GitError> {
+    let refs = repo
+        .references()
+        .map_err(|e| GitError::Other(e.message().to_string()))?;
+    for reference in refs {
+        let reference = reference.map_err(|e| GitError::Other(e.message().to_string()))?;
+        let existing = reference.name_bytes();
+        let requested = requested.as_bytes();
+        if existing
+            .strip_prefix(requested)
+            .is_some_and(|suffix| suffix.starts_with(b"/"))
+            || requested
+                .strip_prefix(existing)
+                .is_some_and(|suffix| suffix.starts_with(b"/"))
+        {
+            return Ok(Some(String::from_utf8_lossy(existing).into_owned()));
+        }
+    }
+    Ok(None)
 }
 
 /// Analyse whether creating a new local branch at `at` is safe and return an
@@ -98,6 +123,14 @@ pub fn plan_create_branch(
         .into_iter()
         .map(|e| PlanNote::Common(CommonNote::BranchNameErrorKeyed(e)))
         .collect();
+    if let Some(existing) = ref_namespace_collision(repo, &format!("refs/heads/{name}"))? {
+        blockers.push(PlanNote::Common(CommonNote::BranchNameErrorKeyed(
+            BranchNameError::CreateNamespaceCollision {
+                name: name.to_string(),
+                existing,
+            },
+        )));
+    }
 
     // Commit existence check.
     let oid = git2::Oid::from_str(&at.0)

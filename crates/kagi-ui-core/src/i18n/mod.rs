@@ -4687,6 +4687,13 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
         CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
         CreateLeadingDash(name) => branch_leading_dash_fmt(name),
         CreateExists(name) => branch_exists_fmt(name),
+        CreateNamespaceCollision { name, existing } => match lang() {
+            Lang::En => e.to_string(),
+            Lang::Ja => format!(
+                "既存の ref `{}` と名前空間が競合しています。\nbranch `{}`",
+                existing, name
+            ),
+        },
     }
 }
 

@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Issues rows and Home's recent repositories use stable-keyed, single-stop keyboard lists with arrow/Home/End navigation, focused-row reveal and Enter/Space activation. Localized row names retain complete Issue and repository identities; removed or hidden rows release focus. (#1346, #1347)
+- Branch picker candidates share the existing roving list keyboard and focus-visible ring inside a bounded scrolling viewport. Checkout/Delete/Rename retain their frozen exact branch names and existing approval paths; Escape returns focus to the opener and repository departure discards the picker. (#1351)
+  - Review: Rename keeps the new-name input's initial focus instead of scheduling a root-focus override; typing works immediately after Enter/Space selection.
 - Changes file rows use stable path-and-section keyboard focus, one roving stop per section, arrows/Home/End and Enter/Space diff selection. Shift+F10/Menu opens the same file-action menu as right-click; keyboard menu navigation preserves the frozen owner/path and Discard's plan/confirmation with root Return cancelling. All three menu items fit inside the viewport, including at 167% zoom. (#1333–#1335)
   - Both section scrollers reserve one complete row before the composer shrinks; high-zoom keyboard focus no longer lands in a shorter-than-row viewport. Tree metadata and flat accessibility names share the localized status/full-path label.
   - Review: virtual-list measurement no longer replaces a remembered non-first-row Tab stop; expanded Generated/Agent artifact files retain TreeItem roles. File names are lazily cached by status/layout revision and language, and only the row containing focus (including its Stage/Unstage button) measures the section's reusable context-menu anchor, keeping menu placement current after resize or scrolling.

@@ -18,6 +18,8 @@ use super::KagiApp;
 
 mod center;
 use center::render_center;
+mod feed;
+use feed::render_main_issue_list;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IssueListPresentation {
@@ -79,6 +81,7 @@ pub(super) struct IssueViewCache {
     login: Option<String>,
     mentions: Vec<u64>,
     pub(super) order: Rc<Vec<usize>>,
+    row_keys: super::keyboard_nav::RowKeys,
     pub(super) tab_counts: [usize; 4],
 }
 
@@ -142,6 +145,11 @@ impl TabUiState {
                 tab: self.github_issue_tab,
                 login: login.map(str::to_owned),
                 mentions: self.github_issue_mentions.clone(),
+                row_keys: order
+                    .iter()
+                    .enumerate()
+                    .map(|(at, &index)| (self.github_issues[index].number.to_string(), at + 3))
+                    .collect(),
                 order: Rc::new(order),
                 tab_counts,
             });
@@ -461,161 +469,6 @@ fn render_main_list_status(
     };
 
     list.into_any_element()
-}
-
-fn render_main_issue_row(app: &KagiApp, issue: &Issue, cx: &mut Context<KagiApp>) -> AnyElement {
-    let number = issue.number;
-    let select = cx.listener(
-        move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-            this.load_github_issue_detail(number, window, cx);
-        },
-    );
-    let age = super::timeline_row::age(&issue.updated_at);
-    let (state_label, state_color) = match issue.state {
-        IssueState::Open => (Msg::IssueStateOpen.t(), theme().color_success),
-        IssueState::Closed => (Msg::IssueStateClosed.t(), theme().text_muted),
-        IssueState::Unknown => (Msg::IssueStateUnknown.t(), theme().text_muted),
-    };
-    let content = super::timeline_row::content_column()
-        .gap_1()
-        .child(super::timeline_row::meta(
-            &issue.author,
-            &format!("#{} · {age}", issue.number),
-        ))
-        .child(
-            div()
-                .w_full()
-                .whitespace_normal()
-                .text_size(theme::scaled_px(15.))
-                .line_height(theme::scaled_px(22.5))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(rgb(theme().text_main))
-                .child(safe_text(&issue.title)),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(theme::scaled_px(18.))
-                .pt_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            Icon::empty()
-                                .path("icons/message-square.svg")
-                                .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
-                        )
-                        .child(issue.comment_count.to_string()),
-                )
-                .child(super::timeline_row::state_dot(state_label, state_color)),
-        );
-    let row = super::timeline_row::clickable(super::timeline_row::row(
-        ("issue-main-row", number as usize),
-        &issue.author,
-        app.issue_repo_host(),
-        &app.avatars.images,
-        content,
-    ))
-    .min_h(theme::scaled_px(104.))
-    .on_click(select);
-    super::e2e::measure_control(format!("issue-main-row-{number}"), row).into_any_element()
-}
-
-/// Composer and variable-height Issue rows share one scrolling viewport.
-/// Appending splices the tail instead of resetting the current scroll anchor.
-fn render_main_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
-    let ui = app.ui();
-    let state = ui.github_issues_list.clone();
-    let order = Rc::clone(&ui.issue_view(app.issue_host_login()).order);
-    let filtered_count = order.len();
-    // Composer, shared strip, status, Issue rows, then the loading/retry tail.
-    let count = filtered_count + 4;
-    let old_count = state.item_count();
-    if count > old_count {
-        state.splice(old_count..old_count, count - old_count);
-        state.remeasure_items(old_count.saturating_sub(1)..count);
-        // Unmeasured rows otherwise contribute zero height, so wheel/scrollbar
-        // movement stops at the few rows measured in the initial viewport.
-        state
-            .clone()
-            .with_uniform_item_height(theme::scaled_px(104.));
-    } else if count < old_count {
-        state.splice(count..old_count, 0);
-    }
-    state.remeasure_items(0..3);
-    state.remeasure_items(count - 1..count);
-    let owner = app.active_session();
-    let repo = app.repo_path.clone();
-    let on_scroll = cx.processor(
-        move |app: &mut KagiApp, visible: std::ops::Range<usize>, _, cx| {
-            let (Some(owner), Some(repo)) = (owner, repo.as_ref()) else {
-                return;
-            };
-            let Some(ui) = app.ui.get(&owner) else {
-                return;
-            };
-            // Read the filter here, not from the closure's capture: a
-            // predicate switched on after this list rendered must still
-            // suppress the fetch this event would have started.
-            if app.active_session() == Some(owner)
-                && ui.github_issues_error.is_none()
-                && !client_membership_active(ui)
-                && filtered_count > 0
-                && visible.end.saturating_sub(3) >= filtered_count
-            {
-                app.load_more_github_issues_for(owner, repo.clone(), cx);
-            }
-        },
-    );
-    state.set_scroll_handler(move |event, window, cx| {
-        on_scroll(event.visible_range.clone(), window, cx);
-    });
-    let render = cx.processor(move |app: &mut KagiApp, index: usize, window, cx| {
-        if app.active_session() != owner {
-            return div().into_any_element();
-        }
-        match index {
-            0 => super::issues_composer::render_composer(app, None, window, cx),
-            1 => super::list_filter_strip::render_strip(
-                app,
-                super::list_filter_strip::ListKind::Issues,
-                filtered_count,
-                cx,
-            ),
-            2 => render_main_list_status(app, filtered_count, cx),
-            index if index == count - 1 => render_issue_page_tail(app, filtered_count, cx),
-            index => order
-                .get(index - 3)
-                .and_then(|&index| app.ui().github_issues.get(index))
-                .map(|issue| render_main_issue_row(app, issue, cx))
-                .unwrap_or_else(|| div().into_any_element()),
-        }
-    });
-    let scrollbar = state.clone();
-    div()
-        .id("issue-main-list")
-        .flex_1()
-        .min_h(px(0.))
-        .h_full()
-        .w_full()
-        .overflow_hidden()
-        .flex()
-        .flex_col()
-        .child(super::e2e::measure_inside("issue-main-list"))
-        .child(super::render_helpers::with_vertical_scrollbar(
-            "issue-main-list-scroll",
-            &scrollbar,
-            gpui::list(state, move |index, window, cx| render(index, window, cx))
-                .flex_1()
-                .min_h(px(0.)),
-            true,
-        ))
-        .into_any_element()
 }
 
 fn render_issue_page_tail(

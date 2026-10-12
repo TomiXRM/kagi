@@ -428,6 +428,7 @@ pub struct TabUiState {
     pub github_issues_loading_more: bool,
     pub github_issues_page: usize,
     pub github_issues_list: gpui::ListState,
+    pub(super) issue_rows: super::list_keyboard::ListKeyboard,
     pub github_issue_mentions: Vec<u64>,
     pub github_issue_tab: kagi_domain::github::IssueListTab,
     /// #753 this session's Issue-list filter intent ([`default_issue_filter`]
@@ -570,6 +571,7 @@ impl Default for TabUiState {
             github_issues_loading_more: false,
             github_issues_page: 0,
             github_issues_list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
+            issue_rows: Default::default(),
             github_issue_mentions: Vec::new(),
             github_issue_tab: Default::default(),
             github_issue_filter: default_issue_filter(),

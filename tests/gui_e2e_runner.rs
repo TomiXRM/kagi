@@ -254,6 +254,9 @@ mod home_work;
 #[cfg(target_os = "macos")]
 #[path = "recovery/keyboard_nav.rs"]
 mod keyboard_nav;
+#[cfg(target_os = "macos")]
+#[path = "recovery/lists_keyboard.rs"]
+mod lists_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -1546,6 +1549,18 @@ mod macos {
             (
                 "home_rows",
                 Box::new(crate::home_rows::scenario_home_rows),
+            ),
+            (
+                "issues_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_issues_rows_keyboard),
+            ),
+            (
+                "home_recent_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_home_recent_rows_keyboard),
+            ),
+            (
+                "branch_picker_keyboard",
+                Box::new(crate::lists_keyboard::scenario_branch_picker_keyboard),
             ),
             (
                 "home_row_paging",

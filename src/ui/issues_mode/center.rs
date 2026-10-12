@@ -46,7 +46,7 @@ pub(super) fn render_center(
             if home_focused {
                 center = center.child(issues_composer::render_composer(app, None, window, cx));
             } else {
-                center = center.child(render_main_issue_list(app, cx));
+                center = center.child(render_main_issue_list(app, window, cx));
             }
         }
     }

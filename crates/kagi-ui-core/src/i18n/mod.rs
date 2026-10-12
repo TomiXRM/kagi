@@ -433,6 +433,11 @@ pub enum Msg {
 
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
+    BranchPickerCheckout,
+    BranchPickerDelete,
+    BranchPickerRename,
+    A11yIssueOpenRow,
+    A11yRecentOpenRow,
     NoOperationsYet,
     /// Operation Log row: tooltip on the per-row copy button (issue #468).
     OpLogCopyEntry,
@@ -2621,6 +2626,16 @@ impl Msg {
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",
             (Ja, NoLocalBranches) => "ローカル branch がありません",
+            (En, BranchPickerCheckout) => "Checkout Branch",
+            (Ja, BranchPickerCheckout) => "checkout する branch",
+            (En, BranchPickerDelete) => "Delete Branch",
+            (Ja, BranchPickerDelete) => "削除する branch",
+            (En, BranchPickerRename) => "Rename Branch",
+            (Ja, BranchPickerRename) => "リネームする branch",
+            (En, A11yIssueOpenRow) => "Open issue #{}, {}, {}",
+            (Ja, A11yIssueOpenRow) => "Issue #{} を開く、{}、{}",
+            (En, A11yRecentOpenRow) => "Open repository {name}",
+            (Ja, A11yRecentOpenRow) => "リポジトリ {name} を開く",
             (En, CommandPalettePlaceholder) => "Search commands…",
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
@@ -4772,6 +4787,26 @@ mod standard_app_menu_tests {
             assert_eq!(message.t_for(Lang::Ja), ja);
         }
     }
+}
+
+/// Read-opening list rows preserve literal braces in external titles/names.
+pub fn issue_row_name(number: u64, title: &str, state: &str) -> String {
+    use std::fmt::Write as _;
+    let template = Msg::A11yIssueOpenRow.t();
+    let mut parts = template.split("{}");
+    let mut name = String::with_capacity(template.len() + 20 + title.len() + state.len());
+    name.push_str(parts.next().unwrap_or_default());
+    let _ = write!(name, "{number}");
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(title);
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(state);
+    name.push_str(parts.next().unwrap_or_default());
+    name
+}
+
+pub fn recent_row_name(name: &str) -> String {
+    Msg::A11yRecentOpenRow.t().replace("{name}", name)
 }
 
 #[cfg(test)]

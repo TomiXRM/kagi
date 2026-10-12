@@ -12,13 +12,10 @@
 //! dialog or anywhere else — turns Home into that repository's tab; clicking
 //! another tab only moves Home to the back, like a browser's new-tab page.
 
-use std::path::PathBuf;
-
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString, Window};
 use gpui_component::button::{Button, ButtonVariants as _};
 
 use super::i18n::Msg;
-use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
 
@@ -189,7 +186,7 @@ impl KagiApp {
             .flex_row()
             .flex_1()
             .min_h(px(0.))
-            .child(self.render_home_sidebar(sidebar, cx))
+            .child(self.render_home_sidebar(sidebar, window, cx))
             .child(self.render_home_main(sidebar, compact, window, cx));
         // Home's content is the Home cell's panel while the strip is drawn
         // (#983); with no tab there is no strip, so no tab list.
@@ -281,84 +278,6 @@ impl KagiApp {
         self.attach_active_modal_key_routing(content, false, cx)
     }
 
-    fn render_home_sidebar(&mut self, width: gpui::Pixels, cx: &mut Context<Self>) -> AnyElement {
-        let recent = super::tabs::recent_repos();
-        let mut list = div().flex().flex_col().gap_1();
-        if recent.is_empty() {
-            list = list.child(
-                div()
-                    .px_2()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::HomeNoRecent.t())),
-            );
-        }
-        for (i, path) in recent.into_iter().enumerate() {
-            list = list.child(super::e2e::measure_control(
-                format!("home-recent-{i}"),
-                recent_row(i, path, cx),
-            ));
-        }
-        div()
-            .id("home-sidebar")
-            .relative()
-            .child(super::e2e::measure_inside("home-sidebar-bounds"))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .w(width)
-            .flex_shrink_0()
-            .h_full()
-            .p_3()
-            .bg(rgb(theme().panel))
-            .border_r_1()
-            .border_color(rgb(theme().surface))
-            .child(super::render_helpers::with_system_vertical_scrollbar(
-                "home-sidebar-scrollbar",
-                &self.home_github.recent_scroll,
-                div()
-                    .id("home-recent-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.home_github.recent_scroll)
-                    .child(
-                        div()
-                            .id("home-recent-heading")
-                            .relative()
-                            .child(super::e2e::measure_inside("home-recent-heading"))
-                            .px_2()
-                            .py(theme::scaled_px(8.))
-                            .w_full()
-                            .min_w(px(0.))
-                            .text_size(theme::scaled_px(12.))
-                            .line_height(theme::scaled_px(12.))
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(theme().text_sub))
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .tooltip(|window, cx| {
-                                gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t())
-                                    .build(window, cx)
-                            })
-                            .child(
-                                div()
-                                    .relative()
-                                    .h(theme::scaled_px(12.))
-                                    .child(super::e2e::measure_inside("home-recent-heading-line"))
-                                    .child(SharedString::from(Msg::HomeRecent.t())),
-                            ),
-                    )
-                    .child(list),
-                cx,
-            ))
-            .into_any_element()
-    }
-
     fn render_home_main(
         &mut self,
         sidebar: gpui::Pixels,
@@ -426,50 +345,4 @@ impl KagiApp {
             )
             .into_any_element()
     }
-}
-
-/// One recently opened repository: its name over its path. Opening it turns
-/// Home into its tab (or switches to the tab it already has).
-fn recent_row(i: usize, path: PathBuf, cx: &mut Context<KagiApp>) -> impl IntoElement {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string());
-    let name = SharedString::from(name);
-    let full = path.display().to_string();
-    let full = SharedString::from(full);
-    let tooltip = full.clone();
-    let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
-        app.open_repository(path.clone(), cx);
-        cx.notify();
-    });
-    div()
-        .id(("home-recent", i))
-        .aria_label(name.clone())
-        .aria_description(full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
-        .flex()
-        .flex_col()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .cursor(gpui::CursorStyle::Arrow)
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(open)
-        .child(
-            div()
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(name),
-        )
-        .child(
-            div()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .truncate()
-                .child(safe_text(&full)),
-        )
 }

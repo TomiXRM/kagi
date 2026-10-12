@@ -30,6 +30,7 @@ pub mod activity;
 pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
+mod conflict;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
@@ -585,6 +586,13 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    EditorUseAllOurs,
+    EditorUseAllTheirs,
+    EditorBothOursFirst,
+    EditorBothTheirsFirst,
+    EditorSelectionNone,
+    EditorSelectionPartial,
+    EditorSelectionAll,
     /// Inspector file context menu: open the file in the Editor Workspace.
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
@@ -2716,6 +2724,20 @@ impl Msg {
             // blocks land in the result when both sides are taken.
             (En | Ja, EditorCurrentFirst) => "Current → Incoming",
             (En | Ja, EditorIncomingFirst) => "Incoming → Current",
+            (En, EditorUseAllOurs) => "Use all ours",
+            (Ja, EditorUseAllOurs) => "ours をすべて採用",
+            (En, EditorUseAllTheirs) => "Use all theirs",
+            (Ja, EditorUseAllTheirs) => "theirs をすべて採用",
+            (En, EditorBothOursFirst) => "Use both, ours first",
+            (Ja, EditorBothOursFirst) => "両方を採用、ours を先に",
+            (En, EditorBothTheirsFirst) => "Use both, theirs first",
+            (Ja, EditorBothTheirsFirst) => "両方を採用、theirs を先に",
+            (En, EditorSelectionNone) => "Not adopted",
+            (Ja, EditorSelectionNone) => "未採用",
+            (En, EditorSelectionPartial) => "Partially adopted",
+            (Ja, EditorSelectionPartial) => "一部を採用",
+            (En, EditorSelectionAll) => "Fully adopted",
+            (Ja, EditorSelectionAll) => "すべて採用済み",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",

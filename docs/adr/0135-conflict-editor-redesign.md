@@ -83,3 +83,19 @@ means: the order the two blocks land in the result when both sides are taken.
   on the commit-pane screen (`conflict_merge_pending`) — is now covered only by
   the seeded "Merge branch …" commit message. Acceptable; revisit if users
   commit-then-wonder.
+
+## Amendment — 2026-10-12: keyboard and accessibility adoption (#1311)
+
+The accent-band header and code-line presentation remains, but each adoption
+target is a named Button, not a click-only row. A hunk RowList is one Tab stop;
+Up/Down moves between hunks, Left/Right traverses that hunk's side, both-order
+and line controls, and Enter/Space uses the same activation listener as a click.
+File-side Use all controls are separate named Buttons. Focus-visible uses the
+shared fixed-width ring, without changing the syntax highlighting or dimming.
+
+Visual Current/Incoming captions remain operation-dependent. Accessibility
+names explicitly identify ours/theirs, hunk or line number, and both-order in
+EN/JA. Adoption describes None/Partial/All and exposes toggled state for All.
+The order controls still change only the existing LineOrder setter: they do
+not implicitly adopt any unselected line. Domain selection, undo/redo and the
+Save/Continue/Commit separation (ADR-0068/0106) are unchanged.

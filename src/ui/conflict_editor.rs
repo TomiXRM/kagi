@@ -31,8 +31,8 @@
 //! same tree-sitter + per-theme pipeline as the diff (ADR-0133), cached per
 //! (path, theme) so selection clicks never re-parse.
 //!
-//! Terminology (ADR-0058): side labels come from `mode.labels()`; the words
-//! "ours" / "theirs" never appear.  All prose is via [`Msg`] (en + ja).  Sizes
+//! Visual side labels come from `mode.labels()` (ADR-0058); accessibility names
+//! explicitly identify ours/theirs adoption. All prose is via [`Msg`] (en + ja). Sizes
 //! go through [`theme::scaled_px`] so the editor respects zoom.
 
 use std::ops::Range;
@@ -292,6 +292,7 @@ fn render_panes(
             path,
             model.file_side_state(SelectionSide::Current),
             SelectionSide::Current,
+            chrome,
             cx,
         )),
         side_row_list(
@@ -313,6 +314,7 @@ fn render_panes(
             path,
             model.file_side_state(SelectionSide::Incoming),
             SelectionSide::Incoming,
+            chrome,
             cx,
         )),
         side_row_list(
@@ -545,6 +547,7 @@ fn side_use_all_pill(
     path: &std::path::Path,
     state: TriState,
     side: SelectionSide,
+    chrome: &EditorChrome,
     cx: &mut Context<ConflictView>,
 ) -> gpui::Stateful<gpui::Div> {
     let p = path.to_path_buf();
@@ -555,24 +558,26 @@ fn side_use_all_pill(
     });
     let accent = side_accent(side);
     let on = state == TriState::All;
-    div()
-        .id(SharedString::from(format!("file-side-{:?}", side)))
-        .px(theme::scaled_px(6.))
-        .py(theme::scaled_px(1.))
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(if on { accent } else { theme().text_muted }))
-        .bg(rgb(if on {
-            theme().bg_base
-        } else {
-            theme().bg_row_alt
-        }))
-        .text_size(theme::scaled_px(9.))
-        .text_color(rgb(if on { accent } else { theme().text_main }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-        .child(SharedString::from(Msg::EditorUseAll.t()))
-        .on_click(handler)
+    super::conflict_editor_keys::adoption(
+        format!("resolver-file-{}", side_key(side)),
+        match side {
+            SelectionSide::Current => Msg::EditorUseAllOurs,
+            SelectionSide::Incoming => Msg::EditorUseAllTheirs,
+        }
+        .t()
+        .into(),
+        selection_state(state),
+        div()
+            .px(theme::scaled_px(6.))
+            .text_size(theme::scaled_px(10.))
+            .text_color(rgb(if on { accent } else { theme().text_main }))
+            .child(SharedString::from(Msg::EditorUseAll.t())),
+        None,
+        &chrome.resolver_keyboard,
+        handler,
+        cx,
+    )
+    .h(theme::scaled_px(22.))
 }
 
 /// Byte ranges in `text` that differ from `other`, the same-index line on the
@@ -712,11 +717,16 @@ fn side_row_list(
         .flex()
         .flex_col()
         .overflow_x_scroll()
+        .child(super::e2e::measure_inside(format!(
+            "resolver-{}-viewport",
+            side_key(side)
+        )))
         .child(
             uniform_list(
                 list_id,
                 row_count,
-                cx.processor(move |_this, range, _window, cx| {
+                cx.processor(move |_this, range: std::ops::Range<usize>, _window, cx| {
+                    _this.resolver_keyboard.borrow_mut().drawn = range.clone();
                     render_side_rows(
                         &rows_for_list,
                         &highlights,
@@ -725,6 +735,7 @@ fn side_row_list(
                         selected_hunk,
                         range,
                         cx,
+                        &_this.resolver_keyboard,
                     )
                 }),
             )
@@ -735,6 +746,8 @@ fn side_row_list(
         .child(Scrollbar::vertical(&scroll))
 }
 
+// Keep the row identity and shared highlight/focus owners explicit, as in the row renderers below.
+#[allow(clippy::too_many_arguments)]
 fn render_side_rows(
     rows: &[SideRow],
     highlights: &[RowHl],
@@ -743,6 +756,7 @@ fn render_side_rows(
     selected_hunk: usize,
     range: std::ops::Range<usize>,
     cx: &mut Context<ConflictView>,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
 ) -> Vec<AnyElement> {
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row.clone())))
@@ -761,6 +775,7 @@ fn render_side_rows(
                 resolved,
                 side,
                 selected_hunk,
+                keyboard,
                 cx,
             ),
             SideRow::Line {
@@ -786,6 +801,7 @@ fn render_side_rows(
                 dim,
                 side,
                 selected_hunk,
+                keyboard,
                 cx,
             ),
             SideRow::Context { line_no, text } => render_context_row(
@@ -869,6 +885,7 @@ fn render_hunk_header_row(
     resolved: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     // ADR-0135 (Xcode-style): clicking the header takes/releases this whole
@@ -881,15 +898,15 @@ fn render_hunk_header_row(
         cx.notify();
     });
     let p_order = path;
-    let next_order = match order {
-        LineOrder::CurrentFirst => LineOrder::IncomingFirst,
-        LineOrder::IncomingFirst => LineOrder::CurrentFirst,
+    let target_order = match side {
+        SelectionSide::Current => LineOrder::CurrentFirst,
+        SelectionSide::Incoming => LineOrder::IncomingFirst,
     };
     let order_click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_set_hunk_order(&p_order, hunk_index, next_order);
+        this.conflict_editor_set_hunk_order(&p_order, hunk_index, target_order);
         cx.notify();
     });
-    let order_label = match order {
+    let order_label = match target_order {
         LineOrder::CurrentFirst => Msg::EditorCurrentFirst.t(),
         LineOrder::IncomingFirst => Msg::EditorIncomingFirst.t(),
     };
@@ -922,23 +939,31 @@ fn render_hunk_header_row(
                 el.bg(rgb(theme().bg_base))
             }
         })
-        .cursor_pointer()
-        .hover(|s| s.bg(side_tint(side, 0.35)))
-        .on_click(take)
         .child(
-            div()
-                .pl(theme::scaled_px(6.))
-                .text_size(theme::scaled_px(10.))
-                .text_color(rgb(if state == TriState::None {
-                    theme().text_muted
-                } else {
-                    accent
-                }))
-                .child(SharedString::from(format!(
-                    "{} {}",
-                    Msg::EditorHunkLabel.t(),
-                    hunk_index + 1
-                ))),
+            super::conflict_editor_keys::adoption(
+                format!("resolver-hunk-{hunk_index}-{}", side_key(side)),
+                Msg::conflict_hunk(side == SelectionSide::Current, hunk_index + 1),
+                selection_state(state),
+                div()
+                    .pl(theme::scaled_px(6.))
+                    .text_size(theme::scaled_px(10.))
+                    .text_color(rgb(if state == TriState::None {
+                        theme().text_muted
+                    } else {
+                        accent
+                    }))
+                    .child(SharedString::from(format!(
+                        "{} {}",
+                        Msg::EditorHunkLabel.t(),
+                        hunk_index + 1
+                    ))),
+                Some(hunk_index),
+                keyboard,
+                take,
+                cx,
+            )
+            .flex_1()
+            .h_full(),
         )
         .when(state == TriState::Partial, |el| {
             el.child(
@@ -949,21 +974,26 @@ fn render_hunk_header_row(
             )
         })
         .child(
-            div()
-                .id(SharedString::from(format!("hunk-order-{}", row_index)))
-                .ml_auto()
-                .px(theme::scaled_px(6.))
-                .py(theme::scaled_px(1.))
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(theme().text_muted))
-                .bg(rgb(theme().bg_base))
-                .text_size(theme::scaled_px(9.))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().bg_row_alt)))
-                .child(SharedString::from(order_label))
-                .on_click(order_click),
+            super::conflict_editor_keys::adoption(
+                format!("resolver-hunk-{hunk_index}-{}-first", side_key(side)),
+                match side {
+                    SelectionSide::Current => Msg::EditorBothOursFirst,
+                    SelectionSide::Incoming => Msg::EditorBothTheirsFirst,
+                }
+                .t()
+                .into(),
+                if order == target_order { "all" } else { "none" },
+                div()
+                    .px(theme::scaled_px(6.))
+                    .text_size(theme::scaled_px(10.))
+                    .text_color(rgb(theme().text_main))
+                    .child(SharedString::from(order_label)),
+                Some(hunk_index),
+                keyboard,
+                order_click,
+                cx,
+            )
+            .h_full(),
         )
         .into_any_element()
 }
@@ -1014,6 +1044,21 @@ fn side_accent(side: SelectionSide) -> u32 {
     }
 }
 
+fn side_key(side: SelectionSide) -> &'static str {
+    match side {
+        SelectionSide::Current => "current",
+        SelectionSide::Incoming => "incoming",
+    }
+}
+
+fn selection_state(state: TriState) -> &'static str {
+    match state {
+        TriState::None => "none",
+        TriState::Partial => "partial",
+        TriState::All => "all",
+    }
+}
+
 /// The side accent as a translucent row background — the diff-view idiom
 /// (coloured code rows), so conflict regions read as *colour*, not just
 /// bright-vs-dim (user report).
@@ -1025,7 +1070,7 @@ fn side_tint(side: SelectionSide, alpha: f32) -> gpui::Hsla {
 
 #[allow(clippy::too_many_arguments)]
 fn render_code_line_row(
-    row_index: usize,
+    _row_index: usize,
     path: Arc<std::path::PathBuf>,
     hunk_index: usize,
     line_index: usize,
@@ -1038,6 +1083,7 @@ fn render_code_line_row(
     dim: bool,
     side: SelectionSide,
     selected_hunk: usize,
+    keyboard: &std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     cx: &mut Context<ConflictView>,
 ) -> AnyElement {
     // ADR-0135: the line itself is the control — clicking it toggles just this
@@ -1049,13 +1095,12 @@ fn render_code_line_row(
         cx.notify();
     });
     let accent = side_accent(side);
-    div()
-        .id(SharedString::from(format!("side-line-{}", row_index)))
+    let content = div()
         .flex()
         .flex_row()
         .items_center()
         .min_w(relative(1.0))
-        .h(theme::scaled_px(17.))
+        .h_full()
         .pr(theme::scaled_px(4.))
         .gap_1()
         .border_l(theme::scaled_px(3.))
@@ -1074,9 +1119,6 @@ fn render_code_line_row(
         } else {
             theme().bg_base
         }))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(toggle)
         // Untaken lines keep their syntax colours but fade — Xcode-style
         // "the other side is dimmed", per line. 0.22: at 0.4 the rejected side
         // still read almost as clearly as the taken one (user report). The fade
@@ -1105,8 +1147,23 @@ fn render_code_line_row(
                 side_tint(side, 0.30),
             )
             .when(dim, |el| el.opacity(0.22)),
-        )
-        .into_any_element()
+        );
+    super::conflict_editor_keys::adoption(
+        format!(
+            "resolver-hunk-{hunk_index}-{}-line-{line_index}",
+            side_key(side)
+        ),
+        Msg::conflict_line(side == SelectionSide::Current, line_no),
+        if taken { "all" } else { "none" },
+        content,
+        Some(hunk_index),
+        keyboard,
+        toggle,
+        cx,
+    )
+    .h(theme::scaled_px(17.))
+    .min_w(relative(1.0))
+    .into_any_element()
 }
 
 /// Monospace code text with validated syntax-highlight spans (the same

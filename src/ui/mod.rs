@@ -28,6 +28,8 @@ pub mod compare_pane;
 pub mod conflict_abort;
 pub mod conflict_binary_view;
 pub mod conflict_editor;
+pub mod conflict_editor_a11y;
+mod conflict_editor_keys;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;

@@ -107,6 +107,20 @@ real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
 both ends with the keyboard, verify the selected fill on hover and the
 dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
+For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
+`conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
+Tabs to the production resolver, moves Down to hunk 2 and Right to theirs,
+and compares Enter adoption with the measured pointer control. It exercises
+Space, both orders, line-level Partial state, file-side Use all, Result
+undo/redo, viewport containment and zero repository writes/receipts at
+940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+The F19 probe observes only the actual focused owner; AX metadata records
+renderer-supplied role/name/state, not native VoiceOver delivery.
+Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
+the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
+and read live EN/JA adoption names in Accessibility Inspector. Do not Save
+while comparing buffer-only adoption with pointer behavior.
+
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
 across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and

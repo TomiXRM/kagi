@@ -81,6 +81,8 @@ pub struct EditorChrome {
     pub inputs: Option<EditorInputs>,
     /// Shared A/B row-list scroll handle; both panes track it for vertical sync.
     pub ab_scroll: UniformListScrollHandle,
+    pub(crate) resolver_keyboard:
+        std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     /// Scroll handle for the Result *preview* row list (ADR-0135 badges).
     pub result_scroll: UniformListScrollHandle,
     /// Syntax-highlight cache for the Result preview, keyed by the assembled
@@ -177,6 +179,8 @@ pub struct ConflictView {
     /// ADR-0070: shared A/B uniform-list scroll handle for synchronized vertical
     /// scrolling in the Conflict Editor.
     pub ab_scroll_handle: UniformListScrollHandle,
+    pub(crate) resolver_keyboard:
+        std::rc::Rc<std::cell::RefCell<super::conflict_editor_keys::ResolverKeyboard>>,
     /// See [`EditorChrome::result_scroll`] / [`EditorChrome::result_hl`]; both
     /// live on the entity so they survive across frames.
     pub result_scroll_handle: UniformListScrollHandle,
@@ -233,6 +237,7 @@ impl ConflictView {
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
+            resolver_keyboard: Default::default(),
             result_scroll_handle: UniformListScrollHandle::new(),
             result_hl: std::rc::Rc::new(std::cell::RefCell::new(None)),
             file_menu: None,
@@ -572,6 +577,13 @@ impl Render for ConflictView {
         // allocation on the one screen where the user types, so every keystroke
         // paid for it. `render_body` already takes a reference, and `cx` is a
         // separate parameter from `self`, so the borrow is fine.
+        let resolver = self.mode.as_ref().and_then(|mode| {
+            let file = mode.selected_file.and_then(|i| mode.session.files.get(i))?;
+            Some((file.path.as_path(), mode.buffer.hunk_model(&file.path)?))
+        });
+        self.resolver_keyboard
+            .borrow_mut()
+            .prepare(resolver, &self.ab_scroll_handle, window, cx);
         match self.mode.as_ref() {
             Some(mode) => {
                 let chrome = self.editor_chrome();
@@ -645,6 +657,7 @@ impl ConflictView {
                 result: i.result.clone(),
             }),
             ab_scroll: self.ab_scroll_handle.clone(),
+            resolver_keyboard: self.resolver_keyboard.clone(),
             result_scroll: self.result_scroll_handle.clone(),
             result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,

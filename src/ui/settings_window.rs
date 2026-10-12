@@ -92,6 +92,7 @@ struct SettingsWindow {
     scroll: ScrollHandle,
     _observe: Subscription,
     _release: Subscription,
+    _toast_removed: Option<Subscription>,
 }
 
 impl SettingsWindow {
@@ -111,6 +112,31 @@ impl SettingsWindow {
             .detach();
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
         let release = cx.observe_release_in(&owner, window, |_, _, window, _| close(window));
+        let toast_removed = owner.read(cx).toast_stack.clone().map(|stack| {
+            cx.subscribe_in(
+                &stack,
+                window,
+                |this, _, removed: &super::toast_stack::ToastRemoved, window, cx| {
+                    if removed.was_focused(window)
+                        || window.focused(cx).is_none()
+                        || !this.focus.contains_focused(window, cx)
+                    {
+                        this.focus.focus(window, cx);
+                    }
+                },
+            )
+        });
+        let id = window.window_handle().window_id();
+        cx.on_release(move |this, cx| {
+            if let Some(stack) = this
+                .owner
+                .upgrade()
+                .and_then(|owner| owner.read(cx).toast_stack.clone())
+            {
+                stack.update(cx, |stack, _| stack.forget_window(id));
+            }
+        })
+        .detach();
         Self {
             owner: owner.downgrade(),
             pane,
@@ -119,6 +145,7 @@ impl SettingsWindow {
             scroll: Default::default(),
             _observe: observe,
             _release: release,
+            _toast_removed: toast_removed,
         }
     }
 
@@ -199,11 +226,18 @@ impl SettingsWindow {
                 owner,
                 &app.smart_commit,
                 &app.settings_switches,
+                &app.settings_controls,
+                Some(self.focus.clone()),
                 cx,
             )
             .into_any_element(),
-            _ => settings_view::analyze_ignore_section(owner, app.analyze_ignore_input.clone())
-                .into_any_element(),
+            _ => settings_view::analyze_ignore_section(
+                owner,
+                app.analyze_ignore_input.clone(),
+                app.analyze_ignore_dirty(cx),
+                app.settings_controls.ignore_error.as_deref(),
+            )
+            .into_any_element(),
         }
     }
 
@@ -248,8 +282,24 @@ impl Render for SettingsWindow {
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
         let body = self.page_body(&owner, cx);
+        owner.update(cx, |app, cx| {
+            let models_shown = self.pane == 2
+                && matches!(
+                    app.smart_commit.provider,
+                    super::smart_commit::SmartProvider::Ollama
+                )
+                && !app.smart_commit.detected_models.is_empty();
+            app.settings_controls.repair_focus(
+                self.pane == 2,
+                models_shown,
+                Some(&self.focus),
+                window,
+                cx,
+            );
+        });
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .bg(gpui::rgb(theme::theme().panel))
@@ -285,6 +335,9 @@ impl Render for SettingsWindow {
                     .child(body),
                 cx,
             ))
+            .when_some(owner.read(cx).toast_stack.clone(), |el, stack| {
+                el.child(super::busy::toast_container().child(stack))
+            })
             .into_any_element()
     }
 }

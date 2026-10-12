@@ -646,23 +646,7 @@ fn commit_to_row(
 /// Ordinary long subjects remain complete for AX and Tooltip; only pathological
 /// subjects get a model ellipsis. The Inspector retains the entire message.
 fn display_subject(subject: &str) -> SharedString {
-    const MAX_BYTES: usize = 4096;
-    // Sanitization only expands bytes, so text beyond this raw UTF-8 prefix
-    // cannot fit. Bound the work/allocation as well as the retained identity.
-    let mut input_end = subject.len().min(MAX_BYTES);
-    while !subject.is_char_boundary(input_end) {
-        input_end -= 1;
-    }
-    let mut safe = kagi_domain::text_safety::sanitize_control_bytes(&subject[..input_end]);
-    if input_end < subject.len() || safe.len() > MAX_BYTES {
-        let mut end = MAX_BYTES - '…'.len_utf8();
-        while !safe.is_char_boundary(end) {
-            end -= 1;
-        }
-        safe.truncate(end);
-        safe.push('…');
-    }
-    SharedString::from(safe)
+    SharedString::from(kagi_domain::text_safety::display_subject(subject))
 }
 
 #[cfg(test)]

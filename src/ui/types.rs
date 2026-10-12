@@ -125,6 +125,10 @@ pub enum ToastKind {
     Sync,
 }
 
+/// A shared toast retains a distinct close-button handle for every host window.
+pub type ToastCloseFocus =
+    std::rc::Rc<std::cell::RefCell<Vec<(gpui::WindowId, gpui::FocusHandle)>>>;
+
 /// One snackbar entry, stacked bottom-right above the status bar.
 ///
 /// Rendered by `render_toasts`; pruned by a 500ms ticker task that runs only
@@ -142,8 +146,8 @@ pub struct Toast {
     pub born: std::time::Instant,
     /// Hover pause began here; elapsed hover time is excluded from the timer.
     pub paused_at: Option<std::time::Instant>,
-    /// Retain the rendered Button handle until removal can release its focus.
-    pub close_focus: std::rc::Rc<std::cell::RefCell<Option<gpui::FocusHandle>>>,
+    /// Per-window rendered Button handles, retained until removal repairs focus.
+    pub close_focus: ToastCloseFocus,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot

@@ -64,6 +64,26 @@ pub fn sanitize_control_bytes(s: &str) -> String {
     out
 }
 
+/// Complete display subject, except for an explicit 4 KiB UTF-8-safe bound.
+/// Bound the input work before escaping controls, which can expand bytes.
+pub fn display_subject(subject: &str) -> String {
+    const MAX_BYTES: usize = 4096;
+    let mut input_end = subject.len().min(MAX_BYTES);
+    while !subject.is_char_boundary(input_end) {
+        input_end -= 1;
+    }
+    let mut safe = sanitize_control_bytes(&subject[..input_end]);
+    if input_end < subject.len() || safe.len() > MAX_BYTES {
+        let mut end = MAX_BYTES - '…'.len_utf8();
+        while !safe.is_char_boundary(end) {
+            end -= 1;
+        }
+        safe.truncate(end);
+        safe.push('…');
+    }
+    safe
+}
+
 // ──────────────────────────────────────────────────────────────
 // Unsafe-Unicode detection (bidi + zero-width)
 // ──────────────────────────────────────────────────────────────
@@ -121,6 +141,23 @@ pub fn has_unsafe_unicode(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_subject_keeps_complete_identity_until_utf8_byte_bound() {
+        for subject in [
+            "日😀".repeat(300),
+            "safe\x1b[31m".repeat(300),
+            "x".repeat(4096),
+        ] {
+            assert_eq!(display_subject(&subject), sanitize_control_bytes(&subject));
+        }
+        for subject in ["日😀".repeat(1000), "\x1b".repeat(2000), "x".repeat(4097)] {
+            let safe = display_subject(&subject);
+            assert!(safe.len() <= 4096);
+            assert!(safe.ends_with('…'));
+            assert!(!safe.contains('\x1b'));
+        }
+    }
 
     // ── sanitize_control_bytes ──────────────────────────────────
 

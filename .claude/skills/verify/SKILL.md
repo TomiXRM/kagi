@@ -71,6 +71,14 @@ footer padding with every chip (including at 700×500/167%). They fail before th
 feedback-first/natural-width/rounding policies. The original fit scenario also
 checks sanitized C1-control branch identity through the label/Tooltip/AX path.
 
+For #1321, `status_bar_busy_height` uses the same matrix and requires Busy
+feedback height not to exceed the actual footer height, with all feedback
+bounds contained inside the footer. The pre-fix spinner/text block stack was
+26.5px high inside a 20px footer at 100%. `status_bar_feedback_min` measures the
+text child's actual bounds, not its spinner-inclusive container; Busy reserves
+the unchanged scaled 10px spinner plus 4px gap in addition to its text budget,
+capped by actual remaining room. Run `KAGI_GUI_E2E_ONLY='status_'` with KEEP_GOING.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
@@ -107,6 +115,43 @@ real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
 both ends with the keyboard, verify the selected fill on hover and the
 dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
+For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
+`conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
+Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
+and compares Enter adoption with the measured pointer control. It exercises
+Space, both orders, line-level Partial state, file-side Use all, Result
+undo/redo, viewport containment and zero repository writes/receipts at
+940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+The F19 probe observes only the actual focused owner; AX metadata records
+renderer-supplied role/name/state, not native VoiceOver delivery.
+`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
+and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
+checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
+operation, and order selection is announced independently of adoption.
+Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
+the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
+and read live EN/JA adoption names in Accessibility Inspector. Do not Save
+while comparing buffer-only adoption with pointer behavior.
+For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
+`graph_columns_fit` reproduces the default-column 940×660/167% zero-width
+subject, then requires a scaled 120px subject minimum, contained author/time,
+native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
+It pins the before x positions at 1392×883/100%, preserves saved width keys
+and preferred widths through resize/zoom, and leaves existing divider-drag,
+subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
+Before: subject x=886.5 width=0, author ends at 1031 and time starts there.
+After: subject x=547 width=180.5; author x=727.5..850 and time x=850..922.
+`graph_columns_compressed_drag` delivers positive native drags to both capped
+dividers, requires preferred widths/settings to stay unchanged, then widens and
+pins the original x positions. `graph_columns_inspector_fit` covers 1440px/167%
+with sidebar 240px and Inspector 360px in EN/JA: subject floor yields below 120px
+while author/time remain contained. Before review: GRAPH preference fell from
+176 to 47.900204 after a capped expansion; the Inspector leg retained the full
+subject floor instead of yielding. Both review regressions pass after correction.
+Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
+back and forth, drag both column dividers, relaunch to check saved preferences,
+and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
+
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
 across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and
@@ -138,6 +183,26 @@ confirmed Drop records exactly one successful receipt, and root Return leaves
 the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
 and close/reopen owner lifetime remain covered. These are native Tier A oracles,
 not a change to product safety or Tier B evidence.
+
+For #1298 / #1299 use
+`KAGI_GUI_E2E_ONLY='settings_provider_keys,settings_analyze_ignore_feedback'`
+with KEEP_GOING; run `settings_` for the neighboring baseline. These two
+scenarios explicitly select the production 715px macOS Settings host in
+EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
+renderer's named selected Tab recorder and real Enter/Space down/up after
+focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+values and no generation modal. Analyze clicks actual visible/scroll-reachable
+Save/Reset controls against a directory at the target path and a mode-000
+settings directory: errors retain the draft/dirty marker and original bytes;
+removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
+selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation

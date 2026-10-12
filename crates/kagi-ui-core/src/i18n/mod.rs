@@ -1778,6 +1778,14 @@ pub fn worktree_removal_verdict_text(
 }
 
 impl Msg {
+    /// Operation-inclusive elapsed status, formatted without an intermediate string.
+    pub fn clone_running_status(seconds: u64) -> String {
+        match lang() {
+            Lang::En => format!("Cloning… {seconds} s"),
+            Lang::Ja => format!("clone 中… {seconds} 秒"),
+        }
+    }
+
     /// Resolve this message to a `&'static str` in the active [`lang()`].
     ///
     /// Domain words (Pull / Push / Branch / Stash / Pop / Undo / amend /
@@ -4531,6 +4539,16 @@ pub fn worktree_exists_fmt(path: &str) -> String {
     match lang() {
         Lang::En => format!("Worktree path '{}' already exists.", path),
         Lang::Ja => format!("worktree のパス '{}' は既に存在します。", path),
+    }
+}
+
+impl Msg {
+    /// Name the browser action, not merely the port it points at.
+    pub fn worktree_inspection_open_url(port: u16) -> String {
+        match lang() {
+            Lang::En => format!("Open http://localhost:{port} in browser"),
+            Lang::Ja => format!("http://localhost:{port} をブラウザで開く"),
+        }
     }
 }
 

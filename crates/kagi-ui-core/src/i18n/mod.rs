@@ -54,6 +54,7 @@ pub mod plan;
 pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
+pub mod status_chips;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
     auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,

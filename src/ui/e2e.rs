@@ -56,6 +56,7 @@ pub mod unborn;
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
     static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
+    static STATUS_CHIPS: RefCell<Vec<(String, Option<String>, Option<String>)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -85,6 +86,21 @@ pub(crate) fn record_status_branch_identity(
 #[cfg(feature = "gui-e2e")]
 pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
     STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chips(chips: Vec<(String, Option<String>, Option<String>)>) {
+    STATUS_CHIPS.with(|value| *value.borrow_mut() = chips);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chip(text: String, label: String, tooltip: String) {
+    STATUS_CHIPS.with(|value| value.borrow_mut().push((text, Some(label), Some(tooltip))));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_chips() -> Vec<(String, Option<String>, Option<String>)> {
+    STATUS_CHIPS.with(|value| value.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to

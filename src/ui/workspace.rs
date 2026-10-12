@@ -425,6 +425,7 @@ impl WorkspaceItem for CommitPanelItem {
             v.panel_render_width = panel_width;
             v.smart_snapshot = smart;
             v.smart_generating = smart_ui.smart_commit_generating;
+            v.smart_generation = smart_ui.smart_commit_generation.clone();
             v.smart_status = smart_ui.smart_commit_status.clone();
             #[cfg(feature = "gui-e2e")]
             {
@@ -513,7 +514,7 @@ pub(super) fn render_inspector_body(
             app.inspector_tree_view,
             app.inspector_split,
             app.inspector_geom.clone(),
-            app.panel_width,
+            app.pane_fit.right,
             // W11-AVATAR: resolved avatar images so the inspector can swap
             // the initial circle for a real image.
             &app.avatars.images,

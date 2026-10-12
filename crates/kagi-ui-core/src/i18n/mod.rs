@@ -25,6 +25,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::settings::{read_setting, write_setting};
 
+pub fn settings_zoom_action(increase: bool, value: &str) -> String {
+    match (lang(), increase) {
+        (Lang::En, false) => format!("Decrease UI zoom ({value})"),
+        (Lang::En, true) => format!("Increase UI zoom ({value})"),
+        (Lang::Ja, false) => format!("UI ズームを下げる ({value})"),
+        (Lang::Ja, true) => format!("UI ズームを上げる ({value})"),
+    }
+}
+
+pub fn settings_zoom_value(value: &str) -> String {
+    match lang() {
+        Lang::En => format!("UI zoom {value}"),
+        Lang::Ja => format!("UI ズーム {value}"),
+    }
+}
+
 // Lang + active-language atomic
 pub mod activity;
 pub mod analyze;
@@ -433,6 +449,11 @@ pub enum Msg {
 
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
+    BranchPickerCheckout,
+    BranchPickerDelete,
+    BranchPickerRename,
+    A11yIssueOpenRow,
+    A11yRecentOpenRow,
     NoOperationsYet,
     /// Operation Log row: tooltip on the per-row copy button (issue #468).
     OpLogCopyEntry,
@@ -1782,6 +1803,14 @@ pub fn worktree_removal_verdict_text(
 }
 
 impl Msg {
+    /// Operation-inclusive elapsed status, formatted without an intermediate string.
+    pub fn clone_running_status(seconds: u64) -> String {
+        match lang() {
+            Lang::En => format!("Cloning… {seconds} s"),
+            Lang::Ja => format!("clone 中… {seconds} 秒"),
+        }
+    }
+
     /// Resolve this message to a `&'static str` in the active [`lang()`].
     ///
     /// Domain words (Pull / Push / Branch / Stash / Pop / Undo / amend /
@@ -2622,6 +2651,16 @@ impl Msg {
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",
             (Ja, NoLocalBranches) => "ローカル branch がありません",
+            (En, BranchPickerCheckout) => "Checkout Branch",
+            (Ja, BranchPickerCheckout) => "checkout する branch",
+            (En, BranchPickerDelete) => "Delete Branch",
+            (Ja, BranchPickerDelete) => "削除する branch",
+            (En, BranchPickerRename) => "Rename Branch",
+            (Ja, BranchPickerRename) => "リネームする branch",
+            (En, A11yIssueOpenRow) => "Open issue #{}, {}, {}",
+            (Ja, A11yIssueOpenRow) => "Issue #{} を開く、{}、{}",
+            (En, A11yRecentOpenRow) => "Open repository {name}",
+            (Ja, A11yRecentOpenRow) => "リポジトリ {name} を開く",
             (En, CommandPalettePlaceholder) => "Search commands…",
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
@@ -4214,7 +4253,7 @@ impl Msg {
             (En, SmartGeneratingLocal) => "Generating with local LLM…",
             (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
             (En, SmartGeneratingProvider) => "Generating with {}…",
-            (Ja, SmartGeneratingProvider) => "{}で生成中…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
             (En, SmartGeneratedLocal) => "Generated with local LLM",
             (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
             (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
@@ -4546,6 +4585,16 @@ pub fn worktree_exists_fmt(path: &str) -> String {
     }
 }
 
+impl Msg {
+    /// Name the browser action, not merely the port it points at.
+    pub fn worktree_inspection_open_url(port: u16) -> String {
+        match lang() {
+            Lang::En => format!("Open http://localhost:{port} in browser"),
+            Lang::Ja => format!("http://localhost:{port} をブラウザで開く"),
+        }
+    }
+}
+
 /// Map a keyed [`kagi_domain::plan::BranchNameError`] to localized text.
 pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
     use kagi_domain::plan::BranchNameError::*;
@@ -4626,6 +4675,27 @@ pub fn smart_model_switch_note(model: &str) -> String {
     match lang() {
         Lang::En => format!("{} — start Ollama to switch", model),
         Lang::Ja => format!("{}。切り替えるには Ollama を起動してください", model),
+    }
+}
+
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
     }
 }
 
@@ -4781,6 +4851,26 @@ mod standard_app_menu_tests {
             assert_eq!(message.t_for(Lang::Ja), ja);
         }
     }
+}
+
+/// Read-opening list rows preserve literal braces in external titles/names.
+pub fn issue_row_name(number: u64, title: &str, state: &str) -> String {
+    use std::fmt::Write as _;
+    let template = Msg::A11yIssueOpenRow.t();
+    let mut parts = template.split("{}");
+    let mut name = String::with_capacity(template.len() + 20 + title.len() + state.len());
+    name.push_str(parts.next().unwrap_or_default());
+    let _ = write!(name, "{number}");
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(title);
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(state);
+    name.push_str(parts.next().unwrap_or_default());
+    name
+}
+
+pub fn recent_row_name(name: &str) -> String {
+    Msg::A11yRecentOpenRow.t().replace("{name}", name)
 }
 
 #[cfg(test)]

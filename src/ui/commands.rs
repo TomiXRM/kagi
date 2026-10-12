@@ -1670,7 +1670,8 @@ pub enum MenuOverlay {
     /// Branch picker list (checkout / delete).
     BranchPicker {
         mode: BranchPickerMode,
-        branches: Vec<String>,
+        branches: std::rc::Rc<[String]>,
+        rows: std::rc::Rc<super::branch_picker::PickerRows>,
     },
     /// Read-only Keyboard Shortcuts panel, titled with body lines.
     Info {
@@ -1996,9 +1997,9 @@ impl KagiApp {
                     self.open_create_branch_modal(id, cx);
                 }
             }
-            "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout),
-            "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete),
-            "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename),
+            "branch.checkout" => self.open_branch_picker(BranchPickerMode::Checkout, window, cx),
+            "branch.delete" => self.open_branch_picker(BranchPickerMode::Delete, window, cx),
+            "branch.rename" => self.open_branch_picker(BranchPickerMode::Rename, window, cx),
 
             // ── Commit (selected commit → dispatch_commit_action) ────
             "commit.copyHash"
@@ -2613,8 +2614,8 @@ impl KagiApp {
     }
 
     /// Open the branch picker overlay listing local branches.
-    fn open_branch_picker(&mut self, mode: BranchPickerMode) {
-        let branches: Vec<String> = self
+    fn open_branch_picker(&mut self, mode: BranchPickerMode, window: &Window, cx: &Context<Self>) {
+        let branches: std::rc::Rc<[String]> = self
             .view()
             .branches
             .iter()
@@ -2626,7 +2627,13 @@ impl KagiApp {
             branches.len()
         );
         self.leave_settings_for_overlay();
-        self.menu_overlay = Some(MenuOverlay::BranchPicker { mode, branches });
+        self.capture_overlay_return_focus(window, cx);
+        let rows = std::rc::Rc::new(super::branch_picker::PickerRows::new(branches.len(), cx));
+        self.menu_overlay = Some(MenuOverlay::BranchPicker {
+            mode,
+            branches,
+            rows,
+        });
     }
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
@@ -2655,9 +2662,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         match self.menu_overlay.clone()? {
-            MenuOverlay::BranchPicker { mode, branches } => {
-                Some(self.render_branch_picker(mode, branches, cx))
-            }
+            MenuOverlay::BranchPicker {
+                mode,
+                branches,
+                rows,
+            } => Some(self.render_branch_picker(mode, branches, rows, window, cx)),
             MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
@@ -2677,88 +2686,6 @@ impl KagiApp {
             // Issue #352: command palette.
             MenuOverlay::CommandPalette => Some(self.render_command_palette(window, cx)),
         }
-    }
-
-    fn render_branch_picker(
-        &self,
-        mode: BranchPickerMode,
-        branches: Vec<String>,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let title = match mode {
-            BranchPickerMode::Checkout => "Checkout Branch",
-            BranchPickerMode::Delete => "Delete Branch",
-            BranchPickerMode::Rename => "Rename Branch",
-        };
-
-        let mut panel = div()
-            // Without occlude, a mouse-down on a branch row propagates through to
-            // the full-screen dismiss scrim beneath (wrap_overlay), which unmounts
-            // the overlay before the row's on_click (down+up on the same element)
-            // can complete — the click silently does nothing. Same fix as the
-            // context/branch/stash menus (see context_menu.rs).
-            .occlude()
-            .w(theme::scaled_px(360.0))
-            .max_h(theme::scaled_px(420.0))
-            .overflow_hidden()
-            .rounded(theme::scaled_px(8.0))
-            .border_1()
-            .border_color(rgb(theme().elevated_border(theme().selected)))
-            .bg(rgb(theme().elevated_surface(theme().panel)))
-            .shadow_lg()
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .text_color(rgb(theme().text_main))
-                    .child(SharedString::from(title)),
-            );
-
-        if branches.is_empty() {
-            panel = panel.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::NoLocalBranches.t())),
-            );
-        }
-
-        for (i, name) in branches.into_iter().enumerate() {
-            let name_for_click = name.clone();
-            let click = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-                this.menu_overlay = None;
-                match mode {
-                    BranchPickerMode::Checkout => this.open_plan_modal(name_for_click.clone(), cx),
-                    BranchPickerMode::Delete => {
-                        this.open_delete_branch_modal(name_for_click.clone(), cx)
-                    }
-                    BranchPickerMode::Rename => {
-                        this.open_rename_branch_modal(name_for_click.clone())
-                    }
-                }
-                cx.notify();
-            });
-            panel = panel.child(
-                div()
-                    .id(("branch-pick", i))
-                    .px_3()
-                    .py(theme::scaled_px(6.0))
-                    .text_sm()
-                    .text_color(rgb(theme().text_sub))
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                    })
-                    .on_click(click)
-                    .child(SharedString::from(name)),
-            );
-        }
-
-        self.wrap_overlay(panel.into_any_element(), cx)
     }
 
     fn render_info_overlay(
@@ -2801,7 +2728,11 @@ impl KagiApp {
     }
 
     /// Centre an overlay panel over a dim, click-to-dismiss backdrop.
-    fn wrap_overlay(&self, panel: gpui::AnyElement, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn wrap_overlay(
+        &self,
+        panel: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
             this.menu_overlay = None;
             cx.stop_propagation();

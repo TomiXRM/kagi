@@ -500,3 +500,33 @@ fn native_window_menu_and_about_labels() {
         assert_eq!(msg.t_for(Lang::Ja), ja);
     }
 }
+
+#[test]
+fn chooser_row_names_preserve_external_identity_in_both_languages() {
+    let _lock = LOCK.lock();
+    let old = ACTIVE.load(Ordering::Relaxed);
+    for (language, issue, recent) in [
+        (
+            Lang::En,
+            "Open issue #42, Fix {} {state} 日本語, Open",
+            "Open repository repo {} 日本語",
+        ),
+        (
+            Lang::Ja,
+            "Issue #42 を開く、Fix {} {state} 日本語、Open",
+            "リポジトリ repo {} 日本語 を開く",
+        ),
+    ] {
+        ACTIVE.store(language.index(), Ordering::Relaxed);
+        assert_eq!(issue_row_name(42, "Fix {} {state} 日本語", "Open"), issue);
+        assert_eq!(recent_row_name("repo {} 日本語"), recent);
+        for message in [
+            Msg::BranchPickerCheckout,
+            Msg::BranchPickerDelete,
+            Msg::BranchPickerRename,
+        ] {
+            assert!(!message.t().is_empty());
+        }
+    }
+    ACTIVE.store(old, Ordering::Relaxed);
+}

@@ -44,3 +44,62 @@ accessible-name API, so naming its focused inner node requires an upstream
 gpui-kit seam. Do not simulate that name with a second unfocused TextInput.
 The placeholder uses a language cache and updates the retained state before
 drawing after a language switch.
+
+## Amendment — 2026-10-12: horizontal pane budget (#1355)
+
+Reference: Apple HIG Layout's primary-content priority; retain Kagi's dense
+sidebar/Inspector, existing divider interactions and zoom tokens, not a new
+control or navigation mode. The outer pane budget follows Graph's inner-column
+fit (#1317): derive render widths, shrink Inspector first and sidebar second,
+and never replace preferred widths merely because the window or zoom changed.
+Widening restores them. Inspector and Compare share this fitted right-slot
+width. Closing/opening clips retain the full fitted content width.
+
+| Region | Preferred reference px | Drag preference minimum | Presentation minimum |
+|---|---:|---:|---:|
+| Sidebar | 240 | 120 | 120 |
+| Inspector / Compare | 360 | 240 | 160 |
+| Centre beside Inspector / Compare | remaining | n/a | 320, zoom-scaled |
+
+At 940×660 / 167%, the old 120 + 240 + 320 minima plus two 4px dividers
+require 1034.064 screen px at the 1.503 physical scale. The presentation-only
+160px Inspector floor makes the required 608 reference px fit in 913.824 screen
+px without changing the existing 240px drag-preference minimum. If even both
+presentation floors do not fit (for example at 700px / 167%), shrink Inspector
+then sidebar to their floors and finally let the centre use the nonnegative
+remainder; do not panic or assign a negative width.
+
+Divider candidates are re-fitted against the last rendered budget before
+changing a preference. An expansion already capped by fitting is ignored,
+just as for #1317's Graph columns; a genuine resize retains the existing
+reference-space preference semantics. Swipe distance uses the fitted sidebar,
+not its preferred width. Commit Panel keeps its existing viewport policy.
+Git, modal, keyboard and accessibility behavior are otherwise unchanged.
+
+This is the fit for the non-collapsed (≥1000px) layout. #1225 on
+`feature/compact-layout` handles <1000px by collapsing auxiliary panes; it is
+complementary, not another breakpoint in this change. The current non-collapsed
+940px regression exercises the fit before that separate branch is integrated.
+
+Native Tier A `pane_budget_fit` covers EN/JA defaults at 940×660 / 167%,
+diff-header containment, exact unchanged wide-window edges at 1392×883 / 100%,
+capped divider drags, preference restoration after widening and sub-minimum
+fallback. Neighbor scenarios are `diff_`, `graph_`, `sidebar_panes`, `inspector_`.
+These geometry/input assertions are not native VoiceOver or Tier B evidence.
+
+Inspector's complete-message regression retains simultaneous containment for
+trailers shorter than the message viewport. A value that wraps taller than the
+viewport at the fitted width must expose its bottom and then its top through
+the same native wheel scroller; requiring the whole oversized row visible in
+one frame would instead force truncation or invalidate this valid layout.
+
+Review clarification: deferred worktree keyboard cards, group identity reveals
+and Branch Cleanup column drag origins must all use the fitted sidebar width.
+Using the preferred width for those local anchors detaches them from the
+painted sidebar after compression. `pane_budget_worktree_anchor` and
+`pane_budget_group_anchor` assert the real card/reveal left edge against the
+painted sidebar's content edge at 940×660 / 167%, without changing preferences.
+Local card/reveal anchors subtract `keyboard_nav::RING`: RowList always lays
+out its transparent 2px focus border, so its local content origin is inset
+even before the ring is visible. This keeps the actual card edge on the
+sidebar edge rather than accepting a larger geometry-test tolerance.

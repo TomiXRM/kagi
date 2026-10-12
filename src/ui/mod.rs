@@ -47,6 +47,7 @@ pub mod window_menu;
 // (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
+mod commit_panel_navigation;
 mod diff_selection;
 mod editor_pane_selectors;
 pub mod editor_tree_menu;
@@ -89,12 +90,15 @@ pub mod graph_squash;
 pub mod graph_view;
 mod graph_window;
 pub mod graph_wip;
+mod pane_budget;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
+mod branch_picker;
 pub mod dialog_a11y;
 pub mod home;
 pub mod home_clone_card;
 pub mod home_github;
 mod home_github_list;
+mod home_recent;
 pub mod home_work;
 mod home_work_list;
 pub mod inspector;
@@ -102,6 +106,7 @@ mod inspector_metadata;
 mod inspector_model;
 pub(crate) mod keyboard_nav;
 pub mod list_a11y;
+mod list_keyboard;
 pub mod main_diff_pane;
 mod menu_keys;
 pub mod menu_overlay;
@@ -1102,6 +1107,8 @@ pub struct KagiApp {
     graph_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// Fitted widths and viewport budget for the currently rendered Graph.
     graph_column_fit: graph_columns::Fit,
+    /// Presentation widths and the last rendered outer-pane drag budget.
+    pane_fit: pane_budget::Fit,
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
@@ -1297,6 +1304,7 @@ pub struct KagiApp {
     pub(crate) context_anchor: menu_keys::RowAnchor,
     /// Owner-stamped file menu; its path survives row renumbering (#286).
     pub file_menu: Option<file_menu::FileMenu>,
+    pub(crate) file_menu_keys: menu_keys::MenuKeys,
     /// Right-click context menu on an Inspector / Compare changed-file row
     /// (`Some((file_index, cursor_pos))` while open): History / Open in
     /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
@@ -1496,6 +1504,7 @@ impl KagiApp {
             badge_col_origin_x: Default::default(),
             graph_col_origin_x: Default::default(),
             graph_column_fit: Default::default(),
+            pane_fit: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),
@@ -1557,6 +1566,7 @@ impl KagiApp {
             menu_keys: Default::default(),
             context_anchor: Default::default(),
             file_menu: None,
+            file_menu_keys: Default::default(),
             inspector_file_menu: None,
             // W5-MENU
             inspector_visible: true,

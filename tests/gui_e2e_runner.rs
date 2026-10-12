@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_contrast.rs"]
+mod pr_dashboard_contrast;
+#[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
 #[cfg(target_os = "macos")]
@@ -79,6 +82,18 @@ mod plan_labels;
 #[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/feedback_status.rs"]
+mod feedback_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/clone_progress_status.rs"]
+mod clone_progress_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_inspection_actions.rs"]
+mod worktree_inspection_actions;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
@@ -143,6 +158,9 @@ mod bottom_panel_motion;
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_column_divider.rs"]
 mod graph_column_divider;
+#[cfg(target_os = "macos")]
+#[path = "recovery/pane_budget.rs"]
+mod pane_budget;
 #[cfg(target_os = "macos")]
 #[path = "recovery/side_panel_motion.rs"]
 mod side_panel_motion;
@@ -242,6 +260,9 @@ mod home_work;
 #[cfg(target_os = "macos")]
 #[path = "recovery/keyboard_nav.rs"]
 mod keyboard_nav;
+#[cfg(target_os = "macos")]
+#[path = "recovery/lists_keyboard.rs"]
+mod lists_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -304,6 +325,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_appearance_ax.rs"]
+mod settings_appearance_ax;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_controls.rs"]
 mod settings_controls;
@@ -1349,6 +1373,22 @@ mod macos {
                 Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
             ),
             (
+                "pr_dashboard_draft_contrast_light_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-dark")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_light_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-dark")),
+            ),
+            (
                 "color_vision_theme",
                 Box::new(crate::recovery_operations::scenario_color_vision_theme),
             ),
@@ -1542,6 +1582,18 @@ mod macos {
             (
                 "home_rows",
                 Box::new(crate::home_rows::scenario_home_rows),
+            ),
+            (
+                "issues_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_issues_rows_keyboard),
+            ),
+            (
+                "home_recent_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_home_recent_rows_keyboard),
+            ),
+            (
+                "branch_picker_keyboard",
+                Box::new(crate::lists_keyboard::scenario_branch_picker_keyboard),
             ),
             (
                 "home_row_paging",
@@ -2110,6 +2162,22 @@ mod macos {
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
             ),
             (
+                "toast_live_status",
+                Box::new(crate::feedback_status::scenario_toast_live_status),
+            ),
+            (
+                "diff_header_identity",
+                Box::new(crate::feedback_status::scenario_diff_header_identity),
+            ),
+            (
+                "clone_progress_status",
+                Box::new(crate::clone_progress_status::scenario_clone_progress_status),
+            ),
+            (
+                "worktree_inspection_actions",
+                Box::new(crate::worktree_inspection_actions::scenario),
+            ),
+            (
                 "fetch_failure_oplog",
                 Box::new(crate::busy_label::scenario_fetch_failure_reaches_the_oplog),
             ),
@@ -2313,6 +2381,14 @@ mod macos {
             (
                 "settings_provider_keys",
                 Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_theme_select_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_theme_select_ax),
+            ),
+            (
+                "settings_zoom_stepper_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
             ),
             (
                 "settings_analyze_ignore_feedback",
@@ -2762,12 +2838,28 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
             ),
             (
+                "changes_rows_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
+            ),
+            (
+                "changes_discard_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_discard_keyboard),
+            ),
+            (
+                "changes_file_menu_viewport",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_file_menu_viewport),
+            ),
+            (
                 "commit_panel_segment_keys",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_segment_keys),
             ),
             (
                 "commit_panel_footer_tab_order",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_footer_tab_order),
+            ),
+            (
+                "smart_commit_footer_provider",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_commit_footer_provider),
             ),
             (
                 "commit_panel_coauthor_keys",
@@ -3393,6 +3485,18 @@ mod macos {
             (
                 "right_selection_motion",
                 Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
+            (
+                "pane_budget_fit",
+                Box::new(crate::pane_budget::scenario_pane_budget_fit),
+            ),
+            (
+                "pane_budget_worktree_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_worktree_anchor),
+            ),
+            (
+                "pane_budget_group_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_group_anchor),
             ),
             (
                 "graph_column_divider_hidden",

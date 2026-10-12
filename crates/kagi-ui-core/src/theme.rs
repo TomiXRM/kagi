@@ -1581,6 +1581,26 @@ mod tests {
     }
 
     #[test]
+    fn apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds() {
+        for t in [
+            &crate::theme_apple_light::APPLE_LIGHT,
+            &crate::theme_apple_dark::APPLE_DARK,
+        ] {
+            for (state, background) in [("rest", t.bg_base), ("hover", t.surface)] {
+                for (role, foreground) in [("title", t.text_main), ("metadata/Draft", t.text_muted)]
+                {
+                    let contrast = contrast_ratio(foreground, background);
+                    assert!(
+                        contrast >= 4.5,
+                        "{} draft row {role} on {state}: {contrast:.3}:1 < 4.5:1",
+                        t.slug
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn apple_dark_elevation_is_ordered_and_readable_with_light_pinned() {
         let dark = &crate::theme_apple_dark::APPLE_DARK;
         let chrome = dark.chrome_surface();

@@ -433,7 +433,7 @@ pub fn scenario_branch_picker_screen_departure(cx: &mut VisualTestAppContext) {
     assert!(
         cx.read(|cx| matches!(
             &app.read(cx).menu_overlay,
-            Some(MenuOverlay::BranchPicker { mode: BranchPickerMode::Checkout, branches })
+            Some(MenuOverlay::BranchPicker { mode: BranchPickerMode::Checkout, branches, .. })
                 if branches.iter().any(|name| name == "a-only")
                     && !branches.iter().any(|name| name == "b-only")
         )),

@@ -2044,6 +2044,10 @@ mod macos {
                 Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),
             (
+                "worktree_modal_prefill",
+                Box::new(crate::worktree_folder_picker::scenario_worktree_modal_prefill),
+            ),
+            (
                 "repo_health_proposal",
                 Box::new(crate::repo_health::scenario_repo_health_proposal),
             ),

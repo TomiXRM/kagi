@@ -24,6 +24,7 @@
 
 mod blame;
 mod bottom_panel;
+mod find;
 pub mod markdown;
 mod pane_selectors;
 mod panes;
@@ -1458,6 +1459,7 @@ impl EditorWorkspaceView {
             let state = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor(self.content_lang)
+                    .search_labels(find::labels())
                     .line_number(true)
             });
             // T-WS-EDITOR-002: track user edits for the dirty indicator/
@@ -1513,6 +1515,9 @@ impl EditorWorkspaceView {
             })
             .detach();
             self.editor = Some(state);
+        }
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |state, cx| state.set_search_labels(find::labels(), cx));
         }
         if self.content_sig == self.pushed_sig {
             return;

@@ -92,6 +92,22 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
+with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,
+compares its Button role/name/toggled assignments, measures real button bounds,
+and hovers each control to observe invoked Tooltip builders in EN/JA,
+940×660 / 1392×883, 100%/167% and Apple Light/Dark. `Window::focus_next`
+traverses rendered stops; F19 records the control receiving the simulated key.
+Enter/Space exercise navigation, case matching, replacement disclosure,
+Replace/Replace all and Close. Escape returns to the owning code buffer,
+replacement stays unsaved/undoable, and a live locale switch retains the query.
+The fork's `test-support` feature is enabled only by the Editor's `gui-e2e`
+feature; normal builds retain no probes. This is renderer/tooltip/simulated-input
+evidence, not physical Tab, Full Keyboard Access, VoiceOver or live IME.
+Tier B: in the real EN/JA Editor window open Cmd+F, Tab through the controls,
+inspect names/help/toggle states in Accessibility Inspector, activate them,
+and check Escape focus return, composition, replacement undo and guarded Save.
+
 For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
 KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
 Tab roles, localized names, selected state, one Tab stop, actual focus

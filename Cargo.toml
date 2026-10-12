@@ -196,5 +196,5 @@ zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d
 ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b" }
-gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b" }
+gpui-component = { path = "/tmp/kagi-hig-audit-20261008/worktrees/gpui-kit-search-a11y/crates/ui" }
+gpui-component-assets = { path = "/tmp/kagi-hig-audit-20261008/worktrees/gpui-kit-search-a11y/crates/assets" }

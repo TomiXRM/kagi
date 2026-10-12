@@ -230,3 +230,35 @@ over an editable-looking viewer or a fork. [#1275](https://github.com/TomiXRM/ka
 tracks restoring these capabilities, preferably by aligning a line-number
 column with source rows/chunks in the same `ListState`, never an independent
 scroll or selection owner.
+
+## Amendment — 2026-10-12: Find/Replace accessibility (#1348)
+
+The editable code buffer keeps gpui-kit's built-in SearchPanel: Kagi does not
+introduce a second query, matcher, text input or replacement owner. The fork
+provides `InputState::search_labels` / `set_search_labels` and English defaults;
+Kagi supplies EN/JA `Msg` names, including live language changes without
+resetting the query or editor. Previous/Next, case, replacement disclosure,
+Close, Replace and Replace all remain real Buttons with their existing
+callbacks, icon geometry, unavailable states and theme styling. Accessible
+Button names and lazily constructed hover help share the localized text;
+case and replacement disclosure additionally expose `aria_toggled`.
+
+The search field precedes case/disclosure/navigation/Close in focus traversal;
+the replacement field precedes Replace/Replace all. Escape from any Find-bar
+control closes it and focuses its owning editable buffer, as does Close.
+The component binds Escape for its `SearchPanel` context as well as Input;
+Kagi's global CloseMainDiff binding excludes that context, so it cannot consume
+the key before the Find control's action handler.
+The bar has a separate non-Tab-stop container focus handle, rather than reusing
+the field's handle. Its Buttons' Return key suppresses the ancestor Input's
+Find Next binding so the normal GPUI keyboard click invokes the named action.
+When replacement can disable its focused action, focus goes to the replacement
+field rather than leaving Escape on an untracked control.
+Input shortcuts, IME handling, replacement history and the host-owned guarded
+Save path remain unchanged. No Git/backend dependency enters the Editor crate.
+
+Tier A observes assignments from the actual component renderer, native bounds,
+invoked Tooltip builders, rendered focus traversal and simulated activation.
+Its matrix is 940×660 / 1392×883, EN/JA, 100%/167%, Apple Light/Dark.
+Native VoiceOver, Full Keyboard Access and live IME are separate PM-owned
+Tier B checks, not claims from these renderer/TestDispatcher observations.

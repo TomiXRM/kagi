@@ -33,7 +33,7 @@ use kagi_domain::hotspot::{CommitChanges, FileChange, RawEcosystem};
 
 /// Record separator emitted by `--format=%x00…` before each commit.
 const RS: char = '\0';
-/// Unit separator between the author time and author email in the header line.
+/// Unit separator between author time, email and display name in the header.
 const US: char = '\u{1f}';
 
 /// Parameters for a whole-repo ecosystem scan.
@@ -63,7 +63,7 @@ pub fn repo_ecosystem(req: &EcosystemRequest) -> Result<RawEcosystem, GitError> 
         "log",
         "--no-renames",
         "--numstat",
-        "--format=%x00%at%x1f%ae",
+        "--format=%x00%at%x1f%ae%x1f%an",
     ];
     if req.limit > 0 {
         limit_arg = format!("-n{}", req.limit);
@@ -105,7 +105,7 @@ fn build_matcher(repo_dir: &Path, patterns: &[String]) -> Gitignore {
     b.build().unwrap_or_else(|_| Gitignore::empty())
 }
 
-/// Parse `git log --numstat --format=%x00%at` output into per-commit changes.
+/// Parse the ecosystem `git log --numstat` time/email/name records.
 fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
     let mut commits = Vec::new();
     for record in stdout.split(RS) {
@@ -113,9 +113,12 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
             continue;
         }
         let mut lines = record.lines();
-        // Header line: `<epoch>\x1f<author-email>`. Skip if epoch isn't a number.
+        // Header: `<epoch>\x1f<author-email>\x1f<author-name>`.
         let header = lines.next().unwrap_or("");
-        let (time_str, author) = header.split_once(US).unwrap_or((header, ""));
+        let mut fields = header.splitn(3, US);
+        let time_str = fields.next().unwrap_or("");
+        let author = fields.next().unwrap_or("");
+        let author_name = fields.next().unwrap_or("").to_string();
         let time = match time_str.trim().parse::<i64>() {
             Ok(t) => t,
             Err(_) => continue,
@@ -134,6 +137,7 @@ fn parse_numstat_log(stdout: &str) -> Vec<CommitChanges> {
         commits.push(CommitChanges {
             time,
             author,
+            author_name,
             files,
         });
     }
@@ -212,10 +216,11 @@ mod tests {
 
     #[test]
     fn parses_author_email_from_header() {
-        let stdout = format!("{RS}1700000100{US}alice@x\n\n3\t0\tsrc/a.rs\n");
+        let stdout = format!("{RS}1700000100{US}alice@x{US}Alice Example\n\n3\t0\tsrc/a.rs\n");
         let commits = parse_numstat_log(&stdout);
         assert_eq!(commits[0].time, 1_700_000_100);
         assert_eq!(commits[0].author, "alice@x");
+        assert_eq!(commits[0].author_name, "Alice Example");
         assert_eq!(commits[0].files[0].path, "src/a.rs");
     }
 

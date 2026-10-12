@@ -2051,6 +2051,7 @@ mod macos {
             ("analyze_a11y_risk", Box::new(crate::analyze_a11y::scenario_analyze_a11y_risk)),
             ("analyze_a11y_truncation", Box::new(crate::analyze_a11y::scenario_analyze_a11y_truncation)),
             ("analyze_a11y_help", Box::new(crate::analyze_a11y::scenario_analyze_a11y_help)),
+            ("analyze_ownership_author", Box::new(crate::analyze_a11y::scenario_analyze_ownership_author)),
             (
                 "refusal_reasons",
                 Box::new(crate::refusal_reasons::scenario_refusal_reasons),

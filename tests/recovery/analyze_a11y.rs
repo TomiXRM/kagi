@@ -85,6 +85,7 @@ fn raw() -> RawEcosystem {
         commits: vec![CommitChanges {
             time: 1,
             author: "fixture@example.test".into(),
+            author_name: String::new(),
             files: files
                 .iter()
                 .map(|f| FileChange {
@@ -537,4 +538,77 @@ fn help_geometry(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
         last.bottom() <= body.bottom() + px(1.),
         "last Help section can be read"
     );
+}
+
+pub fn scenario_analyze_ownership_author(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original = kagi_ui_core::i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        let fixture = build_fixture();
+        let (app, window) = mount(cx, fixture.path());
+        let identities = [
+            (
+                "Alex",
+                "alex@example.test",
+                "Alex",
+                "Alex <alex@example.test>",
+            ),
+            ("", "solo@example.test", "solo", "solo@example.test"),
+            (
+                "Alex",
+                "other@example.test",
+                "Alex",
+                "Alex <other@example.test>",
+            ),
+            ("Only Name", "", "Only Name", "Only Name"),
+        ];
+        let raw = RawEcosystem {
+            loc: Default::default(),
+            commits: identities
+                .iter()
+                .enumerate()
+                .map(|(i, (name, email, _, _))| CommitChanges {
+                    time: 1,
+                    author: (*email).into(),
+                    author_name: (*name).into(),
+                    files: vec![FileChange {
+                        path: format!("src/identity-{i}.rs"),
+                        insertions: 1,
+                        deletions: 0,
+                    }],
+                })
+                .collect(),
+        };
+        app.update(cx, |app, cx| {
+            app.set_lang(lang, cx);
+            let head = app.view().head_oid.clone();
+            app.ui_mut().unwrap().ecosystem_cache = Some(CachedMine { raw, head });
+            app.open_ecosystem_view(cx);
+        });
+        cx.run_until_parked();
+        let view = cx.read(|cx| app.read(cx).ui().ecosystem.clone()).unwrap();
+        view.update(cx, |view, cx| {
+            view.set_granularity(Granularity::All, cx);
+            view.set_mode(EcosystemMode::Ownership, cx);
+        });
+        draw(cx, window);
+        let owners = cx.read(|cx| view.read(cx).data_for_e2e().ownership.clone());
+        assert_eq!(owners.len(), identities.len());
+        for (i, owner) in owners.iter().enumerate() {
+            assert_eq!(
+                owner.path,
+                format!("src/identity-{i}.rs"),
+                "stable path tie order"
+            );
+            let id = format!("eco-own-author-{}", i + 1);
+            let node = e2e::node(&id).expect("rendered author label");
+            assert_eq!(node.text, identities[i].2, "author column shows name");
+            assert_eq!(node.name, identities[i].3);
+            assert_eq!(e2e::tooltip(&id).as_deref(), Some(identities[i].3));
+            assert_eq!(node.role, Role::Label);
+        }
+        drop(view);
+        unmount(cx, app, window);
+    }
+    kagi_ui_core::i18n::set_lang(original);
 }

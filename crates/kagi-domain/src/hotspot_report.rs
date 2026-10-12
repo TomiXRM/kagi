@@ -275,6 +275,7 @@ mod tests {
             CommitChanges {
                 time: NOW - 100,
                 author: "a@x".into(),
+                author_name: String::new(),
                 files: vec![
                     FileChange {
                         path: "src/a.rs".into(),
@@ -291,6 +292,7 @@ mod tests {
             CommitChanges {
                 time: NOW - 200,
                 author: "a@x".into(),
+                author_name: String::new(),
                 files: vec![FileChange {
                     path: "src/a.rs".into(),
                     insertions: 3,
@@ -391,6 +393,7 @@ mod tests {
         let owns = vec![FileOwnership {
             path: "src/a.rs".into(),
             primary_author: "alice@x".into(),
+            primary_author_name: "Alice".into(),
             primary_share: 0.75,
             authors: 2,
             commits: 8,

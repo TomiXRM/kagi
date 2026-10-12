@@ -524,7 +524,7 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
             format!("eco-own-path-{rank}"),
             o.path.clone(),
         ))
-        .child(stat(&o.primary_author))
+        .child(ownership_author(rank, o))
         .child(stat(&format!("{:.0}%", o.primary_share * 100.0)))
         .child(
             div()
@@ -538,6 +538,56 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
                 )),
         )
         .into_any_element()
+}
+
+fn ownership_author(rank: usize, owner: &FileOwnership) -> impl IntoElement {
+    let text = if owner.primary_author_name.is_empty() {
+        owner
+            .primary_author
+            .split('@')
+            .next()
+            .unwrap_or("")
+            .to_owned()
+    } else {
+        owner.primary_author_name.clone()
+    };
+    // Same identity rule as Inspector (#1237): brackets only with both fields.
+    let identity: SharedString = match (
+        owner.primary_author_name.is_empty(),
+        owner.primary_author.is_empty(),
+    ) {
+        (false, false) => {
+            format!("{} <{}>", owner.primary_author_name, owner.primary_author).into()
+        }
+        (true, _) => owner.primary_author.clone().into(),
+        (_, true) => owner.primary_author_name.clone().into(),
+    };
+    let id = format!("eco-own-author-{rank}");
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record_tooltip(&id, &identity);
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record(
+        &id,
+        super::e2e::Node {
+            role: gpui::Role::Label,
+            name: identity.to_string(),
+            text: text.clone(),
+            selected: None,
+            expanded: None,
+            disabled: false,
+        },
+    );
+    div()
+        .id(SharedString::from(id))
+        .role(gpui::Role::Label)
+        .aria_label(identity.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(identity.clone()).build(window, cx)
+        })
+        .flex_shrink_0()
+        .text_size(theme::scaled_px(12.0))
+        .text_color(rgb(theme().text_sub))
+        .child(text)
 }
 
 // ── small shared element helpers ────────────────────────────────

@@ -80,6 +80,14 @@ impl KagiApp {
         self.pending_focus = self.pending_root_focus();
     }
 
+    /// Queue a stable control using the existing screen and dispatch-membership checks.
+    pub(super) fn restore_control_focus(&mut self, focus: FocusHandle) {
+        self.pending_focus = Some(PendingFocus {
+            focus,
+            screen: self.focus_screen(),
+        });
+    }
+
     /// A tab/Home/repository departure owns dismissal, even if a menu command
     /// already closed the dropdown before navigation. BranchPicker snapshots
     /// the old repository's branches; all menu overlays belong to the screen

@@ -18,6 +18,9 @@
 //! `RawEcosystem`) and **outward** as [`EcosystemEvent`]s the bin subscribes to
 //! (close, toast) — no `KagiApp` back-reference.
 
+mod controls;
+#[cfg(feature = "gui-e2e")]
+pub mod e2e;
 mod graph;
 mod health;
 mod lists;
@@ -122,8 +125,6 @@ pub struct EcosystemData {
     pub mode: EcosystemMode,
     /// Selected "Copy diagnostic" output format (Markdown / JSON / Mermaid).
     pub export_format: ExportFormat,
-    /// Whether the "How to read Analyze" help overlay is open.
-    pub help_open: bool,
     /// Hotspots sub-view: `false` = ranked list, `true` = treemap heatmap.
     pub map: bool,
     pub granularity: Granularity,
@@ -150,7 +151,6 @@ impl EcosystemData {
             ownership: Vec::new(),
             mode: EcosystemMode::Hotspots,
             export_format: ExportFormat::Markdown,
-            help_open: false,
             map: false,
             granularity: Granularity::All,
             loading: true,
@@ -184,12 +184,15 @@ pub enum EcosystemEvent {
     /// The user asked to fix a health finding — the host plans the fix and
     /// opens its confirmation; nothing runs from here (#358).
     HealthFixRequested(HealthFix),
+    /// Help belongs to the host's single active modal slot.
+    HelpRequested(gpui::FocusHandle),
 }
 
 /// The Code Ecosystem view entity (ADR-0119). A thin reflector of cached /
 /// loading state; the mine itself is app-owned (`start_ecosystem_mine`).
 pub struct EcosystemView {
     pub(crate) data: EcosystemData,
+    navigation: controls::Navigation,
     repo_path: PathBuf,
 }
 
@@ -200,9 +203,74 @@ impl EcosystemView {
         Self {
             data: EcosystemData::new(),
             repo_path,
+            navigation: controls::Navigation::default(),
         }
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn install_metrics_for_e2e(
+        &mut self,
+        files: Vec<kagi_domain::hotspot::FileMetric>,
+        cx: &mut Context<Self>,
+    ) {
+        self.data.ecosystem = Some(Ecosystem {
+            files,
+            granularity: Granularity::All,
+            window_start: 0,
+            now: 1,
+        });
+        self.data.loading = false;
+        cx.notify();
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn data_for_e2e(&self) -> &EcosystemData {
+        &self.data
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn focus_control_for_e2e(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigation.handle(id, cx).focus(window, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn control_focused_for_e2e(&self, id: &str, window: &Window) -> bool {
+        self.navigation
+            .buttons
+            .borrow()
+            .get(id)
+            .is_some_and(|handle| handle.is_focused(window))
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn focus_selector_for_e2e(
+        &self,
+        group: &str,
+        slot: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = match group {
+            "mode" => &self.navigation.mode,
+            "period" => &self.navigation.period,
+            "view" => &self.navigation.view,
+            "format" => &self.navigation.format,
+            _ => panic!("unknown Analyze selector"),
+        };
+        focus.focus(slot, window, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn selector_focused_for_e2e(&self, group: &str, window: &Window) -> Option<usize> {
+        match group {
+            "mode" => &self.navigation.mode,
+            "period" => &self.navigation.period,
+            "view" => &self.navigation.view,
+            "format" => &self.navigation.format,
+            _ => panic!("unknown Analyze selector"),
+        }
+        .focused(window)
+    }
     /// Seed from a completed mine (instant; no Backend work) and rank.
     pub fn seed(&mut self, raw: RawEcosystem) {
         self.data.raw = Some(raw);
@@ -352,10 +420,9 @@ impl EcosystemView {
         cx.notify();
     }
 
-    /// Toggle the "How to read Analyze" help overlay.
-    pub fn toggle_help(&mut self, cx: &mut Context<Self>) {
-        self.data.help_open = !self.data.help_open;
-        cx.notify();
+    /// Open the host-owned help task and preserve its stable opener.
+    pub fn request_help(&self, opener: gpui::FocusHandle, cx: &mut Context<Self>) {
+        cx.emit(EcosystemEvent::HelpRequested(opener));
     }
 
     pub fn set_mode(&mut self, mode: EcosystemMode, cx: &mut Context<Self>) {
@@ -464,7 +531,11 @@ fn now_unix_secs() -> i64 {
 }
 
 impl Render for EcosystemView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.navigation.root.is_none() {
+            self.navigation.root = Some(cx.focus_handle());
+        }
+        self.navigation.retire_hidden(&self.data, window, cx);
         render::render_ecosystem(self, cx)
     }
 }

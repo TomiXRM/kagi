@@ -243,6 +243,16 @@ pub(crate) fn render_rows(
             .bg(row_bg)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
+            // #1306: a row-wide Tooltip remains reachable when a narrow graph
+            // leaves the subject no width. Child ref/author tooltips keep priority.
+            .tooltip({
+                let subject = row.summary.clone();
+                move |window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::text_caps::record_tooltip(subject.clone());
+                    gpui_component::tooltip::Tooltip::new(subject.clone()).build(window, cx)
+                }
+            })
             .when(is_dimmed, |el| el.opacity(0.32))
             // ── Badges column: user-resizable width (T030) ──
             // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
@@ -434,15 +444,7 @@ pub(crate) fn render_rows(
                     }
                 })
             })
-            .child(
-                div()
-                    .flex_1()
-                    .text_color(rgb(theme().text_main))
-                    // Single line, no wrapping: long summaries ellipsize
-                    // (truncate = overflow_hidden + nowrap + ellipsis).
-                    .truncate()
-                    .child(row.summary.clone()),
-            )
+            .child(metadata::subject(row, ix))
             // Issue #337: AI-agent provenance badge (nothing when the
             // commit is unclassifiable — prefer no badge to a false one).
             .when_some(row.provenance.as_ref(), |el, prov| {

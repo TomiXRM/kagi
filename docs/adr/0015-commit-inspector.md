@@ -10,3 +10,39 @@
 
 ## Consequences
 - 既存の Create branch/Cherry-pick ボタンが上部から Actions セクションへ移動(導線変更をユーザーに周知)
+
+## Amendment — 2026-10-12: complete messages and bounded presentation (#1307)
+
+The complete sanitized commit message is retained in `CommitDetail`, with only
+trailing whitespace trimmed; no 2,000-character model cap remains. Copy message
+uses this full source, not reflowed HTML or a preview. The SHA-keyed Inspector
+model prepares HTML, co-authors and trailers once per selection identity, not
+on each render.
+
+The existing independently scrolling message region exposes the entire body.
+Co-author and trailer blocks belong below the body inside that same scroller,
+not in the fixed header: large trailer sets cannot consume the message/files
+split or push changed files and the footer outside the window. Title, author,
+hash, refs and actions retain their compact header. No explicit expansion state
+is needed because the message region already has definite bounds and the
+system scrollbar.
+
+### Stress render evidence (#1306 / #1307)
+
+The native `text_caps_warm_render` scenario mounted the read-only
+`stress-pr-repo` fixture (121 local branches, 126 commits, 120 graph lanes),
+selected its first commit and settled 20 draws. Each measurement is the median
+of 31 ten-draw batches, in the same debug profile and default 1440×900
+presentation. After the gates completed, frozen original `50b28c69` production
+sources and the fixed production sources ran alternately three times each
+with the same harness:
+
+- Before: 14.590008, 15.574479, 34.361996 ms/frame; median **15.574479 ms**.
+- After: 13.507179, 44.905217, 16.146421 ms/frame; median **16.146421 ms**.
+- Median change: **+3.67%**, within the requested 5% bound.
+
+Concurrent machine load remains a limitation: earlier non-alternating After
+runs ranged from 13.425571 to 19.909288 ms/frame, and the alternating series
+also has large outliers. These are forced warm-render timings, not real-app
+FPS, an idle-machine guarantee, or a cold-message preparation benchmark.
+

@@ -17,6 +17,9 @@ pub mod palette;
 pub mod inspector_metadata;
 
 #[cfg(feature = "gui-e2e")]
+pub mod text_caps;
+
+#[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]

@@ -552,6 +552,10 @@ mod perf_oplog_detail;
 mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/text_caps.rs"]
+mod text_caps;
+
+#[cfg(target_os = "macos")]
 #[path = "perf/inspector_derived.rs"]
 mod perf_inspector_derived;
 
@@ -3222,6 +3226,18 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "graph_subject_identity",
+                Box::new(crate::text_caps::scenario_graph_subject_identity),
+            ),
+            (
+                "inspector_full_message",
+                Box::new(crate::text_caps::scenario_inspector_full_message),
+            ),
+            (
+                "text_caps_warm_render",
+                Box::new(crate::text_caps::scenario_text_caps_warm_render),
             ),
             (
                 "inspector_derived",

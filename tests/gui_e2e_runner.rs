@@ -356,6 +356,9 @@ mod tab_panels;
 #[path = "recovery/status_bar_fit.rs"]
 mod status_bar_fit;
 #[cfg(target_os = "macos")]
+#[path = "recovery/status_chips.rs"]
+mod status_chips;
+#[cfg(target_os = "macos")]
 #[path = "recovery/status_controls.rs"]
 mod status_controls;
 #[cfg(target_os = "macos")]
@@ -2663,6 +2666,7 @@ mod macos {
                 Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
+            ("status_chips_semantics", Box::new(crate::status_chips::scenario_status_chips_semantics)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
             ("status_bar_busy_height", Box::new(crate::status_bar_fit::scenario_status_bar_busy_height)),
             ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),

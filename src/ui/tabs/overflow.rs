@@ -64,6 +64,10 @@ pub(super) fn viewport(
             .min_w_0()
             .h_full()
             .overflow_x_scroll()
+            .map(|mut viewport| {
+                viewport.style().restrict_scroll_to_axis = Some(true);
+                viewport
+            })
             .track_scroll(&scroll),
         px(width),
     )
@@ -204,17 +208,66 @@ impl gpui::RenderOnce for Trigger {
         super::super::e2e::measure_control("tab-overflow", trigger)
     }
 }
+
+pub(super) struct MenuTab {
+    key: u64,
+    name: SharedString,
+    path: SharedString,
+    remote: bool,
+    worktree: bool,
+}
+
+pub(super) fn entries(tabs: &[RepoTab]) -> Vec<MenuTab> {
+    tabs.iter()
+        .map(|tab| MenuTab {
+            key: tab.session.tab().0,
+            name: super::super::render_helpers::safe_text(&tab.name),
+            path: super::super::render_helpers::safe_text(&tab.path.display().to_string()),
+            remote: tab.remote.is_some(),
+            worktree: tab.is_worktree,
+        })
+        .collect()
+}
+
+impl MenuTab {
+    fn parent(&self) -> &std::path::Path {
+        let path = std::path::Path::new(self.path.as_ref());
+        path.parent().unwrap_or(path)
+    }
+
+    fn label(&self, duplicate: bool, shared_parent: bool) -> SharedString {
+        let marker = if self.remote {
+            "☁ "
+        } else if self.worktree {
+            "🌲 "
+        } else {
+            ""
+        };
+        if duplicate {
+            let qualifier = if shared_parent {
+                std::path::Path::new(self.path.as_ref())
+            } else {
+                self.parent()
+            };
+            format!("{marker}{} — {}", self.name, qualifier.display()).into()
+        } else if marker.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{marker}{}", self.name).into()
+        }
+    }
+}
 #[derive(gpui::IntoElement)]
 pub(super) struct Menu {
     app: gpui::WeakEntity<KagiApp>,
-    tabs: Vec<(u64, SharedString)>,
+    tabs: Vec<MenuTab>,
     home: bool,
     state: gpui::Entity<MenuState>,
 }
 
 pub(super) fn menu(
     app: gpui::WeakEntity<KagiApp>,
-    tabs: Vec<(u64, SharedString)>,
+    tabs: Vec<MenuTab>,
     home: bool,
     window: &mut Window,
     cx: &mut gpui::App,
@@ -281,44 +334,8 @@ impl Menu {
         if let Some(menu) = state.read(cx).menu.clone() {
             return menu;
         }
-        let app = self.app.clone();
-        let entries = self.tabs.clone();
-        let width = (window.viewport_size().width - px(34.))
-            .max(px(0.))
-            .min(theme::scaled_px(400.));
-        let menu = PopupMenu::build(window, cx, move |mut menu, _, _| {
-            menu = menu.min_w(width.min(theme::scaled_px(200.))).max_w(width);
-            for (index, (key, label)) in entries.into_iter().enumerate() {
-                let item_app = app.clone();
-                menu = menu.item(
-                    tab_item(index, label, width).on_click(move |_, window, cx| {
-                        let _ = item_app.update(cx, |app, cx| {
-                            if let Some(slot) =
-                                app.tabs.iter().position(|tab| tab.session.tab().0 == key)
-                            {
-                                let left = app.send_home_back();
-                                app.return_to_tab(slot, left, cx);
-                                if let Some(root) = &app.root_focus {
-                                    root.focus(window, cx);
-                                }
-                                cx.notify();
-                            }
-                        });
-                    }),
-                );
-            }
-            if self.home {
-                let item_app = app.clone();
-                menu = menu.item(
-                    tab_item(usize::MAX, Msg::HomeTabTitle.t().into(), width).on_click(
-                        move |_, window, cx| {
-                            let _ = item_app.update(cx, |app, cx| app.open_home_tab(window, cx));
-                        },
-                    ),
-                );
-            }
-            menu
-        });
+        let available = window.viewport_size().width;
+        let menu = PopupMenu::build(window, cx, |menu, _, _| self.items(menu, available));
         let popover_state = cx.entity();
         let popover = popover_state.downgrade();
         state.update(cx, |state, _| {
@@ -336,7 +353,69 @@ impl Menu {
         menu
     }
 }
-fn tab_item(index: usize, label: SharedString, width: gpui::Pixels) -> PopupMenuItem {
+
+impl Menu {
+    fn items(&self, mut menu: PopupMenu, available: gpui::Pixels) -> PopupMenu {
+        let width = (available - px(34.))
+            .max(px(0.))
+            .min(theme::scaled_px(400.));
+        menu = menu.min_w(width.min(theme::scaled_px(200.))).max_w(width);
+        let mut names = std::collections::HashMap::<&str, usize>::with_capacity(self.tabs.len());
+        let mut parents = std::collections::HashMap::new();
+        for tab in &self.tabs {
+            *names.entry(tab.name.as_ref()).or_default() += 1;
+        }
+        for tab in &self.tabs {
+            if names[tab.name.as_ref()] > 1 {
+                *parents
+                    .entry((tab.name.as_ref(), tab.parent()))
+                    .or_insert(0usize) += 1;
+            }
+        }
+        for (index, tab) in self.tabs.iter().enumerate() {
+            let duplicate = names[tab.name.as_ref()] > 1;
+            let shared_parent = duplicate && parents[&(tab.name.as_ref(), tab.parent())] > 1;
+            let label = tab.label(duplicate, shared_parent);
+            let key = tab.key;
+            let app = self.app.clone();
+            menu = menu.item(
+                tab_item(index, label, Some(tab.path.clone()), width).on_click(
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |app, cx| {
+                            if let Some(slot) =
+                                app.tabs.iter().position(|tab| tab.session.tab().0 == key)
+                            {
+                                let left = app.send_home_back();
+                                app.return_to_tab(slot, left, cx);
+                                if let Some(root) = &app.root_focus {
+                                    root.focus(window, cx);
+                                }
+                                cx.notify();
+                            }
+                        });
+                    },
+                ),
+            );
+        }
+        if self.home {
+            let app = self.app.clone();
+            menu = menu.item(
+                tab_item(usize::MAX, Msg::HomeTabTitle.t().into(), None, width).on_click(
+                    move |_, window, cx| {
+                        let _ = app.update(cx, |app, cx| app.open_home_tab(window, cx));
+                    },
+                ),
+            );
+        }
+        menu
+    }
+}
+fn tab_item(
+    index: usize,
+    label: SharedString,
+    path: Option<SharedString>,
+    width: gpui::Pixels,
+) -> PopupMenuItem {
     PopupMenuItem::element(move |window, _| {
         #[cfg(feature = "gui-e2e")]
         super::super::e2e::tab_strip::record(
@@ -344,12 +423,31 @@ fn tab_item(index: usize, label: SharedString, width: gpui::Pixels) -> PopupMenu
             gpui::Role::MenuItem,
             &label,
         );
+        #[cfg(feature = "gui-e2e")]
+        if let Some(path) = &path {
+            super::super::e2e::tab_strip::record_description(
+                format!("tab-overflow-item-{index}"),
+                path,
+            );
+        }
         div()
             .id(("tab-overflow-item", index))
             .role(gpui::Role::MenuItem)
             .aria_label(label.clone())
+            .when_some(path.clone(), |item, path| {
+                item.aria_description(path.clone())
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(path.clone()).build(window, cx)
+                    })
+            })
             .w_full()
             .max_w((width - window.rem_size() * 0.5 - px(16.)).max(px(0.)))
-            .child(div().truncate().child(label.clone()))
+            .child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis_middle()
+                    .whitespace_nowrap()
+                    .child(label.clone()),
+            )
     })
 }

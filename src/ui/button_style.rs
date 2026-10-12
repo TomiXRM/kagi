@@ -153,6 +153,14 @@ pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     }
 }
 
+struct AccessibleButton(Button);
+impl gpui::InteractiveElement for AccessibleButton {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.0.interactivity()
+    }
+}
+impl gpui::StatefulInteractiveElement for AccessibleButton {}
+
 /// Name glyph-only kit buttons without adding a second accessibility node.
 /// The pinned Button exposes Interactivity, but not its stateful AX builders.
 pub(crate) fn named_button(
@@ -160,13 +168,6 @@ pub(crate) fn named_button(
     label: impl Into<SharedString>,
     toggled: Option<bool>,
 ) -> Button {
-    struct AccessibleButton(Button);
-    impl gpui::InteractiveElement for AccessibleButton {
-        fn interactivity(&mut self) -> &mut gpui::Interactivity {
-            self.0.interactivity()
-        }
-    }
-    impl gpui::StatefulInteractiveElement for AccessibleButton {}
     let mut button = AccessibleButton(button).aria_label(label);
     if let Some(toggled) = toggled {
         button = button.aria_toggled(if toggled {
@@ -180,6 +181,20 @@ pub(crate) fn named_button(
         button.0 = button.0.on_key_down(move |_, _, _| {
             super::e2e::pr_detail::record_key_focus(id.clone());
         });
+    }
+    button.0
+}
+
+/// Add a path description to the same kit Button node without changing naming.
+pub(crate) fn named_button_described(
+    button: Button,
+    label: impl Into<SharedString>,
+    toggled: Option<bool>,
+    description: Option<SharedString>,
+) -> Button {
+    let mut button = AccessibleButton(named_button(button, label, toggled));
+    if let Some(description) = description {
+        button = button.aria_description(description);
     }
     button.0
 }

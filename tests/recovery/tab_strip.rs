@@ -94,6 +94,7 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     keyboard_tail(cx, window, &app);
     selection_reveal(cx, window, &app);
+    wheel_axes(cx, window);
     // Retiring the strip while its popover owns focus must dismiss the real
     // kit menu without retaining a deferred popover registration.
     click(cx, window, "tab-overflow");
@@ -163,20 +164,64 @@ fn selection_reveal(
     );
 }
 
+fn wheel_axes(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let scroll = e2e::tab_strip::scroll().unwrap();
+    let before = scroll.offset();
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: scroll.bounds().center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(200.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    draw(cx, window);
+    assert_eq!(
+        scroll.offset(),
+        before,
+        "vertical wheel must not scroll tabs"
+    );
+    cx.simulate_event(
+        window,
+        gpui::ScrollWheelEvent {
+            position: scroll.bounds().center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(200.), px(0.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    draw(cx, window);
+    assert_ne!(
+        scroll.offset(),
+        before,
+        "horizontal wheel still scrolls tabs"
+    );
+}
+
 pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let fixtures: Vec<_> = (0..3).map(|_| crate::macos::build_fixture()).collect();
-    let (app, window) = mount(cx, fixtures[0].path());
-    for fixture in fixtures.iter().skip(1) {
-        app.update(cx, |app, cx| {
-            assert!(app.open_repository(fixture.path().to_path_buf(), cx));
-        });
+    let paths: Vec<_> = fixtures
+        .iter()
+        .map(|fixture| {
+            crate::macos::git(fixture.path(), &["clone", "-q", ".", "same-repository"]);
+            fixture.path().join("same-repository")
+        })
+        .collect();
+    let (app, window) = mount(cx, &paths[0]);
+    for path in paths.iter().skip(1) {
+        app.update(cx, |app, cx| assert!(app.open_repository(path.clone(), cx)));
         cx.run_until_parked();
     }
     app.update(cx, |app, _| {
-        for tab in &mut app.tabs {
-            tab.name = "same-repository".into();
-        }
+        app.tabs[0].remote = Some(kagi::ui::RemoteRepoView {
+            host: kagi_domain::remote::RemoteHost::parse("example.test").unwrap(),
+            root: "/srv/same-repository".into(),
+        });
+        app.tabs[1].is_worktree = true;
     });
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_home_tab(window, cx))
@@ -198,6 +243,12 @@ pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
                     .to_owned()
                 ))
             );
+            let description = e2e::tab_strip::description(&format!("tab-close-{index}"))
+                .expect("close describes its own repository path");
+            assert_eq!(
+                std::path::Path::new(&description).canonicalize().unwrap(),
+                paths[index].canonicalize().unwrap()
+            );
         }
         assert_eq!(
             e2e::tab_strip::control("home-tab-close"),
@@ -206,11 +257,52 @@ pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
                 if lang == i18n::Lang::En {
                     "Close Home"
                 } else {
-                    "Home を閉じる"
+                    "ホーム を閉じる"
                 }
                 .to_owned()
             ))
         );
+        duplicate_menu(cx, window, &app);
     }
     unmount(cx, app, window);
+}
+
+fn duplicate_menu(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
+    click(cx, window, "tab-overflow");
+    cx.run_until_parked();
+    draw(cx, window);
+    let paths = app.read_with(cx, |app, _| {
+        app.tabs
+            .iter()
+            .map(|tab| tab.path.clone())
+            .collect::<Vec<_>>()
+    });
+    for (index, path) in paths.iter().enumerate() {
+        let id = format!("tab-overflow-item-{index}");
+        let marker = match index {
+            0 => "☁ ",
+            1 => "🌲 ",
+            _ => "",
+        };
+        assert_eq!(
+            e2e::tab_strip::control(&id),
+            Some((
+                Role::MenuItem,
+                format!(
+                    "{marker}same-repository — {}",
+                    path.parent().unwrap().display()
+                )
+            ))
+        );
+        assert_eq!(
+            e2e::tab_strip::description(&id),
+            Some(path.display().to_string())
+        );
+    }
+    crate::keyboard_nav::keys(cx, window, "escape");
+    draw(cx, window);
 }

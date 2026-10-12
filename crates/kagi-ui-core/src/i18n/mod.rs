@@ -44,7 +44,7 @@ pub use op::{
     recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
 
-/// Accessibility action for a document tab; Home keeps its feature name.
+/// Accessibility action for a document tab's localized display name.
 pub fn tab_close_name(name: &str) -> String {
     match lang() {
         Lang::En => format!("Close {name}"),

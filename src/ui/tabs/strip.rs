@@ -47,15 +47,7 @@ impl KagiApp {
         viewport = viewport.child(overflow::probe(cx.weak_entity(), window, cx));
         let menu = overflow::menu(
             cx.weak_entity(),
-            self.tabs
-                .iter()
-                .map(|tab| {
-                    (
-                        tab.session.tab().0,
-                        super::super::render_helpers::safe_text(&tab.name),
-                    )
-                })
-                .collect(),
+            overflow::entries(&self.tabs),
             home_slot.is_some(),
             window,
             cx,
@@ -182,13 +174,15 @@ fn repository_tab(
         gpui::Role::Button,
         &close_name,
     );
-    let close = close_button(("tab-close", slot), close_name).on_click(cx.listener(
-        move |app, _, _, cx| {
+    #[cfg(feature = "gui-e2e")]
+    super::super::e2e::tab_strip::record_description(format!("tab-close-{slot}"), &path);
+    let close = close_button(("tab-close", slot), close_name, Some(path.clone())).on_click(
+        cx.listener(move |app, _, _, cx| {
             if let Some(slot) = app.tabs.iter().position(|tab| tab.session == key) {
                 app.close_tab(slot, cx);
             }
-        },
-    ));
+        }),
+    );
     let close = div()
         .id(("tab-close-reveal", slot))
         .opacity(if selected || focused { 1. } else { 0. })
@@ -221,10 +215,10 @@ fn home_tab(
     width: gpui::Pixels,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let close_name = i18n::tab_close_name("Home");
+    let close_name = i18n::tab_close_name(Msg::HomeTabTitle.t());
     #[cfg(feature = "gui-e2e")]
     super::super::e2e::tab_strip::record("home-tab-close", gpui::Role::Button, &close_name);
-    let close = close_button("home-tab-close", close_name)
+    let close = close_button("home-tab-close", close_name, None)
         .on_click(cx.listener(|app, _, _, cx| app.close_home_tab(cx)));
     let close = div()
         .id("home-tab-close-reveal")
@@ -244,10 +238,14 @@ fn home_tab(
         .into_any_element()
 }
 
-fn close_button(id: impl Into<gpui::ElementId>, name: String) -> Button {
+fn close_button(
+    id: impl Into<gpui::ElementId>,
+    name: String,
+    path: Option<SharedString>,
+) -> Button {
     // A visible child, not Button.label: the kit's label would overwrite the
     // independent name with × during RenderOnce.
-    super::super::button_style::named_button(
+    super::super::button_style::named_button_described(
         Button::new(id)
             .child("×")
             .ghost()
@@ -258,6 +256,7 @@ fn close_button(id: impl Into<gpui::ElementId>, name: String) -> Button {
             .tab_stop(false),
         name,
         None,
+        path,
     )
 }
 

@@ -239,6 +239,7 @@ pub fn render_raw_preview(
     path: &Path,
     kind: ConflictKind,
     labels: &SideLabels,
+    scroll: &gpui::ScrollHandle,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some((current, incoming)) = side_pair(mode, path, kind) else {
@@ -250,8 +251,6 @@ pub fn render_raw_preview(
         current.mode == BinaryViewMode::Binary || incoming.mode == BinaryViewMode::Binary;
 
     #[cfg(feature = "gui-e2e")]
-    let scroll = gpui::ScrollHandle::new();
-    #[cfg(feature = "gui-e2e")]
     super::e2e::diff_presentation::record_conflict_scroll(scroll.clone());
     let mut col = div()
         .id("conflict-raw-preview")
@@ -262,13 +261,16 @@ pub fn render_raw_preview(
         .min_w(px(0.))
         .self_stretch()
         .overflow_y_scroll()
+        .track_scroll(scroll)
         .gap(theme::scaled_px(8.))
         .child(
             div()
                 .flex()
                 .flex_row()
-                .flex_1()
-                .min_h(px(0.))
+                .when(
+                    current.mode == BinaryViewMode::Image || incoming.mode == BinaryViewMode::Image,
+                    |row| row.flex_1().min_h(px(0.)),
+                )
                 .self_stretch()
                 .justify_center()
                 .gap(theme::scaled_px(12.))
@@ -287,13 +289,12 @@ pub fn render_raw_preview(
                     "conflict-image-incoming",
                 )),
         );
-    #[cfg(feature = "gui-e2e")]
-    {
-        col = col.track_scroll(&scroll);
-    }
 
     if show_external {
-        col = col.child(external_compare_button(path, _cx));
+        col = col.child(super::e2e::measure_control(
+            "conflict-open-both-external",
+            external_compare_button(path, _cx),
+        ));
     }
 
     // Padding belongs to the bounded pane, not the scroll content: fractional
@@ -324,7 +325,8 @@ fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
                     .w_full()
                     .relative()
                     .child(super::e2e::measure_inside(probe))
-                    .flex_1()
+                    .aspect_ratio(1.)
+                    .flex_shrink(1.)
                     .min_h(px(0.))
                     .max_h(theme::scaled_px(IMAGE_MAX_PX))
                     .overflow_hidden()
@@ -353,6 +355,14 @@ fn side_body(data: &SideData, probe: &'static str) -> gpui::AnyElement {
                 .child(mono(data.oid_short.clone()))
                 .into_any_element(),
             BinaryViewMode::Binary => div()
+                .relative()
+                .child(super::e2e::measure_inside(
+                    if probe == "conflict-image-current" {
+                        "conflict-binary-current-body"
+                    } else {
+                        "conflict-binary-incoming-body"
+                    },
+                ))
                 .flex()
                 .flex_col()
                 .gap(theme::scaled_px(2.))
@@ -388,7 +398,7 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
         .flex_col()
         .w(theme::scaled_px(IMAGE_MAX_PX))
         .flex_shrink(1.)
-        .h_full()
+        .when(data.mode == BinaryViewMode::Image, |column| column.h_full())
         .min_h(px(0.))
         .min_w(px(0.))
         .gap(theme::scaled_px(4.))

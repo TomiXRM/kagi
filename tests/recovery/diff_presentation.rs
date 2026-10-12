@@ -151,6 +151,19 @@ pub(crate) fn assert_conflict_binary_states(cx: &mut VisualTestAppContext) {
             }),
             "{locale}: binary conflict explanation must render"
         );
+        let button = e2e::control_bounds(win.window_id(), "conflict-open-both-external").unwrap();
+        let body_bottom = [
+            "conflict-binary-current-body",
+            "conflict-binary-incoming-body",
+        ]
+        .map(|name| e2e::control_bounds(win.window_id(), name).unwrap().bottom())
+        .into_iter()
+        .max()
+        .unwrap();
+        assert!(
+            (f32::from(button.top() - body_bottom - theme::scaled_px(8.))).abs() < 1.,
+            "{locale}: external compare must follow binary captions immediately"
+        );
         drop(conflict);
         unmount(cx, app, win);
     }
@@ -255,6 +268,14 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
             "image metadata",
         );
         assert!((f32::from(column.size.width - bounds(side).size.width)).abs() < 1.);
+        assert!(
+            bounds(side).size.height > gpui::px(0.),
+            "image box must not collapse"
+        );
+        assert!(
+            bounds(side).size.height <= theme::scaled_px(260.) + gpui::px(1.),
+            "image box exceeds its scaled height cap"
+        );
         let caption = e2e::diff_presentation::image_caption(side).unwrap();
         assert!(caption.contains(i18n::Msg::ImageFileSize.t()));
         assert!(caption.contains(i18n::Msg::ImageDimensions.t()));
@@ -267,6 +288,14 @@ fn assert_image_geometry(win: AnyWindowHandle, locale: &str, zoom: f32, dimensio
             .x,
         gpui::px(0.),
         "{locale}/{zoom}/{dimensions:?}: horizontal scroll extent must be zero"
+    );
+    assert_eq!(
+        e2e::diff_presentation::conflict_scroll()
+            .unwrap()
+            .max_offset()
+            .y,
+        gpui::px(0.),
+        "{locale}/{zoom}/{dimensions:?}: vertical scroll extent must be zero"
     );
     for image in [current, incoming] {
         assert!(

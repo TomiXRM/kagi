@@ -91,6 +91,7 @@ pub struct EditorChrome {
     pub geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     /// Measured (left, right) screen-px bounds of the A·B row.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    pub raw_preview_scroll: gpui::ScrollHandle,
     /// Per-side syntax-highlight cache for the A/B row lists (ADR-0135).
     /// Interior-mutable so the render path can fill it lazily; keyed by
     /// (path, theme slug) — row TEXT never changes within a session, only the
@@ -157,6 +158,8 @@ pub struct ConflictView {
     /// T-CONFLICT-UI-003: measured (left, right) screen-px bounds of the A·B
     /// row, for the vertical A|B divider drag. Shared with `KagiApp` as above.
     pub ab_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
+    /// Stable raw-preview scroll owner, shared by production and E2E renders.
+    pub raw_preview_scroll: gpui::ScrollHandle,
     /// T-CONFLICT-UX-010/012: index (among conflict hunks) of the focused hunk
     /// in the per-hunk Conflict Editor.
     pub selected_hunk: usize,
@@ -215,6 +218,7 @@ impl ConflictView {
             result_split: super::CONFLICT_RESULT_DEFAULT,
             geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             ab_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
+            raw_preview_scroll: gpui::ScrollHandle::new(),
             hl_cache: std::rc::Rc::new(std::cell::RefCell::new(None)),
             selected_hunk: 0,
             ab_scroll_handle: UniformListScrollHandle::new(),
@@ -639,6 +643,7 @@ impl ConflictView {
             selected_hunk: self.selected_hunk,
             geom: self.geom.clone(),
             ab_geom: self.ab_geom.clone(),
+            raw_preview_scroll: self.raw_preview_scroll.clone(),
             hl_cache: self.hl_cache.clone(),
         }
     }
@@ -1052,7 +1057,7 @@ pub fn render_body(
             let path = file.path.clone();
             super::conflict_editor::render_editor(mode, chrome, &path, window_active, cx)
         }
-        _ => render_center(mode, chrome.writer_busy, cx),
+        _ => render_center(mode, chrome.writer_busy, &chrome.raw_preview_scroll, cx),
     };
     // flex_1 + min_h(0) (NOT size_full): in the root flex_col the conflict body
     // must share height with the bottom panel + status bar, not take 100% and
@@ -1905,6 +1910,7 @@ fn render_dir_file_center(
 fn render_center(
     mode: &ConflictMode,
     writer_busy: bool,
+    raw_preview_scroll: &gpui::ScrollHandle,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(idx) = mode.selected_file else {
@@ -2003,7 +2009,7 @@ fn render_center(
         ));
     }
 
-    let preview = render_preview(mode, &path, kind, &labels, cx);
+    let preview = render_preview(mode, &path, kind, &labels, raw_preview_scroll, cx);
 
     div()
         .flex()
@@ -2035,11 +2041,19 @@ fn render_preview(
     path: &std::path::Path,
     kind: ConflictKind,
     labels: &SideLabels,
+    raw_preview_scroll: &gpui::ScrollHandle,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // #321: binary / symlink / submodule get an informative side-by-side viewer.
     if kind.is_raw() {
-        return super::conflict_binary_view::render_raw_preview(mode, path, kind, labels, cx);
+        return super::conflict_binary_view::render_raw_preview(
+            mode,
+            path,
+            kind,
+            labels,
+            raw_preview_scroll,
+            cx,
+        );
     }
     let body: gpui::AnyElement = if let Some(text) = mode.buffer.resolved_text(path) {
         let mut col = div().flex().flex_col();

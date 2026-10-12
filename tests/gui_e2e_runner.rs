@@ -73,6 +73,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/plan_labels.rs"]
+mod plan_labels;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -123,6 +127,10 @@ mod smart_picker;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_filter.rs"]
+mod sidebar_filter;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -258,6 +266,9 @@ mod conflict_continue_cache;
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_file_selection.rs"]
 mod conflict_file_selection;
+#[cfg(target_os = "macos")]
+#[path = "recovery/conflict_text_keyboard.rs"]
+mod conflict_text_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/repo_health.rs"]
@@ -305,6 +316,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_controls.rs"]
+mod settings_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
@@ -1323,6 +1337,10 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_filter_tab_entry",
+                Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
+            ),
+            (
                 "hairline_dividers",
                 Box::new(crate::recovery_hairline_dividers::scenario_hairline_dividers),
             ),
@@ -1474,6 +1492,9 @@ mod macos {
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
+            ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
+            ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
+            ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (
                 "replay_onto_armed",
                 Box::new(crate::recovery_operations::scenario_replay_onto_armed),
@@ -2157,6 +2178,18 @@ mod macos {
                 Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
             ),
             (
+                "conflict_text_keyboard",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_text_keyboard),
+            ),
+            (
+                "conflict_resolver_rebuild",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_rebuild),
+            ),
+            (
+                "conflict_resolver_roles",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_roles),
+            ),
+            (
                 "modal_polish_editor_fs",
                 Box::new(crate::modal_polish_b::scenario_modal_polish_editor_fs),
             ),
@@ -2296,6 +2329,14 @@ mod macos {
             (
                 "settings_hidden_return_target",
                 Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
+                "settings_provider_keys",
+                Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_analyze_ignore_feedback",
+                Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
             (
                 "settings_switches",
@@ -2527,6 +2568,7 @@ mod macos {
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
+            ("status_bar_busy_height", Box::new(crate::status_bar_fit::scenario_status_bar_busy_height)),
             ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
             ("status_bar_short_branch", Box::new(crate::status_bar_fit::scenario_status_bar_short_branch)),
             (
@@ -3371,6 +3413,18 @@ mod macos {
             (
                 "graph_column_divider_hidden",
                 Box::new(crate::graph_column_divider::scenario_graph_column_divider_hidden),
+            ),
+            (
+                "graph_columns_fit",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_fit),
+            ),
+            (
+                "graph_columns_compressed_drag",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_compressed_drag),
+            ),
+            (
+                "graph_columns_inspector_fit",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (

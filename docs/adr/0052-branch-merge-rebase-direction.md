@@ -37,3 +37,16 @@ hard blocker にする方針を撤回**する(W31-MERGE-INTO-CONFLICT)。上記 
   reset --hard/clean 不使用)に委譲し、pre-merge の clean 状態へ戻す。
 - 本改訂は **merge のみ**。cherry-pick / revert / stash-pop の同等化は別 wave。
 - non-conflict(ff / merge-commit)の意味論は §Merge から変更なし。
+
+## Amendment — 2026-10-12: bounded confirmation captions (#1343/#1344)
+
+The plan heading retains both complete source and destination identities.
+Its Rebase/Replay action names the source (`Rebase <source>` / JA
+`<source> を rebase`), not the destination. Long action captions use a
+zoom-scaled 160px middle-ellipsis region; the full action and directional
+plan title remain available in the action tooltip/accessibility description.
+This relaxes the original requirement to repeat both full names in every
+visible action, not the requirement to disclose operation direction.
+Replay retains its warning caption and existing two-stage approval gate.
+The armed warning has no branch name and uses the ordinary, unellipsized
+button so its complete safety wording remains visible in both languages.

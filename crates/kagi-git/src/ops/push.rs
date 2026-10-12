@@ -507,14 +507,9 @@ fn build_push_preview(
             .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
 
         let short = &oid.to_string()[..8];
-        let summary: String = commit
-            .summary()
-            .ok()
-            .flatten()
-            .unwrap_or("(no message)")
-            .chars()
-            .take(72)
-            .collect();
+        let summary = kagi_domain::text_safety::display_subject(
+            commit.summary().ok().flatten().unwrap_or("(no message)"),
+        );
         result.push(format!("{}  {}", short, summary));
     }
 
@@ -580,14 +575,9 @@ fn build_push_preview_for_oid(
             .find_commit(oid)
             .map_err(|e| GitError::Other(format!("commit lookup failed: {}", e.message())))?;
         let short = short_oid_string(oid);
-        let summary: String = commit
-            .summary()
-            .ok()
-            .flatten()
-            .unwrap_or("(no message)")
-            .chars()
-            .take(72)
-            .collect();
+        let summary = kagi_domain::text_safety::display_subject(
+            commit.summary().ok().flatten().unwrap_or("(no message)"),
+        );
         result.push(format!("{}  {}", short, summary));
     }
     Ok(result)

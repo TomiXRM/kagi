@@ -30,6 +30,7 @@ pub mod activity;
 pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
+mod conflict;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
@@ -595,6 +596,9 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    EditorSelectionNone,
+    EditorSelectionPartial,
+    EditorSelectionAll,
     /// Inspector file context menu: open the file in the Editor Workspace.
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
@@ -1006,6 +1010,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreSave,
     /// Analyze-ignore → Reset-to-defaults button.
     SettingsAnalyzeIgnoreReset,
+    SettingsAnalyzeIgnoreUnsaved,
+    SettingsAnalyzeIgnoreSaved,
+    SettingsAnalyzeIgnoreFailed,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -2754,6 +2761,12 @@ impl Msg {
             // blocks land in the result when both sides are taken.
             (En | Ja, EditorCurrentFirst) => "Current → Incoming",
             (En | Ja, EditorIncomingFirst) => "Incoming → Current",
+            (En, EditorSelectionNone) => "Not adopted",
+            (Ja, EditorSelectionNone) => "未採用",
+            (En, EditorSelectionPartial) => "Partially adopted",
+            (Ja, EditorSelectionPartial) => "一部を採用",
+            (En, EditorSelectionAll) => "Fully adopted",
+            (Ja, EditorSelectionAll) => "すべて採用済み",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
@@ -3528,6 +3541,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
             (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
             (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+            (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
+            (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
+            (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -3676,7 +3695,7 @@ impl Msg {
             (En, PlanMerge) => "Merge",
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
-            (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (Ja, PlanRebaseOnto) => "{} を rebase",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",
@@ -4439,6 +4458,11 @@ pub fn commit_button() -> &'static str {
     }
 }
 
+/// Analyze settings failure; the filesystem path and OS cause stay verbatim.
+pub fn analyze_ignore_failed_fmt(detail: &str) -> String {
+    format!("{}: {detail}", Msg::SettingsAnalyzeIgnoreFailed.t())
+}
+
 /// A missing pre-rename history path, with the current filename left verbatim.
 pub fn file_history_renamed_fmt(path: &str) -> String {
     Msg::FileHistoryPathRenamed.t().replace("{path}", path)
@@ -4746,6 +4770,33 @@ mod standard_app_menu_tests {
         ] {
             assert_eq!(message.t_for(Lang::En), en);
             assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}
+
+#[cfg(test)]
+mod rebase_plan_label_tests {
+    use super::*;
+
+    #[test]
+    fn rebase_plan_labels_name_source_not_destination() {
+        for branch in ["feature", "main"] {
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Rebase {branch}")
+            );
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を rebase")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Replay {branch}")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を replay")
+            );
         }
     }
 }

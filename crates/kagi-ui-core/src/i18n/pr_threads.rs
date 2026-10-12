@@ -17,3 +17,21 @@ pub fn resolved() -> &'static str {
         Lang::Ja => "解決済み",
     }
 }
+
+/// Reveal context omitted by the compact review-hunk preview.
+pub fn show_more_lines(count: usize) -> String {
+    match lang() {
+        Lang::En => format!(
+            "Show {count} previous line{}",
+            if count == 1 { "" } else { "s" }
+        ),
+        Lang::Ja => format!("前の {count} 行を表示"),
+    }
+}
+
+pub fn collapse_hunk() -> &'static str {
+    match lang() {
+        Lang::En => "Collapse",
+        Lang::Ja => "折りたたむ",
+    }
+}

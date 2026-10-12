@@ -9,6 +9,7 @@
 // #707 review: accessors live here, never in the feature modules that open a
 // modal. Split by feature as this file hits its LOC ceiling, not by relocating
 // them somewhere `active_modal` gets touched directly.
+mod analyze_help;
 mod apply_suggestion;
 mod arbitration;
 mod conflict;
@@ -56,6 +57,7 @@ impl KagiApp {
                 M::RemoteBrowse(_)
                 | M::Clone(_)
                 | M::AppNotice(_)
+                | M::AnalyzeHelp(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)
@@ -137,6 +139,7 @@ impl KagiApp {
                 | M::Update(_)
                 | M::SmartCommit(_)
                 | M::AppNotice(_)
+                | M::AnalyzeHelp(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)

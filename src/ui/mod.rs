@@ -5,6 +5,7 @@
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
 pub mod activity_view;
+mod analyze_help;
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
@@ -50,6 +51,7 @@ mod env_tests;
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
 mod diff_selection;
+mod editor_pane_selectors;
 pub mod editor_tree_menu;
 pub mod editor_workspace;
 mod external_editor;
@@ -1192,6 +1194,9 @@ pub struct KagiApp {
     /// Issue #352: index of the highlighted row in the command palette's current
     /// (filtered) result list. Reset to 0 on open and on every query change.
     pub command_palette_selected: usize,
+    /// #1271: last pointer coordinates, not a second hover/selection owner.
+    /// Ignore GPUI's stationary move replay when results scroll underneath it.
+    pub(crate) command_palette_pointer: Option<gpui::Point<gpui::Pixels>>,
     /// #1069: lazily created list scroll, retained across redraws and reset on
     /// open. Child-bound reveals keep variable-height disabled reasons intact.
     pub(crate) command_palette_scroll: Option<gpui::ScrollHandle>,
@@ -1512,6 +1517,7 @@ impl KagiApp {
             pr_fields_generation: 0,
             pr_fields_input: None,
             command_palette_selected: 0,
+            command_palette_pointer: None,
             command_palette_scroll: None,
             // W3-NOTIFY
             // Created in `open_main_window`'s `cx.new` closure (needs `cx`).
@@ -2976,11 +2982,11 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Enter while a modal is open: confirm/approve the active modal. Returns
-    /// `true` if a modal was open — the caller consumes Enter and does NOT fall
-    /// through to commit checkout. Each confirm method self-guards on blockers
-    /// and on its own two-stage arming, so Enter can neither execute a blocked
-    /// plan nor skip a stage. View-only/multi-choice overlays (update,
+    /// Explicit approval of the active modal. The root keyboard router selects
+    /// Cancel instead for destructive defaults. Returns `true` if a modal was
+    /// open, preventing fall-through to commit checkout. Each confirm method
+    /// self-guards on blockers and its own two-stage arming; approval can
+    /// neither execute a blocked plan nor skip a stage. View-only/multi-choice overlays (update,
     /// menu/settings) are consumed but not actioned.
     ///
     /// #492: the `match` over [`ActiveModal`] is **exhaustive** — a new variant
@@ -3022,6 +3028,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
@@ -3109,6 +3116,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),
@@ -3499,13 +3507,13 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 
             // The bottom panel now opens on the Terminal tab by default
             // (user request) — start the shell as soon as a Window
-            // context exists. ensure_terminal is a no-op without a repo
+            // context exists. activate_terminal is a no-op without a repo
             // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
             // headless trigger.
             if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
                 || kagi.read(cx).bottom_panel_open
             {
-                kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
+                kagi.update(cx, |app, cx| app.activate_terminal(window, cx));
             }
 
             // W4-TABS / ADR-0027: arm the .git watcher for the initial tab

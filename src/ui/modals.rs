@@ -696,6 +696,8 @@ pub enum ActiveModal {
     Update(UpdateModal),
     SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
+    /// Read-only Analyze help; payload is the stable opener to restore.
+    AnalyzeHelp(gpui::FocusHandle),
     Checkout(CheckoutPlanModal),
     QueuedCommit(QueuedCommitModal),
     Pull(PullPlanModal),
@@ -752,6 +754,7 @@ impl ActiveModal {
         match self {
             M::AppNotice(_) | M::RemoteBrowse(_) | M::Clone(_) | M::Update(_) => false,
             M::SmartCommit(_)
+            | M::AnalyzeHelp(_)
             | M::Checkout(_)
             | M::QueuedCommit(_)
             | M::Pull(_)

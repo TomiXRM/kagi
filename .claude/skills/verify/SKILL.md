@@ -56,6 +56,15 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1225 compact layout integration, use
+`KAGI_GUI_E2E_ONLY='compact_layout_,commit_panel_,home_,toolbar_overflow,bottom_panel,analyze_a11y_,pr_detail_a11y_'`
+with KEEP_GOING and the unchanged 120s per-scenario deadline.
+The geometry matrix is partitioned across `compact_layout_geometry` (660px,
+100%), `_zoom167` (660px, 167%), `_tall` (1000px, 100%) and `_tall_zoom167`
+(1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
+same assertions and real rail interactions; the broad filter selects every
+partition. This bounds process runtime without dropping matrix cells.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
@@ -68,6 +77,20 @@ selected session and selected file. `KagiApp::set_window_active_for_e2e` overrid
 activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
+
+For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
+`conflict_file_selection` finds the actual dashboard Next button through real
+Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
+owns the window's last Tab stop (#1222 added status-bar stops). Space and Enter
+must paint the same inactive `#d3d3d3` selection and selected AX option; pointer,
+hover, editor navigation, binary cleanup and draft-resolution assertions remain.
+The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
+for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
+checks that the retained stash has no write lease before explicit approval,
+confirmed Drop records exactly one successful receipt, and root Return leaves
+the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
+and close/reopen owner lifetime remain covered. These are native Tier A oracles,
+not a change to product safety or Tier B evidence.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
@@ -138,6 +161,20 @@ exercise avatar/custom-theme/Analyze help builders in both languages.
 `settings_view::take_settings_help_for_e2e` consumes only text actually passed
 to an invoked Tooltip builder; each hover clears old observations first.
 This is renderer/tooltip-construction evidence, not native VoiceOver delivery.
+
+For #1271/#1272 use `KAGI_GUI_E2E_ONLY=palette_` with KEEP_GOING. The
+`palette_highlight` scenario compares native row-fill pixels with the one AX
+selected result, moves the pointer to a different real row, scrolls beneath the
+resting pointer (including same-coordinate move replay), and presses Enter;
+unavailable rows stay inert. `palette_shortcut_glyphs` reads renderer-fed
+captions and measures non-overlapping, right-aligned trailing-column bounds
+at 940×660 / 1392×883, 100% / 167%, EN / JA, Apple Light / Dark.
+Only the exact KEEP_GOING child for this scenario installs its saved remaps/
+unassignment **before** `init_app`, because `effective_keystroke` caches settings
+during production startup; changing settings after keymap registration would
+not test remapping. Other same-process scenarios retain their normal bindings.
+The guard restores those isolated startup keys after the run. Native pointer
+delivery, IME and VoiceOver remain Tier B, not claims from TestDispatcher.
 
 ```bash
 # One scenario: the substring the scenario name contains.
@@ -252,8 +289,24 @@ Restoring state:
 - A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`,
   and `gui_isolation::StandInShell::install()` unless it sets its own seam shell
   (`KagiApp::set_terminal_shell_for_e2e`). The stand-in is a `/bin/sh` script
-  that reads lines until `exit` or EOF; its PID and cwd are real, so the
+  that reads lines until `exit`, `exit N` (returning code N) or EOF; its PID and cwd are real, so the
   auto-lock cwd probe and exit delivery behave as with a login shell.
+
+For #1273 use `KAGI_GUI_E2E_ONLY='terminal_states,terminal_auto_lock'`.
+`terminal_states` measures NotStarted / Exited(3) / Failed(reason) icon, title,
+hint and Primary Restart bounds in EN/JA at 100%/167%; Enter/Space and pointer
+activation use the existing spawn seam. Failed starts target a nonexistent
+fixture binary, never `$SHELL`; the OS reason and unchanged failed-start
+Operation Log path are retained. Real tab round-trips preserve Exited/Failed
+without another spawn; Restart alone retries. Native log-tail assertions require the
+unchanged shell-exited line once, before the shell-wait status line. The
+recorder proves renderer state, not real VoiceOver or Tier B focus delivery.
+The wait-error leg uses `KagiApp::set_next_terminal_wait_error_for_e2e`:
+the next spawned StandInShell is really waited/reaped before its result is
+replaced by an I/O error. The presentation must become Failed with its reason
+and recover through Restart; provenance stays Unknown, with no unlock offer
+and no shell-exited log line. JA asserts localized `（終了コード N）` and
+the existing `shell` spelling. The one-shot seam compiles only with gui-e2e.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`
@@ -399,6 +452,20 @@ The current suite covers:
   Tier B: open Analyze → Health on a repository without a commit-graph and
   with `core.fsmonitor` unset, check the EN/JA texts, open each fix, read
   the plan card (equivalent command, recovery) and Cancel, then confirm one.
+- Analyze accessibility (`KAGI_GUI_E2E_ONLY=analyze_a11y`, KEEP_GOING recommended,
+  `tests/recovery/analyze_a11y.rs`): #1265–#1268 uses synthetic FileMetric data
+  with the production bounded renderer, not a real Git mine. EN/JA, 100/167%,
+  Apple Light/Dark, 940×660 and 1392×883 assert named selected Tab controls,
+  actual arrow/Enter/Space dispatch, coupling expanded state, inert disabled Copy,
+  model-matching risk text/AX descriptions, exact 150/300 render caps and a
+  localized Status notice only above the cap. Help uses the single ActiveModal
+  slot, named dialog, Tab/Shift+Tab trap, Escape and exact opener focus return.
+  Attribute probes record where renderer semantics are installed; these are
+  not native VoiceOver assertions. Keep `repo_health_proposal` and
+  `ecosystem_evidence_` alongside it. The behavior-preserving shared TabList
+  extraction additionally runs `commit_panel_segment_keys,editor_toggle_keys,home_,tabs_,workspace_mode`.
+  Tier B: compare toolbar focus/disabled Copy, List/Map numeric risk and capped
+  notices, coupling disclosure, and Help scroll/Escape/opener focus in EN/JA.
 - text-first diff highlight (`KAGI_GUI_E2E_ONLY=diff_highlight`,
   `tests/recovery/diff_highlight.rs`): #495. WIP, Compare and File History
   diffs are read off the UI thread and first appear as unhighlighted text

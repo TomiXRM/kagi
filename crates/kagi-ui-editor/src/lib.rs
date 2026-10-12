@@ -25,8 +25,17 @@
 mod blame;
 mod bottom_panel;
 pub mod markdown;
+mod pane_selectors;
 mod panes;
+pub use pane_selectors::EditorPaneSelectors;
+#[cfg(feature = "gui-e2e")]
+mod tab_probes;
+#[cfg(feature = "gui-e2e")]
+pub use tab_probes::EditorTabProbe;
 mod save_binding;
+mod snapshot;
+mod tabs;
+use tabs::render_tab_strip;
 mod tree_layout;
 mod watcher;
 
@@ -55,7 +64,7 @@ use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::tree_a11y;
 
-pub(crate) use panes::{render_history_pane, render_snapshot_pane};
+pub(crate) use panes::render_history_pane;
 use save_binding::{deliver, dirty_after_save, SaveDelivery};
 
 /// What the Editor Workspace asks of the host app (ADR-0121 C4). Everything
@@ -133,6 +142,7 @@ pub struct EditorHooks {
     /// `render_hunks`, over a second opaque field so the WIP hunks diff and
     /// the History diff never clobber each other.
     pub render_history_diff: RenderHunksFn,
+    pub pane_selectors: Box<dyn EditorPaneSelectors>,
 }
 
 /// Boxed diff-pane renderer (see [`EditorHooks::render_hunks`] /
@@ -305,7 +315,7 @@ pub struct EditorWorkspaceView {
     /// arrow-key stepping (bug report) the moment a user had clicked into the
     /// text pane even once. `set_right_tab` / `select_history_commit`
     /// reclaim it explicitly.
-    root_focus: gpui::FocusHandle,
+    pub root_focus: gpui::FocusHandle,
 
     /// Which files `files`/`tree` are currently listing (T-WS-EDITOR-004).
     pub source: TreeSource,
@@ -353,6 +363,10 @@ pub struct EditorWorkspaceView {
     /// active+cache swap pattern as `KagiApp.active_view`/`tab_cache`
     /// (ADR-0075), so the render/loader code keeps reading the flat fields.
     pub open_tabs: Vec<PathBuf>,
+    tab_scroll: gpui::ScrollHandle,
+    tab_presentation: tabs::TabPresentation,
+    #[cfg(feature = "gui-e2e")]
+    tab_probes: tab_probes::TabProbes,
     /// Stashed per-file state for the INACTIVE tabs, keyed by path.
     tab_cache: HashMap<PathBuf, EditorBufferState>,
     /// `true` while the selected file's content + diff load is in flight.
@@ -444,20 +458,17 @@ pub struct EditorWorkspaceView {
     /// selected so switching to History immediately sees the latest images.
     /// Only snapshot changes notify this entity; empty maps keep initial circles.
     pub avatars: std::sync::Arc<kagi_ui_core::avatar::AvatarImages>,
-    /// The Snapshot tab's OWN `InputState`, independent of the WIP `editor`
-    /// below — same `code_editor(lang).line_number(true)` recipe (bug
-    /// report: a hand-rolled `uniform_list` of styled divs had none of that
-    /// widget's font/line-number/selection behavior). Lazily created by
-    /// `sync_snapshot_editor`, mirroring `sync_editor`'s pattern for
-    /// `editor`. No dirty-tracking subscription — nothing reads back an
-    /// edit here (there's nowhere to save a historical commit's content
-    /// to); gpui-component has no read-only-but-selectable mode distinct
-    /// from `disabled` (which also blocks focus/selection), so an
-    /// unobserved-edits editable input is the closest available.
-    pub snapshot_editor: Option<Entity<InputState>>,
-    /// Hash of the last `(path, content)` pushed into `snapshot_editor` —
-    /// same guard shape as `pushed_sig`/`content_sig` for `editor`.
-    snapshot_pushed_sig: u64,
+    /// Selectable historical text has no editing or dirty/save owner.
+    snapshot_text: Option<Entity<gpui_component::text::TextViewState>>,
+    /// Renderer-measured snapshot surface for native input regressions.
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_indicator: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_current: Option<snapshot::SnapshotControl>,
+    #[cfg(feature = "gui-e2e")]
+    pub snapshot_tooltip_shown: Option<SharedString>,
 
     /// The code viewer `InputState`, created lazily on first render (needs a
     /// `Window`, only available there — see `sync_editor`).
@@ -571,6 +582,10 @@ impl EditorWorkspaceView {
             selected: None,
             open_path: None,
             open_tabs: Vec::new(),
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_presentation: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            tab_probes: Default::default(),
             tab_cache: HashMap::new(),
             file_loading: false,
             content: None,
@@ -596,8 +611,15 @@ impl EditorWorkspaceView {
             snapshot_req: RequestSlot::new(),
             history_scroll: UniformListScrollHandle::new(),
             avatars: Default::default(),
-            snapshot_editor: None,
-            snapshot_pushed_sig: 0,
+            snapshot_text: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_indicator: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_current: None,
+            #[cfg(feature = "gui-e2e")]
+            snapshot_tooltip_shown: None,
             editor: None,
             pushed_sig: 0,
             dirty: false,
@@ -1085,11 +1107,16 @@ impl EditorWorkspaceView {
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
         // preference — not reset here. See `select_history_commit`.
         self.clear_selected_commit_views();
-        // Drop the InputState too, not just its content — otherwise it
-        // lingers (unrendered but alive) for every file ever snapshotted in
-        // the session.
-        self.snapshot_editor = None;
-        self.snapshot_pushed_sig = 0;
+    }
+
+    /// Historical content remains read-only regardless of root/header focus.
+    pub fn showing_history_commit(&self) -> bool {
+        self.right_tab == RightPaneTab::History && self.selected_history_commit.is_some()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn snapshot_text_state(&self) -> Option<Entity<gpui_component::text::TextViewState>> {
+        self.snapshot_text.clone()
     }
 
     /// Drop the selected commit's Diff/Snapshot content **and** whatever load
@@ -1100,6 +1127,7 @@ impl EditorWorkspaceView {
         self.history_diff = None;
         self.history_diff_req.clear();
         self.snapshot = None;
+        self.snapshot_text = None;
         self.snapshot_req.clear();
     }
 
@@ -1409,6 +1437,7 @@ impl EditorWorkspaceView {
             return;
         }
         self.snapshot = result;
+        self.snapshot_text = None;
         cx.notify();
     }
 
@@ -1501,34 +1530,20 @@ impl EditorWorkspaceView {
         }
     }
 
-    /// Lazily create the Snapshot tab's `InputState` and push the loaded
-    /// commit content into it — same recipe as `sync_editor` above, minus
-    /// the dirty-tracking subscription (see `snapshot_editor`'s doc
-    /// comment). No-ops while there's nothing loaded yet.
-    fn sync_snapshot_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.clone()) else {
+    /// Prepare literal historical text once per accepted snapshot. This view
+    /// owns selection/copy only; it never registers an input mutation handler.
+    fn sync_snapshot_text(&mut self, cx: &mut Context<Self>) {
+        if self.snapshot_text.is_some() {
+            return;
+        }
+        let Some(text) = self.snapshot.as_ref().and_then(|s| s.content.as_deref()) else {
             return;
         };
-        if self.snapshot_editor.is_none() {
-            let state = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .code_editor(self.content_lang)
-                    .line_number(true)
-            });
-            self.snapshot_editor = Some(state);
-        }
-        let sig = buffer_sig(self.open_path.as_deref().unwrap_or(Path::new("")), &text);
-        if self.snapshot_pushed_sig == sig {
-            return;
-        }
-        self.snapshot_pushed_sig = sig;
-        let lang = self.content_lang;
-        if let Some(editor) = self.snapshot_editor.clone() {
-            editor.update(cx, |s, cx| {
-                s.set_highlighter(lang, cx);
-                s.set_value(text, window, cx);
-            });
-        }
+        let source = snapshot::literal_source(text, self.content_lang);
+        self.snapshot_text =
+            Some(cx.new(|cx| {
+                gpui_component::text::TextViewState::markdown(&source, cx).selectable(true)
+            }));
     }
 
     /// Step the file selection up/down (root ↑/↓ handler, T-WS-EDITOR-001
@@ -2247,7 +2262,8 @@ impl EditorWorkspaceView {
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_editor(window, cx);
-        self.sync_snapshot_editor(window, cx);
+        self.sync_snapshot_text(cx);
+        self.hooks.pane_selectors.release_hidden(self, window, cx);
         if self.show_tree && !self.loading && self.error.is_none() {
             self.refresh_tree_layout();
         }
@@ -2337,6 +2353,7 @@ fn render_editor_workspace(
     let tree_divider = div()
         .id("ews-divider-tree")
         .group("ews-divider-tree")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2368,10 +2385,16 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorTree,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, true));
+            el
+        });
     let hunks_divider = div()
         .id("ews-divider-hunks")
         .group("ews-divider-hunks")
+        .relative()
         .w(theme::scaled_px(4.))
         .flex_shrink_0()
         .h_full()
@@ -2403,18 +2426,25 @@ fn render_editor_workspace(
                 kind: DividerKind::EditorHunks,
             },
             |_drag, _position, _window, cx| cx.new(|_| DividerGhost),
-        );
+        )
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            let el = el.child(tab_probes::measure_divider(&view.tab_probes, false));
+            el
+        });
 
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —
     // View → Toggle Sidebar now actually hides the file tree in Editor mode.
+    let (tree_width, hunks_width) = tabs::pane_widths(view, window.viewport_size().width);
     let body = div()
         .flex()
         .flex_row()
         .flex_1()
         .min_h(px(0.))
         .when(view.show_tree, |el| {
-            el.child(render_tree_pane(view, cx)).child(tree_divider)
+            el.child(render_tree_pane(view, tree_width, cx))
+                .child(tree_divider)
         })
         .child(
             div()
@@ -2427,7 +2457,7 @@ fn render_editor_workspace(
                 .children(bottom_panel),
         )
         .child(hunks_divider)
-        .child(render_hunks_pane(view, cx));
+        .child(render_hunks_pane(view, hunks_width, cx));
 
     div()
         .id("editor-workspace")
@@ -2561,6 +2591,7 @@ fn render_source_chips(
 /// working-tree file tree.
 fn render_tree_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
@@ -2571,7 +2602,7 @@ fn render_tree_pane(
         this.open_tree_menu(TreeMenuTarget::Root, e.position, cx);
     });
     let mut pane = div()
-        .w(theme::scaled_px(view.tree_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -2828,103 +2859,6 @@ fn render_tree_row(
     }
 }
 
-/// Center pane: the selected file's editable code viewer, or a placeholder.
-/// The editor tab strip (user request): one chip per open buffer — file
-/// name, `●` when dirty, and a × close button (dirty close routes through
-/// the unsaved-changes guard). `None` when no tabs are open.
-///
-/// ponytail: no horizontal scrolling — many tabs just shrink/truncate.
-/// Add an overflow scroll if real usage ever opens that many.
-fn render_tab_strip(
-    view: &EditorWorkspaceView,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> Option<gpui::AnyElement> {
-    if view.open_tabs.is_empty() {
-        return None;
-    }
-    let mut strip = div()
-        .id("ews-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .w_full()
-        .bg(rgb(theme().panel));
-    for (i, path) in view.open_tabs.iter().enumerate() {
-        let is_active = view.open_path.as_ref() == Some(path);
-        let dirty = view.tab_dirty(path);
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
-        let activate_path = path.clone();
-        let close_path = path.clone();
-        let activate = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            this.activate_tab(activate_path.clone(), cx);
-        });
-        let close = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
-            // Don't also fire the chip's activate handler underneath.
-            cx.stop_propagation();
-            this.request_close_tab(close_path.clone(), cx);
-        });
-        strip = strip.child(
-            div()
-                .id(("ews-tab", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .py_px()
-                .max_w(theme::scaled_px(180.))
-                .min_w(px(0.))
-                .cursor_pointer()
-                .text_xs()
-                .bg(rgb(if is_active {
-                    theme().bg_base
-                } else {
-                    theme().panel
-                }))
-                .when(!is_active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-                .on_click(activate)
-                .when(dirty, |el| {
-                    el.child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(rgb(theme().color_warning))
-                            .child(SharedString::from("\u{25cf}")),
-                    )
-                })
-                .child(
-                    div()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(if is_active {
-                            theme().text_main
-                        } else {
-                            theme().text_sub
-                        }))
-                        .child(SharedString::from(name)),
-                )
-                .child(
-                    div()
-                        .id(("ews-tab-x", i))
-                        .flex_shrink_0()
-                        .px_1()
-                        .rounded_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .hover(|s| {
-                            s.bg(rgb(theme().selected))
-                                .text_color(rgb(theme().text_main))
-                        })
-                        .on_click(close)
-                        .child(SharedString::from("\u{00d7}")),
-                ),
-        );
-    }
-    Some(strip.into_any_element())
-}
-
 fn render_center_pane(
     view: &EditorWorkspaceView,
     window: &mut Window,
@@ -2964,7 +2898,7 @@ fn render_center_pane(
                     pane.child(placeholder_text(msg))
                 }
             },
-            MiddlePaneTab::Snapshot => pane.child(render_snapshot_pane(view, cx)),
+            MiddlePaneTab::Snapshot => pane.child(snapshot::render(view, cx)),
         };
         return pane.into_any_element();
     }
@@ -3215,10 +3149,11 @@ fn render_center_pane(
 /// selected file's WIP hunks (unchanged v1 behaviour) or its commit history.
 fn render_hunks_pane(
     view: &EditorWorkspaceView,
+    width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let mut pane = div()
-        .w(theme::scaled_px(view.hunks_w))
+        .w(width)
         .flex_shrink_0()
         .h_full()
         .flex()

@@ -77,6 +77,7 @@ Phase 1 が埋めるのは調査で判明した 3 つの欠落だけである。
      `wait` の `Err` は `ShellExit::Unknown` として保持し、**終了扱いにしない**（契約 C の精神）。
      契約行 `[kagi] terminal: shell exited` は従来どおり PTY EOF callback から出し、新たに
      `[kagi] terminal: shell wait: gen=<n> status=<exited <code>|unknown>` を wait 配送で出す。
+     **#1273 amendment and review (2026-10-12):** proven wait delivery retires the view/writer and sets typed `Exited { code }`. The unchanged `terminal: shell exited` contract line moves to that delivery immediately before wait status, exactly once; EOF cannot emit a duplicate or clear a newer shell. A failed wait also retires its unusable transport and shows `Failed { reason }` with Restart, but process provenance remains `ShellExit::Unknown`: never infer an exit or release its lock. Unknown emits only the unchanged `terminal: shell wait: gen=<n> status=unknown`, not `shell exited`. Restart retains existing owner/auto-lock/nonconcurrent checks.
    - cwd 観測 `kagi_git::proc::cwd_of_pid(pid) -> Result<PathBuf, CwdProbe>`。失敗は `CwdProbe::Unknown(..)` /
      `Unsupported`（Windows）で、呼び手は「不明」を保持する。Phase 1 では `KagiTerminalSession::observe_cwd()` を
      公開し、終了・退出の判定には使わない。

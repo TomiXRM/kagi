@@ -392,6 +392,9 @@ impl KagiApp {
 
     pub fn open_pr_in_browser(&mut self, pr: &PullRequest) {
         klog!("github: open #{}", pr.number);
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_opened_url(&pr.url);
+        #[cfg(not(feature = "gui-e2e"))]
         let _ = std::process::Command::new("open").arg(&pr.url).spawn();
     }
 

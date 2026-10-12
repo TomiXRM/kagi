@@ -589,12 +589,33 @@ fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32,
 }
 
 pub fn scenario_compact_layout_geometry(cx: &mut VisualTestAppContext) {
+    geometry_matrix(cx, 660., 1.);
+}
+
+pub fn scenario_compact_layout_geometry_zoom167(cx: &mut VisualTestAppContext) {
+    geometry_matrix(cx, 660., 1.67);
+}
+
+pub fn scenario_compact_layout_geometry_tall(cx: &mut VisualTestAppContext) {
+    geometry_matrix(cx, 1000., 1.);
+}
+
+pub fn scenario_compact_layout_geometry_tall_zoom167(cx: &mut VisualTestAppContext) {
+    geometry_matrix(cx, 1000., 1.67);
+}
+
+// Each native process retains all EN/JA × Light/Dark cells for one viewport/zoom,
+// bounding the expensive rail interactions without extending the 120s deadline.
+fn geometry_matrix(cx: &mut VisualTestAppContext, height: f32, zoom: f32) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let fixture = fixture();
     let _offline = crate::pr_fields_focus::OfflineGh::with_script(
         "#!/bin/sh\necho 'compact fixture: offline GitHub' >&2\nexit 1\n",
     );
     matrix(|case| {
+        if case.height != height || case.zoom != zoom {
+            return;
+        }
         let (app, win) = mount(cx, fixture.path(), case);
         rail_graph(win, case.dimensions());
         rail::rail_interactions(cx, &app, win, fixture.path(), case.dimensions());

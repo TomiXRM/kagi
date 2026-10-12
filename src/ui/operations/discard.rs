@@ -242,6 +242,9 @@ impl KagiApp {
 
     /// Dismiss the discard modal without acting.
     pub fn cancel_discard_modal(&mut self) {
+        if self.discard_modal().is_some() {
+            klog!("discard: cancelled");
+        }
         self.clear_discard_modal();
     }
 

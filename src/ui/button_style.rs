@@ -153,6 +153,37 @@ pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     }
 }
 
+/// Name glyph-only kit buttons without adding a second accessibility node.
+/// The pinned Button exposes Interactivity, but not its stateful AX builders.
+pub(crate) fn named_button(
+    button: Button,
+    label: impl Into<SharedString>,
+    toggled: Option<bool>,
+) -> Button {
+    struct AccessibleButton(Button);
+    impl gpui::InteractiveElement for AccessibleButton {
+        fn interactivity(&mut self) -> &mut gpui::Interactivity {
+            self.0.interactivity()
+        }
+    }
+    impl gpui::StatefulInteractiveElement for AccessibleButton {}
+    let mut button = AccessibleButton(button).aria_label(label);
+    if let Some(toggled) = toggled {
+        button = button.aria_toggled(if toggled {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        });
+    }
+    #[cfg(feature = "gui-e2e")]
+    if let Some(id) = button.interactivity().element_id.clone() {
+        button.0 = button.0.on_key_down(move |_, _, _| {
+            super::e2e::pr_detail::record_key_focus(id.clone());
+        });
+    }
+    button.0
+}
+
 // Tier A observes the AX attributes set on both active and inert modal controls.
 #[cfg(feature = "gui-e2e")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -167,6 +198,7 @@ pub struct ModalButtonA11y {
 thread_local! {
     static MODAL_BUTTONS: std::cell::RefCell<std::collections::HashMap<&'static str, ModalButtonA11y>> =
         std::cell::RefCell::new(Default::default());
+    static MODAL_FOCUS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -177,6 +209,11 @@ pub fn clear_recorded_modal_buttons() {
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_modal_button(id: &str) -> Option<ModalButtonA11y> {
     MODAL_BUTTONS.with(|buttons| buttons.borrow().get(id).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn modal_focus_probe() -> Option<&'static str> {
+    MODAL_FOCUS.with(|focus| focus.take())
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -227,20 +264,8 @@ pub(crate) fn modal_button(
     modal_button_with_tab_stop(id, label, kind, reason, on_click, true, cx)
 }
 
-/// AppNotice keeps window/root focus for its Enter/Escape confirmation
-/// sequence; unlike other dialog actions its button is not a Tab stop.
-pub(crate) fn modal_button_without_tab_stop(
-    id: &'static str,
-    label: impl Into<SharedString>,
-    kind: ModalButtonKind,
-    reason: Option<SharedString>,
-    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    cx: &gpui::App,
-) -> gpui::AnyElement {
-    modal_button_with_tab_stop(id, label, kind, reason, on_click, false, cx)
-}
-
-fn modal_button_with_tab_stop(
+/// AppNotice opts into Tab activation only for its armed danger action.
+pub(crate) fn modal_button_with_tab_stop(
     id: &'static str,
     label: impl Into<SharedString>,
     kind: ModalButtonKind,
@@ -289,6 +314,11 @@ fn modal_button_with_tab_stop(
     button
         .small()
         .tab_stop(tab_stop)
+        .on_key_down(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            MODAL_FOCUS.with(|focus| focus.set(Some(id)));
+            super::keyboard_nav::stop_activation_keys(event, window, cx);
+        })
         .on_click(on_click)
         .into_any_element()
 }

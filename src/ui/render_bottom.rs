@@ -3,6 +3,8 @@
 //! the panel below the center pane, beside the full-height sidebar and inspector.
 
 use super::*;
+use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::{Icon, IconName};
 
 impl KagiApp {
     #[cfg(feature = "gui-e2e")]
@@ -115,7 +117,7 @@ impl KagiApp {
                         .flatten();
                     this.bottom_tab = TABS[slot];
                     if this.bottom_tab == BottomTab::Terminal {
-                        this.ensure_terminal(window, cx);
+                        this.activate_terminal(window, cx);
                     }
                     if this.bottom_tab == BottomTab::Changes {
                         this.open_compact_changes(window, cx);
@@ -532,14 +534,7 @@ impl KagiApp {
             .into_any_element()
     }
 
-    /// Render the Terminal tab body (T-BP-007).
-    ///
-    /// Three possible states:
-    /// 1. Session running → render `TerminalView` entity directly (flex_1 + min_h).
-    /// 2. Session failed to start → show the error message.
-    /// 3. Not yet started (session is None, or view is None with no error) →
-    ///    show a "starting…" placeholder.  The Terminal tab click listener has
-    ///    already called `ensure_terminal`; the view will appear on next repaint.
+    /// Render the live PTY, or the typed localized terminal empty state.
     fn render_terminal_body(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let active_session = self.ui().terminal_session.as_ref();
         // Case 1: running terminal view.
@@ -613,34 +608,108 @@ impl KagiApp {
                     .into_any();
             }
 
-            // Case 2: start failed — show error.
-            if let Some(ref err) = session.start_error {
-                let msg = SharedString::from(format!("terminal error: {}", err));
-                return div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .bg(rgb(theme().panel))
-                    .px_3()
-                    .py_2()
-                    .text_sm()
-                    .text_color(rgb(theme().color_blocker))
-                    .child(msg)
-                    .into_any();
-            }
+            return self.render_terminal_empty_state(&session.state, cx);
         }
 
-        // Case 3: placeholder (no session yet / shell exited, will restart).
+        self.render_terminal_empty_state(&terminal::TerminalState::NotStarted, cx)
+    }
+
+    fn render_terminal_empty_state(
+        &self,
+        state: &terminal::TerminalState,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use i18n::Msg;
+        use terminal::TerminalState;
+        let (title, hint, icon) = terminal_empty_labels(state);
+        let restart_name = Msg::TerminalRestart.t();
+        // The pinned Button installs Role::Button and label as aria_label,
+        // with its native Enter/Space and focus-visible ring.
+        let restart = Button::new("terminal-restart")
+            .primary()
+            .label(restart_name)
+            .on_click(cx.listener(|app, _, window, cx| {
+                app.ensure_terminal(window, cx);
+                cx.notify();
+            }));
+        #[cfg(feature = "gui-e2e")]
+        terminal::record_empty_state_for_e2e(state, &title, &hint, restart_name);
+        #[cfg(feature = "gui-e2e")]
+        let restart = terminal::RestartButton(restart);
         div()
+            .id("terminal-empty-state")
             .flex_1()
             .min_h(px(0.))
+            .min_w(px(0.))
+            .w_full()
+            .overflow_y_scroll()
             .bg(rgb(theme().panel))
-            .px_3()
-            .py_2()
-            .text_sm()
-            .text_color(rgb(theme().text_muted))
-            .child(SharedString::from(
-                "(terminal exited — re-opening will restart)",
-            ))
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .p_3()
+                    .child(e2e::measure_control(
+                        "terminal-state-icon",
+                        Icon::new(icon).size(theme::scaled_px(20.)).text_color(rgb(
+                            if matches!(state, TerminalState::Failed { .. }) {
+                                theme().color_blocker
+                            } else {
+                                theme().text_sub
+                            },
+                        )),
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(e2e::measure_control(
+                                "terminal-state-title",
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(rgb(theme().text_main))
+                                    .child(title),
+                            ))
+                            .child(e2e::measure_control(
+                                "terminal-state-hint",
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(theme().text_sub))
+                                    .child(hint),
+                            )),
+                    )
+                    .child(e2e::measure_control("terminal-restart", restart)),
+            )
             .into_any()
+    }
+}
+
+fn terminal_empty_labels(
+    state: &terminal::TerminalState,
+) -> (SharedString, SharedString, IconName) {
+    use i18n::Msg;
+    use terminal::TerminalState;
+    match state {
+        TerminalState::NotStarted => (
+            Msg::TerminalNotStartedTitle.t().into(),
+            Msg::TerminalNotStartedHint.t().into(),
+            IconName::SquareTerminal,
+        ),
+        TerminalState::Exited { code } => (
+            i18n::terminal_exited_title(*code).into(),
+            Msg::TerminalRestartHint.t().into(),
+            IconName::SquareTerminal,
+        ),
+        TerminalState::Failed { reason } => (
+            Msg::TerminalFailedTitle.t().into(),
+            i18n::terminal_failed_hint(reason).into(),
+            IconName::TriangleAlert,
+        ),
+        TerminalState::Running => unreachable!("running terminal owns a view"),
     }
 }

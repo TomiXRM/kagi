@@ -11,6 +11,7 @@
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
+pub mod palette;
 
 #[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
@@ -23,6 +24,9 @@ pub mod diff_presentation;
 
 #[cfg(feature = "gui-e2e")]
 pub mod diff_controls;
+
+#[cfg(feature = "gui-e2e")]
+pub mod pr_detail;
 
 #[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {

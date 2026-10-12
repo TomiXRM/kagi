@@ -18,10 +18,9 @@ use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 /// A hover-quiet copy button for a popup surface.
 ///
 /// #454: popup text could not be copied at all — no selection, no button (user
-/// report 2026-09-06). Same shape as the PR-hunk copy button
-/// (`pr_conversation::render_diff_hunk`): quiet until hovered, a tooltip, a
-/// toast on success, and it swallows the mouse-**down** as well as the click so
-/// pressing it never starts a text selection underneath.
+/// report 2026-09-06). Quiet until hovered, with a tooltip and a success toast.
+/// Swallow the mouse-**down** as well as the click so pressing it never starts
+/// a text selection underneath.
 pub(crate) fn modal_copy_button(
     id: &'static str,
     tooltip: &'static str,

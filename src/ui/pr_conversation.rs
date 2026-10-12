@@ -4,16 +4,19 @@
 //! Split out of `pr_mode.rs` — these are pure renderers over a `PrTab`, with
 //! no state of their own.
 
+use super::button_style::{ButtonRole, KagiButton};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use gpui_component::text::TextViewStyle;
+use gpui_component::Sizable as _;
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
 use super::pr_attention::ci_glyph;
 use super::pr_mode::card_pane_bg;
-use super::theme::{self, theme};
-use super::types::ToastKind;
+use super::theme::theme;
 use super::KagiApp;
+
+pub mod hunk;
 
 /// The PR description as the first row of the feed (#750): the author's
 /// avatar, `@login · age`, the body. Its CI glyph and Draft badge ride on the
@@ -139,7 +142,7 @@ pub struct Entry {
     /// comment is about. This is what reads as "the code proposal" on
     /// github.com (Copilot's comments carry it instead of a
     /// ```suggestion fence).
-    hunk: String,
+    hunk: Option<std::rc::Rc<hunk::Hunk>>,
 }
 
 /// The conversation, oldest first: submitted reviews, issue comments and line
@@ -169,7 +172,7 @@ pub(super) fn conversation_entries(
             suggestion: false,
             applicable: None,
             tag,
-            hunk: String::new(),
+            hunk: hunk::Hunk::new(""),
         });
     }
     for c in comments {
@@ -182,7 +185,7 @@ pub(super) fn conversation_entries(
             suggestion: false,
             applicable: None,
             tag: None,
-            hunk: String::new(),
+            hunk: hunk::Hunk::new(""),
         });
     }
     // Line comments — where Copilot / Codex put code suggestions. They carry
@@ -205,7 +208,7 @@ pub(super) fn conversation_entries(
             suggestion: c.has_suggestion(),
             applicable: c.suggestion(),
             tag,
-            hunk: c.diff_hunk.clone(),
+            hunk: hunk::Hunk::new(&c.diff_hunk),
         });
     }
     entries.sort_by(|a, b| a.at.cmp(&b.at));
@@ -217,14 +220,15 @@ pub(super) fn conversation_entries(
 /// draws, with the PR-only payloads — severity tag, review verdict,
 /// suggestion marker, `path:line` anchor and the diff hunk — hung off it.
 fn render_entry(
-    number: u64,
-    i: usize,
+    key: (u64, usize),
     e: &Entry,
     host: Option<&str>,
     avatars: &kagi_ui_core::avatar::AvatarImages,
+    item: (gpui::ListState, usize),
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let (number, i) = key;
     let style = super::timeline_row::markdown_style(15., cx);
     let body = e.body.trim();
     let meta = super::timeline_row::meta(&e.author, &super::timeline_row::age(&e.at))
@@ -278,6 +282,14 @@ fn render_entry(
         .child(div().flex_1())
         .children(e.anchor.as_ref().map(|a| {
             div()
+                .id(("pr-convo-anchor", number as usize * 1000 + i))
+                .aria_description(SharedString::from(a.clone()))
+                .tooltip({
+                    let anchor = a.clone();
+                    move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(anchor.clone()).build(window, cx)
+                    }
+                })
                 .min_w(px(0.))
                 .truncate()
                 .font_family(super::MONO_FONT)
@@ -288,10 +300,10 @@ fn render_entry(
     let content = super::timeline_row::content_column()
         .gap_2()
         .child(meta)
-        .when(!e.hunk.trim().is_empty(), |el| {
+        .when_some(e.hunk.as_ref(), |el, hunk| {
             el.child(super::e2e::measure_control(
                 format!("pr-convo-hunk-{}", number as usize * 1000 + i),
-                render_diff_hunk(&e.hunk, number as usize * 1000 + i, cx),
+                hunk::render(hunk, number as usize * 1000 + i, item, cx),
             ))
         })
         .when(!body.is_empty(), |el| {
@@ -485,7 +497,15 @@ pub(super) fn render_feed_item(
             match entries.as_ref().and_then(|e| e.get(i)) {
                 Some(entry) => block(super::e2e::measure_control(
                     format!("pr-feed-entry-{i}"),
-                    render_entry(number, i, entry, host, &app.avatars.images, window, cx),
+                    render_entry(
+                        (number, i),
+                        entry,
+                        host,
+                        &app.avatars.images,
+                        (tab.expect("entry tab").feed_list.clone(), ix),
+                        window,
+                        cx,
+                    ),
                 )),
                 None => div().into_any_element(),
             }
@@ -574,120 +594,6 @@ pub(super) fn render_feed(
         .into_any_element()
 }
 
-/// The `diff_hunk` GitHub attaches to a line comment — the code the comment
-/// is about, and what reads as "the code proposal" on github.com (Copilot and
-/// Codex comments carry it instead of a ```suggestion fence).
-///
-/// Drawn with kagi's own diff colours rather than as a ```diff fenced block:
-/// routing it through the markdown renderer made tree-sitter colour it with a
-/// generic diff palette that clashed with the diff panes next door (user
-/// report). A copy button carries the copyability that the fenced version got
-/// for free.
-///
-/// Only the last few lines are shown: the hunk can be 30+ lines of context and
-/// the comment is about its end.
-fn render_diff_hunk(hunk: &str, id: usize, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    const MAX_LINES: usize = 12;
-    let all: Vec<&str> = hunk.lines().collect();
-    let skipped = all.len().saturating_sub(MAX_LINES);
-    let shown = &all[skipped..];
-
-    let full = hunk.to_string();
-    let copy = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        cx.stop_propagation();
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
-        this.push_toast(
-            ToastKind::Info,
-            SharedString::from(Msg::PrHunkCopied.t()),
-            cx,
-        );
-    });
-
-    let mut rows = div().flex().flex_col().py_1();
-    if skipped > 0 {
-        rows = rows.child(
-            div()
-                .px_2()
-                .text_xs()
-                .font_family(super::MONO_FONT)
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(format!(
-                    "\u{2026} {} more lines",
-                    skipped
-                ))),
-        );
-    }
-    for line in shown {
-        let (bg, fg) = match line.as_bytes().first() {
-            Some(b'+') => (Some(theme().diff_added_bg), theme().change_added),
-            Some(b'-') => (Some(theme().diff_removed_bg), theme().change_deleted),
-            Some(b'@') => (None, theme().diff_hunk),
-            _ => (None, theme().text_sub),
-        };
-        rows = rows.child(
-            div()
-                .w_full()
-                .px_2()
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .font_family(super::MONO_FONT)
-                .text_xs()
-                .text_color(rgb(fg))
-                .when_some(bg, |el, b| el.bg(rgb(b)))
-                .child(SharedString::from(line.to_string())),
-        );
-    }
-
-    div()
-        .id(("pr-convo-hunk", id))
-        .relative()
-        .w_full()
-        .mb_2()
-        .rounded_md()
-        .overflow_hidden()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().bg_base))
-        .child(rows)
-        // Copy the WHOLE hunk (not just the shown tail) — hover-revealed so
-        // it never competes with the code.
-        .child(
-            div()
-                .absolute()
-                .top_1()
-                .right_1()
-                .id(("pr-convo-hunk-copy", id))
-                .p_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .border_1()
-                .border_color(rgb(theme().selected))
-                .cursor_pointer()
-                // Quiet until hovered (no `visible_on_hover` in this gpui).
-                .opacity(0.55)
-                .hover(|s| s.bg(rgb(theme().selected)).opacity(1.0))
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::PrHunkCopy.t()).build(w, cx)
-                })
-                // Swallow the mouse-DOWN too, not just the click: otherwise it
-                // reaches the selectable TextViews underneath and starts a
-                // window text-selection that then tracks the cursor after the
-                // button is released (user report).
-                .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
-                    cx.stop_propagation();
-                })
-                .on_click(copy)
-                .child(
-                    gpui::svg()
-                        .path("icons/copy.svg")
-                        .w(theme::scaled_px(12.))
-                        .h(theme::scaled_px(12.))
-                        .text_color(rgb(theme().text_sub)),
-                ),
-        )
-        .into_any_element()
-}
-
 /// "Apply suggestion…" on a line comment whose ```suggestion block resolves
 /// to a range (#351, ADR-0210). It only plans: the plan card says whether the
 /// working-tree file is the PR head's version, and only a confirm writes.
@@ -698,25 +604,37 @@ fn render_apply_suggestion(
 ) -> gpui::AnyElement {
     let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-convo-apply-suggestion-{id}"));
         this.open_apply_suggestion_modal(suggestion.clone(), cx);
         cx.notify();
     });
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("pr-convo-apply-suggestion-{id}");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(Msg::PrApplySuggestion.t()),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, Some(ButtonRole::Secondary));
+    }
     super::e2e::measure_control(
         format!("pr-convo-apply-suggestion-{id}"),
-        div()
-            .id(("pr-convo-apply-suggestion", id))
-            .px_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(theme().color_branch))
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().selected)))
-            // The selectable text under the row would start a selection.
-            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-            .on_click(open)
-            .child(SharedString::from(Msg::PrApplySuggestion.t())),
+        KagiButton::styled(
+            ("pr-convo-apply-suggestion", id),
+            Msg::PrApplySuggestion.t(),
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .tab_stop(true)
+        .map(|button| super::button_style::named_button(button, Msg::PrApplySuggestion.t(), None))
+        // The selectable text under the row would start a selection.
+        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+        .on_click(open),
     )
     .into_any_element()
 }

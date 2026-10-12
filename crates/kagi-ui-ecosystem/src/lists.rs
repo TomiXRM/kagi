@@ -541,26 +541,19 @@ fn render_ownership_row(rank: usize, o: &FileOwnership) -> AnyElement {
 }
 
 fn ownership_author(rank: usize, owner: &FileOwnership) -> impl IntoElement {
-    let text = if owner.primary_author_name.is_empty() {
-        owner
-            .primary_author
-            .split('@')
-            .next()
-            .unwrap_or("")
-            .to_owned()
+    // Git identities are untrusted display text (#414); preserve raw email keys.
+    let name = kagi_domain::text_safety::sanitize_control_bytes(&owner.primary_author_name);
+    let email = kagi_domain::text_safety::sanitize_control_bytes(&owner.primary_author);
+    let text = if name.is_empty() {
+        email.split('@').next().unwrap_or("").to_owned()
     } else {
-        owner.primary_author_name.clone()
+        name.clone()
     };
     // Same identity rule as Inspector (#1237): brackets only with both fields.
-    let identity: SharedString = match (
-        owner.primary_author_name.is_empty(),
-        owner.primary_author.is_empty(),
-    ) {
-        (false, false) => {
-            format!("{} <{}>", owner.primary_author_name, owner.primary_author).into()
-        }
-        (true, _) => owner.primary_author.clone().into(),
-        (_, true) => owner.primary_author_name.clone().into(),
+    let identity: SharedString = match (name.is_empty(), email.is_empty()) {
+        (false, false) => format!("{name} <{email}>").into(),
+        (true, _) => email.into(),
+        (_, true) => name.into(),
     };
     let id = format!("eco-own-author-{rank}");
     #[cfg(feature = "gui-e2e")]

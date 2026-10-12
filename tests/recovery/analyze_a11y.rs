@@ -561,6 +561,18 @@ pub fn scenario_analyze_ownership_author(cx: &mut VisualTestAppContext) {
                 "Alex <other@example.test>",
             ),
             ("Only Name", "", "Only Name", "Only Name"),
+            (
+                "\u{1b}[31mX",
+                "unsafe\u{7}@example.test",
+                "\\x1B[31mX",
+                "\\x1B[31mX <unsafe\\x07@example.test>",
+            ),
+            (
+                "",
+                "fallback\u{1b}@example.test",
+                "fallback\\x1B",
+                "fallback\\x1B@example.test",
+            ),
         ];
         let raw = RawEcosystem {
             loc: Default::default(),

@@ -378,13 +378,9 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .count();
 
     // ── Filter input row (pinned above the virtualized list) ──────
-    let group_role = gpui::Role::Group;
     let input_role = gpui::Role::TextInput;
-    let label = Msg::HomeGithubFilter.t();
     let filter_area = div()
         .id("sidebar-filter")
-        .role(group_role)
-        .aria_label(label)
         .relative()
         .child(super::e2e::measure_inside("sidebar-filter"))
         .px_2()

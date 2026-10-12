@@ -92,7 +92,7 @@ pub(crate) fn render_stash_push_modal(
                 .id("stash-push-message")
                 .children(modal.input_state.as_ref().map(|state| {
                     gpui_component::input::Input::new(state)
-                        .aria_label(Msg::InputStashMessage.t())
+                        .aria_label(Msg::A11yStashMessage.t())
                         .h(theme::scaled_px(32.))
                         .rounded(theme::scaled_px(8.))
                         .bg(rgb(current_theme().panel))

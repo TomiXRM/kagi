@@ -78,17 +78,6 @@ fn check(
                 })
                 .collect::<Vec<_>>()
         });
-        if surface == "pr-fields" {
-            let expected = format!(
-                "{}: {}",
-                Msg::PrRailReviewers.t(),
-                Msg::A11yPrFieldsFilter.t()
-            );
-            assert!(
-                names.iter().any(|name| name.as_ref() == expected),
-                "PR fields filter renders its localized name: {names:?}"
-            );
-        }
         for message in expected {
             assert!(
                 names.iter().any(|name| name.as_ref() == message.t()),
@@ -259,7 +248,7 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
             }
             "stash" => {
                 app.update(cx, |app, cx| app.open_stash_push_modal(cx));
-                &[Msg::InputStashMessage]
+                &[Msg::A11yStashMessage]
             }
             "remote" => {
                 app.update(cx, |app, cx| app.open_remote_browse(cx));
@@ -378,7 +367,7 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
             app.open_pr_fields_modal(kagi::ui::modals::PrField::Reviewers, cx)
         });
         cx.run_until_parked();
-        check(cx, &app, window, "pr-fields", &[]);
+        check(cx, &app, window, "pr-fields", &[Msg::A11yPrReviewersFilter]);
         unmount(cx, app, window);
     }
 }

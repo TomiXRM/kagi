@@ -100,6 +100,7 @@ fn status_text_width(text: SharedString, window: &Window) -> gpui::Pixels {
             None,
         )
         .width
+        .ceil()
 }
 
 impl KagiApp {
@@ -307,6 +308,9 @@ impl KagiApp {
                         Dirty => el.child(super::e2e::measure_inside("status-dirty")),
                         AheadBehind => el.child(super::e2e::measure_inside("status-ahead-behind")),
                         UpstreamName => el.child(super::e2e::measure_inside("status-upstream")),
+                        FetchAge | FetchStale => {
+                            el.child(super::e2e::measure_inside("status-fetch-age"))
+                        }
                         _ => el,
                     }),
             );

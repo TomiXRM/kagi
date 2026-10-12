@@ -12,9 +12,10 @@
 ## Amendment — 2026-10-12: bounded branch identity (#1310)
 
 The dense footer keeps its existing summary ordering and panel controls. Branch
-identity has a minimum of the lesser of its measured natural width and a
-zoom-scaled 60-reference-pixel width, with end ellipsis when compressed. Short
-names keep their natural size. Visible text, Tooltip and AX share the complete
+identity has a minimum of the lesser of its measured natural width (rounded up
+to match GPUI text layout) and a zoom-scaled 60-reference-pixel width, with end
+ellipsis when compressed. Short names keep their natural size. Visible text,
+Tooltip and AX share the complete
 control-byte-sanitized branch name; raw repository identity and klog are unchanged.
 Status chips (including ahead/behind and upstream) and the refresh timer retain
 natural widths. Nonempty feedback reserves up to a zoom-scaled 80-reference-pixel
@@ -22,6 +23,8 @@ minimum with a zero flex basis, so branch identity absorbs excess width first.
 The reservation is capped by the measured space remaining after fixed chips,
 timer, controls, padding and the branch minimum (with 1px for layout snapping);
 at 700px/167%, blindly adding both preferred text minima would clip the controls.
+Each shaped chip/timer width is rounded up individually before calculating the
+remaining room; a single final snapping allowance cannot replace those ceils.
 Feedback remains a single-line truncated first-line preview before the
 nonshrinking Terminal / Operation Log cluster. The original footer body and
 durable Operation Log detail are unchanged.

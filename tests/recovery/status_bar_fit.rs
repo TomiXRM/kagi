@@ -189,6 +189,33 @@ fn natural_width(cx: &mut VisualTestAppContext, win: AnyWindowHandle, text: &str
     .unwrap()
 }
 
+fn assert_short_branch_fit(cx: &mut VisualTestAppContext, win: AnyWindowHandle, branch: &str) {
+    let identity = e2e::control_bounds(win.window_id(), "status-branch").unwrap();
+    let natural = natural_width(cx, win, branch).ceil();
+    assert!(
+        identity.size.width >= natural,
+        "short branch can ellipsize after layout rounding: {:?} < {natural:?}",
+        identity.size.width
+    );
+    let footer = e2e::control_bounds(win.window_id(), "pr-menu-footer").unwrap();
+    let fetch_age = e2e::control_bounds(win.window_id(), "status-fetch-age")
+        .expect("all-chip short-branch case includes the stale-fetch chip");
+    contained(footer, fetch_age, "fetch age inside footer");
+    let oplog = e2e::control_bounds(win.window_id(), "status-icon-oplog").unwrap();
+    let padded_right = footer.right() - theme::scaled_px(8.).round();
+    assert!(
+        oplog.right() + px(2.) <= padded_right,
+        "Operation Log consumes footer padding: {:?} > {padded_right:?}",
+        oplog.right() + px(2.)
+    );
+    let dirty = e2e::control_bounds(win.window_id(), "status-dirty").unwrap();
+    let gap = dirty.left() - identity.left() - natural_width(cx, win, branch);
+    assert!(
+        (gap - theme::scaled_px(4.)).abs() <= px(1.),
+        "short branch adds blank space before chip: gap={gap:?}"
+    );
+}
+
 fn review_leg(
     cx: &mut VisualTestAppContext,
     repo: &std::path::Path,
@@ -230,6 +257,10 @@ fn review_leg(
             summary.no_upstream = false;
             summary.upstream_name = "origin/main".into();
             summary.last_refresh_secs = 1_700_000_000;
+            if !feedback {
+                summary.has_remote = true;
+                summary.last_fetch_secs = Some(1_700_000_000);
+            }
             app.status_footer = if busy {
                 FooterStatus::Busy(text.into())
             } else {
@@ -248,13 +279,7 @@ fn review_leg(
                 "short feedback sacrificed to branch: {width:?} < {minimum:?}"
             );
         } else {
-            let identity = e2e::control_bounds(win.window_id(), "status-branch").unwrap();
-            let dirty = e2e::control_bounds(win.window_id(), "status-dirty").unwrap();
-            let gap = dirty.left() - identity.left() - natural_width(cx, win, branch);
-            assert!(
-                (gap - theme::scaled_px(4.)).abs() <= px(1.),
-                "short branch adds blank space before chip: gap={gap:?}"
-            );
+            assert_short_branch_fit(cx, win, branch);
         }
     }
     unmount(cx, app, win);

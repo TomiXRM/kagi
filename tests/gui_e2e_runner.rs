@@ -59,6 +59,9 @@ mod gui_evidence;
 #[path = "support/gui_isolation.rs"]
 mod gui_isolation;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_detail_a11y.rs"]
+mod pr_detail_a11y;
+#[cfg(target_os = "macos")]
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
@@ -234,6 +237,10 @@ mod conflict_file_selection;
 mod repo_health;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/analyze_a11y.rs"]
+mod analyze_a11y;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_polish_b.rs"]
 mod modal_polish_b;
 
@@ -327,6 +334,10 @@ mod editor_tabs;
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
 mod pr_threads;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/github_text.rs"]
+mod github_text;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_suggestion_apply.rs"]
@@ -2036,6 +2047,10 @@ mod macos {
                 "repo_health_proposal",
                 Box::new(crate::repo_health::scenario_repo_health_proposal),
             ),
+            ("analyze_a11y_controls", Box::new(crate::analyze_a11y::scenario_analyze_a11y_controls)),
+            ("analyze_a11y_risk", Box::new(crate::analyze_a11y::scenario_analyze_a11y_risk)),
+            ("analyze_a11y_truncation", Box::new(crate::analyze_a11y::scenario_analyze_a11y_truncation)),
+            ("analyze_a11y_help", Box::new(crate::analyze_a11y::scenario_analyze_a11y_help)),
             (
                 "refusal_reasons",
                 Box::new(crate::refusal_reasons::scenario_refusal_reasons),
@@ -2209,6 +2224,12 @@ mod macos {
                 "pr_detail_lifecycle",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_lifecycle),
             ),
+            ("pr_detail_a11y_1255", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1255)),
+            ("pr_detail_a11y_1256", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1256)),
+            ("pr_detail_a11y_1257", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1257)),
+            ("pr_detail_a11y_1259", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1259)),
+            ("pr_detail_a11y_1260_en", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1260_en)),
+            ("pr_detail_a11y_1260_ja", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1260_ja)),
             (
                 "pr_diff_extent_unified",
                 Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),
@@ -2246,6 +2267,8 @@ mod macos {
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
+            ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
+            ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),

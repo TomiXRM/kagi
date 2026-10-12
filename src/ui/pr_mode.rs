@@ -41,6 +41,7 @@ use super::theme::{self, theme};
 use super::types::ToastKind;
 use super::{CompareTarget, DividerDrag, DividerGhost, DividerKind, KagiApp, MainDiffSource};
 
+mod detail_controls;
 pub mod threads;
 pub mod viewed;
 /// One open PR tab.
@@ -146,6 +147,8 @@ pub struct PrModeState {
     pub(crate) visible: bool,
     pub tabs: Vec<PrTab>,
     pub active: Option<usize>,
+    /// Roving keyboard focus for the detail view selector.
+    pub(crate) detail_focus: super::keyboard_nav::TabFocus,
     /// Keyboard focus target for ↑/↓; ←/→ cycle it. Set by clicking a pane.
     pub focus: PrFocus,
     /// Whether the checks card on the PR page is expanded (mock 7b). Folded
@@ -190,6 +193,7 @@ impl Default for PrModeState {
             visible: true,
             tabs: Vec::new(),
             active: None,
+            detail_focus: Default::default(),
             focus: PrFocus::List,
             checks_open: false,
             comment_preview: false,
@@ -1323,6 +1327,11 @@ fn render_center(
         .h_full();
 
     let Some(ix) = active else {
+        if let Some(mode) = app.pr_mode() {
+            mode.detail_focus.sync(&[], cx);
+            mode.detail_focus
+                .release_closed(app.root_focus.as_ref(), window, cx);
+        }
         // No tab: use the whole center as a PR dashboard instead of an empty
         // hint (user request) — every open PR as a table row, click to open.
         return col
@@ -1347,7 +1356,6 @@ fn render_center(
     // which chip is lit is which section the reader last jumped to.
     let show_feed = matches!(view, PrView::Overview | PrView::Review);
     let show_description = view == PrView::Overview;
-    let show_review = view == PrView::Review;
 
     // PR header
     let (g, c) = ci_glyph(pr.ci);
@@ -1363,6 +1371,8 @@ fn render_center(
     });
     let open_key = pr.key();
     let open_gh = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation("pr-mode-open-gh");
         if this.active_session() != owner {
             return;
         }
@@ -1398,27 +1408,11 @@ fn render_center(
             // Click the title → the PR description (markdown) takes the diff
             // area; click again (or pick a file / commit) to go back.
             let toggle = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                #[cfg(feature = "gui-e2e")]
+                super::e2e::pr_detail::record_activation("pr-mode-title");
                 this.pr_mode_toggle_description(cx);
             });
-            div()
-                .id("pr-mode-title")
-                .flex_1()
-                .min_w(px(0.))
-                .truncate()
-                .text_sm()
-                .cursor_pointer()
-                .text_color(rgb(if show_description {
-                    theme().accent_text_on(theme().bg_base)
-                } else {
-                    theme().text_main
-                }))
-                .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().bg_base))))
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::PrModeShowDescription.t())
-                        .build(w, cx)
-                })
-                .on_click(toggle)
-                .child(safe_text(&pr.title))
+            detail_controls::description(safe_text(&pr.title), show_description, toggle)
         })
         .child(
             div()
@@ -1438,12 +1432,14 @@ fn render_center(
                     .child(SharedString::from(rv.to_string())),
             )
         })
-        // Merge — only for a mergeable, non-draft PR; the confirm modal
-        // states the CI / review caveats before anything happens.
+        // Merge opens a plan even with conflicts; the modal presents blockers
+        // and CI / review caveats before any write is approved.
         .when(!pr.is_draft && !merge_held, |el| {
             let merge_key = pr.key();
             let merge_click =
                 cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::pr_detail::record_activation("pr-mode-merge");
                     if this.active_session() != owner {
                         return;
                     }
@@ -1463,62 +1459,9 @@ fn render_center(
                         cx,
                     );
                 });
-            let ready = pr.mergeable != kagi_domain::github::Mergeable::Conflicting;
-            el.child(
-                div()
-                    .id("pr-mode-merge")
-                    .px_2()
-                    .py_px()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(rgb(if ready {
-                        theme().color_success
-                    } else {
-                        theme().selected
-                    }))
-                    .text_xs()
-                    .text_color(rgb(if ready {
-                        theme().color_success
-                    } else {
-                        theme().text_muted
-                    }))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .hover(|s| s.bg(rgb(theme().surface)))
-                    .on_click(merge_click)
-                    .child(
-                        gpui::svg()
-                            .path("icons/git-merge.svg")
-                            .flex_shrink_0()
-                            .w(theme::scaled_px(12.))
-                            .h(theme::scaled_px(12.))
-                            .text_color(rgb(if ready {
-                                theme().color_success
-                            } else {
-                                theme().text_muted
-                            })),
-                    )
-                    .child(SharedString::from(Msg::PrModeMerge.t())),
-            )
+            el.child(detail_controls::merge(merge_click, cx))
         })
-        .child(
-            div()
-                .id("pr-mode-open-gh")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .border_1()
-                .border_color(rgb(theme().selected))
-                .text_xs()
-                .text_color(rgb(theme().text_sub))
-                .cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(open_gh)
-                .child(SharedString::from("GitHub \u{2197}")),
-        );
+        .child(detail_controls::github(open_gh));
 
     // Commit strip
     let strip = (view == PrView::Commits).then(|| {
@@ -1655,126 +1598,14 @@ fn render_center(
         strip
     });
 
-    // Overview | Review | Diff — one place to say what the body shows, so
-    // the title click is a shortcut rather than the only route.
-    let tab_btn = |id: &'static str,
-                   icon: &'static str,
-                   label: String,
-                   on: bool,
-                   view: PrView,
-                   cx: &mut Context<KagiApp>| {
-        let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-            this.pr_mode_show(view, cx);
-        });
-        // A real tab: underline on the active one, no pill background —
-        // buttons read as actions, these switch what the pane shows.
-        div()
-            .relative()
-            .when(cfg!(feature = "gui-e2e"), |el| {
-                el.child(super::e2e::measure_inside(id))
-            })
-            .id(id)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .px_3()
-            .py_1()
-            .cursor_pointer()
-            .border_b_2()
-            .border_color(rgb(if on {
-                theme().ui_accent()
-            } else {
-                theme().panel
-            }))
-            .text_color(rgb(if on {
-                theme().text_main
-            } else {
-                theme().text_sub
-            }))
-            .hover(|s| s.text_color(rgb(theme().text_main)))
-            .on_click(click)
-            .child(
-                gpui::svg()
-                    .path(icon)
-                    .flex_shrink_0()
-                    .w(theme::scaled_px(13.))
-                    .h(theme::scaled_px(13.))
-                    .text_color(rgb(if on {
-                        theme().accent_text_on(theme().panel)
-                    } else {
-                        theme().text_sub
-                    })),
-            )
-            .child(div().text_xs().child(SharedString::from(label)))
-    };
-    let views = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .flex_shrink_0()
-        .px_2()
-        .bg(rgb(theme().panel))
-        .border_b_1()
-        .border_color(rgb(theme().selected))
-        .child(tab_btn(
-            "pr-view-overview",
-            "icons/file-text.svg",
-            Msg::PrModeOverview.t().to_string(),
-            show_description,
-            PrView::Overview,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-review",
-            "icons/message-square.svg",
-            if convo_n > 0 {
-                format!("{} ({})", Msg::PrModeReview.t(), convo_n)
-            } else {
-                Msg::PrModeReview.t().to_string()
-            },
-            show_review,
-            PrView::Review,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-diff",
-            "icons/git-compare.svg",
-            // The mock's `FILES n`: the count is what says whether this is a
-            // one-line fix or a rewrite, and it is already in the tab's data.
-            match files_n {
-                0 => Msg::PrModeFiles.t().to_string(),
-                n => format!("{} ({})", Msg::PrModeFiles.t(), n),
-            },
-            view == PrView::Diff,
-            PrView::Diff,
-            cx,
-        ))
-        .child(tab_btn(
-            "pr-view-commits",
-            "icons/git-commit.svg",
-            match commits.len() {
-                0 => Msg::PrModeCommits.t().to_string(),
-                n => format!("{} ({})", Msg::PrModeCommits.t(), n),
-            },
-            view == PrView::Commits,
-            PrView::Commits,
-            cx,
-        ))
-        // ADR-0145: only when GitHub says the merge conflicts. A tab that is
-        // always there but empty six times out of seven teaches people to
-        // ignore it, which is the opposite of the point.
-        .when(pr.mergeable == Mergeable::Conflicting, |el| {
-            el.child(tab_btn(
-                "pr-view-conflicts",
-                "icons/git-merge.svg",
-                Msg::PrModeConflicts.t().to_string(),
-                view == PrView::Conflicts,
-                PrView::Conflicts,
-                cx,
-            ))
-        });
+    let views = detail_controls::selector(
+        app,
+        view,
+        pr.mergeable,
+        [convo_n, files_n, commits.len()],
+        window,
+        cx,
+    );
 
     col = col.child(header).child(views);
 
@@ -2128,5 +1959,36 @@ mod pr_fixture_tests {
             base_repo: "o/r".into(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn pr_detail_tabs_for_e2e(
+        &self,
+    ) -> (Option<gpui::Role>, Vec<(gpui::Role, String, bool, bool)>) {
+        let role =
+            super::e2e::pr_detail::control("pr-detail-view-tabs").and_then(|control| control.role);
+        let tabs = self
+            .pr_mode()
+            .filter(|mode| mode.active.is_some())
+            .map(|mode| mode.detail_focus.recorded_tabs())
+            .unwrap_or_default();
+        (role, tabs)
+    }
+
+    pub fn focus_pr_detail_tab_for_e2e(
+        &self,
+        slot: usize,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        if let Some(mode) = self.pr_mode() {
+            mode.detail_focus.focus(slot, window, cx);
+        }
+    }
+
+    pub fn pr_detail_tab_focused_for_e2e(&self, window: &gpui::Window) -> Option<usize> {
+        self.pr_mode()?.detail_focus.focused(window)
     }
 }

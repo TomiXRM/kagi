@@ -12,7 +12,7 @@ fn bounds(win: AnyWindowHandle, name: &str) -> Bounds<gpui::Pixels> {
     e2e::control_bounds(win.window_id(), name).unwrap_or_else(|| panic!("missing {name}"))
 }
 
-fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
+pub(crate) fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, dimensions: (f32, f32)) {
     let wanted = size(px(dimensions.0), px(dimensions.1));
     cx.update_window(win, |_, w, _| w.resize(wanted)).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);

@@ -122,6 +122,7 @@ impl KagiApp {
                 | M::Clone(_)
                 | M::Update(_)
                 | M::SmartCommit(_)
+                | M::AnalyzeHelp(_)
                 | M::PrFields(_)
                 | M::SetUpstream(_)
                 | M::RenameBranch(_)

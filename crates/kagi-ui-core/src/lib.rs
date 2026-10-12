@@ -20,6 +20,7 @@ pub mod file_tree;
 pub mod fonts;
 pub mod header_fit;
 pub mod i18n;
+pub mod keyboard_nav;
 pub mod markdown;
 pub mod pr_viewed;
 pub mod settings;

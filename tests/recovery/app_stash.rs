@@ -65,6 +65,15 @@ fn confirm(
         cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+    } else if cx.read(|cx| {
+        matches!(
+            app.read(cx).active_modal,
+            Some(ActiveModal::Pop(_) | ActiveModal::StashDrop(_))
+        )
+    }) {
+        // #1270: root Return cancels danger cards. Tab to their real Confirm
+        // button and send its Enter down/up rather than bypassing approval.
+        crate::destructive_modal_return::focused_confirm(cx, app, window, "plan-confirm");
     } else {
         cx.simulate_keystrokes(window, "enter");
     }
@@ -247,7 +256,7 @@ pub fn scenario_stash_public_boundary(cx: &mut VisualTestAppContext) {
             eprintln!(
                 "[gui-e2e] PASS app-stash {} {} → executor → one receipt",
                 action.name(),
-                if button { "button" } else { "raw Enter" }
+                if button { "button" } else { "keyboard" }
             );
         }
     }
@@ -308,7 +317,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         set_remote_stash_e2e_mode(None);
         eprintln!(
             "[gui-e2e] PASS remote stash-drop {} → typed transport → refresh + one receipt",
-            if button { "button" } else { "raw Enter" }
+            if button { "button" } else { "focused Enter" }
         );
     }
 
@@ -380,7 +389,7 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
-    for duplicate in [false, true] {
+    for (duplicate, cancel_followup) in [(false, false), (false, true), (true, false)] {
         let fixture = build_fixture();
         let repo = fixture.path().canonicalize().unwrap();
         stash_three(&repo);
@@ -488,19 +497,42 @@ pub fn scenario_stash_conflict_followup(cx: &mut VisualTestAppContext) {
         if duplicate {
             cx.simulate_keystrokes(window, "escape");
             assert_eq!(ids(&repo), kept);
+        } else if cancel_followup {
+            let fingerprint = crate::macos::repo_fingerprint(&repo);
+            crate::recovery_operations::press_key(cx, &app, window, "enter");
+            wait(cx, &app, |app| app.stash_drop_modal().is_none());
+            assert_eq!(ids(&repo), kept, "root Return keeps the retained stash");
+            assert_eq!(crate::macos::repo_fingerprint(&repo), fingerprint);
+            assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+            assert!(!read_oplog_tail_for_repo(&repo, 100)
+                .iter()
+                .any(|entry| entry.op == "stash-drop"));
         } else {
             // Cancelling is not the only thing this prompt must support: the
             // point of the follow-up is that it can be *confirmed*, and that it
             // drops the entry its OID resolved to — not the placeholder index
             // it reserved the modal slot with.
+            crate::recovery_operations::paint(cx, window);
+            assert_eq!(
+                ids(&repo),
+                kept,
+                "the follow-up must await explicit approval"
+            );
+            assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
             confirm(cx, &app, window, false);
             wait(cx, &app, |app| {
                 app.write_busy_op.is_none() && app.stash_drop_modal().is_none()
             });
             assert_eq!(ids(&repo), vec![kept[0].clone(), kept[2].clone()]);
+            let drops: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
+                .into_iter()
+                .filter(|entry| entry.op == "stash-drop")
+                .collect();
+            assert_eq!(drops.len(), 1);
+            assert!(matches!(drops[0].outcome, OpOutcome::Success { .. }));
         }
         unmount(cx, app, window);
-        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID prompt/cancel (duplicate={duplicate})");
+        eprintln!("[gui-e2e] PASS app-stash deep conflict A→B→A → continue → unique OID explicit confirm/Return cancel (duplicate={duplicate}, cancel={cancel_followup})");
     }
 }
 

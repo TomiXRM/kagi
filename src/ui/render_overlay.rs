@@ -477,6 +477,13 @@ impl KagiApp {
                             cx,
                         ))
                     })
+                    .when(self.analyze_help_modal().is_some(), |el| {
+                        el.child(super::analyze_help::render_analyze_help(
+                            modal_focus.clone(),
+                            window,
+                            cx,
+                        ))
+                    })
                     .when_some(self.apply_suggestion_modal().cloned(), |el, modal| {
                         el.child(
                             super::operations::apply_suggestion::render_apply_suggestion_modal(

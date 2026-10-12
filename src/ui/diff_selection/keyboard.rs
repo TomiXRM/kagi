@@ -6,14 +6,16 @@ use gpui::{
 use std::sync::Arc;
 
 const CONTEXT: &str = "KagiDiffSelection";
+const SPLIT_CONTEXT: &str = "KagiSplitDiffSelection";
 
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = kagi_diff, no_json)]
 pub(crate) struct SelectRows {
-    step: i8,
-    extend: bool,
-    boundary: bool,
-    all: bool,
+    pub(super) step: i8,
+    pub(super) extend: bool,
+    pub(super) boundary: bool,
+    pub(super) all: bool,
+    page: bool,
 }
 
 pub(crate) fn bind_keys(cx: &mut App) {
@@ -33,8 +35,31 @@ pub(crate) fn bind_keys(cx: &mut App) {
                 extend,
                 boundary,
                 all,
+                page: false,
             },
             Some(CONTEXT),
+        )]);
+    }
+    for (key, step, extend, boundary, page) in [
+        ("home", -1, false, true, false),
+        ("end", 1, false, true, false),
+        ("shift-home", -1, true, true, false),
+        ("shift-end", 1, true, true, false),
+        ("pageup", -1, false, false, true),
+        ("pagedown", 1, false, false, true),
+        ("shift-pageup", -1, true, false, true),
+        ("shift-pagedown", 1, true, false, true),
+    ] {
+        cx.bind_keys([KeyBinding::new(
+            key,
+            SelectRows {
+                step,
+                extend,
+                boundary,
+                all: false,
+                page,
+            },
+            Some(SPLIT_CONTEXT),
         )]);
     }
 }
@@ -47,6 +72,7 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub rows: Arc<Vec<DiffRow>>,
     pub scroll: ListState,
     pub item_index: F,
+    pub split: bool,
 }
 
 impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
@@ -78,7 +104,11 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                         .border_color(gpui::rgb(super::super::theme::theme().ui_accent())),
                 )
             })
-            .key_context(CONTEXT)
+            .key_context(if self.split {
+                "KagiDiffSelection KagiSplitDiffSelection"
+            } else {
+                CONTEXT
+            })
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx);
             })
@@ -88,14 +118,33 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                     cx.propagate();
                     return;
                 }
-                if let Some(cursor) = super::move_rows(
-                    self.key,
-                    &self.rows,
-                    action.step,
-                    action.extend,
-                    action.boundary,
-                    action.all,
-                ) {
+                let cursor = if self.split {
+                    let projection = super::super::diff_split::split_projection(&self.rows);
+                    let distance = if action.page {
+                        let top = self.scroll.logical_scroll_top().item_ix;
+                        let height = self
+                            .scroll
+                            .bounds_for_item(top)
+                            .map_or(super::super::theme::scaled_px(22.), |b| b.size.height);
+                        (f32::from(self.scroll.viewport_bounds().size.height)
+                            / f32::from(height).max(1.))
+                        .floor()
+                        .max(1.) as usize
+                    } else {
+                        1
+                    };
+                    super::move_split_rows(self.key, &self.rows, &projection.rows, action, distance)
+                } else {
+                    super::move_rows(
+                        self.key,
+                        &self.rows,
+                        action.step,
+                        action.extend,
+                        action.boundary,
+                        action.all,
+                    )
+                };
+                if let Some(cursor) = cursor {
                     super::super::keyboard_nav::reveal_list_row(
                         &self.scroll,
                         (self.item_index)(cursor),

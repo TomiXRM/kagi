@@ -3280,6 +3280,10 @@ mod macos {
                 Box::new(crate::diff_keyboard::scenario_diff_keyboard_selection),
             ),
             (
+                "split_diff_keyboard_order",
+                Box::new(crate::diff_keyboard::scenario_split_diff_keyboard_order),
+            ),
+            (
                 "hunk_staging_content_identity",
                 Box::new(crate::hunk_staging::scenario_hunk_staging_content_identity),
             ),

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Split diff keyboard navigation follows aligned visual rows rather than revisiting the top of replacement blocks; Home/End and viewport-sized PageUp/PageDown use the same order. Unified navigation and inclusive selection/copy semantics remain unchanged. (#1373)
 - Escape dismisses actionable operation notices instead of immediately re-presenting them on every render, and restores focus to the opener. Dismissal discards any armed release approval but keeps the reconcile requirement, write restrictions and durable Operation Log detail; a new explicit write refusal can offer Inspect again. Unread queued notices and notices displaced by another dialog remain available. (#1366)
   - Review: queued Checkout/Commit/Merge requests restore the blocking Inspect notice when their session is already waiting for reconciliation, without duplicating an active or queued notice for the same requirement or recreating it during queue ticks.
 - Empty-query command palettes separate Actions, Appearance and Language with localized headings and named accessibility groups. Headings are not keyboard or activation targets; fuzzy-search ranking, disabled reasons, single-row highlighting and the native shortcut column are unchanged. (#1370)

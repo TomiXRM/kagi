@@ -65,6 +65,67 @@ pub fn scenario_diff_keyboard_selection(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS diff_keyboard_selection EN/JA unified/split");
 }
 
+pub fn scenario_split_diff_keyboard_order(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["diff_split"]);
+    theme::set_diff_split(true);
+    let temp = fixture();
+    std::fs::write(
+        temp.path().join("f.txt"),
+        (0..100)
+            .filter(|i| !(2..7).contains(i))
+            .map(|i| {
+                if i == 7 {
+                    format!("replacement a\nreplacement b\nreplacement c\nline {i}\n")
+                } else {
+                    format!("line {i}\n")
+                }
+            })
+            .collect::<String>(),
+    )
+    .unwrap();
+    let repo = temp.path().canonicalize().unwrap();
+    let (app, window) = mount(cx, &repo);
+    app.update(cx, |app, cx| {
+        e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
+    });
+    open(cx, &app);
+    draw(cx, window);
+    let (key, _) = surface(cx, &app);
+    tab_to_body(cx, window, key);
+    for _ in 0..7 {
+        keys(cx, window, "down");
+    }
+    keys(cx, window, "cmd-c");
+    assert_eq!(clipboard(cx), "line 6\n", "last left replacement row");
+    keys(cx, window, "down");
+    keys(cx, window, "cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "line 7\n",
+        "Down from last left row moves to the next visual row, never back up"
+    );
+    keys(cx, window, "up");
+    keys(cx, window, "cmd-c");
+    assert_eq!(clipboard(cx), "line 6\n");
+    keys(cx, window, "shift-down cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "line 6\nreplacement a\nreplacement b\nreplacement c\nline 7\n",
+        "Shift preserves the unified anchor and code-only copy range"
+    );
+    keys(cx, window, "home");
+    draw(cx, window);
+    assert_header_caret(key, true);
+    keys(cx, window, "end cmd-c");
+    assert_eq!(clipboard(cx), "line 9\n");
+    keys(cx, window, "pageup");
+    draw(cx, window);
+    assert_header_caret(key, true);
+    keys(cx, window, "pagedown cmd-c");
+    assert_eq!(clipboard(cx), "line 9\n");
+    unmount(cx, app, window);
+}
+
 fn selection_cell(cx: &mut VisualTestAppContext) {
     let temp = fixture();
     let repo = temp.path().canonicalize().unwrap();

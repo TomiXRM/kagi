@@ -89,6 +89,7 @@ pub mod graph_squash;
 pub mod graph_view;
 mod graph_window;
 pub mod graph_wip;
+mod pane_budget;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 pub mod dialog_a11y;
 pub mod home;
@@ -1102,6 +1103,8 @@ pub struct KagiApp {
     graph_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// Fitted widths and viewport budget for the currently rendered Graph.
     graph_column_fit: graph_columns::Fit,
+    /// Presentation widths and the last rendered outer-pane drag budget.
+    pane_fit: pane_budget::Fit,
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
@@ -1496,6 +1499,7 @@ impl KagiApp {
             badge_col_origin_x: Default::default(),
             graph_col_origin_x: Default::default(),
             graph_column_fit: Default::default(),
+            pane_fit: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),

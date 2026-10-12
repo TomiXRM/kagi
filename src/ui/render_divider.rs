@@ -40,6 +40,12 @@ impl KagiApp {
             DividerKind::Sidebar | DividerKind::PrModeLeft => {
                 // Divider sits at x = sidebar_width * physical scale.
                 let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                if matches!(drag.kind, DividerKind::Sidebar) {
+                    let candidate = self.pane_fit.refit(new_width, self.panel_width);
+                    if (candidate.sidebar - self.pane_fit.sidebar).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.sidebar.width).abs() > 0.5 {
                     self.sidebar.width = new_width;
                     cx.notify();
@@ -58,6 +64,14 @@ impl KagiApp {
                 // Divider sits at x = viewport_width - panel_width * physical scale.
                 let viewport_w = f32::from(window.viewport_size().width);
                 let new_width = ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
+                // File History owns a nested divider; only the outer right
+                // slot shares this budget. Ignore already-capped expansions.
+                if self.panel_motion.right_pane.is_some() {
+                    let candidate = self.pane_fit.refit(self.sidebar.width, new_width);
+                    if (candidate.right - self.pane_fit.right).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.panel_width).abs() > 0.5 {
                     self.panel_width = new_width;
                     // ADR-0117: the File History detail divider drags `panel_width`

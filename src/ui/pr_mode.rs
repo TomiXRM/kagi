@@ -1984,14 +1984,11 @@ impl KagiApp {
         cx: &mut gpui::App,
     ) {
         if let Some(mode) = self.pr_mode() {
-            let handles = mode
-                .detail_focus
-                .sync(&super::keyboard_nav::slot_keys(5), cx);
-            handles[slot].focus(window, cx);
+            mode.detail_focus.focus(slot, window, cx);
         }
     }
 
     pub fn pr_detail_tab_focused_for_e2e(&self, window: &gpui::Window) -> Option<usize> {
-        self.pr_mode()?.detail_focus.focused_slot(window)
+        self.pr_mode()?.detail_focus.focused(window)
     }
 }

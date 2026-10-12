@@ -272,12 +272,13 @@ pub(super) fn mode_toggle(
         ("icons/eye.svg", Msg::ComposerPreview.t())
     };
     let id = id.into();
+    let name = Msg::ComposerPreview.t();
     #[cfg(feature = "gui-e2e")]
     {
         super::e2e::pr_detail::record_control(
             id.to_string(),
             Some(gpui::Role::Button),
-            Some(tooltip),
+            Some(name),
             Some(preview),
             None,
         );
@@ -289,7 +290,7 @@ pub(super) fn mode_toggle(
         .icon(Icon::empty().path(icon))
         .small()
         .tab_stop(true)
-        .map(|button| super::button_style::named_button(button, tooltip, Some(preview)))
+        .map(|button| super::button_style::named_button(button, name, Some(preview)))
         .tooltip(tooltip)
         .on_click(move |event, window, cx| {
             #[cfg(feature = "gui-e2e")]

@@ -150,6 +150,28 @@ pub fn scenario_pr_detail_a11y_1255(cx: &mut VisualTestAppContext) {
     });
 }
 
+fn cancel_merge_plan(cx: &mut VisualTestAppContext, cell: &Cell) {
+    settle_plan(cx, &cell.app);
+    cell.paint(cx);
+    assert!(
+        cx.update_window(cell.win, |_, window, cx| {
+            cell.app
+                .read(cx)
+                .root_focus
+                .as_ref()
+                .unwrap()
+                .is_focused(window)
+        })
+        .unwrap(),
+        "accepted Merge plan hands focus to the modal root"
+    );
+    let opened = pr_detail::activation_count("pr-mode-merge");
+    crate::keyboard_nav::keys(cx, cell.win, "escape");
+    cell.paint(cx);
+    assert!(cx.read(|cx| cell.app.read(cx).pr_merge_modal().is_none()));
+    assert_eq!(pr_detail::activation_count("pr-mode-merge"), opened);
+}
+
 pub fn scenario_pr_detail_a11y_1256(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, cell, repo| {
         cell.button("pr-mode-title", Msg::PrModeShowDescription);
@@ -174,11 +196,9 @@ pub fn scenario_pr_detail_a11y_1256(cx: &mut VisualTestAppContext) {
                 Some("https://github.com/example/repo/pull/7")
             );
             cell.activate(cx, "pr-mode-merge", "pr-mode-merge", key);
-            settle_plan(cx, &cell.app);
+            cancel_merge_plan(cx, cell);
             // Opening approval never authorizes transport or local cleanup.
             assert_eq!(crate::macos::repo_fingerprint(repo), before);
-            crate::recovery_operations::press_key(cx, &cell.app, cell.win, "escape");
-            cell.paint(cx);
         }
         for mergeable in [
             kagi_domain::github::Mergeable::Clean,
@@ -194,8 +214,7 @@ pub fn scenario_pr_detail_a11y_1256(cx: &mut VisualTestAppContext) {
             cell.button("pr-mode-merge", Msg::PrModeMerge);
             assert!(!pr_detail::control("pr-mode-merge").unwrap().disabled);
             cell.activate(cx, "pr-mode-merge", "pr-mode-merge", "enter");
-            settle_plan(cx, &cell.app);
-            crate::recovery_operations::press_key(cx, &cell.app, cell.win, "escape");
+            cancel_merge_plan(cx, cell);
             assert_eq!(crate::macos::repo_fingerprint(repo), before);
         }
         for (draft, held) in [(true, false), (false, true)] {
@@ -285,10 +304,16 @@ pub fn scenario_pr_detail_a11y_1257(cx: &mut VisualTestAppContext) {
                 "Apply opens existing plan"
             );
             assert_eq!(crate::macos::repo_fingerprint(repo), before);
-            // Root Return cancels destructive suggestion; it must not apply.
-            crate::recovery_operations::press_key(cx, &cell.app, cell.win, "enter");
+            // Use the focus handed off by the opener, not a test-side refocus.
+            let opened = pr_detail::activation_count(APPLY);
+            crate::keyboard_nav::keys(cx, cell.win, "enter");
             cell.paint(cx);
             assert!(cx.read(|cx| cell.app.read(cx).apply_suggestion_modal().is_none()));
+            assert_eq!(
+                pr_detail::activation_count(APPLY),
+                opened,
+                "Return cancellation must not reopen through the opener's key-up"
+            );
             assert_eq!(crate::macos::repo_fingerprint(repo), before);
             assert_eq!(
                 kagi_git::oplog::read_oplog_tail_for_repo(repo, 100).len(),
@@ -302,7 +327,7 @@ fn mode_toggle(cx: &mut VisualTestAppContext, cell: &Cell, id: &str, geometry: &
     cell.button(id, Msg::ComposerPreview);
     for key in ["enter", "space"] {
         cell.activate(cx, id, geometry, key);
-        cell.button(id, Msg::ComposerWrite);
+        cell.button(id, Msg::ComposerPreview);
         assert_eq!(pr_detail::control(id).unwrap().toggled, Some(true));
         cell.activate(cx, id, geometry, key);
         cell.button(id, Msg::ComposerPreview);

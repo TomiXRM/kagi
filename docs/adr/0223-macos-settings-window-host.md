@@ -90,3 +90,6 @@ close handle per window rather than overwriting one global handle. Both hosts
 subscribe to card removal in their own window and repair retired close-button
 focus to their own root, preserving pane navigation and native host commands
 after either pointer or keyboard dismissal.
+Settings host release also removes its own card handles from the shared stack,
+without dismissing any feedback or clearing another window's handles. Persistent
+error cards therefore cannot accumulate retired Settings windows' focus state.

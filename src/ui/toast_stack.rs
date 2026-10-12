@@ -185,6 +185,16 @@ impl ToastStack {
         toast.dismissing = Some(Instant::now());
     }
 
+    /// Release a retired host's controls without dismissing its shared feedback.
+    pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
+        for toast in &self.toasts {
+            toast
+                .close_focus
+                .borrow_mut()
+                .retain(|(host, _)| *host != id);
+        }
+    }
+
     /// Remove a toast by id (after the exit animation has played).
     pub fn remove(&mut self, id: u64) {
         if let Some(toast) = self.toasts.iter().find(|t| t.id == id) {
@@ -316,6 +326,30 @@ impl Default for ToastStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "gui-e2e")]
+    #[gpui::test]
+    fn closed_window_releases_persistent_error_close_handles(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+        cx.update(|cx| {
+            let handles = cx.new(|cx| (cx.focus_handle(), cx.focus_handle()));
+            let (closed_focus, live_focus) = handles.read(cx);
+            let closed = gpui::WindowId::from(1);
+            let live = gpui::WindowId::from(2);
+            let mut stack = ToastStack::new();
+            stack.push(ToastKind::Error, "persistent error");
+            stack.toasts()[0]
+                .close_focus
+                .borrow_mut()
+                .extend([(closed, closed_focus.clone()), (live, live_focus.clone())]);
+            stack.forget_window(closed);
+            stack.forget_window(closed);
+            assert_eq!(stack.toasts().len(), 1, "closing a host keeps the error");
+            let remaining = stack.toasts()[0].close_focus.borrow();
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].0, live, "the surviving host keeps its handle");
+        });
+    }
 
     #[test]
     fn push_and_cap() {

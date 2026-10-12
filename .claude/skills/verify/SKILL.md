@@ -117,6 +117,9 @@ also Tabs to the close control while both hosts render the shared stack, then
 checks pane Left/Right and native Cmd+W after removal. Tier B still owns
 provider/model Tab traversal, focus-visible rings, VoiceOver names,
 selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation

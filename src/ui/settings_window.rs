@@ -126,6 +126,17 @@ impl SettingsWindow {
                 },
             )
         });
+        let id = window.window_handle().window_id();
+        cx.on_release(move |this, cx| {
+            if let Some(stack) = this
+                .owner
+                .upgrade()
+                .and_then(|owner| owner.read(cx).toast_stack.clone())
+            {
+                stack.update(cx, |stack, _| stack.forget_window(id));
+            }
+        })
+        .detach();
         Self {
             owner: owner.downgrade(),
             pane,

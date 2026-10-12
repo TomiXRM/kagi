@@ -470,6 +470,8 @@ pub enum Msg {
     CommandPalettePlaceholder,
     /// Shown when the query matches no command.
     CommandPaletteNoResults,
+    /// Empty-query palette's command section.
+    CommandPaletteActions,
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
@@ -2665,6 +2667,8 @@ impl Msg {
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
+            (En, CommandPaletteActions) => "Actions",
+            (Ja, CommandPaletteActions) => "操作",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",

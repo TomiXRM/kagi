@@ -85,7 +85,7 @@ fn assert_selection(
 fn assert_single_fill(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
-    scroll: &gpui::ScrollHandle,
+    scroll: &kagi::ui::command_palette::PaletteScroll,
     selected: usize,
 ) {
     cx.update_window(window, |_, window, _cx| {
@@ -315,6 +315,137 @@ pub fn scenario_palette_shortcut_glyphs(cx: &mut VisualTestAppContext) {
         }
     }
     eprintln!("[gui-e2e] PASS palette_shortcut_glyphs");
+}
+
+/// #1370: empty-query headings are visible but never become activation targets.
+pub fn scenario_palette_sections(cx: &mut VisualTestAppContext) {
+    let _restore = PresentationRestore::capture(cx);
+    let fixture = build_fixture();
+    let before = repo_fingerprint(fixture.path());
+    for locale in ["en", "ja"] {
+        std::env::set_var("KAGI_LANG", locale);
+        i18n::init_lang();
+        let (app, window) = mount(cx, fixture.path(), (940., 660.));
+        keys(cx, window, "cmd-p");
+        for name in ["actions", "appearance", "language"] {
+            let bounds =
+                e2e::control_bounds(window.window_id(), &format!("palette-heading-{name}"))
+                    .unwrap_or_else(|| panic!("missing visible palette section heading: {name}"));
+            assert!(bounds.size.height > px(0.));
+        }
+        let rows = cx.read(|cx| rows_for(app.read(cx), ""));
+        let ids: std::collections::HashSet<_> = rows.iter().map(|row| &row.id).collect();
+        assert_eq!(ids.len(), rows.len(), "each action appears exactly once");
+        assert_section_model(&rows, locale);
+        for index in 0..rows.len() {
+            assert_selection(&app, cx, &rows, index);
+            if index + 1 < rows.len() {
+                keys(cx, window, "down");
+            }
+        }
+        keys(cx, window, "up");
+        assert_selection(&app, cx, &rows, rows.len() - 2);
+        let language = rows
+            .iter()
+            .rposition(|row| matches!(row.action, PaletteAction::SetLang(_)))
+            .unwrap();
+        keys(cx, window, "down enter");
+        let PaletteAction::SetLang(expected_lang) = rows[language].action.clone() else {
+            unreachable!()
+        };
+        assert_eq!(
+            i18n::lang(),
+            expected_lang,
+            "Enter executes the language row, not its heading"
+        );
+        assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+        // Restore this leg's locale before comparing filtered ranking.
+        std::env::set_var("KAGI_LANG", locale);
+        i18n::init_lang();
+        keys(cx, window, "cmd-p");
+        assert_flat_ranking(cx, &app, window, &rows);
+        query(cx, &app, window, "zzzz-no-match");
+        for name in ["actions", "appearance", "language"] {
+            e2e::clear_control_bounds(window.window_id(), &format!("palette-heading-{name}"));
+        }
+        draw(cx, window);
+        for name in ["actions", "appearance", "language"] {
+            assert!(
+                e2e::control_bounds(window.window_id(), &format!("palette-heading-{name}"))
+                    .is_none(),
+                "filtered results must remain flat"
+            );
+        }
+        keys(cx, window, "escape");
+        unmount(cx, app, window);
+    }
+    assert_eq!(repo_fingerprint(fixture.path()), before);
+    eprintln!("[gui-e2e] PASS palette_sections");
+}
+
+fn assert_section_model(rows: &[PaletteRow], locale: &str) {
+    let sections = e2e::palette::recorded_sections();
+    assert_eq!(sections.len(), 3);
+    let labels = if locale == "ja" {
+        [
+            ("actions", "操作"),
+            ("appearance", "外観"),
+            ("language", "言語"),
+        ]
+    } else {
+        [
+            ("actions", "Actions"),
+            ("appearance", "Appearance"),
+            ("language", "Language"),
+        ]
+    };
+    for (id, label) in labels {
+        let section = &sections[id];
+        assert_eq!(section.role, gpui::Role::Group);
+        assert_eq!(section.label, label);
+        assert!(!section.rows.is_empty());
+        for index in section.rows.clone() {
+            assert_eq!(rows[index].section().id(), id);
+            let description = e2e::palette::recorded_description(index).unwrap();
+            assert!(description.starts_with(label));
+            if let Some(reason) = &rows[index].disabled_reason {
+                assert!(
+                    description.ends_with(reason),
+                    "availability explanation retained"
+                );
+            }
+        }
+    }
+}
+
+fn assert_flat_ranking(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    all: &[PaletteRow],
+) {
+    use kagi::ui::command_palette::fuzzy_match;
+    query(cx, app, window, "a");
+    let mut expected: Vec<_> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| fuzzy_match("a", &row.label).map(|score| (score, index, row)))
+        .collect();
+    expected.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let filtered = cx.read(|cx| rows_for(app.read(cx), "a"));
+    assert_eq!(
+        filtered,
+        expected
+            .into_iter()
+            .map(|(_, _, row)| row.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(e2e::palette::recorded_sections().is_empty());
+    for (index, row) in filtered.iter().enumerate() {
+        assert!(e2e::palette::recorded_description(index)
+            .unwrap()
+            .starts_with(row.section().label()));
+    }
 }
 
 pub fn install_shortcut_bindings() -> crate::gui_isolation::SavedKeys {

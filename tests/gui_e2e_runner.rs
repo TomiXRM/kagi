@@ -163,6 +163,9 @@ mod bottom_panel_motion;
 #[path = "recovery/graph_column_divider.rs"]
 mod graph_column_divider;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pane_budget.rs"]
+mod pane_budget;
+#[cfg(target_os = "macos")]
 #[path = "recovery/side_panel_motion.rs"]
 mod side_panel_motion;
 
@@ -326,6 +329,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_appearance_ax.rs"]
+mod settings_appearance_ax;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_controls.rs"]
 mod settings_controls;
@@ -2377,6 +2383,14 @@ mod macos {
                 Box::new(crate::settings_controls::scenario_settings_provider_keys),
             ),
             (
+                "settings_theme_select_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_theme_select_ax),
+            ),
+            (
+                "settings_zoom_stepper_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
+            ),
+            (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
@@ -3467,6 +3481,18 @@ mod macos {
             (
                 "right_selection_motion",
                 Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
+            (
+                "pane_budget_fit",
+                Box::new(crate::pane_budget::scenario_pane_budget_fit),
+            ),
+            (
+                "pane_budget_worktree_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_worktree_anchor),
+            ),
+            (
+                "pane_budget_group_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_group_anchor),
             ),
             (
                 "graph_column_divider_hidden",

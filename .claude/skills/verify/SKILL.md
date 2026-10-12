@@ -56,6 +56,16 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
+`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
+role/name/value/expanded/disabled properties on Appearance controls in the native
+Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
+to the kit's actual focused Select root; confirmation and Escape preserve its
+identity and focus owner. Zoom retains kit activation and discrete caps, hands
+focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
+These probes are not native VoiceOver or Full Keyboard Access evidence.
+Tier B inspects the live ComboBox and option names and both zoom button/value
+nodes at 100%, 70% and 167%, including disabled announcements.
 For #1336/#1337/#1338/#1341 use
 `KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
 with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and

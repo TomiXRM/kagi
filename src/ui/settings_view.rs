@@ -32,10 +32,12 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::{FocusTrapElement as _, IndexPath, Sizable as _};
+use gpui_component::{Disableable as _, FocusTrapElement as _, IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
+#[cfg(feature = "gui-e2e")]
+pub use super::theme_select::{appearance_ax_for_e2e, take_theme_option_ax_for_e2e};
 use super::{settings, KagiApp};
 
 /// Native scenarios opt into the macOS host; the portable suite keeps testing
@@ -96,8 +98,31 @@ impl SelectItem for ThemeOption {
         // SelectState keeps its options across language changes. Resolve the
         // display name at render time so both the trigger and dropdown switch.
         theme::theme_by_slug(&self.slug)
-            .map(|theme| SharedString::from(theme.display_name().to_string()))
+            .map(|theme| {
+                SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                    theme.display_name(),
+                ))
+            })
             .unwrap_or_else(|| self.name.clone())
+    }
+
+    fn render(&self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
+        let name = self.title();
+        #[cfg(feature = "gui-e2e")]
+        super::theme_select::record_ax(
+            &format!("theme-option:{}", self.slug),
+            gpui::Role::ListBoxOption,
+            &name,
+            &self.slug,
+            None,
+            false,
+        );
+        div()
+            .id(self.slug.clone())
+            .role(gpui::Role::ListBoxOption)
+            .aria_label(name.clone())
+            .aria_value(self.slug.clone())
+            .child(name)
     }
 
     fn value(&self) -> &Self::Value {
@@ -111,7 +136,9 @@ pub fn theme_options() -> Vec<ThemeOption> {
         .into_iter()
         .map(|t| ThemeOption {
             slug: SharedString::from(t.slug.clone()),
-            name: SharedString::from(t.display_name().to_string()),
+            name: SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                t.display_name(),
+            )),
         })
         .collect()
 }
@@ -432,11 +459,28 @@ pub(super) fn appearance_section(
     // back to a static label so the row still renders.
     let theme_dropdown = match theme_select {
         Some(state) => {
-            let select = Select::new(&state)
-                .menu_width(px(220.0))
-                .small()
-                .w(px(220.0));
-            super::e2e::measure_control("settings-theme-select", select)
+            let expanded = state.read(cx).is_open();
+            let value = kagi_domain::text_safety::sanitize_control_bytes(theme().display_name());
+            #[cfg(feature = "gui-e2e")]
+            super::theme_select::record_ax(
+                "settings-theme-select",
+                gpui::Role::ComboBox,
+                Msg::SettingsTheme.t(),
+                &value,
+                Some(expanded),
+                false,
+            );
+            super::e2e::measure_control(
+                "settings-theme-select",
+                Select::new(&state)
+                    .role(gpui::Role::ComboBox)
+                    .aria_label(Msg::SettingsTheme.t())
+                    .aria_value(value)
+                    .aria_expanded(expanded)
+                    .menu_width(px(220.0))
+                    .small()
+                    .w(px(220.0)),
+            )
         }
         None => div()
             .text_sm()
@@ -448,6 +492,15 @@ pub(super) fn appearance_section(
     // ── UI Zoom stepper:  [−]  110%  [+] ──
     let zoom = theme::zoom();
     let zoom_label = format!("{:.0}%", zoom * 100.0);
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(
+        "zoom-value",
+        gpui::Role::Status,
+        &i18n::settings_zoom_value(&zoom_label),
+        &zoom_label,
+        None,
+        false,
+    );
     #[cfg(feature = "gui-e2e")]
     super::e2e::record_settings_zoom_label(&zoom_label);
     let app_minus = app.downgrade();
@@ -470,20 +523,38 @@ pub(super) fn appearance_section(
             cx.notify();
         });
     };
+    let increase_name = i18n::settings_zoom_action(true, &zoom_label);
     let zoom_ctl = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .child(stepper_btn("zoom-dec", "−", dec))
+        .child(stepper_btn(
+            "zoom-dec",
+            "−",
+            i18n::settings_zoom_action(false, &zoom_label),
+            theme::step_zoom(zoom, false) == zoom,
+            false,
+            dec,
+        ))
         .child(
             div()
+                .id("zoom-value")
+                .role(gpui::Role::Status)
+                .aria_label(i18n::settings_zoom_value(&zoom_label))
                 .min_w(px(56.0))
                 .text_center()
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(zoom_label)),
         )
-        .child(stepper_btn("zoom-inc", "+", inc))
+        .child(stepper_btn(
+            "zoom-inc",
+            "+",
+            increase_name,
+            theme::step_zoom(zoom, true) == zoom,
+            true,
+            inc,
+        ))
         .into_any_element();
 
     // The five switches reach the keyboard and assistive technology through
@@ -760,13 +831,78 @@ pub(super) fn appearance_section(
 fn stepper_btn(
     id: &'static str,
     label: &'static str,
+    name: String,
+    disabled: bool,
+    increase: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    Button::new(id)
-        .label(label)
-        .outline()
-        .small()
-        .on_click(on_click)
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(id, gpui::Role::Button, &name, "", None, disabled);
+    let button = super::button_style::named_disabled_button(
+        Button::new(id)
+            .child(label)
+            .outline()
+            .small()
+            .disabled(disabled),
+        name,
+        disabled,
+    );
+    super::e2e::measure_control(
+        id,
+        ZoomStepperButton {
+            id,
+            button,
+            increase,
+            on_click,
+        },
+    )
+}
+
+/// Reuse the kit Button's keyed focus owner, without adding a second stop.
+#[derive(IntoElement)]
+struct ZoomStepperButton<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+    id: &'static str,
+    button: Button,
+    increase: bool,
+    on_click: F,
+}
+
+impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::RenderOnce
+    for ZoomStepperButton<F>
+{
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        let Self {
+            id,
+            button,
+            increase,
+            on_click,
+        } = self;
+        // Button::render uses this same public keyed-state API under the same
+        // element namespace. Capture its existing owner before installing the
+        // listener; no extra handle/entity is allocated.
+        let focus = window
+            .use_keyed_state(gpui::ElementId::from(id), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let button = button.on_click(move |event, window, cx| {
+            on_click(event, window, cx);
+            let bound = if increase {
+                theme::ZOOM_MAX
+            } else {
+                theme::ZOOM_MIN
+            };
+            if theme::zoom() == bound && focus.is_focused(window) {
+                // Both stepper stops still exist in this frame. Hand focus to
+                // the opposite direction before the clicked Button retires.
+                if increase {
+                    window.focus_prev(cx);
+                } else {
+                    window.focus_next(cx);
+                }
+            }
+        });
+        gpui::RenderOnce::render(button, window, cx)
+    }
 }
 
 // ────────────────────────────────────────────────────────────

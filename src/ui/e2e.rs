@@ -23,6 +23,8 @@ pub mod sidebar_labels;
 pub mod activity;
 #[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
+#[cfg(feature = "gui-e2e")]
+pub mod tab_strip;
 
 #[cfg(feature = "gui-e2e")]
 pub mod text_caps;
@@ -46,6 +48,9 @@ pub mod pr_detail;
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
     super::modal_command::recorded_disclosure(id)
 }
+
+#[cfg(feature = "gui-e2e")]
+pub mod unborn;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -485,6 +490,14 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
     });
     app.present_app_notice();
     true
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn enqueue_checkout(app: &mut KagiApp, branch: &str, cx: &mut gpui::Context<KagiApp>) -> bool {
+    app.enqueue_checkout(
+        &super::modals::CheckoutPlanTarget::Branch(branch.into()),
+        cx,
+    )
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -1023,7 +1036,7 @@ pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
 
 /// #1069: the actual palette list handle, for native geometry/scroll assertions.
 #[cfg(feature = "gui-e2e")]
-pub fn command_palette_scroll(app: &KagiApp) -> Option<gpui::ScrollHandle> {
+pub fn command_palette_scroll(app: &KagiApp) -> Option<super::palette_scroll::PaletteScroll> {
     app.command_palette_scroll.clone()
 }
 

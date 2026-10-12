@@ -124,6 +124,10 @@ mod dark_elevation;
 mod inactive_selection;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/tab_strip.rs"]
+mod tab_strip;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -140,6 +144,10 @@ mod recovery_sidebar_panes;
 mod sidebar_filter;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/input_names.rs"]
+mod input_names;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
 mod recovery_hairline_dividers;
 
@@ -154,6 +162,10 @@ mod activity_a11y;
 #[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/unborn_empty.rs"]
+mod recovery_unborn_empty;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
@@ -1265,6 +1277,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
             ),
             (
+                "unborn_empty_state",
+                Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
+            ),
+            (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
@@ -1363,6 +1379,10 @@ mod macos {
             (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
+            ),
+            (
+                "input_names_inventory",
+                Box::new(crate::input_names::scenario_input_names_inventory),
             ),
             (
                 "hairline_dividers",
@@ -1521,6 +1541,14 @@ mod macos {
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
             ),
             (
+                "tab_strip_overflow",
+                Box::new(crate::tab_strip::scenario_tab_strip_overflow),
+            ),
+            (
+                "tab_close_names",
+                Box::new(crate::tab_strip::scenario_tab_close_names),
+            ),
+            (
                 "unified_toolbar",
                 Box::new(crate::toolbar_overflow::scenario_unified_toolbar),
             ),
@@ -1570,6 +1598,18 @@ mod macos {
             (
                 "app_notice_modal_replacement",
                 Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
+            ),
+            (
+                "app_notice_escape_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_escape_dismiss),
+            ),
+            (
+                "app_notice_acknowledge_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_acknowledge_dismiss),
+            ),
+            (
+                "app_notice_queue_recurrence",
+                Box::new(crate::op_queue::scenario_app_notice_queue_recurrence),
             ),
             (
                 "reconcile_unobservable_release",
@@ -2385,6 +2425,10 @@ mod macos {
             (
                 "palette_shortcut_glyphs",
                 Box::new(crate::palette_polish::scenario_palette_shortcut_glyphs),
+            ),
+            (
+                "palette_sections",
+                Box::new(crate::palette_polish::scenario_palette_sections),
             ),
             (
                 "settings_close_returns_focus",

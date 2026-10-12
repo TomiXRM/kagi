@@ -378,17 +378,9 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .count();
 
     // ── Filter input row (pinned above the virtualized list) ──────
-    let group_role = gpui::Role::Group;
     let input_role = gpui::Role::TextInput;
-    let label = Msg::HomeGithubFilter.t();
-    #[cfg(feature = "gui-e2e")]
-    if let Some(input) = &filter_input {
-        super::sidebar::record_filter_semantics(input.entity_id(), group_role, input_role, label);
-    }
     let filter_area = div()
         .id("sidebar-filter")
-        .role(group_role)
-        .aria_label(label)
         .relative()
         .child(super::e2e::measure_inside("sidebar-filter"))
         .px_2()
@@ -397,6 +389,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .when_some(filter_input.as_ref(), |row, input| {
             row.child(
                 Input::new(input)
+                    .aria_label(Msg::A11ySidebarFilter.t())
                     .role(input_role)
                     .xsmall()
                     .appearance(true)

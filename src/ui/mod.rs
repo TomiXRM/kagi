@@ -42,6 +42,7 @@ pub mod ecosystem;
 pub mod editor_fs_ops;
 #[cfg(test)]
 mod env_tests;
+mod palette_scroll;
 pub mod window_menu;
 // ADR-0166: GUI E2E seam — pub helpers the `harness = false` main-thread runner
 // (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
@@ -1207,7 +1208,7 @@ pub struct KagiApp {
     pub(crate) command_palette_pointer: Option<gpui::Point<gpui::Pixels>>,
     /// #1069: lazily created list scroll, retained across redraws and reset on
     /// open. Child-bound reveals keep variable-height disabled reasons intact.
-    pub(crate) command_palette_scroll: Option<gpui::ScrollHandle>,
+    pub(crate) command_palette_scroll: Option<palette_scroll::PaletteScroll>,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.

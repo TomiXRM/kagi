@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Draft PR dashboard rows retain full-contrast titles and readable number/author/age metadata in Apple Light and Dark. The existing localized Draft state uses `text_muted` rather than fading the whole interactive row; hover and open behavior remain unchanged. (#1352)
+  - Review: mute STATE only when its attention reason is Draft; conflicting, changes-requested and other actionable draft states retain their attention colour rather than losing the Needs You signal.
 - Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
 - Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
 - Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)

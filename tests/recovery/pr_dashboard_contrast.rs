@@ -146,6 +146,74 @@ fn cell_matrix(cx: &mut VisualTestAppContext, app: &gpui::Entity<KagiApp>, win: 
     );
 }
 
+fn draft_attention(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+) {
+    use kagi_domain::github::{Mergeable, PrAttention, PrDetailAvailability, PrReason};
+    let original = app.update(cx, |app, cx| {
+        let row = app
+            .ui_mut()
+            .unwrap()
+            .github_prs
+            .iter_mut()
+            .find(|pr| pr.number == 2)
+            .unwrap();
+        let original = row.clone();
+        row.is_draft = true;
+        row.head = "main".into();
+        row.mergeable = Mergeable::Conflicting;
+        assert_eq!(
+            row.attention_with_status(true, false, PrDetailAvailability::Fresh),
+            (PrAttention::NeedsYou, PrReason::Conflicting)
+        );
+        app.seed_pr_status_fresh_for_e2e(2, cx);
+        original
+    });
+    let horizontal = cx.read(|cx| {
+        app.read(cx)
+            .pr_mode()
+            .unwrap()
+            .dashboard_horizontal_scroll
+            .clone()
+    });
+    horizontal.set_offset(point(px(0.), px(0.)));
+    app.update(cx, |_, cx| cx.notify());
+    draw(cx, win);
+    let viewport = bounds(win, "pr-home-table-viewport");
+    let rect = bounds(win, "pr-home-state-2");
+    if rect.right() > viewport.right() {
+        horizontal.set_offset(point(viewport.right() - rect.right() - px(2.), px(0.)));
+        app.update(cx, |_, cx| cx.notify());
+        draw(cx, win);
+    }
+    cx.simulate_mouse_move(win, point(px(1.), px(1.)), None, Modifiers::none());
+    draw(cx, win);
+    cx.update_window(win, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native conflicting draft STATE pixels");
+        assert_pixels(
+            &image,
+            window.scale_factor(),
+            bounds(win, "pr-home-state-2"),
+            "draft-conflicting-state",
+            theme::theme().color_blocker,
+        );
+    })
+    .unwrap();
+    app.update(cx, |app, cx| {
+        *app.ui_mut()
+            .unwrap()
+            .github_prs
+            .iter_mut()
+            .find(|pr| pr.number == 2)
+            .unwrap() = original;
+        cx.notify();
+    });
+}
+
 pub fn scenario_pr_dashboard_draft_contrast(
     cx: &mut VisualTestAppContext,
     dimensions: (f32, f32),
@@ -190,6 +258,7 @@ pub fn scenario_pr_dashboard_draft_contrast(
             theme::set_zoom(zoom);
             eprintln!("[gui-e2e] PR contrast {dimensions:?} {slug} {lang} zoom={zoom}");
             cell_matrix(cx, &app, win);
+            draft_attention(cx, &app, win);
         }
     }
     unmount(cx, app, win);

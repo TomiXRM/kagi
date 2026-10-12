@@ -746,7 +746,12 @@ excluded from this layout regression; its leak assertion was not suppressed.
 
 The open-row table retains GitHub's explicit Draft state rather than treating
 drafts as disabled actions. Draft titles keep `text_main`; number, author,
-branch pair, age and the existing localized Draft state use `text_muted`.
+branch pair and age use `text_muted`. STATE uses the muted override only for
+`PrReason::Draft`; all other reasons retain `attention_color(bucket)`.
+Draft identity must not erase the Needs You colour for conflicts,
+changes-requested reviews or failed checks. The localized state label remains
+unchanged. The native regression includes a draft with fresh conflicting
+status and verifies the production Needs You STATE colour in both themes.
 Remove the 75% whole-row opacity, which also attenuated required small text.
 The existing List/ListItem name, pointer-open route and surface hover remain
 unchanged. This dashboard has no selected-row presentation; inactive windows

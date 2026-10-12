@@ -654,7 +654,7 @@ fn render_table_row(
                         pr.number
                     )))
                 })
-                .text_color(rgb(if pr.is_draft {
+                .text_color(rgb(if matches!(why, PrReason::Draft) {
                     theme().text_muted
                 } else {
                     attention_color(bucket)

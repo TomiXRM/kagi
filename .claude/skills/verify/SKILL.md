@@ -356,6 +356,9 @@ Production cell bounds select actual Metal glyph-interior and blank-background
 pixels for titles, number, author, age and the localized Draft state; inherited
 row opacity is included in the captured pixel, not replaced with theme RGB.
 Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
 There is no selected dashboard row state. Pair with the ui-core
 `apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
 Tier B remains a real-window comparison of draft/ready rows and opening a draft

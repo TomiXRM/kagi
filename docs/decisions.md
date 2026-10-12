@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-12
+> **Last updated:** 2026-10-13
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-13 | #1352 review: draft identity does not override the actionable STATE colour | Apply the muted override only to `PrReason::Draft`; all other reasons preserve their `attention_color(bucket)`, including Needs You for conflicting or changes-requested drafts. Native coverage seeds only L2 freshness for a conflicting fixture, then exercises production ownership/classification and STATE pixels. [ADR-0200](adr/0200-pr-workspace-layout.md). |
 | 2026-10-12 | #1352: draft PR dashboard rows use an explicit muted Draft state, never whole-row opacity | Keep the open-row table density, title hierarchy and existing localized state/AX identity. Number, author and age retain the readable `text_muted` token on actual base/hover backgrounds; no selected-row state exists in this plain action list. Native Metal glyph/background pixels supplement the shared WCAG unit helper. [ADR-0200](adr/0200-pr-workspace-layout.md). |
 | 2026-10-12 | #1343: Japanese Rebase action names the source as an object, not the destination | Preserve the EN source label and correct JA to `{} を rebase`; operation/branch domain words stay English under [ADR-0048](adr/0048-ui-localization.md), and the approved `onto` operation argument is unchanged. |
 | 2026-10-12 | #1344: Rebase/Replay action captions use a scaled 160px middle-ellipsis layout, with full identities outside the width budget | Reuse the pinned Button and shared modal footer, retain full names in the plan heading and action tooltip/AX description, and keep armed warning text and two-stage approval unchanged. [ADR-0052](adr/0052-branch-merge-rebase-direction.md). |

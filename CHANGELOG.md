@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)
 - Activity period selection uses named EN/JA keyboard tabs with one Tab stop, arrow/Home/End navigation and Enter/Space activation; the selected fill remains visible on hover in active and inactive windows. (#1301)
 - Activity chart buckets expose localized UTC dates, commits, merges and distinct-author counts, with arrow-key inspection sharing the existing instant hover readout. Solid commit and dashed merge strokes use the same encoding in the legend, including equal/zero series and single buckets. (#1302)
   - Review: merge dash gaps knock out underlying commit/baseline strokes with the Activity body's explicit panel fill, preserving a luminance-visible pattern at equal/zero values without contrasting gap rectangles. A single merge bucket paints two genuine dashes below its separate commit mark; native gap pixels match nearby unpainted background, and probes count actual painted dash/knockout segments.

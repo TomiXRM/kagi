@@ -157,7 +157,7 @@ impl KagiApp {
                 this.bottom_panel_open = true;
                 this.bottom_tab = BottomTab::Terminal;
                 // T-BP-007: lazy-start terminal when opening via status bar icon.
-                this.ensure_terminal(window, cx);
+                this.activate_terminal(window, cx);
             }
             if let Some(focus) = keyboard_focus {
                 focus.focus(window, cx);

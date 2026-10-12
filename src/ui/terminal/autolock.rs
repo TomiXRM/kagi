@@ -7,12 +7,35 @@
 
 use gpui::{Context, Window};
 
-use super::{AutoLockOffer, KagiTerminalSession, ShellExit};
+use super::{AutoLockOffer, KagiTerminalSession, ShellExit, TerminalState};
 use crate::app::SessionId;
 use crate::ui::{FooterStatus, KagiApp, SharedString, ToastKind, UnlockWorktreeModal};
 use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockTarget};
 
 impl KagiApp {
+    /// Showing a stopped terminal preserves its explanation. Only Restart
+    /// requests another spawn; first activation remains lazy-started.
+    pub fn activate_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let stopped = self
+            .active_session()
+            .and_then(|owner| self.ui.get(&owner))
+            .and_then(|ui| ui.terminal_session.as_ref())
+            .is_some_and(|session| {
+                matches!(
+                    session.state,
+                    TerminalState::Exited { .. } | TerminalState::Failed { .. }
+                )
+            });
+        if stopped {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        } else {
+            self.ensure_terminal(window, cx);
+        }
+        cx.notify();
+    }
+
     /// Ensure the active session's terminal exists and its shell is running.
     /// The session owner is frozen into the exit callback so completion cannot
     /// clear another tab's terminal.
@@ -39,7 +62,9 @@ impl KagiApp {
         // decision. Starting another shell must not forget its provenance.
         if session.view.is_none() && session.auto_lock.is_some() {
             let message = crate::ui::i18n::Msg::TerminalAutoLockPendingRelease.t();
-            session.start_error = Some(message.into());
+            session.state = TerminalState::Failed {
+                reason: message.into(),
+            };
             self.ui
                 .get_mut(&owner)
                 .expect("attached owner")
@@ -61,7 +86,9 @@ impl KagiApp {
                     &repo_path.display().to_string(),
                     &running.display().to_string(),
                 );
-                session.start_error = Some(message.clone());
+                session.state = TerminalState::Failed {
+                    reason: message.clone(),
+                };
                 if let Some(ui) = self.ui.get_mut(&owner) {
                     ui.terminal_session = Some(session);
                 }
@@ -175,8 +202,23 @@ impl KagiApp {
             ShellExit::Exited { code } => format!("exited {code}"),
             ShellExit::Unknown(_) => "unknown".to_string(),
         };
+        if matches!(exit, ShellExit::Exited { .. }) {
+            // Preserve the former EOF contract line exactly once, before the
+            // wait-status line, even when the PTY is hidden or retired.
+            klog!("terminal: shell exited");
+        }
         klog!("terminal: shell wait: gen={} status={}", generation, status);
         shell.exit = Some(exit.clone());
+        session.state = match &exit {
+            ShellExit::Exited { code } => TerminalState::Exited { code: *code },
+            ShellExit::Unknown(reason) => TerminalState::Failed {
+                reason: reason.clone(),
+            },
+        };
+        // Even a failed wait retires the unusable transport. Unknown process
+        // provenance stays retained and never authorizes releasing its lock.
+        session.view = None;
+        session.paste_writer = None;
         if matches!(exit, ShellExit::Exited { .. })
             && session
                 .auto_lock

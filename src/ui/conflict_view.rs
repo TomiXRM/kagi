@@ -48,6 +48,17 @@ use super::theme::{self, theme};
 use super::ConflictEditorInputs;
 use super::KagiApp;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static NEXT_CONFLICT_FOCUS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Records real keyboard focus without assuming this is the window's last Tab stop.
+#[cfg(feature = "gui-e2e")]
+pub fn take_next_conflict_focus_probe() -> bool {
+    NEXT_CONFLICT_FOCUS.with(|focused| focused.replace(false))
+}
+
 /// T-CONFLICT-UI: the per-pane editor state for the open file.
 /// Held on [`KagiApp`] (they need a `Window` to create) and passed into the
 /// render functions via [`EditorChrome`].
@@ -1354,15 +1365,19 @@ fn dash_primary(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::An
             view.conflict_nav_unresolved(1);
             cx.notify();
         });
-        row = row.child(super::e2e::measure_control(
-            "conflict-next",
-            secondary_button(
-                "conflict-next".to_string(),
-                Msg::ConflictNextConflict.t(),
-                true,
-                Some(next),
-            ),
-        ));
+        let next_button = secondary_button(
+            "conflict-next".to_string(),
+            Msg::ConflictNextConflict.t(),
+            true,
+            Some(next),
+        );
+        #[cfg(feature = "gui-e2e")]
+        let next_button = next_button.on_key_down(|event, _, _| {
+            if event.keystroke.key == "f19" {
+                NEXT_CONFLICT_FOCUS.with(|focused| focused.set(true));
+            }
+        });
+        row = row.child(super::e2e::measure_control("conflict-next", next_button));
         has_secondary = true;
     }
     if is_sequencer {

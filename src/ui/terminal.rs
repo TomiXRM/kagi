@@ -12,8 +12,8 @@
 //!     view: Some(Entity<TerminalView>),        (running)
 //!     …
 //! })
-//!   └─ Shell exits → exit_callback clears view to None
-//!   └─ Terminal tab shown again → restarts
+//!   └─ Shell wait proves exit → Exited { code }, clears view
+//!   └─ Restart → ensure_terminal() → Running again
 //! ```
 
 mod autolock;
@@ -126,13 +126,83 @@ pub fn build_terminal_config() -> TerminalConfig {
     }
 }
 
+/// Presentation lifecycle; process provenance remains in `ShellProcess`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalState {
+    NotStarted,
+    Running,
+    Exited { code: u32 },
+    Failed { reason: String },
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct RenderedTerminalState {
+    pub state: TerminalState,
+    pub title: gpui::SharedString,
+    pub hint: gpui::SharedString,
+    pub restart_role: gpui::Role,
+    pub restart_name: gpui::SharedString,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static RENDERED_STATE: std::cell::RefCell<Option<RenderedTerminalState>> = const { std::cell::RefCell::new(None) };
+    static RESTART_FOCUS: std::cell::RefCell<Option<gpui::FocusHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_empty_state_for_e2e(
+    state: &TerminalState,
+    title: &gpui::SharedString,
+    hint: &gpui::SharedString,
+    restart_name: &'static str,
+) {
+    RENDERED_STATE.with(|slot| {
+        *slot.borrow_mut() = Some(RenderedTerminalState {
+            state: state.clone(),
+            title: title.clone(),
+            hint: hint.clone(),
+            restart_role: gpui::Role::Button,
+            restart_name: restart_name.into(),
+        })
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_rendered_state_for_e2e() -> Option<RenderedTerminalState> {
+    RENDERED_STATE.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_restart_focus_for_e2e() -> gpui::FocusHandle {
+    RESTART_FOCUS.with(|slot| slot.borrow_mut().take().expect("Restart button rendered"))
+}
+
+/// Observe the pinned Button's own focus handle during its real layout pass.
+#[cfg(feature = "gui-e2e")]
+#[derive(gpui::IntoElement)]
+pub(crate) struct RestartButton(pub gpui_component::button::Button);
+
+#[cfg(feature = "gui-e2e")]
+impl gpui::RenderOnce for RestartButton {
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        let focus = window
+            .use_keyed_state("terminal-restart", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        RESTART_FOCUS.with(|slot| *slot.borrow_mut() = Some(focus));
+        self.0.render(window, cx)
+    }
+}
+
 /// Session state for the embedded terminal.
 pub struct KagiTerminalSession {
     /// Live `TerminalView` entity, or `None` if the shell has not yet started
     /// or has exited.
     pub view: Option<Entity<TerminalView>>,
-    /// Error message from the most recent failed start attempt, if any.
-    pub start_error: Option<String>,
+    /// Typed presentation state, including the complete failed-start reason.
+    pub state: TerminalState,
     /// Repository root — used as the working directory for spawned shells.
     pub repo_path: PathBuf,
     /// Second handle to the PTY writer, used by the cmd-v paste path
@@ -215,10 +285,18 @@ impl ShellWait {
     fn spawn(mut child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
         let slot = Arc::new(Mutex::new(ShellWaitSlot::default()));
         let writer = slot.clone();
+        #[cfg(feature = "gui-e2e")]
+        let wait_error = E2E_WAIT_ERROR.with(|slot| slot.borrow_mut().take());
         std::thread::Builder::new()
             .name("kagi-shell-wait".into())
             .spawn(move || {
-                let exit = match child.wait() {
+                let waited = child.wait();
+                #[cfg(feature = "gui-e2e")]
+                let waited = match wait_error {
+                    Some(reason) => Err(std::io::Error::other(reason)),
+                    None => waited,
+                };
+                let exit = match waited {
                     Ok(status) => ShellExit::Exited {
                         code: status.exit_code(),
                     },
@@ -295,7 +373,7 @@ impl KagiTerminalSession {
     pub fn new(repo_path: PathBuf) -> Self {
         KagiTerminalSession {
             view: None,
-            start_error: None,
+            state: TerminalState::NotStarted,
             repo_path,
             paste_writer: None,
             shell: None,
@@ -352,7 +430,6 @@ pub struct PortsExhausted {
 pub fn build_terminal_view(
     shell: &str,
     repo_path: &std::path::Path,
-    owner: crate::app::SessionId,
     cx: &mut Context<crate::ui::KagiApp>,
 ) -> Result<TerminalBuild, String> {
     let settings = crate::ui::settings::Settings::load();
@@ -453,15 +530,14 @@ pub fn build_terminal_view(
 
     let resize_master = master_arc.clone();
 
-    // The callback is stamped with the creating session. It may finish while
-    // another tab is active, and a detached owner receives no write.
-    let weak_app = cx.weak_entity();
+    // EOF is a transport observation, not proof of process exit. The owned
+    // child's wait delivery updates state with its spawn generation.
 
     // Create the TerminalView entity.  `cx.new` is called on `Context<KagiApp>`
     // and produces `Entity<TerminalView>`.
     let view_entity = cx.new(|view_cx| {
-        TerminalView::new(writer, reader, config, view_cx)
-            .with_resize_callback(move |cols, rows| {
+        TerminalView::new(writer, reader, config, view_cx).with_resize_callback(
+            move |cols, rows| {
                 if let Ok(master) = resize_master.lock() {
                     let _ = master.resize(PtySize {
                         rows: rows as u16,
@@ -470,20 +546,8 @@ pub fn build_terminal_view(
                         pixel_height: 0,
                     });
                 }
-            })
-            .with_exit_callback(move |_window, cx| {
-                klog!("terminal: shell exited");
-                let _ = weak_app.update(cx, |app, cx| {
-                    if let Some(session) = app
-                        .ui
-                        .get_mut(&owner)
-                        .and_then(|ui| ui.terminal_session.as_mut())
-                    {
-                        session.view = None;
-                    }
-                    cx.notify();
-                });
-            })
+            },
+        )
     });
 
     Ok(TerminalBuild {
@@ -590,6 +654,7 @@ pub fn resolve_shell() -> String {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static E2E_SHELL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static E2E_WAIT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -600,6 +665,12 @@ impl crate::ui::KagiApp {
     /// real PTY spawn hands its shell, which a payload unit test cannot.
     pub fn set_terminal_shell_for_e2e(shell: Option<String>) {
         E2E_SHELL.with(|slot| *slot.borrow_mut() = shell);
+    }
+
+    /// Replace the next spawned child's wait result with an error only after
+    /// its real wait finishes; never leave a test shell running or unreaped.
+    pub fn set_next_terminal_wait_error_for_e2e(reason: Option<String>) {
+        E2E_WAIT_ERROR.with(|slot| *slot.borrow_mut() = reason);
     }
 }
 
@@ -633,7 +704,7 @@ pub fn ensure_terminal(
     let shell = resolve_shell();
     klog!("terminal: starting shell={}", shell);
 
-    match build_terminal_view(&shell, &session.repo_path, owner, cx) {
+    match build_terminal_view(&shell, &session.repo_path, cx) {
         Ok(TerminalBuild {
             view: view_entity,
             master: _master_arc,
@@ -647,12 +718,9 @@ pub fn ensure_terminal(
 
             session.view = Some(view_entity);
             session.paste_writer = Some(paste_writer);
-            session.start_error = None;
-            // #772 欠落 1 / 2: own the child, and observe its exit off the
-            // render path. The PTY EOF callback above still clears the view;
-            // this is the process-level evidence, delivered even while the
-            // terminal is hidden or another tab is active, and attributed to
-            // the owner + spawn generation it belongs to.
+            session.state = TerminalState::Running;
+            // Own the child and observe its exit off the render path, including
+            // while hidden, attributed to its owner and spawn generation.
             session.spawns += 1;
             let generation = session.spawns;
             session.shell = Some(ShellProcess {
@@ -679,7 +747,7 @@ pub fn ensure_terminal(
         }
         Err(e) => {
             klog!("terminal: start failed: {}", e);
-            session.start_error = Some(e.clone());
+            session.state = TerminalState::Failed { reason: e.clone() };
             record_failure(e);
             false
         }

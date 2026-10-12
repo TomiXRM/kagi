@@ -5,6 +5,7 @@
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
 pub mod activity_view;
+mod analyze_help;
 pub mod assets;
 pub mod avatar;
 pub mod avatar_fetch;
@@ -3017,6 +3018,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
@@ -3104,6 +3106,7 @@ impl KagiApp {
         };
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
+            M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),
@@ -3494,13 +3497,13 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 
             // The bottom panel now opens on the Terminal tab by default
             // (user request) — start the shell as soon as a Window
-            // context exists. ensure_terminal is a no-op without a repo
+            // context exists. activate_terminal is a no-op without a repo
             // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
             // headless trigger.
             if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
                 || kagi.read(cx).bottom_panel_open
             {
-                kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
+                kagi.update(cx, |app, cx| app.activate_terminal(window, cx));
             }
 
             // W4-TABS / ADR-0027: arm the .git watcher for the initial tab

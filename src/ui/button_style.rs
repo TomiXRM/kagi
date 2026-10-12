@@ -153,6 +153,37 @@ pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     }
 }
 
+/// Name glyph-only kit buttons without adding a second accessibility node.
+/// The pinned Button exposes Interactivity, but not its stateful AX builders.
+pub(crate) fn named_button(
+    button: Button,
+    label: impl Into<SharedString>,
+    toggled: Option<bool>,
+) -> Button {
+    struct AccessibleButton(Button);
+    impl gpui::InteractiveElement for AccessibleButton {
+        fn interactivity(&mut self) -> &mut gpui::Interactivity {
+            self.0.interactivity()
+        }
+    }
+    impl gpui::StatefulInteractiveElement for AccessibleButton {}
+    let mut button = AccessibleButton(button).aria_label(label);
+    if let Some(toggled) = toggled {
+        button = button.aria_toggled(if toggled {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        });
+    }
+    #[cfg(feature = "gui-e2e")]
+    if let Some(id) = button.interactivity().element_id.clone() {
+        button.0 = button.0.on_key_down(move |_, _, _| {
+            super::e2e::pr_detail::record_key_focus(id.clone());
+        });
+    }
+    button.0
+}
+
 // Tier A observes the AX attributes set on both active and inert modal controls.
 #[cfg(feature = "gui-e2e")]
 #[derive(Clone, Debug, PartialEq, Eq)]

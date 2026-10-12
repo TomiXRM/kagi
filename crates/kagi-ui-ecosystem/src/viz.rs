@@ -29,32 +29,57 @@ pub(super) fn render_hotspot_map(eco: &Ecosystem) -> AnyElement {
     let mut canvas = div()
         .id("eco-map")
         .relative()
-        .size_full()
+        .flex_1()
+        .min_h(px(0.))
         .overflow_hidden()
         .bg(rgb(theme().bg_base));
     for (f, r) in files.iter().zip(rects.iter()) {
         if r.area() <= 0.0 {
             continue;
         }
-        canvas = canvas.child(tile(f.path.as_str(), f.risk, r));
+        canvas = canvas.child(tile(f, r));
     }
-    canvas.into_any_element()
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .size_full()
+        .child(super::lists::metric_legend(true));
+    if eco.files.len() > MAP_TILES {
+        section = section.child(super::lists::truncation_notice(MAP_TILES, eco.files.len()));
+    }
+    section.child(canvas).into_any_element()
 }
 
 /// One treemap tile: a heat-coloured rectangle, labelled with the file's base
 /// name when it is large enough to fit text. Every tile carries a hover tooltip
 /// with the **full path**, so tiles too small to show (or that clip) their name
 /// are still identifiable on hover.
-fn tile(path: &str, risk: f64, r: &Rect) -> AnyElement {
-    let full = SharedString::from(path.to_string());
+fn tile(file: &kagi_domain::hotspot::FileMetric, r: &Rect) -> AnyElement {
+    let path = file.path.as_str();
+    let description = kagi_ui_core::i18n::analyze::metric_description(file);
+    let full = SharedString::from(description.clone());
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::record(
+        &format!("eco-tile-{path}"),
+        super::e2e::Node {
+            role: gpui::Role::Label,
+            name: description.clone(),
+            text: format!("{:.2}", file.risk),
+            selected: None,
+            expanded: None,
+            disabled: false,
+        },
+    );
     let mut el = div()
         .id(SharedString::from(format!("eco-tile-{path}")))
+        .role(gpui::Role::Label)
+        .aria_label(SharedString::from(description))
         .absolute()
         .left(relative(r.x as f32))
         .top(relative(r.y as f32))
         .w(relative(r.w as f32))
         .h(relative(r.h as f32))
-        .bg(rgb(heat(risk)))
+        .bg(rgb(heat(file.risk)))
         .border_1()
         .border_color(rgb(theme().bg_base))
         .overflow_hidden()
@@ -69,7 +94,7 @@ fn tile(path: &str, risk: f64, r: &Rect) -> AnyElement {
                 .px_1()
                 .text_size(theme::scaled_px(11.0))
                 .text_color(rgb(LABEL))
-                .child(name.to_string()),
+                .child(format!("{name} · {:.2}", file.risk)),
         );
     }
     el.into_any_element()

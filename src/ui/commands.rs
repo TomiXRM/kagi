@@ -1906,7 +1906,7 @@ impl KagiApp {
                 klog!("menu: bottom_panel_open={}", self.bottom_panel_open);
                 if self.bottom_panel_open {
                     self.bottom_tab = BottomTab::Terminal;
-                    self.ensure_terminal(window, cx);
+                    self.activate_terminal(window, cx);
                 }
             }
             "view.toggleCommitDetails" => {
@@ -2119,7 +2119,7 @@ impl KagiApp {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
-        self.ensure_terminal(window, cx);
+        self.activate_terminal(window, cx);
     }
 
     /// Open the repository working tree in Finder via `open <path>` (no shell).

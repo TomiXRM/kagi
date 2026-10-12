@@ -201,6 +201,9 @@ mod home_tab;
 #[path = "recovery/branch_menu_compact.rs"]
 mod branch_menu_compact;
 #[cfg(target_os = "macos")]
+#[path = "recovery/clone_card.rs"]
+mod clone_card;
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_paging.rs"]
 mod commit_paging;
 #[cfg(target_os = "macos")]
@@ -1571,6 +1574,14 @@ mod macos {
             (
                 "clone_card_ticker",
                 Box::new(crate::home_p2::scenario_clone_card_ticker),
+            ),
+            (
+                "clone_card_viewport",
+                Box::new(crate::clone_card::scenario_clone_card_viewport),
+            ),
+            (
+                "clone_card_destination",
+                Box::new(crate::clone_card::scenario_clone_card_destination),
             ),
             (
                 "smart_commit_generation_owner",

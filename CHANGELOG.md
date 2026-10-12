@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Clone confirmation cards use the shared viewport-capped modal frame with one scrolling body and a pinned Cancel/Clone/Hide footer, keeping long plans reachable at high zoom. (#1296)
+- Clone shows the resolved destination, with middle truncation, full-path tooltip/accessibility text, localized Change and Copy Location actions, and the same destination in its plan summary. The system picker and approved clone request remain unchanged. (#1297)
+  - Review: the scrolling body reserves a fixed 3px focus-band inset, so Change and Copy Location retain all four edges of the pinned Button's outside ring at both zoom levels. Native pixel coverage compares focused/unfocused edges in EN/JA and Apple Light/Dark.
 - Sidebar stash accessibility names include the visible `stash@{N}: message` identity while focus remains tied to the stash OID. (#1303)
 - Unloaded tag targets show a muted row and localized accessibility/tooltip explanation; click and Enter report the reason and request the existing read-only history page only while more history is available. Loaded targets hidden by Branch Solo retain the filter and show a localized hint instead of paging. (#1304)
 - Remote/prefix group headers reserve separate disclosure and count columns, ellipsize only the name, and reveal the complete identity through bounded tooltips, Shift+F10/Menu keyboard cards and accessibility metadata. Escape closes the card without moving row focus; leaving the row or sidebar retires it. (#1305)

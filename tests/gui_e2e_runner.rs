@@ -89,6 +89,10 @@ mod settings_window;
 mod primary_button;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/dark_elevation.rs"]
+mod dark_elevation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/inactive_selection.rs"]
 mod inactive_selection;
 
@@ -1300,6 +1304,30 @@ mod macos {
             (
                 "primary_button_states",
                 Box::new(crate::primary_button::scenario_primary_button_states),
+            ),
+            (
+                "dark_elevation_palette",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_palette),
+            ),
+            (
+                "dark_elevation_modal",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_modal),
+            ),
+            (
+                "dark_elevation_menu",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_menu),
+            ),
+            (
+                "dark_elevation_popover",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_popover),
+            ),
+            (
+                "dark_elevation_toast",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_toast),
+            ),
+            (
+                "dark_elevation_chrome",
+                Box::new(crate::dark_elevation::scenario_dark_elevation_chrome),
             ),
             (
                 "system_accent_chrome",

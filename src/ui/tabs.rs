@@ -1029,12 +1029,17 @@ impl KagiApp {
 
         let mut strip = strip_tabs
             .list(div().id("tab-strip"))
+            .when(cfg!(feature = "gui-e2e"), |strip| {
+                strip
+                    .relative()
+                    .child(super::e2e::measure_inside("repo-tab-strip"))
+            })
             .flex()
             .flex_row()
             .items_center()
             .w_full()
             .h(theme::scaled_px(TAB_STRIP_H))
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().chrome_surface()))
             .border_b_1()
             .border_color(rgb(theme().surface));
         let focused = self.tab_strip_focus.focused(window);

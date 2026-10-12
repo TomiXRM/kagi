@@ -220,7 +220,10 @@ impl KagiApp {
                     })
                     .pr_3()
                     .flex_shrink_0()
-                    .bg(rgb(theme().panel))
+                    .bg(rgb(theme().chrome_surface()))
+                    .when(theme().slug == "apple-dark", |bar| {
+                        bar.border_b_1().border_color(rgb(theme().surface))
+                    })
                     .relative()
                     .child(super::e2e::measure_inside("home-frame"))
                     .child(

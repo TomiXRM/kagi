@@ -171,8 +171,8 @@ pub fn render_settings_overlay(
         .overflow_hidden()
         .rounded(px(12.0))
         .border_1()
-        .border_color(rgb(theme().surface))
-        .bg(rgb(theme().panel))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .shadow_lg()
         .child(super::e2e::measure_inside("settings-frame"))
         // swallow clicks inside the panel so they don't dismiss via the scrim

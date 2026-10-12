@@ -45,8 +45,8 @@ impl KagiApp {
             .py_1()
             .rounded(theme::scaled_px(6.0))
             .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
+            .border_color(rgb(theme().elevated_border(theme().selected)))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg();
         // Tier A reads the panel's bounds (#935); compiled out of normal builds.
         #[cfg(feature = "gui-e2e")]

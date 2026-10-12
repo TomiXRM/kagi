@@ -135,9 +135,9 @@ pub(crate) fn render_clone_modal(
         .gap_6()
         .p_6()
         .rounded_xl()
-        .bg(rgb(theme().panel))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .border_1()
-        .border_color(rgb(theme().surface))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
         .shadow_lg()
         .child(body)
         .child(buttons);

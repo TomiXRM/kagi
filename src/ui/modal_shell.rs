@@ -154,21 +154,20 @@ pub(crate) fn modal_card_sized() -> gpui::Div {
     // scrim (#454 review). The border is derived like the panel tints, so it
     // holds on every theme.
     let (_, border) = theme::panel_style();
+    let t = current_theme();
+    let border: gpui::Hsla = if t.slug == "apple-dark" {
+        rgb(t.elevated_border(t.surface)).into()
+    } else {
+        gpui::rgba(border).into()
+    };
     let card = div()
         .when_some(theme::viewport_h(), |card, height| {
             card.max_h((gpui::px(height) - theme::scaled_px(32.)).max(gpui::px(0.)))
         })
         .overflow_hidden()
         .border_1()
-        .border_color(gpui::rgba(border))
-        // `panel`, not `modal`: the Settings popup already used `panel`, so a
-        // discard/push card next to it read as a different kind of surface —
-        // and `modal` is the lighter of the two in every dark theme (Apple
-        // Dark 0x2c2c2e vs 0x161618), which is the "popups are all grey"
-        // complaint (user report 2026-09-06). One token for every popup
-        // surface; the inset panels inside tint on top of it
-        // (`theme::panel_style`).
-        .bg(rgb(current_theme().panel))
+        .border_color(border)
+        .bg(rgb(t.elevated_surface(t.panel)))
         .rounded_lg()
         .p_4()
         .flex()

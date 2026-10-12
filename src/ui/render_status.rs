@@ -215,7 +215,10 @@ impl KagiApp {
             .h(theme::scaled_px(STATUS_BAR_H))
             .flex_shrink_0()
             .px_2()
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().chrome_surface()))
+            .when(theme().slug == "apple-dark", |bar| {
+                bar.border_t_1().border_color(rgb(theme().surface))
+            })
             .text_xs()
             .text_color(rgb(theme().text_muted))
             .overflow_hidden()

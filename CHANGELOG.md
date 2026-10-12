@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Analyze Ownership displays author names, falling back to the email local part for unnamed authors; full identities remain available through tooltips and accessibility labels. Email-based aggregation, stable ranking and EN/JA captions are unchanged. (#1052)
+  - Review: untrusted author names and emails escape display-control bytes before reaching visible labels, tooltips or accessibility names; raw aggregation/export identities remain unchanged.
 - Worktree creation from a branch context menu preserves the branch name in its text Input and derives the suggested path from that name, in EN/JA. (#1045)
 - Conflict image previews use the same zoom-scaled geometry for columns, boxes, gaps and captions; equal-width previews shrink to fit the pane while preserving image aspect ratio. Current/Incoming headers and size/dimension captions support EN/JA. (#1269)
   - Review: image boxes prefer a square aspect and only shrink; binary previews retain an external comparison button immediately below their captions. A view-owned scroll handle preserves scrolling across redraws, and native image coverage requires positive bounded height and zero horizontal/vertical extent.

@@ -218,6 +218,7 @@ impl SettingsWindow {
                 owner,
                 app.theme_select.clone(),
                 &app.settings_switches,
+                app.theme_select_trigger_focus.clone(),
                 cx,
             )
             .into_any_element(),

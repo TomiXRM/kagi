@@ -305,6 +305,9 @@ mod overlay_focus;
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_appearance_ax.rs"]
+mod settings_appearance_ax;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_controls.rs"]
 mod settings_controls;
 #[cfg(target_os = "macos")]
@@ -2305,6 +2308,14 @@ mod macos {
             (
                 "settings_provider_keys",
                 Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_theme_select_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_theme_select_ax),
+            ),
+            (
+                "settings_zoom_stepper_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
             ),
             (
                 "settings_analyze_ignore_feedback",

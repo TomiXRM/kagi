@@ -163,6 +163,31 @@ pub(crate) fn named_button(
     named_button_with_description(button, label.into(), toggled, None)
 }
 
+/// The pinned kit disables interaction/paint but does not publish AX disabled.
+pub(crate) fn named_disabled_button(
+    button: Button,
+    label: impl Into<SharedString>,
+    disabled: bool,
+) -> Button {
+    struct AccessibleButton(Button);
+    impl gpui::InteractiveElement for AccessibleButton {
+        fn interactivity(&mut self) -> &mut gpui::Interactivity {
+            self.0.interactivity()
+        }
+    }
+    impl gpui::StatefulInteractiveElement for AccessibleButton {}
+    let button = AccessibleButton(named_button(button, label, None));
+    if disabled {
+        button
+            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+                builder.parent_node().set_disabled();
+            })
+            .0
+    } else {
+        button.0
+    }
+}
+
 fn named_button_with_description(
     button: Button,
     label: SharedString,

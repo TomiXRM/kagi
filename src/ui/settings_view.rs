@@ -22,6 +22,7 @@
 //! restart. No new persistence layer is introduced.
 
 use gpui::prelude::FluentBuilder as _;
+use gpui::Focusable as _;
 use gpui::{
     div, px, rgb, AnyElement, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
@@ -32,10 +33,12 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
 use gpui_component::radio::RadioGroup;
 use gpui_component::select::{Select, SelectItem, SelectState};
-use gpui_component::{FocusTrapElement as _, IndexPath, Sizable as _};
+use gpui_component::{Disableable as _, FocusTrapElement as _, IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
 use super::theme::{self, theme};
+#[cfg(feature = "gui-e2e")]
+pub use super::theme_select::{appearance_ax_for_e2e, take_theme_option_ax_for_e2e};
 use super::{settings, KagiApp};
 
 /// Native scenarios opt into the macOS host; the portable suite keeps testing
@@ -96,8 +99,31 @@ impl SelectItem for ThemeOption {
         // SelectState keeps its options across language changes. Resolve the
         // display name at render time so both the trigger and dropdown switch.
         theme::theme_by_slug(&self.slug)
-            .map(|theme| SharedString::from(theme.display_name().to_string()))
+            .map(|theme| {
+                SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                    theme.display_name(),
+                ))
+            })
             .unwrap_or_else(|| self.name.clone())
+    }
+
+    fn render(&self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
+        let name = self.title();
+        #[cfg(feature = "gui-e2e")]
+        super::theme_select::record_ax(
+            &format!("theme-option:{}", self.slug),
+            gpui::Role::ListBoxOption,
+            &name,
+            &self.slug,
+            None,
+            false,
+        );
+        div()
+            .id(self.slug.clone())
+            .role(gpui::Role::ListBoxOption)
+            .aria_label(name.clone())
+            .aria_value(self.slug.clone())
+            .child(name)
     }
 
     fn value(&self) -> &Self::Value {
@@ -111,7 +137,9 @@ pub fn theme_options() -> Vec<ThemeOption> {
         .into_iter()
         .map(|t| ThemeOption {
             slug: SharedString::from(t.slug.clone()),
-            name: SharedString::from(t.display_name().to_string()),
+            name: SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+                t.display_name(),
+            )),
         })
         .collect()
 }
@@ -137,6 +165,7 @@ pub(super) fn render_settings_overlay(
     // renders *during* KagiApp's own update, which would panic ("cannot read …
     // while it is already being updated").
     theme_select: Option<Entity<ThemeSelectState>>,
+    theme_trigger_focus: Option<gpui::FocusHandle>,
     // The switches' focus handles, for the same reason.
     switches: super::keyboard_nav::FocusSlots,
     // The panel's focus-trap handle (#974), for the same reason. `None` only
@@ -229,7 +258,13 @@ pub(super) fn render_settings_overlay(
                 .flex()
                 .flex_col()
                 .gap_6()
-                .child(appearance_section(&app, theme_select, &switches, cx))
+                .child(appearance_section(
+                    &app,
+                    theme_select,
+                    &switches,
+                    theme_trigger_focus,
+                    cx,
+                ))
                 .child(language_section(&app))
                 .child(smart_commit_section(
                     &app,
@@ -422,6 +457,7 @@ pub(super) fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
     switches: &super::keyboard_nav::FocusSlots,
+    theme_trigger_focus: Option<gpui::FocusHandle>,
     cx: &gpui::App,
 ) -> impl IntoElement {
     // ── Theme picker (gpui-component Select) ──
@@ -436,7 +472,30 @@ pub(super) fn appearance_section(
                 .menu_width(px(220.0))
                 .small()
                 .w(px(220.0));
-            super::e2e::measure_control("settings-theme-select", select)
+            let expanded = theme_trigger_focus
+                .as_ref()
+                .is_some_and(|focus| state.read(cx).focus_handle(cx) != *focus);
+            let value = kagi_domain::text_safety::sanitize_control_bytes(theme().display_name());
+            #[cfg(feature = "gui-e2e")]
+            super::theme_select::record_ax(
+                "settings-theme-select",
+                gpui::Role::ComboBox,
+                Msg::SettingsTheme.t(),
+                &value,
+                Some(expanded),
+                false,
+            );
+            super::e2e::measure_control(
+                "settings-theme-select",
+                div()
+                    .id("settings-theme-combobox")
+                    .role(gpui::Role::ComboBox)
+                    .aria_label(Msg::SettingsTheme.t())
+                    .aria_value(value)
+                    .aria_expanded(expanded)
+                    .when(!expanded, |el| el.aria_active_descendant())
+                    .child(select),
+            )
         }
         None => div()
             .text_sm()
@@ -448,6 +507,15 @@ pub(super) fn appearance_section(
     // ── UI Zoom stepper:  [−]  110%  [+] ──
     let zoom = theme::zoom();
     let zoom_label = format!("{:.0}%", zoom * 100.0);
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(
+        "zoom-value",
+        gpui::Role::Status,
+        &i18n::settings_zoom_value(&zoom_label),
+        &zoom_label,
+        None,
+        false,
+    );
     #[cfg(feature = "gui-e2e")]
     super::e2e::record_settings_zoom_label(&zoom_label);
     let app_minus = app.downgrade();
@@ -470,20 +538,36 @@ pub(super) fn appearance_section(
             cx.notify();
         });
     };
+    let increase_name = i18n::settings_zoom_action(true, &zoom_label);
     let zoom_ctl = div()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
-        .child(stepper_btn("zoom-dec", "−", dec))
+        .child(stepper_btn(
+            "zoom-dec",
+            "−",
+            i18n::settings_zoom_action(false, &zoom_label),
+            theme::step_zoom(zoom, false) == zoom,
+            dec,
+        ))
         .child(
             div()
+                .id("zoom-value")
+                .role(gpui::Role::Status)
+                .aria_label(i18n::settings_zoom_value(&zoom_label))
                 .min_w(px(56.0))
                 .text_center()
                 .text_color(rgb(theme().text_main))
                 .child(SharedString::from(zoom_label)),
         )
-        .child(stepper_btn("zoom-inc", "+", inc))
+        .child(stepper_btn(
+            "zoom-inc",
+            "+",
+            increase_name,
+            theme::step_zoom(zoom, true) == zoom,
+            inc,
+        ))
         .into_any_element();
 
     // The five switches reach the keyboard and assistive technology through
@@ -760,13 +844,23 @@ pub(super) fn appearance_section(
 fn stepper_btn(
     id: &'static str,
     label: &'static str,
+    name: String,
+    disabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
-    Button::new(id)
-        .label(label)
-        .outline()
-        .small()
-        .on_click(on_click)
+    #[cfg(feature = "gui-e2e")]
+    super::theme_select::record_ax(id, gpui::Role::Button, &name, "", None, disabled);
+    let button = super::button_style::named_disabled_button(
+        Button::new(id)
+            .child(label)
+            .outline()
+            .small()
+            .disabled(disabled)
+            .on_click(on_click),
+        name,
+        disabled,
+    );
+    super::e2e::measure_control(id, button)
 }
 
 // ────────────────────────────────────────────────────────────

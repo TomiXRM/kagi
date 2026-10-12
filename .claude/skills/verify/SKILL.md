@@ -56,6 +56,16 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
+`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
+role/name/value/expanded/disabled properties on the actual Appearance controls
+in the native Settings host, across EN/JA and Apple Light/Dark. Theme open,
+confirmation and Escape preserve the existing Select identity and focus owner;
+zoom buttons retain kit keyboard activation and the existing discrete caps.
+These probes are not native VoiceOver or Full Keyboard Access evidence.
+Tier B inspects the live ComboBox and option names and both zoom button/value
+nodes at 100%, 70% and 167%, including disabled announcements.
+
 For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
 `status_bar_fit` mounts the production footer at 700×500 and 940×660 with
 1/120-character branch identity, status chips, refresh timer and Busy/Failed

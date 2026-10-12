@@ -2660,6 +2660,7 @@ impl KagiApp {
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
                 cx.entity(),
                 self.theme_select.clone(),
+                self.theme_select_trigger_focus.clone(),
                 self.settings_switches.clone(),
                 self.settings_focus.clone(),
                 self.smart_commit.clone(),

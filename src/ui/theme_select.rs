@@ -7,6 +7,7 @@
 //! Theme files are read only at startup (`theme::init_active`) and by the
 //! explicit "Reload Themes" command — never from render or a watcher.
 
+use gpui::Focusable as _;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
 use gpui_component::select::SelectEvent;
 use std::process::Command;
@@ -16,6 +17,68 @@ use super::external_editor::os_opener;
 use super::i18n;
 use super::settings_view::{self, ThemeOption, ThemeSelectState};
 use super::theme::{self, ThemeLoadError};
+
+/// Renderer-fed semantics, not a native VoiceOver snapshot.
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct AppearanceAx {
+    pub role: gpui::Role,
+    pub name: String,
+    pub value: String,
+    pub expanded: Option<bool>,
+    pub disabled: bool,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static APPEARANCE_AX: std::cell::RefCell<std::collections::HashMap<String, AppearanceAx>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_ax(
+    id: &str,
+    role: gpui::Role,
+    name: &str,
+    value: &str,
+    expanded: Option<bool>,
+    disabled: bool,
+) {
+    APPEARANCE_AX.with(|ax| {
+        ax.borrow_mut().insert(
+            id.into(),
+            AppearanceAx {
+                role,
+                name: name.into(),
+                value: value.into(),
+                expanded,
+                disabled,
+            },
+        )
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn appearance_ax_for_e2e(id: &str) -> Option<AppearanceAx> {
+    APPEARANCE_AX.with(|ax| ax.borrow().get(id).cloned())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_theme_option_ax_for_e2e() -> Vec<AppearanceAx> {
+    APPEARANCE_AX.with(|ax| {
+        let mut ax = ax.borrow_mut();
+        let mut options = Vec::new();
+        ax.retain(|id, value| {
+            if id.starts_with("theme-option:") {
+                options.push(value.clone());
+                false
+            } else {
+                true
+            }
+        });
+        options
+    })
+}
 use super::{commands, KagiApp, ToastKind};
 
 /// A toast is a short preview; the log line keeps the whole reason.
@@ -37,6 +100,9 @@ pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App)
             cx,
         )
     });
+    kagi.update(cx, |_, cx| {
+        cx.observe(&theme_select, |_, _, cx| cx.notify()).detach();
+    });
     kagi.update(cx, |app, cx| {
         cx.subscribe(
             &theme_select,
@@ -49,6 +115,10 @@ pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App)
         )
         .detach();
         app.theme_select = Some(theme_select);
+        app.theme_select_trigger_focus = app
+            .theme_select
+            .as_ref()
+            .map(|state| state.read(cx).focus_handle(cx));
         // Drained once per process: a second window does not repeat them.
         app.report_theme_load_errors(theme::take_theme_load_errors(), cx);
     });

@@ -60,3 +60,24 @@
 - New `MenuOverlay::Settings` variant + a `settings_view` render module; a gear button
   in `render_header_slot`; menu + `cmd-,` action. No repo/git access from the view.
 - ticket: T-SETTINGS-001.
+
+## Amendment — 2026-10-12: Appearance accessibility (#1349 / #1350)
+
+The existing open-density Settings controls keep their layout and interaction.
+The pinned gpui-kit Select (879f3bf) has no trigger AX builder or public open
+getter, so Kagi wraps the call site with ComboBox, localized Theme name, current
+display-name value and expanded state. The initial trigger FocusHandle is retained;
+the kit's Focusable implementation returns a different list handle while open.
+Observing Select notifications keeps the wrapper current without another open flag.
+ThemeOption's row rendering adds named ListBoxOption content in EN/JA.
+
+Zoom keeps the kit's outline Buttons. Their AX names describe increase/decrease
+and the live percentage; the percentage itself is a localized Status. Comparing
+step_zoom with the current value disables only bound actions. The pinned kit
+owns disabled paint/interaction but does not publish AX disabled; Kagi adds that
+property to the same Button node. Glyphs are children rather than Button labels
+so kit rendering cannot overwrite the descriptive AX name with −/+. Existing
+hover/pressed/focus styling, selection, Escape,
+live apply and persistence remain kit/existing-path owned; loading, empty and
+error states are not introduced. Renderer-fed Tier A metadata is not native
+VoiceOver evidence; native AX delivery remains a Tier B inspection.

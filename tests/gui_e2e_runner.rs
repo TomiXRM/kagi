@@ -73,6 +73,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/plan_labels.rs"]
+mod plan_labels;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -1462,6 +1466,9 @@ mod macos {
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
+            ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
+            ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
+            ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (
                 "replay_onto_armed",
                 Box::new(crate::recovery_operations::scenario_replay_onto_armed),

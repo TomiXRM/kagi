@@ -3668,7 +3668,7 @@ impl Msg {
             (En, PlanMerge) => "Merge",
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
-            (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (Ja, PlanRebaseOnto) => "{} を rebase",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",
@@ -4728,6 +4728,33 @@ mod standard_app_menu_tests {
         ] {
             assert_eq!(message.t_for(Lang::En), en);
             assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}
+
+#[cfg(test)]
+mod rebase_plan_label_tests {
+    use super::*;
+
+    #[test]
+    fn rebase_plan_labels_name_source_not_destination() {
+        for branch in ["feature", "main"] {
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Rebase {branch}")
+            );
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を rebase")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Replay {branch}")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を replay")
+            );
         }
     }
 }

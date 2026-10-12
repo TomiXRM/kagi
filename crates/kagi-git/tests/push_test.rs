@@ -504,3 +504,78 @@ fn test_push_local_unchanged_on_error() {
 
 #[path = "../../../tests/support/isolated.rs"]
 mod test_support;
+
+#[test]
+fn push_plan_preserves_full_sanitized_subjects() {
+    let repos = setup();
+    let subject = format!("{} identity-at-the-tail", "日本語😀".repeat(80));
+    write_file(&repos.local, "long.txt", "long\n");
+    commit_all(&repos.local, &subject);
+    let repo = Repository::open(&repos.local).unwrap();
+    let plan = plan_push(&repo).unwrap();
+    assert_eq!(plan.preview_commits.len(), 1);
+    assert!(plan.preview_commits[0].ends_with(&subject));
+    assert!(plan.preview_commits[0].contains("identity-at-the-tail"));
+    let branch_plan = kagi_git::plan_push_branch(&repo, "main", false).unwrap();
+    assert_eq!(branch_plan.preview_commits, plan.preview_commits);
+}
+
+#[test]
+fn push_plan_bounds_utf8_and_escapes_subject_controls() {
+    let repos = setup();
+    for subject in ["safe\x1b[31m identity".to_string(), "日本語😀".repeat(1000)] {
+        git(&repos.local, &["commit", "--allow-empty", "-qm", &subject]);
+    }
+    let repo = Repository::open(&repos.local).unwrap();
+    let plan = plan_push(&repo).unwrap();
+    assert!(plan
+        .preview_commits
+        .iter()
+        .any(|line| line.ends_with("safe\\x1B[31m identity")));
+    let huge = &plan.preview_commits[0][10..];
+    assert!(huge.len() <= 4096);
+    assert!(huge.ends_with('…'));
+    assert!(plan
+        .preview_commits
+        .iter()
+        .all(|line| !line.contains('\x1b')));
+    assert_eq!(
+        kagi_git::plan_push_branch(&repo, "main", false)
+            .unwrap()
+            .preview_commits,
+        plan.preview_commits
+    );
+}
+
+#[test]
+fn push_plan_subject_boundary_matrix_for_both_producers() {
+    for upstream in [false, true] {
+        let repos = setup();
+        if !upstream {
+            git(&repos.local, &["branch", "--unset-upstream", "main"]);
+        }
+        let mut subjects: Vec<_> = [71, 72, 73, 300]
+            .into_iter()
+            .map(|length| format!("{}😀", "日".repeat(length - 1)))
+            .collect();
+        subjects.extend(
+            ["first-tail", "second-tail"].map(|tail| format!("{} {tail}", "日".repeat(72))),
+        );
+        for subject in &subjects {
+            git(&repos.local, &["commit", "--allow-empty", "-qm", subject]);
+        }
+        let repo = Repository::open(&repos.local).unwrap();
+        let plan = plan_push(&repo).unwrap();
+        assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+        assert_eq!(plan.preview_commits.len(), subjects.len());
+        for (entry, subject) in plan.preview_commits.iter().zip(subjects.iter().rev()) {
+            assert_eq!(&entry[10..], subject);
+        }
+        assert_eq!(
+            kagi_git::plan_push_branch(&repo, "main", !upstream)
+                .unwrap()
+                .preview_commits,
+            plan.preview_commits
+        );
+    }
+}

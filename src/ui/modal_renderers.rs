@@ -844,8 +844,7 @@ fn render_plan_modal_card_styled(
                 .relative()
                 .child(super::modal_shell::modal_probe("modal-target-list"));
         }
-        for entry in &plan.preview_commits {
-            let line: String = entry.chars().take(72).collect();
+        for (index, entry) in plan.preview_commits.iter().enumerate() {
             let row = div()
                 .flex_shrink_0()
                 .h(theme::scaled_px(MODAL_LIST_ROW_H))
@@ -856,7 +855,7 @@ fn render_plan_modal_card_styled(
                 // overrun this fixed-height row into the next one.
                 .whitespace_nowrap()
                 .text_ellipsis()
-                .child(render_commit_row(&line, accent.clone()));
+                .child(render_commit_row(index, entry, accent.clone()));
             #[cfg(feature = "gui-e2e")]
             let row = row
                 .relative()
@@ -991,14 +990,28 @@ fn render_plan_modal_card_styled(
         .blockers
         .first()
         .map(|blocker| SharedString::from(plan_note_text(blocker)));
-    let button = modal_button(
-        "plan-confirm",
-        confirm_label,
-        confirm_kind,
-        reason,
-        move |_, w, a| confirm_handler(w, a),
-        cx,
-    );
+    let button = if matches!(plan.title, kagi_domain::plan_note::PlanTitle::Rebase(_)) {
+        let detail = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+            &format!("{confirm_label}\n{title_text}"),
+        ));
+        super::button_style::bounded_modal_button(
+            "plan-confirm",
+            (confirm_label, detail),
+            confirm_kind,
+            reason,
+            move |_, w, a| confirm_handler(w, a),
+            cx,
+        )
+    } else {
+        modal_button(
+            "plan-confirm",
+            confirm_label,
+            confirm_kind,
+            reason,
+            move |_, w, a| confirm_handler(w, a),
+            cx,
+        )
+    };
     #[cfg(feature = "gui-e2e")]
     let button = div()
         .relative()

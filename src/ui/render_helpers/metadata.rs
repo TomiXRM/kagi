@@ -16,7 +16,7 @@ pub(super) fn subject(row: &CommitRow, ix: usize) -> impl IntoElement {
         .child(row.summary.clone())
 }
 
-pub(super) fn subject_tooltip(
+pub(crate) fn subject_tooltip(
     subject: SharedString,
     window: &mut gpui::Window,
     cx: &mut gpui::App,

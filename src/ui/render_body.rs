@@ -96,8 +96,6 @@ impl KagiApp {
         // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
         is_dirty: bool,
-        badge_col_w: f32,
-        graph_col_w: f32,
         commit_scroll_handle: UniformListScrollHandle,
         commit_panel_open: bool,
         // ADR-0118 (Phase 5.2): the Commit Panel is now an `Entity<CommitPanelView>`
@@ -109,6 +107,73 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // ADR-0120: rendering and keyboard routing resolve the same center
+        // from the same gates; precedence lives only in `resolve_workspace`.
+        let layout = workspace::resolve_workspace(&self.workspace_inputs(
+            commit_panel_open,
+            commit_panel.is_some(),
+            detail.is_some(),
+        ));
+
+        // The sidebar follows its toggle (#955); the right slot follows
+        // resolved visibility (#1001). Whole-workspace takeovers stay instant.
+        let motion_now = super::panel_motion::now();
+        let motion_instant = super::panel_motion::instant();
+        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
+        self.panel_motion.sync_sidebar(
+            sidebar_shown,
+            self.sidebar.visible,
+            motion_now,
+            motion_instant,
+        );
+        let right_shown = matches!(
+            layout.right,
+            workspace::RightPane::Inspector
+                | workspace::RightPane::Compare
+                | workspace::RightPane::CommitPanel
+        );
+        let mode = self.workspace_mode();
+        let graph_body = mode == workspace_mode::WorkspaceMode::Graph
+            && matches!(
+                layout.center,
+                workspace::CenterPane::CommitList | workspace::CenterPane::Diff
+            );
+        self.panel_motion.sync_right(
+            layout.right,
+            selected,
+            graph_body,
+            motion_now,
+            motion_instant,
+        );
+        let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
+        let right_fraction = self.panel_motion.right.visible(motion_now);
+        let right_pane = if right_shown {
+            Some(layout.right)
+        } else {
+            self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
+        };
+        let right_width = if right_pane == Some(workspace::RightPane::CommitPanel) {
+            self.commit_panel_viewport_width(window)
+        } else {
+            self.panel_width
+        };
+        let center_width = f32::from(window.viewport_size().width)
+            - theme::scaled(self.sidebar.width + 4.) * sidebar_fraction
+            - theme::scaled(right_width + 4.) * right_fraction;
+        let columns = super::graph_columns::fit(
+            self.badge_col_w,
+            self.graph_col_w,
+            center_width,
+            f32::from(window.rem_size()) * 1.5, // px_3 on both row edges.
+        );
+        self.graph_column_fit = columns;
+        let (badge_col_w, graph_col_w) = (columns.badge, columns.graph);
+        // Tab switches, zoom and fitting all change the visible lane window.
+        let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
+        let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.);
+        if self.ui().graph_scroll_x > max {
+            self.with_ui(|ui| ui.graph_scroll_x = max);
+        }
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -368,7 +433,7 @@ impl KagiApp {
                     .px_1()
                     .on_scroll_wheel(cx.listener(
                         move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                            this.scroll_graph_by(&e.delta, cx);
+                            this.scroll_graph_by(&e.delta, graph_col_w, cx);
                         },
                     ))
                     .child(
@@ -495,8 +560,8 @@ impl KagiApp {
                                                     commit_panel_open,
                                                     anchor.map(|anchor| anchor.lane),
                                                     &passing,
-                                                    this.badge_col_w,
-                                                    this.graph_col_w,
+                                                    badge_col_w,
+                                                    graph_col_w,
                                                     this.ui().graph_scroll_x,
                                                     (i, prefix_count + rows_len),
                                                     cx,
@@ -512,8 +577,8 @@ impl KagiApp {
                                     }
                                     if range.start < prefix_count && range.end > wip_count {
                                         els.extend(this.render_stash_graph_rows(
-                                            this.badge_col_w,
-                                            this.graph_col_w,
+                                            badge_col_w,
+                                            graph_col_w,
                                             this.ui().graph_scroll_x,
                                             &wip_passing_lanes,
                                             range.start.saturating_sub(wip_count)
@@ -532,8 +597,9 @@ impl KagiApp {
                                             commit_range,
                                             selected,
                                             this.window_active,
-                                            this.badge_col_w,
-                                            this.graph_col_w,
+                                            badge_col_w,
+                                            graph_col_w,
+                                            columns.subject_min,
                                             compact,
                                             this.ui().graph_scroll_x,
                                             &this.view().stash_graph_lanes,
@@ -577,46 +643,6 @@ impl KagiApp {
                     })
             });
 
-        // ADR-0120: rendering and keyboard routing resolve the same center
-        // from the same gates; precedence lives only in `resolve_workspace`.
-        let layout = workspace::resolve_workspace(&self.workspace_inputs(
-            commit_panel_open,
-            commit_panel.is_some(),
-            detail.is_some(),
-        ));
-
-        // The sidebar follows its toggle (#955); the right slot follows
-        // resolved visibility (#1001). Whole-workspace takeovers stay instant.
-        let motion_now = super::panel_motion::now();
-        let motion_instant = super::panel_motion::instant();
-        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
-        self.panel_motion.sync_sidebar(
-            sidebar_shown,
-            self.sidebar.visible,
-            motion_now,
-            motion_instant,
-        );
-        let right_shown = matches!(
-            layout.right,
-            workspace::RightPane::Inspector
-                | workspace::RightPane::Compare
-                | workspace::RightPane::CommitPanel
-        );
-        let mode = self.workspace_mode();
-        let graph_body = mode == workspace_mode::WorkspaceMode::Graph
-            && matches!(
-                layout.center,
-                workspace::CenterPane::CommitList | workspace::CenterPane::Diff
-            );
-        self.panel_motion.sync_right(
-            layout.right,
-            selected,
-            graph_body,
-            motion_now,
-            motion_instant,
-        );
-        let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
-        let right_fraction = self.panel_motion.right.visible(motion_now);
         // The Graph page's panes are drawn this frame only while the sidebar
         // is (or is still closing) and shows that page — the PRs and Issues
         // pages are lists of their own. Their keyboard state follows this
@@ -791,11 +817,6 @@ impl KagiApp {
         // nothing, exactly as the old per-field arms did.
         // Drawn while shown or still closing (then the pane last shown); the
         // divider travels with the pane's edge inside the clip.
-        let right_pane = if right_shown {
-            Some(layout.right)
-        } else {
-            self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
-        };
         let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
             self.panel_motion.inspector_row.and_then(|row| {
                 self.ui_mut()?.sync_inspector_commit_files(row);
@@ -807,11 +828,6 @@ impl KagiApp {
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
         if let Some(el) = right_element {
-            let right_width = if right_pane == Some(workspace::RightPane::CommitPanel) {
-                self.commit_panel_viewport_width(window)
-            } else {
-                self.panel_width
-            };
             let pane = div()
                 .flex()
                 .flex_row()

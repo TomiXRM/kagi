@@ -329,7 +329,9 @@ fn focused_eviction(
         stack.read(cx).toasts()[0]
             .close_focus
             .borrow()
-            .clone()
+            .iter()
+            .find(|(host, _)| *host == window.window_id())
+            .map(|(_, focus)| focus.clone())
             .unwrap()
     });
     cx.update_window(window, |_, window, cx| focus.focus(window, cx))

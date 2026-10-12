@@ -24,7 +24,7 @@ impl KagiApp {
         (a11y_offset, a11y_size): (usize, usize),
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        let visible_lanes = graph_view::lanes_for_width(graph_col_w);
+        let visible_lanes = graph_view::lanes_for_width(theme::scaled(graph_col_w));
         let stash_color = theme().color_warning;
         let stash_lanes = self.view().stash_graph_lanes.clone();
         let rh = row_height(self.graph_compact);
@@ -439,25 +439,28 @@ impl KagiApp {
                     .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
-                    .when(graph_view::lanes_for_width(graph_col_w) > 0, |el| {
-                        el.child(
-                            graph_view::graph_canvas(
-                                lane.unwrap_or(0),
-                                color_idx,
-                                edges,
-                                if lane.is_some() {
-                                    graph_view::GraphNode::Wip
-                                } else {
-                                    graph_view::GraphNode::Hidden
-                                },
-                                lane.is_some(),
-                                graph_scroll_x,
-                                graph_lane_pad_l(),
-                                Vec::new(),
+                    .when(
+                        graph_view::lanes_for_width(theme::scaled(graph_col_w)) > 0,
+                        |el| {
+                            el.child(
+                                graph_view::graph_canvas(
+                                    lane.unwrap_or(0),
+                                    color_idx,
+                                    edges,
+                                    if lane.is_some() {
+                                        graph_view::GraphNode::Wip
+                                    } else {
+                                        graph_view::GraphNode::Hidden
+                                    },
+                                    lane.is_some(),
+                                    graph_scroll_x,
+                                    graph_lane_pad_l(),
+                                    Vec::new(),
+                                )
+                                .size_full(),
                             )
-                            .size_full(),
-                        )
-                    })
+                        },
+                    )
             })
             // Inner divider spacer (graph|message handle width)
             .child(

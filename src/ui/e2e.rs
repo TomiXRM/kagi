@@ -28,6 +28,9 @@ pub mod inspector_metadata;
 pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]
+pub mod plan_subjects;
+
+#[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
 
 #[cfg(feature = "gui-e2e")]
@@ -595,6 +598,13 @@ pub fn build_kagi_entity(
     super::window_menu::register_main_window(window, cx);
     let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
+        app_state.sidebar.filter = Some(cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder(super::i18n::Msg::HomeGithubFilter.t())
+        }));
+        if let Some(input) = &app_state.sidebar.filter {
+            cx.observe(input, |_, _, cx| cx.notify()).detach();
+        }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {
             cx.subscribe_in(
@@ -602,10 +612,7 @@ pub fn build_kagi_entity(
                 window,
                 |app: &mut KagiApp, _, removed: &toast_stack::ToastRemoved, window, cx| {
                     if let Some(root) = app.root_focus.as_ref() {
-                        let closed_focused = removed
-                            .0
-                            .as_ref()
-                            .is_some_and(|focus| focus.is_focused(window));
+                        let closed_focused = removed.was_focused(window);
                         if closed_focused
                             || window.focused(cx).is_none()
                             || !root.contains_focused(window, cx)

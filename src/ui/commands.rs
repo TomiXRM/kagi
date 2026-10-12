@@ -1358,6 +1358,11 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         super::issues_composer::FocusIssueEditor,
         Some("IssueComposer"),
     )]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-f",
+        super::FocusSidebarFilter,
+        Some("!Terminal && !Input"),
+    )]);
     // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
     // the toggle key for the bottom panel. context = None means the binding
     // fires regardless of focus context. GUI-CLICK: was `cmd-j`, which on
@@ -2668,6 +2673,8 @@ impl KagiApp {
                 self.settings_focus.clone(),
                 self.smart_commit.clone(),
                 self.analyze_ignore_input.clone(),
+                &self.settings_controls,
+                self.analyze_ignore_dirty(cx),
                 self.settings_scroll.clone(),
                 window,
                 cx,

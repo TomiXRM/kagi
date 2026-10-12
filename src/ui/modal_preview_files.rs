@@ -5,15 +5,22 @@ use super::{
     theme::{self, theme},
 };
 use gpui::{div, prelude::*, rgb, SharedString, TextOverflow};
-use kagi_domain::status::{ChangeKind, FileStatus};
+use kagi_domain::{plan::OperationPlan, plan_note::PlanTitle, status::FileStatus};
 
 pub(crate) const PREVIEW_FILE_LIMIT: usize = 25;
 
-pub(crate) fn render(files: &[FileStatus]) -> gpui::AnyElement {
-    let heading = Msg::ModalFilesToChange
-        .t()
-        .replace("{}", &files.len().to_string());
-    let rows = files
+pub(crate) fn render(plan: &OperationPlan) -> gpui::AnyElement {
+    let files = &plan.preview_files;
+    let capped = matches!(&plan.title, PlanTitle::Merge(_))
+        && files.len() >= kagi_git::ops::PREVIEW_FILES_CAP;
+    let count = if capped {
+        format!("{}+", files.len())
+    } else {
+        files.len().to_string()
+    };
+    let heading = Msg::ModalFilesToChange.t().replace("{}", &count);
+    let rows = plan
+        .preview_files
         .iter()
         .take(PREVIEW_FILE_LIMIT)
         .enumerate()
@@ -40,9 +47,13 @@ pub(crate) fn render(files: &[FileStatus]) -> gpui::AnyElement {
         )
         .children(rows)
         .when(remaining > 0, |column| {
-            let more = Msg::ModalFilesMore
-                .t()
-                .replace("{}", &remaining.to_string());
+            let more = if capped {
+                Msg::ModalFilesMoreUnknown.t().to_owned()
+            } else {
+                Msg::ModalFilesMore
+                    .t()
+                    .replace("{}", &remaining.to_string())
+            };
             column.child(e2e::measure_control(
                 "plan-preview-more",
                 super::dialog_a11y::apply_note(
@@ -60,13 +71,7 @@ pub(crate) fn render(files: &[FileStatus]) -> gpui::AnyElement {
 }
 
 fn render_row(index: usize, file: &FileStatus) -> gpui::AnyElement {
-    let (glyph, color) = match &file.change {
-        ChangeKind::Added => ("A", theme().change_added),
-        ChangeKind::Modified => ("M", theme().change_modified),
-        ChangeKind::Deleted => ("D", theme().change_deleted),
-        ChangeKind::Renamed { .. } => ("R", theme().change_renamed),
-        ChangeKind::TypeChange => ("T", theme().change_typechange),
-    };
+    let (glyph, color, _) = kagi_ui_core::file_tree::status_badge(Some(&file.change), false);
     let path: SharedString =
         kagi_domain::text_safety::sanitize_control_bytes(&file.path.to_string_lossy()).into();
     let tooltip = path.clone();

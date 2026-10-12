@@ -773,11 +773,12 @@ fn render_plan_modal_card_styled(
     // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
     // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let show_files = matches!(
-        &plan.title,
-        kagi_domain::plan_note::PlanTitle::Merge(_)
-            | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
-    );
+    let show_files = !plan.preview_files.is_empty()
+        && matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Merge(_)
+                | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+        );
     let mut body = if show_files {
         super::modal_shell::modal_scroll_body()
     } else {
@@ -785,7 +786,7 @@ fn render_plan_modal_card_styled(
     }
     .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
     if show_files {
-        body = body.child(super::modal_preview_files::render(&plan.preview_files));
+        body = body.child(super::modal_preview_files::render(&plan));
     }
 
     // ── Warnings ─────────────────────────────────────────

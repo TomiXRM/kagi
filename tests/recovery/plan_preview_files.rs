@@ -89,11 +89,6 @@ fn run_card(
     });
     cx.run_until_parked();
     app.update(cx, |app, cx| {
-        // The existing backend caps some previews at 200. Exercise a 300-entry
-        // display payload without changing that read-only computation.
-        if count == 300 {
-            expand_stress_payload(app, operation, count);
-        }
         let plan = match operation {
             "merge" => &app.merge_modal().unwrap().plan,
             "cherry-pick" => &app.cherry_pick_modal().unwrap().plan,
@@ -101,7 +96,11 @@ fn run_card(
         };
         assert_eq!(
             plan.preview_files.len(),
-            count,
+            if operation == "merge" {
+                count.min(kagi_git::ops::PREVIEW_FILES_CAP)
+            } else {
+                count
+            },
             "computed {operation} preview"
         );
         cx.notify();
@@ -128,7 +127,9 @@ fn run_card(
             && footer.right() <= viewport.right(),
         "{operation}/{count}: footer outside window: {footer:?} / {viewport:?}"
     );
-    assert_preview(window, count);
+    let cap = kagi_git::ops::PREVIEW_FILES_CAP;
+    let capped = operation == "merge" && count >= cap;
+    assert_preview(window, if capped { cap } else { count }, capped);
     app.update(cx, |app, cx| {
         match operation {
             "merge" => app.clear_merge_modal(),
@@ -139,10 +140,15 @@ fn run_card(
     });
 }
 
-fn assert_preview(window: AnyWindowHandle, count: usize) {
+fn assert_preview(window: AnyWindowHandle, count: usize, capped: bool) {
+    let display_count = if capped {
+        format!("{count}+")
+    } else {
+        count.to_string()
+    };
     let expected = kagi_ui_core::i18n::Msg::ModalFilesToChange
         .t()
-        .replace("{}", &count.to_string());
+        .replace("{}", &display_count);
     assert_eq!(
         dialog_a11y::recorded_note("plan-preview-files").unwrap().1,
         expected
@@ -156,9 +162,16 @@ fn assert_preview(window: AnyWindowHandle, count: usize) {
         count > 25
     );
     if count > 25 {
-        let more = kagi_ui_core::i18n::Msg::ModalFilesMore
-            .t()
-            .replace("{}", &(count - 25).to_string());
+        let more = if capped {
+            match i18n::lang() {
+                Lang::En => "…and more files".to_owned(),
+                Lang::Ja => "…ほかにもファイルがあります".to_owned(),
+            }
+        } else {
+            kagi_ui_core::i18n::Msg::ModalFilesMore
+                .t()
+                .replace("{}", &(count - 25).to_string())
+        };
         assert_eq!(
             dialog_a11y::recorded_note("plan-preview-more").unwrap().1,
             more
@@ -175,33 +188,85 @@ fn assert_preview(window: AnyWindowHandle, count: usize) {
     );
 }
 
-fn expand_stress_payload(app: &mut KagiApp, operation: &str, count: usize) {
-    macro_rules! expand {
-        ($get:ident, $set:ident) => {{
-            let mut modal = app.$get().unwrap().clone();
-            let mut plan = (*modal.plan).clone();
-            if plan.preview_files.len() == count {
-                return;
-            }
-            let template = plan
-                .preview_files
-                .first()
-                .expect("real computed file")
-                .clone();
-            plan.preview_files = (0..count)
-                .map(|index| {
-                    let mut file = template.clone();
-                    file.path = full_path(index).into();
-                    file
-                })
-                .collect();
-            modal.plan = std::sync::Arc::new(plan);
-            app.$set(modal);
-        }};
+pub fn scenario_plan_preview_files_empty(cx: &mut VisualTestAppContext) {
+    let _restore = Restore {
+        zoom: theme::zoom(),
+        lang: i18n::lang(),
+        saved: ["lang", "ui_zoom"].map(|key| (key, kagi::ui::settings::read_setting(key))),
+    };
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    std::fs::write(repo.join("preview-anchor.txt"), "original\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "preview anchor"]);
+    git(repo, &["branch", "target", "main"]);
+    git(repo, &["checkout", "-q", "-b", "preview"]);
+    std::fs::write(repo.join("preview-change.txt"), "change\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "preview change"]);
+    let commit = git_fixture::git_output(repo, &["rev-parse", "HEAD"]);
+    for operation in ["merge-into", "merge", "cherry-pick", "revert"] {
+        std::fs::write(repo.join("preview-anchor.txt"), "original\n").unwrap();
+        git(repo, &["checkout", "-q", "main"]);
+        if operation != "merge-into" {
+            std::fs::write(repo.join("preview-anchor.txt"), "dirty\n").unwrap();
+        }
+        let (app, window) = mount(cx, repo);
+        crate::pr_detail_adaptive::resize(cx, window, (940., 660.));
+        theme::set_zoom(1.67);
+        for lang in [Lang::En, Lang::Ja] {
+            i18n::set_lang(lang);
+            run_empty_card(cx, &app, window, operation, &commit, lang);
+        }
+        unmount(cx, app, window);
     }
-    match operation {
-        "merge" => expand!(merge_modal, set_merge_modal),
-        "cherry-pick" => expand!(cherry_pick_modal, set_cherry_pick_modal),
-        _ => expand!(revert_modal, set_revert_modal),
-    }
+    eprintln!("[gui-e2e] PASS plan_preview_files_empty");
+}
+
+fn run_empty_card(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    operation: &str,
+    commit: &str,
+    lang: Lang,
+) {
+    e2e::clear_control_bounds(window.window_id(), "plan-preview-files");
+    app.update(cx, |app, cx| match operation {
+        "merge-into" => app.open_merge_into_modal("preview".into(), "target".into(), cx),
+        "merge" => app.open_merge_modal("preview".into(), None, cx),
+        "cherry-pick" => app.open_cherry_pick_modal(CommitId(commit.to_owned())),
+        _ => app.open_revert_modal(CommitId(commit.to_owned())),
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        let plan = match operation {
+            "merge-into" | "merge" => &app.merge_modal().unwrap().plan,
+            "cherry-pick" => &app.cherry_pick_modal().unwrap().plan,
+            _ => &app.revert_modal().unwrap().plan,
+        };
+        assert!(
+            plan.preview_files.is_empty(),
+            "{operation}: uncomputed preview fixture"
+        );
+        assert_eq!(plan.blockers.is_empty(), operation == "merge-into");
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        e2e::control_bounds(window.window_id(), "plan-preview-files").is_none(),
+        "{operation}/{lang:?}: uncomputed preview must not claim zero files"
+    );
+    app.update(cx, |app, cx| {
+        match operation {
+            "merge-into" | "merge" => app.clear_merge_modal(),
+            "cherry-pick" => app.clear_cherry_pick_modal(),
+            _ => app.clear_revert_modal(),
+        }
+        cx.notify();
+    });
 }

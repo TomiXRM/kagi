@@ -513,6 +513,8 @@ pub enum Msg {
     ModalFilesToChange,
     /// Bounded preview remainder; `{}` is the omitted count.
     ModalFilesMore,
+    /// Preview producer reached its cap; the true omitted count is unknown.
+    ModalFilesMoreUnknown,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -2770,6 +2772,8 @@ impl Msg {
             (Ja, ModalFilesToChange) => "変更するファイル ({})",
             (En, ModalFilesMore) => "…and {} more",
             (Ja, ModalFilesMore) => "…ほか {} 件",
+            (En, ModalFilesMoreUnknown) => "…and more files",
+            (Ja, ModalFilesMoreUnknown) => "…ほかにもファイルがあります",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
             (En, ConflictContinue) => "Continue",

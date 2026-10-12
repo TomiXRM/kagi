@@ -60,10 +60,22 @@ blocker present, Execute hidden.
 
 ## Amendment — 2026-10-13: computed file previews (#1381)
 
-Merge, Cherry-pick and Revert confirmations expose the existing plan's
-`preview_files` as “Files to change (N)” (EN/JA). This is presentation only:
-no `plan_*` computation, blocker, preflight or write behavior changes.
-The dense preview shows status glyphs and at most 25 paths, followed by the
-exact omitted count. Paths use middle ellipsis with their sanitized full value
-in Tooltip/AX. The list belongs to the shared modal scroll body rather than a
-nested scroller, so Cancel/Confirm remain pinned at 940×660 and 167% zoom.
+Merge, Cherry-pick and Revert confirmations expose a non-empty existing plan's
+`preview_files` as “Files to change (N)” (EN/JA). Empty payloads are omitted:
+Merge-into and blocked early returns can leave the preview uncomputed, so zero
+must not be asserted. Existing blockers remain the reason when planning refuses.
+No `plan_*` computation, blocker, preflight or write behavior changes.
+
+The dense preview reuses Changes' status badges and shows at most 25 paths.
+This bounded, noninteractive list plus a visible overflow line is the explicit
+#1381 exception to #454's all-rows modal-list rule; the CI allowlist is limited
+to `src/ui/modal_preview_files.rs`. Below the producer cap, the overflow line
+names the exact omitted preview count. Merge's existing `PREVIEW_FILES_CAP`
+(200) is now public for presentation: at or above it the heading uses `N+`
+and the overflow line says “and more files” (EN/JA), never an exact remainder,
+because the plan has no truncation flag. Even exactly 200 is conservatively
+presented as a lower bound.
+
+Paths use middle ellipsis with their sanitized full value in Tooltip/AX.
+The list belongs to the shared modal scroll body rather than a nested scroller,
+so Cancel/Confirm remain pinned at 940×660 and 167% zoom.

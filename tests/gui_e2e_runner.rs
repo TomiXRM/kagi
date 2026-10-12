@@ -1351,6 +1351,10 @@ mod macos {
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
             ),
             (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
+            ),
+            (
                 "plan_recovery_noop",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
             ),

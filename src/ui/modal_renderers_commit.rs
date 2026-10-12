@@ -133,7 +133,9 @@ pub(crate) fn render_cherry_pick_modal(
     let mut body =
         modal_scroll_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
 
-    body = body.child(super::modal_preview_files::render(&plan.preview_files));
+    if !plan.preview_files.is_empty() {
+        body = body.child(super::modal_preview_files::render(&plan));
+    }
 
     // ── Warnings ──────────────────────────────────────────
     if !plan.warnings.is_empty() {

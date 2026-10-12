@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- File History's Open File opens the selected entry's exact path in the Editor workspace and closes History only after the worktree file is available. Binary or missing paths show the existing EN/JA Editor reason and keep History open; followed pre-rename paths never silently fall back to the current name. Existing Editor tabs and dirty buffers are retained, and Back remains dismiss-only. (#1308)
 - Narrow toolbars move Update, Settings and inactive workspace modes into » before Git commands. Pull/Push remain visible longest among Git actions, with the selected mode collapsing last; widening restores the reverse order. Existing overflow menu order, accessibility names/roles, shortcuts and hidden-mode keyboard/palette routes are unchanged. (#1316)
   - Tiny-window review: icon-only fitting includes the controls' fixed focus borders, the workspace group retains its measured minimum, and repository identity explicitly shrinks to its readable minimum. Native group probes no longer insert a test-only layout wrapper; 700×500 long-name coverage checks outer control/group nonintersection.
 - Alert-style confirmations, including the Editor dirty guard, Delete, Discard, Abort, Amend and Trust, reuse the named-dialog focus trap so Tab and Shift+Tab stay inside the dialog instead of reaching the Editor's Code Input. Root Return and Escape cancellation, explicit danger approval and modal accessors are unchanged. (#1292)

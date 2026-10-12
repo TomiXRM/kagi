@@ -69,3 +69,23 @@ WIP entry は working tree / index / untracked から合成し、`kind = Wip`、
 - v1 非スコープ: line blame、per-line history、履歴グラフ、複数ファイル同時、restore/checkout、commit 間比較 UI、semantic diff、binary preview。
 - CI gate(src/ui は git2 直叩き禁止)は維持。UI は `kagi::git::Backend` 経由のみ。
 - テスト: history.rs のパーサを fixture(add/modify/rename/delete/binary を1ファイルに対して持つ repo)で検証。
+
+## Amendment — 2026-10-12: Open File action (#1308)
+
+The header's **Open File** action is distinct from Back: it requests the selected
+entry's `path_after` (the displayed historical path), or the requested `rel_path`
+when no entry is loaded, through `FileHistoryEvent::OpenFileRequested(PathBuf)`.
+It opens that exact path's current worktree file in the existing Editor workspace;
+it does not restore a revision, launch an external application, or substitute the
+latest name for a missing pre-rename path. The operation label stays English in
+EN/JA under ADR-0048.
+
+The host probes file availability/binary content off the UI thread before
+switching workspace. Missing and binary files show the existing localized Editor
+reason in a toast while History and any retained Editor stay unchanged. On
+success, reveal or create the Editor through `show_editor_mode` and reuse
+`open_tab` so dirty buffers survive and retained PR/Issues modes step aside.
+History closes as part of that successful workspace handoff. Both request
+delivery and async completion require the original
+owner and pane to remain active; the pane crate stays Git-free. Back emits only
+`CloseRequested`. These are read/navigation actions and perform no Git write.

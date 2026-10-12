@@ -69,6 +69,29 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
+KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
+Tab roles, localized names, selected state, one Tab stop, actual focus
+handles, Left/Right/Home/End/Enter/Space dispatch and native selected-fill
+pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
+0/1/24 buckets' Status names against UTC date/time + commits/merges/authors,
+one roving stop, arrow/Home/End boundary inspection and identical immediate
+hover/keyboard readouts. The actual chart/legend painter records successful
+solid/dash/gap/knockout segment counts and the single-point fallback branch.
+`activity_equal_series_encoding` compares native merge-gap pixels with nearby
+unpainted pixels over equal commit/merge values and 0/0 baseline segments,
+including the legend; do not derive the expected background from the painter's
+theme token. `activity_single_bucket_encoding` requires a genuine two-dash merge
+mark and knockout gap, not the former solid fallback or a clamped counter.
+All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
+Apple Light/Dark; axes and legend must fit.
+Pair with `cargo test -p kagi-domain activity` for per-bucket distinct raw
+email aggregation, and `cargo test -p kagi-ui-core activity_bucket` for
+localized 0/1/plural units. Renderer metadata is not native VoiceOver or
+real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
+both ends with the keyboard, verify the selected fill on hover and the
+dashed merge legend/line, then read each bucket in Accessibility Inspector.
+
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
 across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and

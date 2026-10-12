@@ -14,6 +14,8 @@ pub mod commit_panel_labels;
 pub mod palette;
 
 #[cfg(feature = "gui-e2e")]
+pub mod activity;
+#[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
 
 #[cfg(feature = "gui-e2e")]

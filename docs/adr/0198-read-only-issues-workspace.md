@@ -393,3 +393,15 @@ issue closure. Broader performance/width/comparison and PR-conversation scope,
 hosted CI, independent exact-head review, Kagi PR publication and merge remain
 pending. Internal omp review is not herdr mail or external merge approval.
 
+
+## Amendment — 2026-10-12: main feed keyboard rows (#1346)
+
+The session-owned main feed retains number-keyed `RowFocus` / `RowList`
+handles. Composer, filter, status and paging tail are not navigation rows.
+The list has one Tab stop; arrows/Home/End reveal the destination through
+the existing variable-height `ListState`, and Enter/Space reuse the detail
+read handler. Current session/repository and filtered membership are checked
+at activation. Detail/composition/mode departure yields hidden row focus;
+replacement/filter/append reconcile stable numbers without a second data
+or paging owner. Localized row names preserve sanitized title/state identity.
+

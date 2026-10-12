@@ -258,6 +258,9 @@ mod home_work;
 #[cfg(target_os = "macos")]
 #[path = "recovery/keyboard_nav.rs"]
 mod keyboard_nav;
+#[cfg(target_os = "macos")]
+#[path = "recovery/lists_keyboard.rs"]
+mod lists_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -1560,6 +1563,18 @@ mod macos {
                 Box::new(crate::home_rows::scenario_home_rows),
             ),
             (
+                "issues_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_issues_rows_keyboard),
+            ),
+            (
+                "home_recent_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_home_recent_rows_keyboard),
+            ),
+            (
+                "branch_picker_keyboard",
+                Box::new(crate::lists_keyboard::scenario_branch_picker_keyboard),
+            ),
+            (
                 "home_row_paging",
                 Box::new(crate::home_rows::scenario_home_row_paging),
             ),
@@ -2788,6 +2803,18 @@ mod macos {
             (
                 "commit_panel_body_focus",
                 Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
+            ),
+            (
+                "changes_rows_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
+            ),
+            (
+                "changes_discard_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_discard_keyboard),
+            ),
+            (
+                "changes_file_menu_viewport",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_file_menu_viewport),
             ),
             (
                 "commit_panel_segment_keys",

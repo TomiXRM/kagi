@@ -108,6 +108,10 @@ mod settings_quiet;
 mod settings_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_restore.rs"]
+mod window_restore;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -1478,6 +1482,22 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "window_restore_position",
+                Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_restore_display_identity",
+                Box::new(crate::window_restore::scenario_window_restore_display_identity),
+            ),
+            (
+                "window_restore_fit",
+                Box::new(crate::window_restore::scenario_window_restore_fit),
+            ),
+            (
+                "window_restore_titlebar",
+                Box::new(crate::window_restore::scenario_window_restore_titlebar),
             ),
             (
                 "settings_window_open_raise",

@@ -387,3 +387,34 @@ fn path_switch_child() {
     std::fs::remove_dir(&a_file).expect("unblock A");
     write_setting("recovered", Some("yes"));
 }
+
+#[test]
+fn main_window_frame_preserves_unknown_preferences_and_retires_size() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join("settings.json"),
+        r#"{"window_size":"640x480","future_only_key":"keepme"}"#,
+    )
+    .expect("seed");
+    run_child("main_window_frame_child", tmp.path());
+    let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
+    assert_eq!(saved["window_frame"], "-120,240,640,480,display-id");
+    assert_eq!(saved["future_only_key"], "keepme");
+    assert!(saved.get("window_size").is_none());
+}
+
+#[test]
+#[ignore = "child process: needs a private KAGI_LOG_DIR"]
+fn main_window_frame_child() {
+    use crate::settings::{flush, main_window_frame, write_main_window_frame, MainWindowFrame};
+    let frame = MainWindowFrame {
+        x: -120.,
+        y: 240.,
+        width: 640.,
+        height: 480.,
+        display: "display-id".into(),
+    };
+    write_main_window_frame(&frame);
+    flush();
+    assert_eq!(main_window_frame(), Some(frame));
+}

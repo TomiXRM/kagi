@@ -241,27 +241,8 @@ pub fn render_raw_preview(
     labels: &SideLabels,
     _cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
-    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
-    // repository access) and SIDE_CACHE is consulted first — the backend is
-    // opened, and blob bytes read, only when a side misses the cache. Before
-    // this, every repaint on the one screen where the user types opened a
-    // git2 Repository and copied both sides' full blobs.
-    let mut backend: Option<kagi_git::Backend> = None;
-    let mut side = |s: SelectionSide| -> Option<SideData> {
-        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
-            return Some(SideData::absent());
-        };
-        cached_or_build(&format!("{oid}:{kind:?}"), || {
-            if backend.is_none() {
-                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
-            }
-            let b = backend.as_ref()?;
-            Some(build_side(b, &mode.buffer, path, s, kind))
-        })
-    };
-    let (current, incoming) = match (side(SelectionSide::Current), side(SelectionSide::Incoming)) {
-        (Some(c), Some(i)) => (c, i),
-        _ => return raw_error_box(),
+    let Some((current, incoming)) = side_pair(mode, path, kind) else {
+        return raw_error_box();
     };
 
     // Any non-image binary side offers the external-compare action.
@@ -312,20 +293,7 @@ pub fn render_raw_preview(
     }
 
     if show_external {
-        let p = path.to_path_buf();
-        use gpui_component::Sizable as _;
-        col = col.child(
-            super::button_style::KagiButton::styled(
-                SharedString::from("conflict-open-both-external"),
-                SharedString::from(Msg::ConflictOpenBothExternal.t()),
-                super::button_style::ButtonRole::Neutral,
-                _cx,
-            )
-            .small()
-            .on_click(_cx.listener(move |view: &mut ConflictView, _e, _w, cx| {
-                view.open_raw_sides_external(&p, cx);
-            })),
-        );
+        col = col.child(external_compare_button(path, _cx));
     }
 
     // Padding belongs to the bounded pane, not the scroll content: fractional
@@ -410,7 +378,13 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
     div()
         .flex()
         .relative()
-        .child(super::e2e::measure_inside(format!("{probe}-column")))
+        .child(super::e2e::measure_inside(
+            if probe == "conflict-image-current" {
+                "conflict-image-current-column"
+            } else {
+                "conflict-image-incoming-column"
+            },
+        ))
         .flex_col()
         .w(theme::scaled_px(IMAGE_MAX_PX))
         .flex_shrink(1.)
@@ -421,7 +395,13 @@ fn side_column(header: &str, data: &SideData, probe: &'static str) -> gpui::AnyE
         .child(
             div()
                 .relative()
-                .child(super::e2e::measure_inside(format!("{probe}-header")))
+                .child(super::e2e::measure_inside(
+                    if probe == "conflict-image-current" {
+                        "conflict-image-current-header"
+                    } else {
+                        "conflict-image-incoming-header"
+                    },
+                ))
                 .text_size(theme::scaled_px(11.))
                 .text_color(rgb(theme().text_label))
                 .child(SharedString::from(header.to_string())),
@@ -465,10 +445,13 @@ impl gpui::RenderOnce for ImageMetadata {
         super::e2e::diff_presentation::record_image_caption(self.probe, &text);
         div()
             .relative()
-            .child(super::e2e::measure_inside(format!(
-                "{}-caption",
-                self.probe
-            )))
+            .child(super::e2e::measure_inside(
+                if self.probe == "conflict-image-current" {
+                    "conflict-image-current-caption"
+                } else {
+                    "conflict-image-incoming-caption"
+                },
+            ))
             .text_size(theme::scaled_px(11.))
             .text_color(rgb(theme().text_muted))
             .child(text)
@@ -565,6 +548,45 @@ impl ConflictView {
     }
 }
 
+fn external_compare_button(path: &Path, cx: &mut Context<ConflictView>) -> impl IntoElement {
+    let path = path.to_path_buf();
+    use gpui_component::Sizable as _;
+    super::button_style::KagiButton::styled(
+        SharedString::from("conflict-open-both-external"),
+        SharedString::from(Msg::ConflictOpenBothExternal.t()),
+        super::button_style::ButtonRole::Neutral,
+        cx,
+    )
+    .small()
+    .on_click(cx.listener(move |view: &mut ConflictView, _e, _w, cx| {
+        view.open_raw_sides_external(&path, cx);
+    }))
+}
+
+fn side_pair(mode: &ConflictMode, path: &Path, kind: ConflictKind) -> Option<(SideData, SideData)> {
+    // #409: the cache key comes from the buffer alone (`side_raw_meta`, no
+    // repository access) and SIDE_CACHE is consulted first — the backend is
+    // opened, and blob bytes read, only when a side misses the cache. Before
+    // this, every repaint on the one screen where the user types opened a
+    // git2 Repository and copied both sides' full blobs.
+    let mut backend: Option<kagi_git::Backend> = None;
+    let mut side = |s: SelectionSide| -> Option<SideData> {
+        let Some((oid, _)) = mode.buffer.side_raw_meta(path, s) else {
+            return Some(SideData::absent());
+        };
+        cached_or_build(&format!("{oid}:{kind:?}"), || {
+            if backend.is_none() {
+                backend = kagi_git::Backend::open(mode.buffer.repo_path()).ok();
+            }
+            let b = backend.as_ref()?;
+            Some(build_side(b, &mode.buffer, path, s, kind))
+        })
+    };
+    Some((
+        side(SelectionSide::Current)?,
+        side(SelectionSide::Incoming)?,
+    ))
+}
 // ────────────────────────────────────────────────────────────
 // Tests — pure helpers only (the render path needs a gpui window; see #321
 // acceptance: GUI-verify the rendering).

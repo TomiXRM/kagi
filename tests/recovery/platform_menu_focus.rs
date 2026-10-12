@@ -459,7 +459,7 @@ pub fn scenario_branch_picker_screen_departure(cx: &mut VisualTestAppContext) {
     assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
     cx.run_until_parked();
 
-    invoke(cx, "app.about");
+    invoke(cx, "help.shortcuts");
     assert!(cx.read(|cx| matches!(&app.read(cx).menu_overlay, Some(MenuOverlay::Info { .. }))));
     app.update(cx, |app, cx| app.switch_repo(1, cx));
     assert!(
@@ -467,12 +467,21 @@ pub fn scenario_branch_picker_screen_departure(cx: &mut VisualTestAppContext) {
         "Info closes on departure"
     );
     cx.run_until_parked();
+    invoke(cx, "app.about");
+    assert!(cx.read(|cx| app.read(cx).about_modal().is_some()));
+    app.update(cx, |app, cx| {
+        app.switch_repo(0, cx);
+        assert!(app.about_modal().is_some(), "About is window-global");
+        app.clear_about_modal();
+        cx.notify();
+    });
+    cx.run_until_parked();
     invoke(cx, "view.commandPalette");
     assert!(cx.read(|cx| matches!(
         &app.read(cx).menu_overlay,
         Some(MenuOverlay::CommandPalette)
     )));
-    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    app.update(cx, |app, cx| app.switch_repo(1, cx));
     assert!(
         cx.read(|cx| app.read(cx).menu_overlay.is_none()),
         "Command Palette closes on departure"

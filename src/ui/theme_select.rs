@@ -132,7 +132,7 @@ impl KagiApp {
                 );
                 theme::sync_gpui_component_theme(cx);
                 app.apply_terminal_config(cx);
-                cx.set_menus(commands::build_menus());
+                cx.set_menus(commands::build_menus(cx));
                 if let Some(select) = app.theme_select.clone() {
                     select.update(cx, |state, cx| {
                         state.set_items(settings_view::theme_options(), window, cx);

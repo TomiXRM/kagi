@@ -592,6 +592,7 @@ pub fn build_kagi_entity(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<KagiApp> {
+    super::window_menu::register_main_window(window, cx);
     let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
@@ -619,7 +620,11 @@ pub fn build_kagi_entity(
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         #[cfg(target_os = "macos")]
-        cx.observe_window_activation(window, |_, window, cx| {
+        cx.observe_window_activation(window, |app, window, cx| {
+            if window.is_window_active() {
+                app.publish_window_menu_state(window, cx);
+                cx.notify();
+            }
             if window.is_window_active() && theme::refresh_system_accent() {
                 theme::sync_gpui_component_theme(cx);
                 cx.refresh_windows();

@@ -28,11 +28,17 @@ use std::rc::Rc;
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static ENTRY_LABEL: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
+    static WARNING_GLYPH: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
 pub fn take_stash_entry_label_for_e2e() -> Option<SharedString> {
     ENTRY_LABEL.with(|label| label.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_stash_warning_glyph_for_e2e() -> Option<&'static str> {
+    WARNING_GLYPH.with(|glyph| glyph.borrow_mut().take())
 }
 
 /// The approved entry, not the current occupant of its volatile index.
@@ -44,18 +50,25 @@ pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<gpui::Stateful<g
         ) => *index,
         _ => return None,
     };
-    let message = match &plan.recovery.as_ref()?.kind {
-        RecoveryKind::Stash(
-            StashRecovery::Apply { message, .. }
-            | StashRecovery::Pop { message, .. }
-            | StashRecovery::Drop { message, .. },
-        ) => message,
-        _ => return None,
-    };
-    let mut label = String::with_capacity(message.len() + 24);
+    let message = plan
+        .stash_identity
+        .as_ref()
+        .filter(|identity| identity.oids.get(index).is_some())
+        .and_then(|_| match &plan.recovery.as_ref()?.kind {
+            RecoveryKind::Stash(
+                StashRecovery::Apply { message, .. }
+                | StashRecovery::Pop { message, .. }
+                | StashRecovery::Drop { message, .. },
+            ) => Some(message.as_str()),
+            _ => None,
+        });
+    let mut label = String::with_capacity(message.map_or(0, str::len) + 24);
     use std::fmt::Write as _;
-    let _ = write!(label, "stash@{{{index}}}: ");
-    kagi_domain::text_safety::append_sanitized_control_bytes(&mut label, message);
+    let _ = write!(label, "stash@{{{index}}}");
+    if let Some(message) = message {
+        label.push_str(": ");
+        kagi_domain::text_safety::append_sanitized_control_bytes(&mut label, message);
+    }
     let full = SharedString::from(label);
     let tooltip = full.clone();
     #[cfg(feature = "gui-e2e")]
@@ -444,19 +457,23 @@ pub(crate) fn render_stash_apply_modal(
     if !plan.warnings.is_empty() {
         let mut warnings = div().flex().flex_col().gap_1().flex_shrink_0();
         for (index, warning) in plan.warnings.iter().enumerate() {
-            let text = SharedString::from(plan_note_text(warning));
+            let glyph = "\u{26a0}";
+            #[cfg(feature = "gui-e2e")]
+            WARNING_GLYPH.with(|value| *value.borrow_mut() = Some(glyph));
             warnings = warnings.child(
                 div()
-                    .id(format!("stash-apply-warning-{index}"))
-                    .role(gpui::Role::Label)
-                    .aria_label(text.clone())
-                    .text_sm()
-                    .text_color(rgb(current_theme().color_warning))
                     .relative()
                     .when(index == 0, |row| {
                         row.child(super::e2e::measure_inside("stash-apply-warning"))
                     })
-                    .child(text),
+                    .child(super::plan_card_rows::render_note_row(
+                        format!("stash-apply-warning-{index}").into(),
+                        false,
+                        glyph,
+                        current_theme().color_warning,
+                        &plan_note_text(warning),
+                        false,
+                    )),
             );
         }
         body = body.child(warnings);

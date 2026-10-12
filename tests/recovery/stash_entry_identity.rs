@@ -61,6 +61,34 @@ fn approve_and_assert_refused(
     );
 }
 
+fn assert_missing_target(cx: &mut VisualTestAppContext, repo: &std::path::Path, action: &str) {
+    let (app, window) = mount(cx, repo);
+    app.update(cx, |app, cx| match action {
+        "apply" => app.open_stash_apply_modal(5, cx),
+        "pop" => app.open_pop_modal(5, cx),
+        _ => app.open_stash_drop_modal(5, cx),
+    });
+    cx.run_until_parked();
+    kagi::ui::take_stash_entry_label_for_e2e();
+    crate::recovery_operations::paint(cx, window);
+    assert_eq!(
+        kagi::ui::take_stash_entry_label_for_e2e().as_deref(),
+        Some("stash@{5}"),
+        "a missing entry has no message to repeat"
+    );
+    let button_id = if action == "apply" {
+        "stash-apply-confirm"
+    } else {
+        "plan-confirm"
+    };
+    assert!(
+        kagi::ui::button_style::recorded_modal_button(button_id)
+            .unwrap()
+            .disabled
+    );
+    unmount(cx, app, window);
+}
+
 pub fn scenario_stash_entry_identity(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom"]);
     let original = i18n::lang();
@@ -125,6 +153,7 @@ pub fn scenario_stash_entry_identity(cx: &mut VisualTestAppContext) {
             );
             drop(backend);
             unmount(cx, app, window);
+            assert_missing_target(cx, &repo, action);
         }
     }
     i18n::set_lang(original);

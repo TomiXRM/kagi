@@ -126,7 +126,7 @@ mod modal_renderers_misc;
 mod modal_renderers_plan;
 mod modal_renderers_stash;
 #[cfg(feature = "gui-e2e")]
-pub use modal_renderers_stash::take_stash_entry_label_for_e2e;
+pub use modal_renderers_stash::{take_stash_entry_label_for_e2e, take_stash_warning_glyph_for_e2e};
 mod modal_shell;
 pub mod modals;
 mod op_queue;

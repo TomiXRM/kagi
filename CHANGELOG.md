@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Stash Apply, Pop and Drop confirmations show the approved entry's sanitized message beside its index, with middle ellipsis and full tooltip/accessibility text. Existing full-OID/order preflight guards reject a replaced stash even when stack depth is unchanged. Apply also shows its plan warnings outside the recovery disclosure. (#1384, #652)
+  - Review: Apply warnings reuse the shared `Note` row and visible ⚠ cue; a missing stash index displays only the index rather than inventing a repeated message.
 - Status-bar chips expose localized explanatory tooltips and accessibility names, including ahead/behind counts, unavailable counts, upstream identity and full fetch ages. Stale fetches add a visible `!` cue rather than relying on warning colour alone; informational chips remain outside the Tab order and existing rounded-up text fitting is retained. (#1377)
   - Review: sanitize upstream identity once per footer render rather than once per chip; the fresh-fetch regression uses a midpoint within its minute to avoid a wall-clock boundary flake.
 - Bottom-panel divider resizing starts from the pressed body height, including the rendered tab strip without a start jump; scaled pointer deltas clamp without drift and the final height is saved through the settings store on release. The existing divider has no focus handle, so its pointer-only keyboard scope is unchanged. (#1372)

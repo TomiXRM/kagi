@@ -108,6 +108,10 @@ mod settings_quiet;
 mod settings_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_restore.rs"]
+mod window_restore;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -160,8 +164,16 @@ mod activity_a11y;
 mod recovery_terminal_states;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/unborn_empty.rs"]
+mod recovery_unborn_empty;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
 mod bottom_panel_motion;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel_divider_drag.rs"]
+mod bottom_panel_divider_drag;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_column_divider.rs"]
@@ -324,6 +336,9 @@ mod diff_highlight;
 mod binary_diff_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/modal_viewports.rs"]
+mod modal_viewports;
+#[cfg(target_os = "macos")]
 #[path = "recovery/remote_browse_focus.rs"]
 mod remote_browse_focus;
 
@@ -355,6 +370,9 @@ mod tab_panels;
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_bar_fit.rs"]
 mod status_bar_fit;
+#[cfg(target_os = "macos")]
+#[path = "recovery/status_chips.rs"]
+mod status_chips;
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_controls.rs"]
 mod status_controls;
@@ -1269,6 +1287,10 @@ mod macos {
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
             ),
             (
+                "unborn_empty_state",
+                Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
+            ),
+            (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
@@ -1467,6 +1489,22 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "window_restore_position",
+                Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_restore_display_identity",
+                Box::new(crate::window_restore::scenario_window_restore_display_identity),
+            ),
+            (
+                "window_restore_fit",
+                Box::new(crate::window_restore::scenario_window_restore_fit),
+            ),
+            (
+                "window_restore_titlebar",
+                Box::new(crate::window_restore::scenario_window_restore_titlebar),
             ),
             (
                 "settings_window_open_raise",
@@ -2363,6 +2401,14 @@ mod macos {
                 Box::new(crate::conflict_abort_slot::scenario_cherry_pick_abort_sequence),
             ),
             (
+                "remote_browse_viewport",
+                Box::new(crate::modal_viewports::scenario_remote_browse_viewport),
+            ),
+            (
+                "trust_prompt_viewport",
+                Box::new(crate::modal_viewports::scenario_trust_prompt_viewport),
+            ),
+            (
                 "remote_browse_escape_focus",
                 Box::new(crate::remote_browse_focus::scenario_remote_browse_escape_focus),
             ),
@@ -2663,6 +2709,7 @@ mod macos {
                 Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
+            ("status_chips_semantics", Box::new(crate::status_chips::scenario_status_chips_semantics)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
             ("status_bar_busy_height", Box::new(crate::status_bar_fit::scenario_status_bar_busy_height)),
             ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
@@ -3519,6 +3566,10 @@ mod macos {
                 Box::new(crate::bottom_panel_motion::scenario_bottom_panel_motion),
             ),
             (
+                "bottom_panel_divider_drag",
+                Box::new(crate::bottom_panel_divider_drag::scenario_bottom_panel_divider_drag),
+            ),
+            (
                 "side_panel_motion",
                 Box::new(crate::side_panel_motion::scenario_side_panel_motion),
             ),
@@ -4355,6 +4406,7 @@ mod macos {
     /// Native layout and interactions: the bottom panel occupies the center
     /// column only; Cmd-J, the action, and resizing keep that geometry.
     fn scenario_bottom_panel(cx: &mut VisualTestAppContext) {
+        let _saved = crate::gui_isolation::SavedKeys::keep(&["bottom_panel_height"]);
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);

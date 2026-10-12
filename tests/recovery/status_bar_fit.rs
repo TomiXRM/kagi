@@ -257,19 +257,23 @@ fn review_leg(
     let app = captured.borrow().clone().unwrap();
     cx.run_until_parked();
     let branch = if feedback {
-        "feature/12345678901234567"
+        "feature/12345678901234567".repeat(if dimensions.0 >= 940. { 5 } else { 1 })
     } else {
-        "main"
+        "main".to_owned()
     };
     let text = if feedback {
-        "failed"
+        if dimensions.0 >= 940. {
+            "failed: operation"
+        } else {
+            "failed"
+        }
     } else {
         "failed: no current branch"
     };
     for busy in [false, true] {
         app.update(cx, |app, cx| {
             let summary = &mut app.view_mut().status_summary;
-            summary.branch = branch.into();
+            summary.branch = branch.clone();
             summary.is_dirty = true;
             summary.staged = 2;
             summary.unstaged = 3;
@@ -295,14 +299,18 @@ fn review_leg(
             draw(cx, win, dimensions);
         }
         if feedback {
-            let width = e2e::footer_message_bounds().size.width;
+            let width = e2e::control_bounds(win.window_id(), "status-footer-text")
+                .expect("feedback text drawn")
+                .size
+                .width;
             let minimum = natural_width(cx, win, text).min(theme::scaled_px(80.));
             assert!(
                 width + px(0.5) >= minimum,
-                "short feedback sacrificed to branch: {width:?} < {minimum:?}"
+                "short feedback sacrificed to branch: {width:?} < {minimum:?}; busy={busy}, dimensions={dimensions:?}, container={:?}",
+                e2e::footer_message_bounds()
             );
         } else {
-            assert_short_branch_fit(cx, win, branch);
+            assert_short_branch_fit(cx, win, &branch);
         }
     }
     unmount(cx, app, win);

@@ -329,6 +329,7 @@ impl KagiApp {
         // it one line at any width. A zero flex basis and readable nonempty
         // minimum reserve feedback before branch identity absorbs excess width.
         // The full body is unchanged in the Operation Log and the oplog.
+        let busy = matches!(status_footer, FooterStatus::Busy(_));
         let feedback_min_width = if footer_text.is_empty() {
             px(0.)
         } else {
@@ -336,7 +337,7 @@ impl KagiApp {
             // exceed the bar. Reserve only actual room, with 1px for snapping.
             (window.viewport_size().width - fixed_width - branch_min_width - px(1.))
                 .max(px(0.))
-                .min(theme::scaled_px(80.))
+                .min(theme::scaled_px(80. + if busy { 14. } else { 0. }))
         };
         let mut message = div()
             .id("status-footer-msg")
@@ -350,14 +351,18 @@ impl KagiApp {
             .overflow_hidden()
             .text_color(rgb(footer_color))
             .children(
-                matches!(status_footer, FooterStatus::Busy(_))
-                    .then(|| super::render_overlay::sync_spinner(10., footer_color, "footer-busy")),
+                busy.then(|| super::render_overlay::sync_spinner(10., footer_color, "footer-busy")),
             )
             .child(
                 div()
+                    .relative()
+                    .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(SharedString::from(view_models::footer_line(&footer_text))),
+                    .child(SharedString::from(view_models::footer_line(&footer_text)))
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.child(super::e2e::measure_inside("status-footer-text"))
+                    }),
             );
         #[cfg(feature = "gui-e2e")]
         {

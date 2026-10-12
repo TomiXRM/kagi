@@ -45,3 +45,6 @@ the #1310 minimum-width reservation above. Idle, Success and Failed use the same
 single-line text slot without a spinner. Tooltip, full operation detail, colours
 and reduced-motion behavior are unchanged. Native `status_bar_busy_height`
 checks both height and complete containment at EN/JA and 100%/167% zoom.
+Busy's preferred reservation includes the scaled 10px spinner and 4px gap
+in addition to the text's 80-reference-pixel budget, still capped by actual
+remaining room. The minimum-width oracle measures the text child itself.

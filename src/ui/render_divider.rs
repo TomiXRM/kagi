@@ -80,6 +80,12 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                // A capped expansion must not replace the larger saved preference
+                // with a candidate measured from its compressed painted origin.
+                let candidate = self.graph_column_fit.refit(new_w, self.graph_col_w);
+                if (candidate.badge - self.graph_column_fit.badge).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.badge_col_w).abs() > 0.5 {
                     self.badge_col_w = new_w;
                     theme::set_col_width("badge_col_w", new_w);
@@ -92,6 +98,10 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                let candidate = self.graph_column_fit.refit(self.badge_col_w, new_w);
+                if (candidate.graph - self.graph_column_fit.graph).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.graph_col_w).abs() > 0.5 {
                     self.graph_col_w = new_w;
                     theme::set_col_width("graph_col_w", new_w);

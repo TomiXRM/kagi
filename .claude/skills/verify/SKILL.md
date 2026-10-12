@@ -132,6 +132,25 @@ Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
 the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
 and read live EN/JA adoption names in Accessibility Inspector. Do not Save
 while comparing buffer-only adoption with pointer behavior.
+For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
+`graph_columns_fit` reproduces the default-column 940×660/167% zero-width
+subject, then requires a scaled 120px subject minimum, contained author/time,
+native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
+It pins the before x positions at 1392×883/100%, preserves saved width keys
+and preferred widths through resize/zoom, and leaves existing divider-drag,
+subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
+Before: subject x=886.5 width=0, author ends at 1031 and time starts there.
+After: subject x=547 width=180.5; author x=727.5..850 and time x=850..922.
+`graph_columns_compressed_drag` delivers positive native drags to both capped
+dividers, requires preferred widths/settings to stay unchanged, then widens and
+pins the original x positions. `graph_columns_inspector_fit` covers 1440px/167%
+with sidebar 240px and Inspector 360px in EN/JA: subject floor yields below 120px
+while author/time remain contained. Before review: GRAPH preference fell from
+176 to 47.900204 after a capped expansion; the Inspector leg retained the full
+subject floor instead of yielding. Both review regressions pass after correction.
+Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
+back and forth, drag both column dividers, relaunch to check saved preferences,
+and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
 
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome

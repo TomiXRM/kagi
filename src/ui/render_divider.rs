@@ -6,6 +6,17 @@
 use super::*;
 
 impl KagiApp {
+    pub(super) fn finish_bottom_panel_resize(&mut self) {
+        if let Some((_, original_height)) = self.bottom_panel_drag_origin.take() {
+            if (self.bottom_panel_height - original_height).abs() > 0.5 {
+                settings::write_setting(
+                    "bottom_panel_height",
+                    Some(&self.bottom_panel_height.to_string()),
+                );
+            }
+        }
+    }
+
     /// T023: divider drag-move handler (single listener handles every divider).
     /// On the root div so a drag continues outside the narrow divider strip.
     /// Widths use absolute pointer positions, not deltas: outer panes anchor to
@@ -123,18 +134,18 @@ impl KagiApp {
                 }
             }
             DividerKind::BottomPanel => {
-                // T-BP-002: absolute-coordinate formula from ADR-0007:
-                //   height = viewport_h - cursor_y - status_bar_h(22) - 2
-                // W28: the panel is rendered scaled, so the on-screen gap
-                // between the cursor and the window bottom is the *scaled*
-                // height; divide by the physical scale to recover its stored
-                // value. The status bar and divider half use the same scale.
+                // Start from the actual pressed body height: the rendered panel
+                // already includes its divider and tab strip. Applying the
+                // pointer delta also preserves an off-centre grab, and keeping
+                // the origin immutable prevents drift after clamp overshoot.
+                let Some((origin_y, origin_height)) = self.bottom_panel_drag_origin else {
+                    return;
+                };
                 let viewport_h = f32::from(window.viewport_size().height);
                 let cursor_y = f32::from(event.event.position.y);
-                // max fraction is a screen-space cap → convert to unscaled.
-                let max_h = (viewport_h * BOTTOM_PANEL_MAX_FRAC) / z;
-                let new_h = ((viewport_h - cursor_y - (22.0 + 2.0) * z) / z)
-                    .clamp(BOTTOM_PANEL_MIN_H, max_h);
+                let max_h = ((viewport_h * BOTTOM_PANEL_MAX_FRAC) / z).max(BOTTOM_PANEL_MIN_H);
+                let new_h =
+                    (origin_height + (origin_y - cursor_y) / z).clamp(BOTTOM_PANEL_MIN_H, max_h);
                 if (new_h - self.bottom_panel_height).abs() > 0.5 {
                     self.bottom_panel_height = new_h;
                     cx.notify();

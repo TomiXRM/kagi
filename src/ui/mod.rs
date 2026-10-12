@@ -1115,6 +1115,8 @@ pub struct KagiApp {
     pub bottom_panel_open: bool,
     /// Current height of the bottom panel in pixels (clamped 80 .. viewport*0.6).
     pub bottom_panel_height: f32,
+    /// Pointer Y and body height at press; kept unchanged through clamp overshoot.
+    bottom_panel_drag_origin: Option<(f32, f32)>,
     /// How the bottom panel, the sidebar and the right pane slide open and
     /// closed toward their toggles (#950, #955).
     pub(crate) panel_motion: panel_motion::PanelMotions,
@@ -1507,7 +1509,10 @@ impl KagiApp {
             graph_column_fit: Default::default(),
             pane_fit: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
-            bottom_panel_height: BOTTOM_PANEL_H_UNSET,
+            bottom_panel_height: settings::Settings::load()
+                .bottom_panel_height()
+                .unwrap_or(BOTTOM_PANEL_H_UNSET),
+            bottom_panel_drag_origin: None,
             panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             bottom_tab_focus: Default::default(),

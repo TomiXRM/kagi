@@ -9,3 +9,22 @@
 
 ## Consequences
 - B-1(default 18%)のみ即時変更。他は現状維持を正式仕様化
+
+## Amendment — 2026-10-13: continuous divider resize (#1372)
+
+The persisted height is the **body** height in reference pixels. The rendered
+panel adds the scaled divider and tab strip. Capture body height and pointer Y
+on divider press, then apply the scaled pointer delta to that origin; neither
+the tab strip nor a grab off the divider centre can introduce a start jump.
+The body retains its 80-reference-pixel minimum and viewport-height × 60%
+maximum (converted back from screen space). Clamping does not replace the
+press origin, so returning from either bound does not accumulate drift.
+
+Live moves change only UI state. Release writes the final changed body height
+once through the settings store, whose repeated-key writes coalesce; subsequent
+windows restore it. No repository operation or terminal lifecycle changes.
+The existing divider has **no focus handle**, so the conditional keyboard
+resize / named Separator path is intentionally not introduced by this fix.
+Rest, hover and drag styling remain unchanged; focus-visible, selected,
+loading, disabled and error states are not applicable to this pointer-only
+divider. Tier B remains a real-window check of continuous pointer tracking.

@@ -20,26 +20,8 @@ pub(crate) fn render_note_row(
     text: &str,
     chip: bool,
 ) -> gpui::AnyElement {
-    render_note_row_with_role(
-        id,
-        super::dialog_a11y::note_role(blocker),
-        glyph,
-        color,
-        text,
-        chip,
-    )
-}
-
-fn render_note_row_with_role(
-    id: SharedString,
-    role: gpui::Role,
-    glyph: &'static str,
-    color: u32,
-    text: &str,
-    chip: bool,
-) -> gpui::AnyElement {
     if !chip {
-        return super::dialog_a11y::apply_note_role(id.clone(), div().id(id), role, text)
+        return super::dialog_a11y::apply_note(id.clone(), div().id(id), blocker, text)
             .text_sm()
             .text_color(rgb(color))
             .overflow_hidden()
@@ -47,7 +29,7 @@ fn render_note_row_with_role(
             .into_any_element();
     }
     let (bg, border, _) = theme::badge_style(color);
-    super::dialog_a11y::apply_note_role(id.clone(), div().id(id), role, text)
+    super::dialog_a11y::apply_note(id.clone(), div().id(id), blocker, text)
         .flex()
         .flex_row()
         .items_start()
@@ -76,7 +58,7 @@ fn render_note_row_with_role(
         .into_any_element()
 }
 
-/// Advisory form-plan warnings: wrap full localized text and announce Status.
+/// Advisory form-plan warnings: wrap full localized text with shared Note semantics.
 pub(crate) fn render_warnings_list(
     prefix: &'static str,
     warnings: &[kagi_domain::plan_note::PlanNote],
@@ -91,9 +73,9 @@ pub(crate) fn render_warnings_list(
             let text = kagi_ui_core::i18n::plan_note_text(warning);
             super::e2e::measure_control(
                 id.clone(),
-                render_note_row_with_role(
+                render_note_row(
                     id,
-                    gpui::Role::Status,
+                    false,
                     "\u{26a0}",
                     current_theme().color_warning,
                     &text,

@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Status names and the shared warning icon/style inside the scrolling plan body. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
+- Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Note names and the shared warning icon/style inside the scrolling plan body. Create Worktree uses the same warning list. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
 - Status-bar chips expose localized explanatory tooltips and accessibility names, including ahead/behind counts, unavailable counts, upstream identity and full fetch ages. Stale fetches add a visible `!` cue rather than relying on warning colour alone; informational chips remain outside the Tab order and existing rounded-up text fitting is retained. (#1377)
   - Review: sanitize upstream identity once per footer render rather than once per chip; the fresh-fetch regression uses a midpoint within its minute to avoid a wall-clock boundary flake.
 - Bottom-panel divider resizing starts from the pressed body height, including the rendered tab strip without a start jump; scaled pointer deltas clamp without drift and the final height is saved through the settings store on release. The existing divider has no focus handle, so its pointer-only keyboard scope is unchanged. (#1372)

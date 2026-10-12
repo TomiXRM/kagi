@@ -193,18 +193,9 @@ pub(crate) fn apply_note(
     blocker: bool,
     text: &str,
 ) -> Stateful<Div> {
-    apply_note_role(id, el, note_role(blocker), text)
-}
-
-/// Name a plan row with an explicit semantic role, retaining Tier A evidence.
-pub(crate) fn apply_note_role(
-    id: SharedString,
-    el: Stateful<Div>,
-    role: Role,
-    text: &str,
-) -> Stateful<Div> {
-    record_note(&id, role, text);
-    el.role(role).aria_label(SharedString::from(text))
+    record_note(&id, note_role(blocker), text);
+    el.role(note_role(blocker))
+        .aria_label(SharedString::from(text))
 }
 
 /// Record and expose the localized name of a plan-state group.

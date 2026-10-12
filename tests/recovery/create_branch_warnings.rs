@@ -53,6 +53,7 @@ pub fn scenario_create_branch_warnings(cx: &mut VisualTestAppContext) {
         cx.simulate_keystrokes(window, "f e a t");
         assert_warned_plan(cx, &app, window, language);
         check_viewports(cx, &app, window);
+        check_policy_legs(cx, &app, window, &repo);
         drop(input);
         unmount(cx, app, window);
     }
@@ -146,8 +147,8 @@ fn assert_warned_plan(
     for (index, warning) in warnings.iter().enumerate() {
         assert_eq!(
             kagi::ui::dialog_a11y::recorded_note(&format!("create-branch-warning-{index}")),
-            Some((gpui::Role::Status, i18n::plan_note_text(warning))),
-            "{language:?}: warning {index} must be rendered with localized Status role"
+            Some((gpui::Role::Note, i18n::plan_note_text(warning))),
+            "{language:?}: warning {index} must be rendered with localized Note role"
         );
         assert!(
             kagi::ui::e2e::control_bounds(
@@ -163,5 +164,122 @@ fn assert_warned_plan(
             .unwrap()
             .disabled,
         "warnings must not disable Create"
+    );
+}
+
+fn check_policy_legs(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+    repo: &std::path::Path,
+) {
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    let checkbox =
+        kagi::ui::e2e::control_bounds(window.window_id(), "create-branch-checkout-after").unwrap();
+    cx.simulate_click(
+        window,
+        gpui::point(checkbox.left() + gpui::px(20.), checkbox.center().y),
+        gpui::Modifiers::none(),
+    );
+    assert_plan_counts(cx, app, window, 0, 1);
+    assert!(
+        !cx.read(|cx| app.read(cx).create_branch_modal().unwrap().checkout_after),
+        "real checkbox click turns Checkout After off"
+    );
+    let input = cx
+        .read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .unwrap()
+                .input_state
+                .clone()
+        })
+        .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&input.read(cx).focus_handle(cx), cx);
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    cx.simulate_keystrokes(window, "cmd-a");
+    cx.simulate_input(window, "feature/feat");
+    assert_plan_counts(cx, app, window, 0, 0);
+    let workdir = kagi_git::Backend::open(repo).unwrap().workdir().unwrap();
+    let branch = git_fixture::git_output(repo, &["symbolic-ref", "--short", "HEAD"]);
+    kagi_git::ruleset::seed_ruleset(
+        &workdir,
+        &branch,
+        RulesetStatus::Active(Ruleset {
+            branch_name: Some(Pattern {
+                operator: PatternOp::StartsWith,
+                pattern: "feature/".into(),
+                negate: false,
+            }),
+            bypass: kagi_domain::ruleset::Bypass::Denied,
+            ..Ruleset::default()
+        }),
+    );
+    cx.simulate_keystrokes(window, "cmd-a");
+    cx.simulate_input(window, "denied");
+    assert_plan_counts(cx, app, window, 1, 0);
+}
+
+fn assert_plan_counts(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+    blockers: usize,
+    warnings: usize,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        cx.advance_clock(std::time::Duration::from_millis(300));
+        cx.run_until_parked();
+        if cx.read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .unwrap()
+                .plan
+                .plan()
+                .is_some_and(|p| p.blockers.len() == blockers && p.warnings.len() == warnings)
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected {blockers} blockers and {warnings} warnings"
+        );
+    }
+    kagi::ui::dialog_a11y::clear_recorded_a11y();
+    kagi::ui::button_style::clear_recorded_modal_buttons();
+    app.update(cx, |_, cx| cx.notify());
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    assert_eq!(
+        kagi::ui::button_style::recorded_modal_button("create-branch-confirm")
+            .unwrap()
+            .disabled,
+        blockers > 0
+    );
+    let plan = cx.read(|cx| {
+        app.read(cx)
+            .create_branch_modal()
+            .unwrap()
+            .plan
+            .plan()
+            .unwrap()
+            .clone()
+    });
+    for (index, warning) in plan.warnings.iter().enumerate() {
+        assert_eq!(
+            kagi::ui::dialog_a11y::recorded_note(&format!("create-branch-warning-{index}")),
+            Some((gpui::Role::Note, i18n::plan_note_text(warning)))
+        );
+    }
+    assert!(
+        kagi::ui::dialog_a11y::recorded_note(&format!("create-branch-warning-{warnings}"))
+            .is_none(),
+        "removed warning is absent from the next rendered frame"
     );
 }

@@ -15,7 +15,8 @@
 
 Create Branch displays all existing `plan.warnings` in the scrollable plan
 body before approval, using the shared warning-row icon and theme warning
-colour with localized EN/JA text and `Role::Status`. Cancel/Create remain
+colour with localized EN/JA text and the existing #354 `Role::Note` convention.
+Create Worktree uses the same warning list. Cancel/Create remain
 outside that body. Warnings are advisory: only existing blockers, pending
 plans or failed plans disable Create. This presentation change does not
 fetch rulesets, modify `plan_*`, or alter checkout-after safety policy.

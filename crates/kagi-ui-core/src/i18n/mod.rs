@@ -742,6 +742,8 @@ pub enum Msg {
     /// `{}` = the folder that will be created.
     CloneWillCreate,
     CloneChooseFolder,
+    CloneChangeFolder,
+    CloneCopyLocation,
     CloneConfirm,
     CloneBusy,
     /// `{}` = elapsed time, `m:ss`.
@@ -1332,6 +1334,9 @@ pub enum Msg {
     A11ySidebarCurrentBranch,
     A11ySidebarRemoteBranch,
     A11ySidebarTag,
+    SidebarTagCommitNotLoaded,
+    SidebarTagHiddenBySolo,
+    A11ySidebarStash,
     A11ySidebarWorktree,
     A11ySidebarCurrentSuffix,
     A11ySidebarLockedSuffix,
@@ -1500,6 +1505,8 @@ pub enum Msg {
     /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
     /// finding #6).
     EditorWorkspaceUndecodable,
+    /// File History unavailable pre-rename path; `{path}` is its current name.
+    FileHistoryPathRenamed,
 
     // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──────
     /// Banner shown above a dirty buffer when the FS watcher sees the file
@@ -3074,6 +3081,10 @@ impl Msg {
             (Ja, CloneWillCreate) => "{} を作成します",
             (En, CloneChooseFolder) => "Choose…",
             (Ja, CloneChooseFolder) => "選択…",
+            (En, CloneChangeFolder) => "Change…",
+            (Ja, CloneChangeFolder) => "変更…",
+            (En, CloneCopyLocation) => "Copy Location",
+            (Ja, CloneCopyLocation) => "保存先をコピー",
             (En, CloneConfirm) => "Clone",
             (Ja, CloneConfirm) => "clone",
             (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
@@ -3656,6 +3667,11 @@ impl Msg {
             (Ja, A11ySidebarRemoteBranch) => "remote branch {}",
             (En, A11ySidebarTag) => "Tag {}",
             (Ja, A11ySidebarTag) => "tag {}",
+            (En, SidebarTagCommitNotLoaded) => "Commit not loaded; load more history.",
+            (Ja, SidebarTagCommitNotLoaded) => "commit が未読込みです。履歴を追加で読み込んでください。",
+            (En, SidebarTagHiddenBySolo) => "Commit is hidden by Branch Solo.",
+            (Ja, SidebarTagHiddenBySolo) => "commit は Branch Solo により非表示です。",
+            (En, A11ySidebarStash) | (Ja, A11ySidebarStash) => "stash@{{}}: {}",
             (En, A11ySidebarWorktree) => "Worktree {}, {}",
             (Ja, A11ySidebarWorktree) => "worktree {}、{}",
             (En, A11ySidebarCurrentSuffix) => ", current",
@@ -3898,6 +3914,8 @@ impl Msg {
             (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
             (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
             (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
+            (En, FileHistoryPathRenamed) => "File was renamed; open {path} instead.",
+            (Ja, FileHistoryPathRenamed) => "ファイル名が変更されています。{path} を開いてください。",
 
             // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──
             (En, EditorWorkspaceExternalChanged) => "File changed on disk.",
@@ -4381,6 +4399,11 @@ pub fn commit_button() -> &'static str {
         Lang::En => "Commit",
         Lang::Ja => "commit",
     }
+}
+
+/// A missing pre-rename history path, with the current filename left verbatim.
+pub fn file_history_renamed_fmt(path: &str) -> String {
+    Msg::FileHistoryPathRenamed.t().replace("{path}", path)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

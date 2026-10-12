@@ -132,8 +132,11 @@ impl FileHistoryState {
 /// `open_file_history` and maps them onto `KagiApp`.
 #[derive(Debug, Clone)]
 pub enum FileHistoryEvent {
-    /// Back / Open File clicked → host drops the entity (ADR-0117 shape kept).
+    /// Back clicked → host drops the entity.
     CloseRequested,
+    /// Open the selected entry's exact path in the Editor workspace.
+    /// The host keeps History open if that worktree file is unavailable.
+    OpenFileRequested(PathBuf),
     /// Double-click / Open Commit / Show in Graph → host closes the pane and
     /// jumps the commit graph to this commit.
     JumpToCommit(CommitId),

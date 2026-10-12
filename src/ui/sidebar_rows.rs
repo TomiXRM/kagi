@@ -470,6 +470,7 @@ pub fn build_sidebar_rows(
                         let collapsed_now = !has_filter && groups_collapsed.contains(&key);
                         rows.push(SidebarRow::RemoteSubGroup {
                             key,
+                            remote: remote.clone(),
                             prefix: prefix.clone(),
                             count: *count,
                             collapsed: collapsed_now,

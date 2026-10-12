@@ -8,15 +8,24 @@
 //! Plain helpers may compile in normal builds, but must not require
 //! `gpui/test-support`; the native runner opts into that dependency explicitly.
 
+#[cfg(feature = "gui-e2e")]
+pub use super::home_clone_card::{
+    clone_destination_presentation, take_clone_copy_activations, CloneDestinationPresentation,
+};
+
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
+pub mod sidebar_labels;
 
 #[cfg(feature = "gui-e2e")]
 pub mod activity;
 #[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
+
+#[cfg(feature = "gui-e2e")]
+pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
@@ -38,6 +47,7 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
+    static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -53,6 +63,20 @@ pub(crate) fn record_status_control(
 #[cfg(feature = "gui-e2e")]
 pub fn status_control(id: &str) -> Option<(gpui::Role, &'static str, gpui::Toggled)> {
     STATUS_CONTROLS.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_branch_identity(
+    label: gpui::SharedString,
+    tooltip: gpui::SharedString,
+) {
+    STATUS_BRANCH_IDENTITY.with(|identity| *identity.borrow_mut() = Some((label, tooltip)));
+}
+
+/// Renderer-fed full AX name and tooltip for the status bar's branch.
+#[cfg(feature = "gui-e2e")]
+pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
+    STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to
@@ -194,6 +218,7 @@ pub struct ControlPaint {
     pub font_weight: gpui::FontWeight,
     pub text_color: gpui::Hsla,
     pub ellipsis: bool,
+    pub middle_ellipsis: bool,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -218,6 +243,10 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         ellipsis: matches!(
             window.text_style().text_overflow.as_ref(),
             Some(gpui::TextOverflow::Truncate(affix)) if affix.as_ref() == "…"
+        ),
+        middle_ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::TruncateMiddle(affix)) if affix.as_ref() == "…"
         ),
     };
     CONTROL_PAINTS.with(|map| {

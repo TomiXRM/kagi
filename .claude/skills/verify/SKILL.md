@@ -635,6 +635,8 @@ The current suite covers:
   `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
   Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;
   Escape and modal displacement discard the arm without releasing the requirement.
+  Escape now dismisses the presentation until a fresh explicit write request
+  (#1366); the scenario re-enters through a real Fetch admission refusal.
   A real append-lock failure preserves the requirement and writer exclusion,
   leaves no durable release row, and renders a Partial receipt rather than raw
   Unknown in the panel. Restoring persistence and confirming again records exactly
@@ -644,6 +646,16 @@ The current suite covers:
   its controls outside the window.
   App-level tests in `app_unobservable_release_test` additionally reject live writers,
   mismatches, failed transports, unknown families, and failed audit persistence.
+- actionable-notice dismissal (`KAGI_GUI_E2E_ONLY='app_notice_,alert_focus_notice,modal_,reconcile_unobservable_release'`,
+  KEEP_GOING): `app_notice_escape_dismiss` and `app_notice_acknowledge_dismiss`
+  exercise EN/JA Escape, five renders, opener focus, non-editing Return and fresh
+  refusal recurrence. `app_notice_queue_recurrence` parks a real panicked checkout
+  in a reconciling queue, dismisses its notice and explicitly enqueues Checkout
+  through `e2e::enqueue_checkout`, which forwards to the unchanged production
+  enqueue boundary (no manufactured queue state or mutation result). It checks
+  active/queued Inspect/Acknowledge deduplication and five subsequent queue ticks
+  without re-presentation. The native dispatcher assertions do not establish
+  live VoiceOver or IME behavior; Tier B checks those and the restored opener.
 - conflict Continue cache (`KAGI_GUI_E2E_ONLY=conflict_continue_cache`,
   `tests/recovery/conflict_continue_cache.rs`): real Result InputState changes
   cover omitted final LF, empty text versus a blank line, marker addition/removal,

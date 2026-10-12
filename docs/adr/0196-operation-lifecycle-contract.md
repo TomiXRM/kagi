@@ -483,6 +483,12 @@ Operation Log retains the original durable detail; this fix does not add an
 OpLog Inspect action or a new mapping between receipts and in-session operation
 IDs. Reinspection uses the existing refusal route and obtains a fresh read
 before either release step.
+An explicit enqueue into a session already waiting on reconciliation is also a
+recurring write request, even when the queue never retries admission. Its
+`Enqueued` effect offers the blocking Inspect notice unless the same requirement
+already has an active or queued Inspect/Acknowledge notice. Queue ticks and
+renders do not present it again after Escape; the original queue wait and write
+blockade remain unchanged.
 
 Return keeps the existing non-destructive primary action (Inspect, ordinary
 Acknowledge or the first arm step). Handled modal Return is consumed before

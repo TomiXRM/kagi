@@ -488,6 +488,14 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn enqueue_checkout(app: &mut KagiApp, branch: &str, cx: &mut gpui::Context<KagiApp>) -> bool {
+    app.enqueue_checkout(
+        &super::modals::CheckoutPlanTarget::Branch(branch.into()),
+        cx,
+    )
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
     app.app_notice()
         .is_some_and(|notice| notice.acknowledge.is_some())

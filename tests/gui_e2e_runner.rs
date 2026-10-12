@@ -1560,6 +1560,10 @@ mod macos {
                 Box::new(crate::reconcile_unobservable::scenario_app_notice_acknowledge_dismiss),
             ),
             (
+                "app_notice_queue_recurrence",
+                Box::new(crate::op_queue::scenario_app_notice_queue_recurrence),
+            ),
+            (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
             ),

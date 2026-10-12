@@ -11,7 +11,7 @@ use kagi_ui_core::{
 };
 use std::path::Path;
 
-fn fixture() -> tempfile::TempDir {
+pub(super) fn fixture() -> tempfile::TempDir {
     fixture_for_operation(false)
 }
 fn fixture_for_operation(rebase: bool) -> tempfile::TempDir {

@@ -5,7 +5,9 @@ use super::{
     theme::{self, theme},
     KagiApp,
 };
-use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Entity, SharedString, Window};
+use gpui::{
+    div, prelude::*, px, rgb, AnyElement, Context, Entity, Focusable, SharedString, Window,
+};
 use gpui_component::input::{
     Enter, IndentInline, Input, InputEvent, InputState, OutdentInline, Paste,
 };
@@ -76,6 +78,7 @@ impl KagiApp {
                 let body = cx.new(|cx| {
                     InputState::new(window, cx)
                         .code_editor("markdown")
+                        .search_labels(kagi_ui_core::find::labels())
                         .line_number(false)
                         .placeholder(if number.is_some() {
                             Msg::PrCommentPlaceholder.t()
@@ -179,6 +182,7 @@ impl KagiApp {
                 if editor.placeholder_lang != Some(active_lang) {
                     if let Some(input) = &editor.body_input {
                         input.update(cx, |st, cx| {
+                            st.set_search_labels(kagi_ui_core::find::labels(), cx);
                             st.set_placeholder(
                                 if number.is_some() {
                                     Msg::PrCommentPlaceholder.t()
@@ -455,6 +459,11 @@ pub(super) fn render_composer(
             }))
             .capture_action(cx.listener(move |app, _: &Paste, window, cx| {
                 if app.has_active_modal() {
+                    return;
+                }
+                // Descendant Find controls own their text/actions; capture
+                // must not bypass that boundary and edit the hidden body.
+                if !paste_input.read(cx).focus_handle(cx).is_focused(window) {
                     return;
                 }
                 let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {

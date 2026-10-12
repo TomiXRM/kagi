@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Find/Replace controls in the Editor, conflict Result editor and Issue composer expose localized Button names and hover help, with case/replacement toggled state. Keyboard traversal reaches the actions after the field; Escape and Close return focus to the same editable buffer. Find Buttons consume inherited editing actions, and clicking bar padding focuses its query rather than allowing hidden code/draft edits. Query, undo history and guarded Save remain owned by the existing inputs. (#1348)
 - Settings' theme picker exposes a localized ComboBox name, current theme value and open/closed state, with named options. UI zoom controls announce localized decrease/increase actions with the current percentage; the value is a named Status and bound buttons are disabled. (#1349, #1350)
   - Review: theme semantics belong to the actual focused Select trigger, not an unfocused wrapper. Reaching a zoom bound keeps keyboard focus on the opposite stepper, and the next Tab continues beside the zoom row; Japanese announcements use the visible UI ズーム term.
 - Sidebar and Inspector / Compare widths fit the window and zoom without replacing preferred divider widths: the Inspector shrinks first, then the sidebar, reserving a scaled 320px centre whenever their presentation minima fit. Capped drags preserve preferences and widening restores the original geometry; diff-header controls remain inside the narrow/high-zoom centre. (#1355)

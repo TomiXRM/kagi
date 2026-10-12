@@ -1369,8 +1369,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     // Linux is Super-J — so Ctrl-J never toggled the panel.
     cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
     // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
-    // Scoped `!Terminal` so Escape reaches a focused terminal (vim/less/etc.).
-    cx.bind_keys([KeyBinding::new("escape", CloseMainDiff, Some("!Terminal"))]);
+    // Terminal and the built-in Find bar own Escape while their controls focus.
+    cx.bind_keys([KeyBinding::new(
+        "escape",
+        CloseMainDiff,
+        Some("!Terminal && !SearchPanel"),
+    )]);
     // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
     // text field keeps its own copy; no-ops when nothing is selected.
     cx.bind_keys([KeyBinding::new(

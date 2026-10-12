@@ -38,10 +38,25 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                         theme::set_zoom(zoom);
                         cx.notify();
                     });
-                    let (label, panel) = (
-                        luminance(theme::theme().text_sub),
-                        luminance(theme::theme().panel),
-                    );
+                    let card_fill = if slug == "apple-dark" {
+                        0x2a2a2c
+                    } else {
+                        0xf7f7f7
+                    };
+                    let separator = if slug == "apple-dark" {
+                        0x414144
+                    } else {
+                        0xe5e5e5
+                    };
+                    for shift in [16, 8, 0] {
+                        let line_channel = ((separator >> shift) & 255) as u8;
+                        let fill_channel = ((card_fill >> shift) & 255) as u8;
+                        assert!(
+                            line_channel.abs_diff(fill_channel) >= 16,
+                            "separator and fill must exceed both RGB tolerance bands"
+                        );
+                    }
+                    let (label, panel) = (luminance(theme::theme().text_sub), luminance(card_fill));
                     assert!(
                         (label.max(panel) + 0.05) / (label.min(panel) + 0.05) >= 4.5,
                         "Settings heading contrast"
@@ -80,7 +95,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                     ((f32::from(b.bottom()) + 0.5) * scale) as u32,
                                 )
                                 .0;
-                            let color = theme::theme().surface;
+                            let color = separator;
                             for (got, expected) in p[..3].iter().zip([
                                 (color >> 16) as u8,
                                 (color >> 8) as u8,
@@ -91,7 +106,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                     "separator {p:?} expected {color:06x}"
                                 );
                             }
-                            // Adjacent interior/exterior pixels stay panel-coloured:
+                            // Adjacent pixels retain the floating-card fill:
                             // a scaled 1.67px separator would cross this oracle.
                             for offset in [-0.5, 1.5] {
                                 let p = image
@@ -100,7 +115,7 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                         ((f32::from(b.bottom()) + offset) * scale) as u32,
                                     )
                                     .0;
-                                let color = theme::theme().panel;
+                                let color = card_fill;
                                 for (got, expected) in p[..3].iter().zip([
                                     (color >> 16) as u8,
                                     (color >> 8) as u8,
@@ -119,7 +134,11 @@ pub fn scenario_settings_quiet(cx: &mut VisualTestAppContext) {
                                 (f32::from(frame.center().y) * scale) as u32,
                             )
                             .0;
-                        let color = theme::theme().surface;
+                        let color = if slug == "apple-dark" {
+                            0x414144
+                        } else {
+                            0xe5e5e5
+                        };
                         for (got, expected) in p[..3].iter().zip([
                             (color >> 16) as u8,
                             (color >> 8) as u8,

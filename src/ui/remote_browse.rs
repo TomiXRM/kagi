@@ -422,13 +422,10 @@ pub(crate) fn render_remote_browse(
 
     let mut card = div()
         .w(theme::scaled_px(520.))
-        // Same popup surface as `modal_shell::modal_card` and the Settings
-        // panel (`theme.panel`); `modal` is lighter and read as a different
-        // surface class next to them (#454 follow-up).
-        .bg(rgb(current_theme().panel))
+        .bg(rgb(current_theme().elevated_surface(current_theme().panel)))
         .rounded_xl()
         .border_1()
-        .border_color(rgb(current_theme().surface))
+        .border_color(rgb(current_theme().elevated_border(current_theme().surface)))
         .shadow_lg()
         .p_6()
         .flex()
@@ -592,6 +589,11 @@ pub(crate) fn render_remote_browse(
                     .p_2()
                     .rounded_md()
                     .bg(rgb(current_theme().surface))
+                    .when(current_theme().slug == "apple-dark", |card| {
+                        card.border_1().border_color(rgb(
+                            current_theme().elevated_border(current_theme().surface)
+                        ))
+                    })
                     .child(
                         div()
                             .text_sm()
@@ -812,6 +814,11 @@ fn render_directory_list(
     let app = cx.entity();
     let row_keys = modal.row_keys.clone();
     let size = row_keys.len();
+    let row_fill = if current_theme().slug == "apple-dark" {
+        current_theme().selected
+    } else {
+        current_theme().surface
+    };
     let list = gpui::list(modal.row_scroll.clone(), move |ix, _window, _cx| {
         let (label, text, target) = if ix == 0 && parent.is_some() {
             (
@@ -861,9 +868,7 @@ fn render_directory_list(
             } else {
                 current_theme().text_muted
             }))
-            .when(selected == Some(ix), |row| {
-                row.bg(rgb(current_theme().surface))
-            })
+            .when(selected == Some(ix), |row| row.bg(rgb(row_fill)))
             .when(busy, |row| {
                 row.aria_description(SharedString::from(Msg::RemoteRequestBusy.t()))
                     .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
@@ -872,7 +877,7 @@ fn render_directory_list(
             })
             .when(!busy && navigable, |row| {
                 row.cursor_pointer()
-                    .hover(|style| style.bg(rgb(current_theme().surface)))
+                    .hover(move |style| style.bg(rgb(row_fill)))
             })
             .on_click(move |_, window, cx| {
                 app.update(cx, |app, cx| {

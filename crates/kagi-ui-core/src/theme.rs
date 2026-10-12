@@ -77,7 +77,7 @@ pub struct Theme {
     pub panel: u32,
     /// Sidebar background (crust).
     pub sidebar: u32,
-    /// Modal background.
+    /// Floating surface; Apple Dark uses this for every elevated card.
     pub modal: u32,
     /// Full-screen modal scrim (alpha applied at the call site).
     pub modal_overlay: u32,
@@ -204,6 +204,36 @@ pub struct SyntaxPalette {
 }
 
 impl Theme {
+    /// Apple Dark's single floating fill; other themes retain their existing role.
+    #[inline]
+    pub fn elevated_surface(&self, existing: u32) -> u32 {
+        if self.slug == "apple-dark" {
+            self.modal
+        } else {
+            existing
+        }
+    }
+
+    /// Neutral identifying boundary for the Apple Dark floating layer.
+    #[inline]
+    pub fn elevated_border(&self, existing: u32) -> u32 {
+        if self.slug == "apple-dark" {
+            crate::theme_apple_dark::ELEVATED_BORDER
+        } else {
+            existing
+        }
+    }
+
+    /// Window chrome stays lighter than panels but darker than elevated cards.
+    #[inline]
+    pub fn chrome_surface(&self) -> u32 {
+        if self.slug == "apple-dark" {
+            crate::theme_apple_dark::CHROME
+        } else {
+            self.panel
+        }
+    }
+
     /// Chrome accent. Git ref/lane/status tokens and custom themes stay fixed.
     #[inline]
     pub fn ui_accent(&self) -> u32 {
@@ -1186,7 +1216,7 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.muted_foreground = to_hsla(k.text_muted);
 
     // ── Popover / overlay / selection (Tooltip, modals, Input) ──
-    gc.colors.popover = to_hsla(k.modal);
+    gc.colors.popover = to_hsla(k.elevated_surface(k.modal));
     gc.colors.popover_foreground = to_hsla(k.text_main);
     gc.colors.overlay = to_hsla(k.modal_overlay);
     // Text selection is NOT `selected` (the list-row highlight): that colour is
@@ -1289,13 +1319,15 @@ fn apply_gpui_component_theme(k: &Theme, gc: &mut gpui_component::Theme) {
     gc.colors.list_hover = to_hsla(k.surface);
     gc.colors.sidebar = to_hsla(k.sidebar);
     gc.colors.sidebar_foreground = to_hsla(k.text_main);
-    gc.colors.title_bar = to_hsla(k.panel);
+    gc.colors.title_bar = to_hsla(k.chrome_surface());
     gc.colors.title_bar_border = to_hsla(k.surface);
 
     // ── Scrollbar (W12-GCADOPT §2.10) ───────────────────────────
     gc.colors.scrollbar = to_hsla(k.bg_base);
     // Preserve hover/drag feedback even when secondary text roles coincide.
-    gc.colors.scrollbar_thumb = to_hsla(k.text_muted).alpha(if k.text_muted == k.text_sub {
+    gc.colors.scrollbar_thumb = to_hsla(k.text_muted).alpha(if k.slug == "apple-dark" {
+        0.8
+    } else if k.text_muted == k.text_sub {
         0.65
     } else {
         1.0
@@ -1549,6 +1581,95 @@ mod tests {
     }
 
     #[test]
+    fn apple_dark_elevation_is_ordered_and_readable_with_light_pinned() {
+        let dark = &crate::theme_apple_dark::APPLE_DARK;
+        let chrome = dark.chrome_surface();
+        assert!(
+            relative_luminance(dark.bg_base) < relative_luminance(dark.panel),
+            "Apple Dark base must be darker than its panel"
+        );
+        assert!(relative_luminance(dark.panel) < relative_luminance(chrome));
+        assert!(relative_luminance(chrome) < relative_luminance(dark.modal));
+        assert_eq!(dark.modal, 0x2a2a2c, "one elevated fill");
+        for foreground in [
+            dark.text_main,
+            dark.text_sub,
+            dark.text_label,
+            dark.text_muted,
+        ] {
+            assert!(contrast_ratio(foreground, dark.modal) >= 4.5);
+        }
+        // Chip outlines separate the inset without sacrificing label contrast.
+        assert!(contrast_ratio(dark.text_sub, dark.surface) >= 4.5);
+        assert!(contrast_ratio(dark.text_main, dark.selected) >= 4.5);
+        assert!(contrast_ratio(dark.elevated_border(dark.surface), chrome) >= 1.3);
+        assert!(contrast_ratio(dark.elevated_border(dark.surface), dark.modal) >= 1.3);
+        let mut dark_gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(dark, &mut dark_gc);
+        assert_eq!(dark_gc.colors.popover, to_hsla(dark.modal));
+        assert_eq!(dark_gc.colors.border, to_hsla(0x67676a).alpha(0.85));
+        let light = &crate::theme_apple_light::APPLE_LIGHT;
+        assert_eq!(
+            [
+                light.bg_base,
+                light.panel,
+                light.sidebar,
+                light.surface,
+                light.modal
+            ],
+            [0xffffff, 0xf7f7f7, 0xf7f7f7, 0xe5e5e5, 0xffffff]
+        );
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(light, &mut gc);
+        assert_eq!(gc.colors.popover, to_hsla(0xffffff));
+        assert_eq!(gc.colors.border, to_hsla(0x666666).alpha(0.85));
+        for preset in THEMES.iter().filter(|t| t.slug != "apple-dark") {
+            assert_eq!(preset.elevated_surface(preset.panel), preset.panel);
+            assert_eq!(preset.elevated_surface(preset.modal), preset.modal);
+            assert_eq!(preset.elevated_border(preset.surface), preset.surface);
+            assert_eq!(preset.chrome_surface(), preset.panel);
+        }
+        let mut custom = dark.clone();
+        custom.slug = Cow::Borrowed("custom-dark");
+        custom.panel = 0x123456;
+        custom.modal = 0x654321;
+        assert_eq!(custom.elevated_surface(custom.panel), 0x123456);
+        assert_eq!(custom.chrome_surface(), 0x123456);
+        apply_gpui_component_theme(&custom, &mut gc);
+        assert_eq!(gc.colors.popover, to_hsla(0x654321));
+    }
+
+    #[test]
+    fn apple_dark_chrome_keeps_secondary_and_accent_contrast() {
+        let dark = &crate::theme_apple_dark::APPLE_DARK;
+        let mut gc = gpui_component::Theme::default();
+        apply_gpui_component_theme(dark, &mut gc);
+        let highlight = highlight_theme(dark);
+        for foreground in [
+            dark.text_label,
+            dark.text_muted,
+            dark.color_branch,
+            u32::from(highlight.style.editor_line_number.unwrap().to_rgb()) >> 8,
+            u32::from(highlight.style.editor_active_line_number.unwrap().to_rgb()) >> 8,
+        ] {
+            assert!(contrast_ratio(foreground, dark.bg_base) >= 4.5);
+        }
+        for thumb in [gc.colors.scrollbar_thumb, gc.colors.scrollbar_thumb_hover] {
+            let rgba = thumb.to_rgb();
+            let bg = gpui::rgb(dark.bg_base);
+            let channel =
+                |fg: f32, bg: f32| ((fg * rgba.a + bg * (1. - rgba.a)) * 255.).round() as u32;
+            let painted = (channel(rgba.r, bg.r) << 16)
+                | (channel(rgba.g, bg.g) << 8)
+                | channel(rgba.b, bg.b);
+            assert!(
+                contrast_ratio(painted, dark.bg_base) >= 4.5,
+                "Apple Dark scrollbar #{painted:06x} must remain readable on base"
+            );
+        }
+    }
+
+    #[test]
     fn apple_inputs_are_quiet_without_losing_identifying_contrast() {
         for t in THEMES {
             let mut gc = gpui_component::Theme::default();
@@ -1561,11 +1682,11 @@ mod tests {
             assert_eq!(gc.colors.input, to_hsla(expected), "{}", t.slug);
             assert_eq!(gc.colors.ring, to_hsla(t.ui_accent()));
             let border = if t.slug == "apple-dark" {
-                expected
+                to_hsla(0x67676a).alpha(0.85)
             } else {
-                t.text_muted
+                to_hsla(t.text_muted).alpha(0.85)
             };
-            assert_eq!(gc.colors.border, to_hsla(border).alpha(0.85));
+            assert_eq!(gc.colors.border, border);
             if matches!(&*t.slug, "apple-light" | "apple-dark") {
                 assert!(contrast_ratio(expected, t.bg_base) >= 3.0);
                 assert!(contrast_ratio(expected, t.panel) >= 3.0);
@@ -1588,7 +1709,11 @@ mod tests {
                 "{}: scrollbar hover must remain distinct",
                 t.slug
             );
-            assert_eq!(gc.colors.scrollbar_thumb, to_hsla(t.text_muted).alpha(0.65));
+            let alpha = if t.slug == "apple-dark" { 0.8 } else { 0.65 };
+            assert_eq!(
+                gc.colors.scrollbar_thumb,
+                to_hsla(t.text_muted).alpha(alpha)
+            );
             let highlight = highlight_theme(&t);
             assert_ne!(
                 highlight.style.editor_line_number, highlight.style.editor_active_line_number,

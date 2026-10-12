@@ -549,3 +549,53 @@ pub fn scenario_remote_browse_keyboard_read_ownership(cx: &mut VisualTestAppCont
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS remote_browse_keyboard_read_ownership");
 }
+
+fn assert_directory_fill(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    row: usize,
+    expected: [u8; 4],
+) {
+    let bounds = cx
+        .read(|cx| e2e_transport::row_bounds(app.read(cx).remote_browse().unwrap(), row).unwrap());
+    cx.update_window(window, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native Remote Browse row pixels");
+        let scale = window.scale_factor();
+        let x = ((f32::from(bounds.right()) - 12.) * scale) as u32;
+        let y = (f32::from(bounds.center().y) * scale) as u32;
+        assert_eq!(image.get_pixel(x, y).0, expected, "remote row {row} fill");
+    })
+    .unwrap();
+}
+
+/// #1274 review: hover and accepted keyboard selection remain visible on elevated.
+pub fn scenario_remote_browse_dark_elevation(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::theme;
+    let _presentation = crate::toolbar_overflow::ToolbarRestore::capture(cx);
+    let fixture = build_fixture();
+    let before = repo_fingerprint(fixture.path());
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| app.set_theme("apple-dark", cx));
+    theme::set_zoom(1.);
+    connect_listing(cx, &app, window, "/home/dev", "src/\nother/\n");
+    assert_directory_fill(cx, &app, window, 0, [0x3a, 0x3a, 0x3c, 255]);
+    assert_directory_fill(cx, &app, window, 1, [0x2a, 0x2a, 0x2c, 255]);
+    let second =
+        cx.read(|cx| e2e_transport::row_bounds(app.read(cx).remote_browse().unwrap(), 1).unwrap());
+    cx.simulate_mouse_move(window, second.center(), None, gpui::Modifiers::none());
+    paint_browser(cx, window);
+    assert_directory_fill(cx, &app, window, 1, [0x3a, 0x3a, 0x3c, 255]);
+    cx.simulate_mouse_move(
+        window,
+        gpui::point(gpui::px(1.), gpui::px(100.)),
+        None,
+        gpui::Modifiers::none(),
+    );
+    paint_browser(cx, window);
+    assert_directory_fill(cx, &app, window, 1, [0x2a, 0x2a, 0x2c, 255]);
+    assert_eq!(repo_fingerprint(fixture.path()), before);
+    unmount(cx, app, window);
+}

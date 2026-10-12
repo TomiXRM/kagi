@@ -135,9 +135,9 @@ pub(crate) fn render_clone_modal(
         .gap_6()
         .p_6()
         .rounded_xl()
-        .bg(rgb(theme().panel))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .border_1()
-        .border_color(rgb(theme().surface))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
         .shadow_lg()
         .child(body)
         .child(buttons);
@@ -189,6 +189,10 @@ fn header(modal: &CloneModal) -> impl IntoElement {
                     .px_2()
                     .rounded_md()
                     .bg(rgb(theme().surface))
+                    .when(theme().slug == "apple-dark", |chip| {
+                        chip.border_1()
+                            .border_color(rgb(theme().elevated_border(theme().surface)))
+                    })
                     .text_xs()
                     .text_color(rgb(theme().text_sub))
                     .child(SharedString::from(label)),

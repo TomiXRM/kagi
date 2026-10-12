@@ -101,11 +101,46 @@ thread_local! {
 pub fn take_close_focus_for_e2e() -> Option<gpui::FocusHandle> {
     CLOSE_FOCUS.with(|slot| slot.borrow_mut().take())
 }
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToastStatusPresentation {
+    pub role: Option<gpui::Role>,
+    pub label: Option<SharedString>,
+    pub newest_id: Option<u64>,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static STATUS: std::cell::RefCell<Option<ToastStatusPresentation>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status(
+    role: Option<gpui::Role>,
+    label: Option<SharedString>,
+    newest_id: Option<u64>,
+) {
+    STATUS.with(|slot| {
+        *slot.borrow_mut() = Some(ToastStatusPresentation {
+            role,
+            label,
+            newest_id,
+        })
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_for_e2e() -> Option<ToastStatusPresentation> {
+    STATUS.with(|slot| slot.borrow().clone())
+}
 
 /// Self-contained toast stack. All toast lifecycle logic lives here.
 pub struct ToastStack {
     toasts: Vec<Toast>,
     next_id: u64,
+    /// Latest arrival, not the newest remaining card: removing it must not
+    /// present an older persistent error as new feedback.
+    arrival: Option<(u64, SharedString)>,
     /// True while the auto-dismiss ticker task is running (so we never spawn a
     /// second one). Reset when the stack drains.
     ticker_alive: bool,
@@ -119,11 +154,16 @@ impl ToastStack {
             next_id: 1,
             ticker_alive: false,
             removed_focus: Vec::new(),
+            arrival: None,
         }
     }
 
     pub fn toasts(&self) -> &[Toast] {
         &self.toasts
+    }
+
+    pub(super) fn status(&self) -> Option<(u64, &SharedString)> {
+        self.arrival.as_ref().map(|(id, message)| (*id, message))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -153,6 +193,7 @@ impl ToastStack {
         };
         let id = self.next_id;
         self.next_id += 1;
+        self.arrival = Some((id, message.clone()));
         self.toasts.push(Toast {
             id,
             kind,
@@ -201,6 +242,9 @@ impl ToastStack {
             self.removed_focus = std::mem::take(&mut *toast.close_focus.borrow_mut());
         }
         self.toasts.retain(|t| t.id != id);
+        if self.toasts.is_empty() {
+            self.arrival = None;
+        }
     }
 
     /// Return ids of toasts that have hit their lifetime and should start exiting.
@@ -442,5 +486,30 @@ mod tests {
             Some("new info")
         );
         assert!(!stack.toasts.iter().any(|t| t.id == oldest));
+    }
+
+    #[test]
+    fn status_changes_only_on_arrival_or_empty_stack() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Error, "old error");
+        stack.push(ToastKind::Info, "latest arrival");
+        let (id, message) = stack.status().unwrap();
+        let message = message.clone();
+        stack.set_hovered(id, true);
+        stack.start_exit(id);
+        assert_eq!(stack.status(), Some((id, &message)));
+        stack.remove(id);
+        assert_eq!(stack.status(), Some((id, &message)));
+        stack.push(ToastKind::Info, message.clone());
+        assert_ne!(stack.status().unwrap().0, id);
+        for id in stack
+            .toasts()
+            .iter()
+            .map(|toast| toast.id)
+            .collect::<Vec<_>>()
+        {
+            stack.remove(id);
+        }
+        assert!(stack.status().is_none());
     }
 }

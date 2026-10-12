@@ -81,6 +81,18 @@ mod plan_labels;
 mod toast_dismiss;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/feedback_status.rs"]
+mod feedback_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/clone_progress_status.rs"]
+mod clone_progress_status;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_inspection_actions.rs"]
+mod worktree_inspection_actions;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/system_accent.rs"]
 mod system_accent;
 
@@ -242,6 +254,9 @@ mod home_work;
 #[cfg(target_os = "macos")]
 #[path = "recovery/keyboard_nav.rs"]
 mod keyboard_nav;
+#[cfg(target_os = "macos")]
+#[path = "recovery/lists_keyboard.rs"]
+mod lists_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/conflict_abort_slot.rs"]
@@ -1536,6 +1551,18 @@ mod macos {
                 Box::new(crate::home_rows::scenario_home_rows),
             ),
             (
+                "issues_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_issues_rows_keyboard),
+            ),
+            (
+                "home_recent_rows_keyboard",
+                Box::new(crate::lists_keyboard::scenario_home_recent_rows_keyboard),
+            ),
+            (
+                "branch_picker_keyboard",
+                Box::new(crate::lists_keyboard::scenario_branch_picker_keyboard),
+            ),
+            (
                 "home_row_paging",
                 Box::new(crate::home_rows::scenario_home_row_paging),
             ),
@@ -2100,6 +2127,22 @@ mod macos {
             (
                 "toast_dismiss",
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
+            ),
+            (
+                "toast_live_status",
+                Box::new(crate::feedback_status::scenario_toast_live_status),
+            ),
+            (
+                "diff_header_identity",
+                Box::new(crate::feedback_status::scenario_diff_header_identity),
+            ),
+            (
+                "clone_progress_status",
+                Box::new(crate::clone_progress_status::scenario_clone_progress_status),
+            ),
+            (
+                "worktree_inspection_actions",
+                Box::new(crate::worktree_inspection_actions::scenario),
             ),
             (
                 "fetch_failure_oplog",
@@ -2748,6 +2791,18 @@ mod macos {
             (
                 "commit_panel_body_focus",
                 Box::new(crate::recovery_commit_panel_polish::scenario_commit_panel_body_focus),
+            ),
+            (
+                "changes_rows_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
+            ),
+            (
+                "changes_discard_keyboard",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_discard_keyboard),
+            ),
+            (
+                "changes_file_menu_viewport",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_file_menu_viewport),
             ),
             (
                 "commit_panel_segment_keys",

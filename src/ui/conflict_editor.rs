@@ -1537,6 +1537,7 @@ fn render_result_pane(
             .font_family(terminal::pick_font_family())
             .child(
                 Input::new(&inputs.result)
+                    .aria_label(Msg::A11yConflictResult.t())
                     .disabled(chrome.writer_busy)
                     .appearance(false)
                     .bordered(false)

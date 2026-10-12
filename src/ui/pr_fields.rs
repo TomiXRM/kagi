@@ -348,11 +348,13 @@ pub(crate) fn render_pr_fields_modal(
         ))
         .child(
             modal_body()
-                .children(
-                    app.pr_fields_input
-                        .as_ref()
-                        .map(gpui_component::input::Input::new),
-                )
+                .children(app.pr_fields_input.as_ref().map(|input| {
+                    gpui_component::input::Input::new(input).aria_label(format!(
+                        "{}: {}",
+                        modal.field.title(),
+                        Msg::A11yPrFieldsFilter.t()
+                    ))
+                }))
                 .child(list)
                 // A read that failed says so; it never masquerades as "the
                 // repository offers nothing".

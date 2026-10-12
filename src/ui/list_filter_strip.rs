@@ -311,9 +311,11 @@ pub(super) fn render_strip(
     if let Some(input) = &app.ui().filter_controls.inputs[kind.index()] {
         strip = strip.child(super::e2e::measure_control(
             "list-filter-text",
-            div()
-                .w(theme::scaled_px(180.))
-                .child(Input::new(input).small()),
+            div().w(theme::scaled_px(180.)).child(
+                Input::new(input)
+                    .aria_label(Msg::A11yListTitleFilter.t())
+                    .small(),
+            ),
         ));
     }
     let owner = app.active_session();

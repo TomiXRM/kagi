@@ -34,7 +34,9 @@ pub(crate) fn render_input_modal_field(
 ) -> gpui::Div {
     input_modal_field(
         label,
-        state.map(|s| super::e2e::measure_control("input-modal-field", Input::new(s))),
+        state.map(|s| {
+            super::e2e::measure_control("input-modal-field", Input::new(s).aria_label(label))
+        }),
         reason,
     )
 }
@@ -72,7 +74,7 @@ pub(crate) fn render_input_modal_path_field(
                     .min_w_0()
                     .child(crate::ui::e2e::measure_control(
                         format!("{button_id}-input"),
-                        Input::new(state),
+                        Input::new(state).aria_label(label),
                     )),
             )
             .into_any_element()
@@ -345,12 +347,12 @@ pub(crate) fn render_worktree_lock_reason_modal(
     let mut body = modal_scroll_body()
         .child(div().flex_shrink_0().child(SharedString::from(modal.name)))
         .child(div().flex_shrink_0().child(Msg::WorktreeLockReason.t()))
-        .children(
-            modal
-                .input_state
-                .as_ref()
-                .map(|input| measure_control("worktree-lock-reason-input", Input::new(input))),
-        );
+        .children(modal.input_state.as_ref().map(|input| {
+            measure_control(
+                "worktree-lock-reason-input",
+                Input::new(input).aria_label(Msg::WorktreeLockReason.t()),
+            )
+        }));
     if let Some(error) = modal.error {
         body = body.child(
             div()

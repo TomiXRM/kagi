@@ -46,6 +46,7 @@ impl KagiApp {
             v.panel_render_width = panel_width;
             v.smart_snapshot = smart;
             v.smart_generating = smart_ui.smart_commit_generating;
+            v.smart_generation = smart_ui.smart_commit_generation.clone();
             v.smart_status = smart_ui.smart_commit_status.clone();
             #[cfg(feature = "gui-e2e")]
             {

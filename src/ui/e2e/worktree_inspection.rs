@@ -33,3 +33,46 @@ pub fn status(
 ) {
     sidebar_worktree_row::inspection_status(app, path)
 }
+
+#[derive(Clone)]
+pub struct ActionProbe {
+    pub role: gpui::Role,
+    pub name: gpui::SharedString,
+    pub focus: Option<gpui::FocusHandle>,
+}
+
+thread_local! {
+    static ACTIONS: RefCell<std::collections::HashMap<&'static str, ActionProbe>> =
+        RefCell::new(Default::default());
+    static REFRESH_ACTIVATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Values passed to the actual renderer, including the absence of old controls' focus.
+pub(crate) fn record_action(
+    id: &'static str,
+    role: gpui::Role,
+    name: gpui::SharedString,
+    focus: Option<gpui::FocusHandle>,
+) {
+    ACTIONS.with(|values| {
+        values
+            .borrow_mut()
+            .insert(id, ActionProbe { role, name, focus })
+    });
+}
+
+pub fn action(id: &str) -> Option<ActionProbe> {
+    ACTIONS.with(|values| values.borrow().get(id).cloned())
+}
+
+pub fn clear_actions() {
+    ACTIONS.with(|values| values.borrow_mut().clear());
+}
+
+pub(crate) fn record_refresh_activation() {
+    REFRESH_ACTIVATIONS.with(|count| count.set(count.get() + 1));
+}
+
+pub fn take_refresh_activations() -> usize {
+    REFRESH_ACTIVATIONS.with(|count| count.replace(0))
+}

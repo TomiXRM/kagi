@@ -79,7 +79,7 @@ pub(super) const INVENTORY: &[Entry] = &[
     capture!("50b-TrustRepoSaveError", "Trust prompt → real directory trust-store save failure (Retry/Cancel and Copy detail)", Basic, modals::trust_repo_save_error),
     capture!("51-BranchPicker-checkout", "branch.checkout command → branch picker", Branches, popups::branch_picker_checkout),
     capture!("52-BranchPicker-delete", "branch.delete command → branch picker", Branches, popups::branch_picker_delete),
-    capture!("53-Info-About", "app.about command → About overlay", Basic, popups::info_about),
+    capture!("53-About", "app.about command → named About dialog", Basic, popups::about_dialog),
     capture!("54-Info-Shortcuts", "help.shortcuts command → shortcuts overlay", Basic, popups::info_shortcuts),
     capture!("55-Settings", "app.settings command → Settings overlay", Basic, popups::settings),
     capture!("56-CommandPalette", "Command palette action → search overlay", Basic, popups::command_palette),

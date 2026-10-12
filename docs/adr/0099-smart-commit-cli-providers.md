@@ -117,3 +117,28 @@ stdin をブロック書き込みすると **パイプ・デッドロック**す
   静かに rule-based ドラフトへフォールバックする。
 - `src/ui/` の git2 直アクセス禁止ゲートは維持(サブプロセス起動は
   `src/git/message_gen.rs` 側)。
+
+## Amendment — 2026-10-12: Settings choice accessibility (#1298)
+
+Provider and saved-model chips retain their appearance but reuse the shared
+manual TabList: named selected tabs, one roving Tab stop, Left/Right/Home/End
+focus movement and Enter/Space activation. Unavailable CLI choices remain
+focusable for their localized unavailability reason but activation is inert.
+The existing setters alone persist selection; choosing a provider never starts
+generation and the cost/quota/privacy warning remains unchanged.
+
+## Amendment — 2026-10-12: Commit footer provider identity (#1342)
+
+The footer reads the existing settings-backed SmartCommitState snapshot for
+provider-aware EN/JA tooltip and accessibility descriptions. Ollama includes
+the selected model; Claude Code and Codex never display Ollama's saved model.
+Generation wording names the actual provider (for example, “Generating with
+Codex…”), without implying that external CLI generation is local. Empty staging
+and rule-based suggestion keep their existing explanations and behavior.
+
+Review (2026-10-13): in-flight provider/model identity is frozen at dispatch in
+the initiating session beside its generating flag, forwarded to its composer
+and cleared on settlement. Settings changes must not rename an outstanding
+generation. Provider display names and localized loading wording each have one
+source. Rule-based help keeps its tooltip but omits a description identical to
+the action name; unavailable staging retains its accessibility explanation.

@@ -8,13 +8,29 @@
 //! Plain helpers may compile in normal builds, but must not require
 //! `gpui/test-support`; the native runner opts into that dependency explicitly.
 
+#[cfg(feature = "gui-e2e")]
+pub use super::home_clone_card::{
+    clone_destination_presentation, take_clone_copy_activations, CloneDestinationPresentation,
+};
+
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
+pub mod sidebar_labels;
 
 #[cfg(feature = "gui-e2e")]
+pub mod activity;
+#[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
+#[cfg(feature = "gui-e2e")]
+pub mod tab_strip;
+
+#[cfg(feature = "gui-e2e")]
+pub mod text_caps;
+
+#[cfg(feature = "gui-e2e")]
+pub mod plan_subjects;
 
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;
@@ -34,8 +50,12 @@ pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, boo
 }
 
 #[cfg(feature = "gui-e2e")]
+pub mod unborn;
+
+#[cfg(feature = "gui-e2e")]
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
+    static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -51,6 +71,20 @@ pub(crate) fn record_status_control(
 #[cfg(feature = "gui-e2e")]
 pub fn status_control(id: &str) -> Option<(gpui::Role, &'static str, gpui::Toggled)> {
     STATUS_CONTROLS.with(|map| map.borrow().get(id).copied())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_branch_identity(
+    label: gpui::SharedString,
+    tooltip: gpui::SharedString,
+) {
+    STATUS_BRANCH_IDENTITY.with(|identity| *identity.borrow_mut() = Some((label, tooltip)));
+}
+
+/// Renderer-fed full AX name and tooltip for the status bar's branch.
+#[cfg(feature = "gui-e2e")]
+pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
+    STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to
@@ -192,6 +226,7 @@ pub struct ControlPaint {
     pub font_weight: gpui::FontWeight,
     pub text_color: gpui::Hsla,
     pub ellipsis: bool,
+    pub middle_ellipsis: bool,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -216,6 +251,10 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         ellipsis: matches!(
             window.text_style().text_overflow.as_ref(),
             Some(gpui::TextOverflow::Truncate(affix)) if affix.as_ref() == "…"
+        ),
+        middle_ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::TruncateMiddle(affix)) if affix.as_ref() == "…"
         ),
     };
     CONTROL_PAINTS.with(|map| {
@@ -454,6 +493,14 @@ pub fn deliver_acknowledge_notice(app: &mut KagiApp, message: &str) -> bool {
 }
 
 #[cfg(feature = "gui-e2e")]
+pub fn enqueue_checkout(app: &mut KagiApp, branch: &str, cx: &mut gpui::Context<KagiApp>) -> bool {
+    app.enqueue_checkout(
+        &super::modals::CheckoutPlanTarget::Branch(branch.into()),
+        cx,
+    )
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
     app.app_notice()
         .is_some_and(|notice| notice.acknowledge.is_some())
@@ -561,8 +608,16 @@ pub fn build_kagi_entity(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<KagiApp> {
+    super::window_menu::register_main_window(window, cx);
     let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
+        app_state.sidebar.filter = Some(cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder(super::i18n::Msg::HomeGithubFilter.t())
+        }));
+        if let Some(input) = &app_state.sidebar.filter {
+            cx.observe(input, |_, _, cx| cx.notify()).detach();
+        }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {
             cx.subscribe_in(
@@ -570,10 +625,7 @@ pub fn build_kagi_entity(
                 window,
                 |app: &mut KagiApp, _, removed: &toast_stack::ToastRemoved, window, cx| {
                     if let Some(root) = app.root_focus.as_ref() {
-                        let closed_focused = removed
-                            .0
-                            .as_ref()
-                            .is_some_and(|focus| focus.is_focused(window));
+                        let closed_focused = removed.was_focused(window);
                         if closed_focused
                             || window.focused(cx).is_none()
                             || !root.contains_focused(window, cx)
@@ -588,7 +640,11 @@ pub fn build_kagi_entity(
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         #[cfg(target_os = "macos")]
-        cx.observe_window_activation(window, |_, window, cx| {
+        cx.observe_window_activation(window, |app, window, cx| {
+            if window.is_window_active() {
+                app.publish_window_menu_state(window, cx);
+                cx.notify();
+            }
             if window.is_window_active() && theme::refresh_system_accent() {
                 theme::sync_gpui_component_theme(cx);
                 cx.refresh_windows();
@@ -980,7 +1036,7 @@ pub fn seed_modal_list_scroll(app: &KagiApp, item: usize) {
 
 /// #1069: the actual palette list handle, for native geometry/scroll assertions.
 #[cfg(feature = "gui-e2e")]
-pub fn command_palette_scroll(app: &KagiApp) -> Option<gpui::ScrollHandle> {
+pub fn command_palette_scroll(app: &KagiApp) -> Option<super::palette_scroll::PaletteScroll> {
     app.command_palette_scroll.clone()
 }
 

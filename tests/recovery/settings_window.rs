@@ -24,13 +24,13 @@ fn settle(cx: &mut VisualTestAppContext, handle: AnyWindowHandle) {
     }
 }
 
-struct SettingsHostGuard {
+pub(crate) struct SettingsHostGuard {
     cx: VisualTestAppContext,
     previous: bool,
 }
 
 impl SettingsHostGuard {
-    fn native(cx: &mut VisualTestAppContext) -> Self {
+    pub(crate) fn native(cx: &mut VisualTestAppContext) -> Self {
         let previous = cx.read(|cx| cx.global::<SettingsHostForE2e>().native);
         cx.update(|cx| cx.set_global(SettingsHostForE2e { native: true }));
         Self {
@@ -236,7 +236,7 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, repo, settings| {
         let fixture = build_fixture();
         let (other_app, other_repo) = mount(cx, fixture.path());
-        let before_token = theme::theme().panel;
+        let before_token = theme::theme().chrome_surface();
         let picker = e2e::control_bounds(settings.window_id(), "settings-theme-select")
             .expect("existing theme picker in host");
         cx.simulate_click(settings, picker.center(), gpui::Modifiers::none());
@@ -248,7 +248,9 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
             "apple-light",
             "picker applies a different theme through its existing callback"
         );
-        let token = theme::theme().panel;
+        // The blank toolbar drag region shows the unified frame's chrome fill,
+        // not the panel fill (distinct in Apple Dark's elevation ladder).
+        let token = theme::theme().chrome_surface();
         assert_ne!(
             token, before_token,
             "the selected theme changes repository chrome"
@@ -274,7 +276,7 @@ pub fn scenario_settings_window_live_apply(cx: &mut VisualTestAppContext) {
                 {
                     assert!(
                         got.abs_diff(expected) <= 2,
-                        "repository paints new theme token: {pixel:?}, expected {token:06x}"
+                        "repository paints new chrome token: {pixel:?}, expected {token:06x}"
                     );
                 }
             })

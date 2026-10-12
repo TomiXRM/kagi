@@ -74,3 +74,22 @@ Tier A's hidden windows do not prove real OS activation, dragging, traffic-light
 presentation or text-field IME. Tier B must exercise these on the launched PID,
 list both repository and Settings CGWindow IDs, and capture Settings with
 screencapture -l<settings-window-id>, not the first PID-matching window.
+
+## Amendment — 2026-10-12: settings control feedback (#1298 / #1299)
+
+The Smart Commit pane shares the existing manual TabList choice focus owner
+with the portable overlay; pointer activation returns to the active Settings
+host's focus, and departing/removed cells yield focus to that host. Analyze
+Save/Reset outcomes use the originating app's existing bounded ToastStack,
+placed with the repository window's shared out-of-flow toast container so
+feedback cannot change page layout or content-height measurement. The saved
+editor baseline and full inline failure remain on KagiApp, not on this window.
+
+Since both hosts render the same ToastStack, each card retains its rendered
+close handle per window rather than overwriting one global handle. Both hosts
+subscribe to card removal in their own window and repair retired close-button
+focus to their own root, preserving pane navigation and native host commands
+after either pointer or keyboard dismissal.
+Settings host release also removes its own card handles from the shared stack,
+without dismissing any feedback or clearing another window's handles. Persistent
+error cards therefore cannot accumulate retired Settings windows' focus state.

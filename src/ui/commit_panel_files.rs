@@ -16,8 +16,17 @@ impl CommitPanelView {
             + panel.agent_extra_rows(false);
         div()
             .id("cp-unstaged-scroll")
+            .relative()
+            .when_some(self.unstaged_navigation.rows.as_ref(), |el, rows| {
+                rows.list(el)
+            })
+            .when(!tree_view, |el| {
+                el.role(gpui::Role::ListBox)
+                    .aria_label(Msg::A11yUnstagedTree.t())
+            })
+            .child(super::e2e::measure_inside("cp-us-viewport"))
             .flex_1()
-            .min_h(px(0.))
+            .min_h(theme::scaled_px(26.) + px(4.))
             .mx_1()
             .mb_px()
             .border_1()
@@ -34,6 +43,7 @@ impl CommitPanelView {
                         "cp-unstaged-list",
                         unstaged_row_count,
                         cx.processor(move |view, range: std::ops::Range<usize>, _window, cx| {
+                            let rows = view.unstaged_navigation.drawn(&range, _window, cx);
                             let layout = view
                                 .state
                                 .tree_view
@@ -42,11 +52,12 @@ impl CommitPanelView {
                                 .filter_map(|i| match &layout {
                                     Some(layout) => render_unstaged_tree_row(
                                         view,
+                                        &rows,
                                         i,
                                         cp_tree_slot(layout, "cp-unstaged-tree", i),
                                         cx,
                                     ),
-                                    None => render_unstaged_flat_row(view, i, cx),
+                                    None => render_unstaged_flat_row(view, &rows, i, cx),
                                 })
                                 .collect::<Vec<_>>()
                         }),
@@ -79,8 +90,17 @@ impl CommitPanelView {
             + panel.agent_extra_rows(true);
         div()
             .id("cp-staged-scroll")
+            .relative()
+            .when_some(self.staged_navigation.rows.as_ref(), |el, rows| {
+                rows.list(el)
+            })
+            .when(!tree_view, |el| {
+                el.role(gpui::Role::ListBox)
+                    .aria_label(Msg::A11yStagedTree.t())
+            })
+            .child(super::e2e::measure_inside("cp-st-viewport"))
             .flex_1()
-            .min_h(px(0.))
+            .min_h(theme::scaled_px(26.) + px(4.))
             .mx_1()
             .mb_px()
             .border_1()
@@ -97,6 +117,7 @@ impl CommitPanelView {
                         "cp-staged-list",
                         staged_row_count,
                         cx.processor(move |view, range: std::ops::Range<usize>, _window, cx| {
+                            let rows = view.staged_navigation.drawn(&range, _window, cx);
                             let layout = view
                                 .state
                                 .tree_view
@@ -105,11 +126,12 @@ impl CommitPanelView {
                                 .filter_map(|i| match &layout {
                                     Some(layout) => render_staged_tree_row(
                                         view,
+                                        &rows,
                                         i,
                                         cp_tree_slot(layout, "cp-staged-tree", i),
                                         cx,
                                     ),
-                                    None => render_staged_flat_row(view, i, cx),
+                                    None => render_staged_flat_row(view, &rows, i, cx),
                                 })
                                 .collect::<Vec<_>>()
                         }),

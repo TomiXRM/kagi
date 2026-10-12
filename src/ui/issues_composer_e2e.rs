@@ -179,6 +179,17 @@ impl KagiApp {
         cx.notify();
     }
 
+    /// Read the production New Issue body entity for renderer/keyboard probes.
+    pub fn issue_body_input_for_e2e(
+        &self,
+    ) -> Option<gpui::Entity<gpui_component::input::InputState>> {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&None)
+            .and_then(|editor| editor.body_input.clone())
+    }
+
     /// Exercise InputState's normal edit/Change event, not a direct draft write.
     /// `set_value` deliberately suppresses Change and would miss the subscription.
     pub fn insert_issue_body_for_e2e(

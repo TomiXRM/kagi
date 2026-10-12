@@ -58,6 +58,7 @@ impl KagiApp {
                 | M::Clone(_)
                 | M::AppNotice(_)
                 | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)
@@ -140,6 +141,7 @@ impl KagiApp {
                 | M::SmartCommit(_)
                 | M::AppNotice(_)
                 | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)
                 | M::Pull(_)
@@ -931,7 +933,12 @@ impl KagiApp {
         let mut set_path: Option<String> = None;
         if let Some(m) = self.create_worktree_modal_mut() {
             if m.branch_state.is_none() {
-                let st = cx.new(|cx| InputState::new(window, cx).placeholder("branch-name"));
+                let initial = m.branch_input.clone();
+                let st = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("branch-name")
+                        .default_value(initial)
+                });
                 st.update(cx, |s, cx| s.focus(window, cx));
                 m.branch_state = Some(st);
             }

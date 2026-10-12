@@ -162,15 +162,9 @@ impl KagiApp {
     }
 
     pub(crate) fn cancel_app_notice(&mut self) {
-        // Dismissal preserves the recovery entry, never its armed approval.
-        if let Some(mut notice) = self
-            .app_notice()
-            .filter(|notice| notice.inspect.is_some() || notice.acknowledge.is_some())
-            .cloned()
-        {
-            notice.release_armed = false;
-            self.app_notices.push_back(notice);
-        }
+        // Acknowledge the presentation, not the reconcile requirement. The
+        // oplog retains durable detail; a fresh admission refusal can offer
+        // Inspect again. Dropping this payload also discards armed approval.
         self.clear_app_notice();
     }
 }

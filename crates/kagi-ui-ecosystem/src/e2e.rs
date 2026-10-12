@@ -14,10 +14,12 @@ pub struct Node {
 thread_local! {
     static NODES: RefCell<HashMap<String, Node>> = RefCell::new(HashMap::new());
     static BOUNDS: RefCell<HashMap<(WindowId, String), Bounds<Pixels>>> = RefCell::new(HashMap::new());
+    static TOOLTIPS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
 }
 pub fn clear() {
     NODES.with(|m| m.borrow_mut().clear());
     BOUNDS.with(|m| m.borrow_mut().clear());
+    TOOLTIPS.with(|m| m.borrow_mut().clear());
 }
 pub fn node(id: &str) -> Option<Node> {
     NODES.with(|m| m.borrow().get(id).cloned())
@@ -44,6 +46,12 @@ pub fn bounds(window: WindowId, id: &str) -> Option<Bounds<Pixels>> {
 }
 pub fn record(id: &str, node: Node) {
     NODES.with(|m| m.borrow_mut().insert(id.into(), node));
+}
+pub fn tooltip(id: &str) -> Option<String> {
+    TOOLTIPS.with(|m| m.borrow().get(id).cloned())
+}
+pub(crate) fn record_tooltip(id: &str, text: &str) {
+    TOOLTIPS.with(|m| m.borrow_mut().insert(id.into(), text.into()));
 }
 pub(crate) fn measure(id: impl Into<String>) -> AnyElement {
     let id = id.into();

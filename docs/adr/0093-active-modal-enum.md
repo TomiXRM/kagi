@@ -50,3 +50,14 @@ different type) — left untouched; and the non-modal overlays
 
 This implements the ActiveModal half of ADR-0076; the View-Model-layer half of
 ADR-0076 remains tracked separately (issue #13 P5).
+
+## Amendment — 2026-10-12: About task dialog (#1315)
+
+About moves from `MenuOverlay::Info` to window-global `ActiveModal::About`,
+using the getter/setter/clear accessor contract. Its named task-dialog frame
+shares the existing focus trap, Escape/Return routing and explicit Close
+Button. Version and copyright are selectable text; no repository write,
+lease or selection is introduced. Shortcuts remains the existing Info overlay.
+This is the assigned dialog presentation, not a claim of a native nonmodal
+auxiliary window.
+

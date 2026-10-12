@@ -226,10 +226,28 @@ pub(super) fn render_pane(
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         let slot = div().id((pane_id, absolute)).w_full().h(row_h);
+                        let slot = match &row {
+                            SidebarRow::Tag { name, target } => slot.when_some(
+                                super::sidebar_ref_rows::tag_navigation_reason(this, target),
+                                |slot, reason| {
+                                    slot.aria_description(super::e2e::sidebar_labels::description(
+                                        name,
+                                        gpui::SharedString::from(reason.t()),
+                                    ))
+                                },
+                            ),
+                            _ => slot,
+                        };
                         let slot = match rows.as_ref().filter(|rows| position < rows.len()) {
-                            Some(rows) => {
-                                super::sidebar_focus::row(this, rows, position, slot, row, el, cx)
-                            }
+                            Some(rows) => super::sidebar_focus::row(
+                                this,
+                                rows,
+                                position,
+                                slot,
+                                (row, el),
+                                cx,
+                                window,
+                            ),
                             None => slot.child(el),
                         };
                         let slot = if compact && leaf {
@@ -471,40 +489,27 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .into_any_element()
 }
 
-/// The same lazy InputState and filter chrome in wide panes and compact popovers.
-pub(super) fn render_filter(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    if let Some(input) = &app.sidebar.filter {
-        div()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(Input::new(input).xsmall().appearance(true))
-            .into_any_element()
-    } else {
-        div()
-            .id("sidebar-filter-placeholder")
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.ensure_sidebar_filter(window, cx);
-                cx.notify();
-            }))
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .child(
-                div()
-                    .h(theme::scaled_px(22.))
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .bg(rgb(theme().bg_base))
-                    .rounded(theme::scaled_px(4.))
-                    .child(SharedString::from("filter…")),
+/// The same filter chrome in wide panes and compact popovers.
+pub(super) fn render_filter(app: &KagiApp, _cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let input_role = gpui::Role::TextInput;
+    div()
+        .id("sidebar-filter")
+        .relative()
+        .child(super::e2e::measure_inside("sidebar-filter"))
+        .px_2()
+        .py_1()
+        .flex_shrink_0()
+        .when_some(app.sidebar.filter.as_ref(), |row, input| {
+            row.child(
+                Input::new(input)
+                    .aria_label(Msg::A11ySidebarFilter.t())
+                    .role(input_role)
+                    .xsmall()
+                    .appearance(true)
+                    .cleanable(true),
             )
-            .into_any_element()
-    }
+        })
+        .into_any_element()
 }
 
 #[cfg(test)]

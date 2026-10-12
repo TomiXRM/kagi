@@ -100,6 +100,32 @@ struct Inner {
 }
 
 impl MenuKeys {
+    /// Reconcile a compact overlay's independent focus lifecycle.
+    pub(crate) fn sync(
+        &self,
+        open: bool,
+        covered: bool,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if open && !self.0.open.replace(true) {
+            self.0.focus_first.set(true);
+            *self.0.return_to.borrow_mut() = window.focused(cx).or_else(|| fallback.cloned());
+        } else if !open && self.0.open.replace(false) {
+            let back = self.0.return_to.borrow_mut().take();
+            if window.focused(cx).is_none() || self.holds_focus(window) {
+                if let Some(target) = if covered {
+                    fallback.cloned()
+                } else {
+                    back.or_else(|| fallback.cloned())
+                } {
+                    target.focus(window, cx);
+                }
+            }
+        }
+    }
+
     /// Item `slot`'s focus handle.
     pub(crate) fn item(&self, slot: usize, cx: &App) -> FocusHandle {
         self.0.items.get(slot, cx)
@@ -279,6 +305,10 @@ pub(crate) enum Step {
 pub struct RowAnchor(Rc<Cell<Option<Bounds<Pixels>>>>);
 
 impl RowAnchor {
+    pub(crate) fn point(&self, window: &Window) -> Point<Pixels> {
+        menu_point(self, window)
+    }
+
     /// A probe filling its parent (painting nothing), recording the parent's
     /// bounds: give it to the selected row only.
     pub(crate) fn probe(&self) -> impl IntoElement {
@@ -396,12 +426,9 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// The context-menu key on a focused sidebar row: that row's menu (as
-    /// its right-click opens), below it. A row without a menu (a group
-    /// heading) does nothing, as does a key pressed while anything is drawn
-    /// over the workspace: a modal, another menu, or an Info panel / the
-    /// branch picker, which leave the row focused — opening a branch menu
-    /// jumps the Graph to its commit, behind them (#1000).
+    /// The context key opens the focused row's menu below it. Dynamic group
+    /// headers reveal their complete identity in the existing keyboard-card
+    /// layer instead. Neither path acts through a modal or another front layer.
     pub(super) fn open_sidebar_row_menu(
         &mut self,
         row: &super::sidebar::SidebarRow,
@@ -432,10 +459,17 @@ impl KagiApp {
             SidebarRow::Worktree {
                 name, locked, path, ..
             } => self.open_worktree_menu(name.clone(), *locked, false, Some(path.clone()), at),
-            SidebarRow::SectionHeader { .. }
-            | SidebarRow::LocalGroupHeader { .. }
-            | SidebarRow::RemoteHeader { .. }
-            | SidebarRow::RemoteSubGroup { .. } => return,
+            SidebarRow::LocalGroupHeader { key, .. }
+            | SidebarRow::RemoteHeader { key, .. }
+            | SidebarRow::RemoteSubGroup { key, .. } => {
+                let reveal = &mut self.sidebar.focus.group_reveal;
+                *reveal = if reveal.as_ref() == Some(key) {
+                    None
+                } else {
+                    Some(key.clone())
+                };
+            }
+            SidebarRow::SectionHeader { .. } => return,
         }
         cx.notify();
     }

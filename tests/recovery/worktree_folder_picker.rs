@@ -205,3 +205,69 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS worktree_folder_picker");
 }
+
+/// #1045: the branch menu's prefill survives lazy InputState creation.
+pub fn scenario_worktree_modal_prefill(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let fixture = build_fixture();
+    let repo = fixture.path().canonicalize().unwrap();
+    crate::macos::git(&repo, &["branch", "prefill/topic"]);
+    let (app, window) = mount(cx, &repo);
+    for lang in [Lang::En, Lang::Ja] {
+        app.update(cx, |app, cx| {
+            app.set_lang(lang, cx);
+            app.open_local_branch_menu(
+                "prefill/topic".into(),
+                gpui::point(gpui::px(400.), gpui::px(40.)),
+            );
+            cx.notify();
+        });
+        paint(cx, window);
+        crate::context_menu_keys::focus_menu_control(cx, &app, window, "branch-menu-item-3-1");
+        crate::keyboard_nav::keys(cx, window, "right");
+        paint(cx, window);
+        let create =
+            kagi::ui::e2e::control_bounds(window.window_id(), "branch-menu-item-3-1-submenu-1-1")
+                .expect("Create worktree here is drawn in the Worktree submenu");
+        cx.simulate_click(window, create.center(), gpui::Modifiers::none());
+        settle(cx, &app, window, "prefilled modal inputs", |app| {
+            app.create_worktree_modal()
+                .is_some_and(|m| m.branch_state.is_some() && m.path_state.is_some())
+        });
+        cx.read(|cx| {
+            let modal = app
+                .read(cx)
+                .create_worktree_modal()
+                .expect("worktree modal open");
+            assert_eq!(
+                modal
+                    .branch_state
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .value()
+                    .as_str(),
+                "prefill/topic",
+                "{lang:?}: branch Input must preserve the context-menu prefill"
+            );
+            assert_eq!(modal.branch_input, "prefill/topic");
+            assert!(
+                modal.path_input.ends_with("/prefill-topic"),
+                "{lang:?}: {}",
+                modal.path_input
+            );
+            assert_eq!(
+                modal.path_state.as_ref().unwrap().read(cx).value().as_str(),
+                modal.path_input
+            );
+            assert!(!modal.path_touched, "the suggestion is not a user edit");
+        });
+        app.update(cx, |app, cx| {
+            app.cancel_create_worktree_modal();
+            cx.notify();
+        });
+        paint(cx, window);
+    }
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS worktree_modal_prefill");
+}

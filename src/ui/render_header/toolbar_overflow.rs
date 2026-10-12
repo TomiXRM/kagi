@@ -27,6 +27,7 @@ pub(super) const IDS: [&str; 14] = [
 ];
 
 pub(super) type StyleKey = (bool, i18n::Lang, u32);
+pub(super) const ICON_IDENTITY_MIN_WIDTH: f32 = 96.;
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
@@ -98,6 +99,11 @@ impl Layout {
             return self.last_hidden & present;
         }
         let scale = f32::from_bits(key.2);
+        let selected_mask = if selected < IDS.len() {
+            1 << selected
+        } else {
+            0
+        };
         let (mut repo, mut workspace) = (0., 0.);
         for (i, width) in self.widths.iter().enumerate() {
             if i < IDS.len() && present & (1 << i) != 0 {
@@ -108,7 +114,7 @@ impl Layout {
                 }
             }
         }
-        // Preserve equal side columns and reserve only the gaps actually drawn.
+        // Budget each side column's minimum and only the gaps actually drawn.
         let required = |repo: f32, workspace: f32, hidden: u16| {
             let visible = present & !hidden;
             let (repo_spacing, workspace_spacing) = spacing(visible, scale);
@@ -132,8 +138,17 @@ impl Layout {
                     }
                     + 28. * scale;
             }
+            let workspace_minimum = if visible & 0x3f00 & !selected_mask != 0 {
+                100. * scale
+            } else {
+                0.
+            };
+            let side = (workspace + workspace_spacing + overflow).max(workspace_minimum);
+            // The right group may yield its empty reservation, not the left
+            // Refresh/repository/branch summary's readable minimum.
             repo + repo_spacing
-                + 2. * (workspace + workspace_spacing + overflow).max(100. * scale)
+                + side
+                + side.max(ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale)
                 // Frame padding, native lights (unscaled) and trailing +.
                 + 24. * scale
                 + if cfg!(target_os = "macos") { 80. - 12. * scale } else { 0. }
@@ -144,9 +159,9 @@ impl Layout {
             return 0;
         }
         let mut hidden = 0;
-        // Repository commands collapse first; preserve the selected workspace
-        // until every other command has moved to the menu.
-        for i in [13, 7, 6, 5, 4, 3, 2, 1, 0, 12, 11, 10, 9, 8] {
+        // Git commands outlast preferences and inactive workspace modes; only
+        // the selected workspace mode remains after Pull has overflowed.
+        for i in [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0] {
             if i == selected || present & (1 << i) == 0 {
                 continue;
             }
@@ -236,9 +251,8 @@ pub(super) fn measure_hidden(
         .flex()
         .flex_col()
         .items_center()
-        .when(!icon_only, |el| {
-            el.border_2().border_color(gpui::transparent_black())
-        })
+        .border_2()
+        .border_color(gpui::transparent_black())
         .min_w(theme::scaled_px(minimum_width(icon_only)))
         .px(keyboard_nav::inset(4.))
         .child(div().w(theme::scaled_px(22.)))
@@ -258,8 +272,10 @@ pub(super) fn probe(
             if width <= 0. {
                 return;
             }
+            // Absolute canvases measure inside the fixed 2px focus border.
+            // Both toolbar presentations carry that border; identity does not.
             let normalized = if index.is_some() {
-                (width + if !key.0 && index != Some(15) { 4. } else { 0. }) / f32::from_bits(key.2)
+                (width + if index != Some(15) { 4. } else { 0. }) / f32::from_bits(key.2)
             } else {
                 width
             };
@@ -335,55 +351,33 @@ impl gpui::RenderOnce for OverflowTrigger {
         super::toolbar_a11y::record_label("tb-overflow", Msg::ToolbarOverflow.t());
         let pointer_state = self.state.clone();
         let trigger = keyboard_nav::focusable(
-            div()
-                .id("tb-overflow")
-                .role(gpui::Role::Button)
-                .aria_label(Msg::ToolbarOverflow.t())
-                .track_focus(&self.focus.tab_index(0).tab_stop(true))
-                .w(theme::scaled_px(36.))
-                .h(theme::scaled_px(28.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(rgb(theme().text_main))
-                .rounded_md()
-                .cursor_pointer()
-                .when(self.selected, |el| el.bg(rgb(theme().surface)))
-                .hover(|style| style.bg(rgb(theme().surface)))
-                .when(!self.selected, |el| {
-                    el.tooltip(|window, cx| {
-                        Tooltip::element(|_, _| {
-                            super::super::e2e::measure_control(
-                                "tb-overflow-tooltip",
-                                div().child(Msg::ToolbarOverflow.t()),
-                            )
-                        })
-                        .build(window, cx)
-                    })
-                })
-                .child("»")
-                .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                    let focus = window.focused(cx);
-                    let _ = pointer_state.update(cx, |state, _| {
-                        if !state.open {
-                            state.previous_focus = focus;
-                        }
-                    });
-                })
-                // Popover opens on mouse-down; a GPUI keyboard click has no
-                // mouse-down. Control its open state for Enter/Space explicitly.
-                .on_click(move |event, window, cx| {
-                    if !event.is_keyboard() {
-                        return;
-                    }
-                    let focus = window.focused(cx);
-                    let _ = self.state.update(cx, |state, _| {
+            super::overflow_trigger::trigger(
+                "tb-overflow",
+                Msg::ToolbarOverflow.t(),
+                self.selected,
+                &self.focus,
+            )
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                let focus = window.focused(cx);
+                let _ = pointer_state.update(cx, |state, _| {
+                    if !state.open {
                         state.previous_focus = focus;
-                        state.open = true;
-                    });
-                    let _ = self.app.update(cx, |_, cx| cx.notify());
-                }),
+                    }
+                });
+            })
+            // Popover opens on mouse-down; a GPUI keyboard click has no
+            // mouse-down. Control its open state for Enter/Space explicitly.
+            .on_click(move |event, window, cx| {
+                if !event.is_keyboard() {
+                    return;
+                }
+                let focus = window.focused(cx);
+                let _ = self.state.update(cx, |state, _| {
+                    state.previous_focus = focus;
+                    state.open = true;
+                });
+                let _ = self.app.update(cx, |_, cx| cx.notify());
+            }),
         );
         #[cfg(feature = "gui-e2e")]
         let trigger = trigger.on_key_down(|event, _, _| {
@@ -649,6 +643,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn toolbar_overflow_priority_preserves_git_until_inactive_modes_hide() {
+        for icon_only in [true, false] {
+            for language in [i18n::Lang::En, i18n::Lang::Ja] {
+                for scale in [1_f32, 1.67] {
+                    for selected in [8, 9, 10, usize::MAX] {
+                        let key = (icon_only, language, scale.to_bits());
+                        let mut layout = Layout::default();
+                        layout.measure(None, 3000. * scale, key);
+                        for index in 0..16 {
+                            layout.measure(Some(index), 60., key);
+                        }
+                        let present = 0x3fff;
+                        let mut order = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+                        if let Some(position) = order.iter().position(|i| *i == selected) {
+                            order[position..].rotate_left(1);
+                        }
+                        let mut stages = 0_u16;
+                        for available in (1..=3000).rev() {
+                            layout.measure(None, available as f32 * scale, key);
+                            let hidden = layout.hidden(present, selected, key);
+                            let count = hidden.count_ones() as usize;
+                            let expected = order[..count]
+                                .iter()
+                                .fold(0, |mask, index| mask | (1 << index));
+                            assert_eq!(hidden, expected, "{key:?}/{selected}/{available}");
+                            stages |= 1 << count;
+                        }
+                        assert_eq!(stages, 0x7fff, "all 15 stages must be reachable");
+                        for available in 1..=3000 {
+                            layout.measure(None, available as f32 * scale, key);
+                            let hidden = layout.hidden(present, selected, key);
+                            let count = hidden.count_ones() as usize;
+                            assert_eq!(
+                                hidden,
+                                order[..count]
+                                    .iter()
+                                    .fold(0, |mask, index| mask | (1 << index)),
+                                "expansion must restore the same priority"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn toolbar_overflow_releases_selected_only_workspace_reservation_for_git() {
+        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let mut layout = Layout::default();
+        // Keep the same content budget with and without native traffic lights.
+        let available = if cfg!(target_os = "macos") {
+            620.
+        } else {
+            552.
+        };
+        layout.measure(None, available, key);
+        for index in 0..IDS.len() {
+            layout.measure(Some(index), 36., key);
+        }
+        assert_eq!(
+            layout.hidden(0x3fff, 8, key),
+            0x3e00,
+            "once only selected Graph remains, every Git command fits without the 100px side reservation"
+        );
+    }
+
+    #[test]
     fn toolbar_overflow_keeps_fit_while_new_style_is_measuring() {
         let key = (true, i18n::Lang::En, 1_f32.to_bits());
         let mut layout = Layout::default();
@@ -681,8 +743,6 @@ mod tests {
 
 #[cfg(test)]
 mod spacing_tests {
-    use super::*;
-
     #[test]
     fn toolbar_overflow_spacing_requires_visible_neighbours() {
         let scale = 1.;

@@ -453,6 +453,8 @@ fn assert_row_stage_focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle
         })
         .unwrap();
     press(cx, window, "shift-tab");
+    assert_focus(cx, window, "cp-us-row-0");
+    press(cx, window, "shift-tab");
     assert_focus(cx, window, "cp-view-list");
     let unfocused = cx
         .update_window(window, |_, window, _| window.render_to_image().unwrap())

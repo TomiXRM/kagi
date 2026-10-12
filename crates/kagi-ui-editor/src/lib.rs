@@ -59,6 +59,7 @@ use kagi_domain::load_request::RequestSlot;
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
+use kagi_ui_core::find;
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
@@ -1458,6 +1459,7 @@ impl EditorWorkspaceView {
             let state = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor(self.content_lang)
+                    .search_labels(find::labels())
                     .line_number(true)
             });
             // T-WS-EDITOR-002: track user edits for the dirty indicator/
@@ -1513,6 +1515,9 @@ impl EditorWorkspaceView {
             })
             .detach();
             self.editor = Some(state);
+        }
+        if let Some(editor) = &self.editor {
+            editor.update(cx, |state, cx| state.set_search_labels(find::labels(), cx));
         }
         if self.content_sig == self.pushed_sig {
             return;
@@ -3136,6 +3141,7 @@ fn render_center_pane(
                 // (user-reported). `appearance(false)` / `bordered(false)`
                 // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
+                    .aria_label(Msg::A11yEditorFileContents.t())
                     .appearance(false)
                     .bordered(false)
                     .h_full(),

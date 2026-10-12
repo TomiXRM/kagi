@@ -4,16 +4,6 @@
 //!
 //! Split out of `pr_mode.rs`. Pure renderers over the fetched PR list; the
 //! only state they touch is `pr_mode.active` (via `pr_mode_home`).
-//!
-//! ```text
-//! ┌ Pull Requests · owner/repo ──────────────── [⟳ Refresh] ┐
-//! │  ● 3        ● 2          ● 1                            │  attention tiles
-//! │  NEEDS YOU  IN PROGRESS  READY                          │
-//! │ Mine 3                                                  │
-//! │ ▌ feat: PR merge from kagi                 ✓  approved  │  one card per PR
-//! │   #247 · @tomixrm · feat/pr → main · ready to merge     │
-//! └─────────────────────────────────────────────────────────┘
-//! ```
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -608,6 +598,13 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_NO))
                 .flex_shrink_0()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-number-{}",
+                        pr.number
+                    )))
+                })
                 .child(SharedString::from(format!("#{}", pr.number))),
         )
         // Title over its branch pair: the two lines that identify the PR.
@@ -650,7 +647,18 @@ fn render_table_row(
                 .w(theme::scaled_px(COL_STATE))
                 .flex_shrink_0()
                 .truncate()
-                .text_color(rgb(attention_color(bucket)))
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-state-{}",
+                        pr.number
+                    )))
+                })
+                .text_color(rgb(if matches!(why, PrReason::Draft) {
+                    theme().text_muted
+                } else {
+                    attention_color(bucket)
+                }))
                 .child(SharedString::from(state)),
         )
         .child(
@@ -658,6 +666,13 @@ fn render_table_row(
                 .w(theme::scaled_px(COL_AUTHOR))
                 .flex_shrink_0()
                 .truncate()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |cell| {
+                    cell.child(super::e2e::measure_inside(format!(
+                        "pr-home-author-{}",
+                        pr.number
+                    )))
+                })
                 .child(safe_text(&format!("@{}", pr.author))),
         )
         .child(
@@ -727,7 +742,6 @@ fn render_table_row(
     .py(theme::scaled_px(ROW_PY))
     .on_click(click)
     .on_mouse_down(gpui::MouseButton::Right, menu)
-    .when(pr.is_draft, |el| el.opacity(0.75))
 }
 
 /// One badge per non-empty attention bucket — dot, count, label, all on one

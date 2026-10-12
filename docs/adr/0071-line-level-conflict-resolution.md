@@ -85,3 +85,12 @@ File:  [☑/—/☐] b.txt   ← toolbar / pane header
   行番号/scrollbar は自前 row で再現。InputState の「行 checkbox 差せない」制約を解消。
 - assemble() の後方互換で、hunk 単位しか使わない既存テスト/動作は不変。
 - A/B scroll 同期(ADR-0070)が row-list 化で実装しやすくなる。
+
+## Amendment — 2026-10-12: Result Find ownership (#1348)
+
+The editable Result continues to own one InputState. Its built-in Find uses
+`kagi-ui-core::find` EN/JA names/help, refreshed before synchronization's unchanged
+content/mode early returns so a retained query survives language changes.
+SearchPanel controls consume editing actions before they can reach the hidden
+Result buffer; adoption, resolution, undo and guarded Save remain unchanged.
+

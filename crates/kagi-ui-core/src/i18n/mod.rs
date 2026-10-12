@@ -25,10 +25,28 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::settings::{read_setting, write_setting};
 
+pub fn settings_zoom_action(increase: bool, value: &str) -> String {
+    match (lang(), increase) {
+        (Lang::En, false) => format!("Decrease UI zoom ({value})"),
+        (Lang::En, true) => format!("Increase UI zoom ({value})"),
+        (Lang::Ja, false) => format!("UI ズームを下げる ({value})"),
+        (Lang::Ja, true) => format!("UI ズームを上げる ({value})"),
+    }
+}
+
+pub fn settings_zoom_value(value: &str) -> String {
+    match lang() {
+        Lang::En => format!("UI zoom {value}"),
+        Lang::Ja => format!("UI ズーム {value}"),
+    }
+}
+
 // Lang + active-language atomic
+pub mod activity;
 pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
+mod conflict;
 pub use busy::{busy_label, slow_read_advice, slow_read_label, slow_read_skip, slow_write_advice};
 pub mod op;
 pub mod oplog_panel;
@@ -42,6 +60,14 @@ pub use op::{
     plan_not_shown_retry, pull_failed_stash_restored, rebase_repository_settings_may_block_start,
     recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
+
+/// Accessibility action for a document tab's localized display name.
+pub fn tab_close_name(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Close {name}"),
+        Lang::Ja => format!("{name} を閉じる"),
+    }
+}
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
 
@@ -181,6 +207,32 @@ pub fn init_lang() {
 /// inside both arms; only the surrounding explanatory prose is localized.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
+    AboutTitle,
+    A11yCommandPaletteQuery,
+    A11yCommitSummary,
+    A11yCommitDescription,
+    A11yConflictResult,
+    A11yIssueTitle,
+    A11yIssueBody,
+    A11yCommentBody,
+    A11yHomeFilter,
+    A11yListTitleFilter,
+    A11ySidebarFilter,
+    A11yPrReviewersFilter,
+    A11yPrAssigneesFilter,
+    A11yPrLabelsFilter,
+    A11yStashMessage,
+    A11yAnalyzeIgnorePatterns,
+    A11yEditorFileContents,
+    AboutDescription,
+    MenuHideSidebar,
+    MenuShowSidebar,
+    MenuEnterFullScreen,
+    MenuExitFullScreen,
+    MenuPreviousTab,
+    MenuNextTab,
+    MenuBringAllToFront,
+    NoOtherTabs,
     MenuHideApp,
     MenuHideOthers,
     MenuShowAll,
@@ -342,6 +394,8 @@ pub enum Msg {
     TerminalNotStartedHint,
     TerminalRestartHint,
     TerminalRestart,
+    UnbornEmptyTitle,
+    UnbornEmptyHint,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -421,6 +475,11 @@ pub enum Msg {
 
     // ── Empty states ────────────────────────────────────────────────
     NoLocalBranches,
+    BranchPickerCheckout,
+    BranchPickerDelete,
+    BranchPickerRename,
+    A11yIssueOpenRow,
+    A11yRecentOpenRow,
     NoOperationsYet,
     /// Operation Log row: tooltip on the per-row copy button (issue #468).
     OpLogCopyEntry,
@@ -437,6 +496,8 @@ pub enum Msg {
     CommandPalettePlaceholder,
     /// Shown when the query matches no command.
     CommandPaletteNoResults,
+    /// Empty-query palette's command section.
+    CommandPaletteActions,
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
@@ -595,6 +656,9 @@ pub enum Msg {
     NoRecentAuthors,
     /// Conflict editor: pane-header pill that takes the whole file's side.
     EditorUseAll,
+    EditorSelectionNone,
+    EditorSelectionPartial,
+    EditorSelectionAll,
     /// Inspector file context menu: open the file in the Editor Workspace.
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
@@ -752,6 +816,8 @@ pub enum Msg {
     /// `{}` = the folder that will be created.
     CloneWillCreate,
     CloneChooseFolder,
+    CloneChangeFolder,
+    CloneCopyLocation,
     CloneConfirm,
     CloneBusy,
     /// `{}` = elapsed time, `m:ss`.
@@ -971,11 +1037,19 @@ pub enum Msg {
     BottomTabOperationLog,
     BottomTabActivity,
     BottomTabChanges,
+    ActivityPeriod,
+    ActivityChart,
+    ActivityDay,
+    ActivityWeek,
+    ActivityMonth,
+    ActivityYear,
+    ActivityAll,
     StatusShowTerminal,
     StatusHideTerminal,
     StatusShowOperationLog,
     StatusHideOperationLog,
     ToolbarOverflow,
+    TabOverflow,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -998,6 +1072,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreSave,
     /// Analyze-ignore → Reset-to-defaults button.
     SettingsAnalyzeIgnoreReset,
+    SettingsAnalyzeIgnoreUnsaved,
+    SettingsAnalyzeIgnoreSaved,
+    SettingsAnalyzeIgnoreFailed,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -1336,6 +1413,9 @@ pub enum Msg {
     A11ySidebarCurrentBranch,
     A11ySidebarRemoteBranch,
     A11ySidebarTag,
+    SidebarTagCommitNotLoaded,
+    SidebarTagHiddenBySolo,
+    A11ySidebarStash,
     A11ySidebarWorktree,
     A11ySidebarCurrentSuffix,
     A11ySidebarLockedSuffix,
@@ -1505,6 +1585,8 @@ pub enum Msg {
     /// (and weren't flagged binary by the NUL-byte probe; T-WS-EDITOR-005
     /// finding #6).
     EditorWorkspaceUndecodable,
+    /// File History unavailable pre-rename path; `{path}` is its current name.
+    FileHistoryPathRenamed,
 
     // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──────
     /// Banner shown above a dirty buffer when the FS watcher sees the file
@@ -1581,6 +1663,15 @@ pub enum Msg {
     EditorTreePreviewMarkdown,
     EditorWorkspacePreviewShow,
     EditorWorkspacePreviewEdit,
+    EditorFindPrevious,
+    EditorFindNext,
+    EditorFindReplace,
+    EditorFindReplaceAll,
+    EditorFindClose,
+    EditorFindCase,
+    EditorFindReplaceMode,
+    EditorFindField,
+    EditorFindReplacementField,
     EditorWorkspaceMermaidRendering,
     EditorWorkspaceMermaidNeedsCli,
     EditorWorkspaceMermaidFailed,
@@ -1754,6 +1845,14 @@ pub fn worktree_removal_verdict_text(
 }
 
 impl Msg {
+    /// Operation-inclusive elapsed status, formatted without an intermediate string.
+    pub fn clone_running_status(seconds: u64) -> String {
+        match lang() {
+            Lang::En => format!("Cloning… {seconds} s"),
+            Lang::Ja => format!("clone 中… {seconds} 秒"),
+        }
+    }
+
     /// Resolve this message to a `&'static str` in the active [`lang()`].
     ///
     /// Domain words (Pull / Push / Branch / Stash / Pop / Undo / amend /
@@ -1769,6 +1868,58 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, A11yCommandPaletteQuery) => "Command search",
+            (Ja, A11yCommandPaletteQuery) => "コマンド検索",
+            (En, A11yCommitSummary) => "Commit summary",
+            (Ja, A11yCommitSummary) => "commit の概要",
+            (En, A11yCommitDescription) => "Commit description",
+            (Ja, A11yCommitDescription) => "commit の説明",
+            (En, A11yConflictResult) => "Conflict resolution",
+            (Ja, A11yConflictResult) => "競合の解決結果",
+            (En, A11yIssueTitle) => "Issue title",
+            (Ja, A11yIssueTitle) => "Issue のタイトル",
+            (En, A11yIssueBody) => "Issue description",
+            (Ja, A11yIssueBody) => "Issue の説明",
+            (En, A11yCommentBody) => "Comment",
+            (Ja, A11yCommentBody) => "コメント",
+            (En, A11yHomeFilter) => "Search repositories",
+            (Ja, A11yHomeFilter) => "リポジトリを検索",
+            (En, A11yListTitleFilter) => "Filter by title",
+            (Ja, A11yListTitleFilter) => "タイトルで絞り込み",
+            (En, A11ySidebarFilter) => "Filter sidebar",
+            (Ja, A11ySidebarFilter) => "サイドバーを絞り込み",
+            (En, A11yPrReviewersFilter) => "Filter pull request reviewers",
+            (Ja, A11yPrReviewersFilter) => "pull request のレビュー担当者を絞り込み",
+            (En, A11yPrAssigneesFilter) => "Filter pull request assignees",
+            (Ja, A11yPrAssigneesFilter) => "pull request の担当者を絞り込み",
+            (En, A11yPrLabelsFilter) => "Filter pull request labels",
+            (Ja, A11yPrLabelsFilter) => "pull request のラベルを絞り込み",
+            (En, A11yStashMessage) => "Stash message",
+            (Ja, A11yStashMessage) => "stash メッセージ",
+            (En, A11yAnalyzeIgnorePatterns) => "Analyze ignore patterns",
+            (Ja, A11yAnalyzeIgnorePatterns) => "Analyze の除外パターン",
+            (En, A11yEditorFileContents) => "File contents",
+            (Ja, A11yEditorFileContents) => "ファイルの内容",
+            (En, AboutTitle) => "About Kagi",
+            (Ja, AboutTitle) => "Kagiについて",
+            (En, AboutDescription) => "A safety-first Git GUI client",
+            (Ja, AboutDescription) => "安全を優先する Git GUI クライアント",
+            (En, MenuHideSidebar) => "Hide Sidebar",
+            (Ja, MenuHideSidebar) => "サイドバーを非表示",
+            (En, MenuShowSidebar) => "Show Sidebar",
+            (Ja, MenuShowSidebar) => "サイドバーを表示",
+            (En, MenuEnterFullScreen) => "Enter Full Screen",
+            (Ja, MenuEnterFullScreen) => "フルスクリーンにする",
+            (En, MenuExitFullScreen) => "Exit Full Screen",
+            (Ja, MenuExitFullScreen) => "フルスクリーンを解除",
+            (En, MenuPreviousTab) => "Show Previous Tab",
+            (Ja, MenuPreviousTab) => "前のタブを表示",
+            (En, MenuNextTab) => "Show Next Tab",
+            (Ja, MenuNextTab) => "次のタブを表示",
+            (En, MenuBringAllToFront) => "Bring All to Front",
+            (Ja, MenuBringAllToFront) => "すべてを手前に移動",
+            (En, NoOtherTabs) => "No other tabs",
+            (Ja, NoOtherTabs) => "ほかのタブがありません",
             (En, MenuHideApp) => "Hide Kagi",
             (Ja, MenuHideApp) => "Kagiを隠す",
             (En, MenuHideOthers) => "Hide Others",
@@ -2445,6 +2596,10 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
+            (En, UnbornEmptyTitle) => "No commits yet",
+            (Ja, UnbornEmptyTitle) => "まだ commit がありません",
+            (En, UnbornEmptyHint) => "Add files and create the first commit",
+            (Ja, UnbornEmptyHint) => "ファイルを追加して最初の commit を作成してください",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",
@@ -2574,10 +2729,22 @@ impl Msg {
             // ── Empty states ────────────────────────────────────────
             (En, NoLocalBranches) => "No local branches",
             (Ja, NoLocalBranches) => "ローカル branch がありません",
+            (En, BranchPickerCheckout) => "Checkout Branch",
+            (Ja, BranchPickerCheckout) => "checkout する branch",
+            (En, BranchPickerDelete) => "Delete Branch",
+            (Ja, BranchPickerDelete) => "削除する branch",
+            (En, BranchPickerRename) => "Rename Branch",
+            (Ja, BranchPickerRename) => "リネームする branch",
+            (En, A11yIssueOpenRow) => "Open issue #{}, {}, {}",
+            (Ja, A11yIssueOpenRow) => "Issue #{} を開く、{}、{}",
+            (En, A11yRecentOpenRow) => "Open repository {name}",
+            (Ja, A11yRecentOpenRow) => "リポジトリ {name} を開く",
             (En, CommandPalettePlaceholder) => "Search commands…",
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
+            (En, CommandPaletteActions) => "Actions",
+            (Ja, CommandPaletteActions) => "操作",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",
@@ -2714,6 +2881,12 @@ impl Msg {
             // blocks land in the result when both sides are taken.
             (En | Ja, EditorCurrentFirst) => "Current → Incoming",
             (En | Ja, EditorIncomingFirst) => "Incoming → Current",
+            (En, EditorSelectionNone) => "Not adopted",
+            (Ja, EditorSelectionNone) => "未採用",
+            (En, EditorSelectionPartial) => "Partially adopted",
+            (Ja, EditorSelectionPartial) => "一部を採用",
+            (En, EditorSelectionAll) => "Fully adopted",
+            (Ja, EditorSelectionAll) => "すべて採用済み",
             // ── W33-CONFLICT-DASHBOARD ───────────────────────────────
             (En, ConflictDashHeader) => "Merge conflicts detected",
             (Ja, ConflictDashHeader) => "conflict が検出されました",
@@ -3099,6 +3272,10 @@ impl Msg {
             (Ja, CloneWillCreate) => "{} を作成します",
             (En, CloneChooseFolder) => "Choose…",
             (Ja, CloneChooseFolder) => "選択…",
+            (En, CloneChangeFolder) => "Change…",
+            (Ja, CloneChangeFolder) => "変更…",
+            (En, CloneCopyLocation) => "Copy Location",
+            (Ja, CloneCopyLocation) => "保存先をコピー",
             (En, CloneConfirm) => "Clone",
             (Ja, CloneConfirm) => "clone",
             (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",
@@ -3445,6 +3622,20 @@ impl Msg {
             (Ja, BottomTabActivity) => "アクティビティ",
             (En, BottomTabChanges) => "Changes",
             (Ja, BottomTabChanges) => "変更",
+            (En, ActivityPeriod) => "Activity period",
+            (Ja, ActivityPeriod) => "アクティビティの期間",
+            (En, ActivityChart) => "Commit activity",
+            (Ja, ActivityChart) => "commit の推移",
+            (En, ActivityDay) => "Day",
+            (Ja, ActivityDay) => "日",
+            (En, ActivityWeek) => "Week",
+            (Ja, ActivityWeek) => "週",
+            (En, ActivityMonth) => "Month",
+            (Ja, ActivityMonth) => "月",
+            (En, ActivityYear) => "Year",
+            (Ja, ActivityYear) => "年",
+            (En, ActivityAll) => "All",
+            (Ja, ActivityAll) => "全期間",
             (En, StatusShowTerminal) => "Show Terminal",
             (Ja, StatusShowTerminal) => "ターミナルを表示",
             (En, StatusHideTerminal) => "Hide Terminal (⌘J)",
@@ -3455,6 +3646,8 @@ impl Msg {
             (Ja, StatusHideOperationLog) => "操作ログを隠す (↵ / Space)",
             (En, ToolbarOverflow) => "More Toolbar Commands",
             (Ja, ToolbarOverflow) => "その他のツールバーコマンド",
+            (En, TabOverflow) => "All Tabs",
+            (Ja, TabOverflow) => "すべてのタブ",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
@@ -3492,6 +3685,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
             (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
             (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+            (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
+            (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
+            (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -3640,7 +3839,7 @@ impl Msg {
             (En, PlanMerge) => "Merge",
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
-            (Ja, PlanRebaseOnto) => "{} へ rebase",
+            (Ja, PlanRebaseOnto) => "{} を rebase",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",
@@ -3669,6 +3868,11 @@ impl Msg {
             (Ja, A11ySidebarRemoteBranch) => "remote branch {}",
             (En, A11ySidebarTag) => "Tag {}",
             (Ja, A11ySidebarTag) => "tag {}",
+            (En, SidebarTagCommitNotLoaded) => "Commit not loaded; load more history.",
+            (Ja, SidebarTagCommitNotLoaded) => "commit が未読込みです。履歴を追加で読み込んでください。",
+            (En, SidebarTagHiddenBySolo) => "Commit is hidden by Branch Solo.",
+            (Ja, SidebarTagHiddenBySolo) => "commit は Branch Solo により非表示です。",
+            (En, A11ySidebarStash) | (Ja, A11ySidebarStash) => "stash@{{}}: {}",
             (En, A11ySidebarWorktree) => "Worktree {}, {}",
             (Ja, A11ySidebarWorktree) => "worktree {}、{}",
             (En, A11ySidebarCurrentSuffix) => ", current",
@@ -3913,6 +4117,8 @@ impl Msg {
             (Ja, EditorWorkspaceDeleted) => "作業ツリーに存在しません(削除済み)。",
             (En, EditorWorkspaceUndecodable) => "Cannot decode as UTF-8 — preview not available.",
             (Ja, EditorWorkspaceUndecodable) => "UTF-8として読めないためプレビューできません。",
+            (En, FileHistoryPathRenamed) => "File was renamed; open {path} instead.",
+            (Ja, FileHistoryPathRenamed) => "ファイル名が変更されています。{path} を開いてください。",
 
             // ── Editor Workspace editable buffer (T-WS-EDITOR-002) ──
             (En, EditorWorkspaceExternalChanged) => "File changed on disk.",
@@ -3992,6 +4198,24 @@ impl Msg {
             (En, EditorWorkspacePreviewShow) => "Preview",
             (Ja, EditorWorkspacePreviewEdit) => "編集に戻る",
             (En, EditorWorkspacePreviewEdit) => "Back to editor",
+            (En, EditorFindPrevious) => "Previous match",
+            (Ja, EditorFindPrevious) => "前の一致",
+            (En, EditorFindNext) => "Next match",
+            (Ja, EditorFindNext) => "次の一致",
+            (En, EditorFindReplace) => "Replace",
+            (Ja, EditorFindReplace) => "置換",
+            (En, EditorFindReplaceAll) => "Replace all",
+            (Ja, EditorFindReplaceAll) => "すべて置換",
+            (En, EditorFindClose) => "Close",
+            (Ja, EditorFindClose) => "閉じる",
+            (En, EditorFindCase) => "Match case",
+            (Ja, EditorFindCase) => "大文字と小文字を区別",
+            (En, EditorFindReplaceMode) => "Show replacement field",
+            (Ja, EditorFindReplaceMode) => "置換欄を表示",
+            (En, EditorFindField) => "Find",
+            (Ja, EditorFindField) => "検索",
+            (En, EditorFindReplacementField) => "Replacement",
+            (Ja, EditorFindReplacementField) => "置換文字列",
             (Ja, EditorWorkspaceMermaidRendering) => "図を描画中…",
             (En, EditorWorkspaceMermaidRendering) => "Rendering diagram…",
             (Ja, EditorWorkspaceMermaidNeedsCli) => "図の描画には mermaid-cli (mmdc) が必要です",
@@ -4135,7 +4359,7 @@ impl Msg {
             (En, SmartGeneratingLocal) => "Generating with local LLM…",
             (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
             (En, SmartGeneratingProvider) => "Generating with {}…",
-            (Ja, SmartGeneratingProvider) => "{}で生成中…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
             (En, SmartGeneratedLocal) => "Generated with local LLM",
             (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
             (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
@@ -4268,6 +4492,15 @@ pub fn issue_comments(count: usize) -> String {
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Palette section and unavailable reason share language-appropriate punctuation.
+pub fn command_palette_description(language: Lang, section: &str, reason: Option<&str>) -> String {
+    match (language, reason) {
+        (Lang::En, Some(reason)) => format!("{section}. {reason}"),
+        (Lang::Ja, Some(reason)) => format!("{section}。{reason}"),
+        (_, None) => section.to_string(),
+    }
+}
+
 /// Help-overlay sections for the Analyze view: `(heading, body)` in the active
 /// language. Kept here so EN/JA stay side by side (ADR-0119).
 pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
@@ -4398,6 +4631,16 @@ pub fn commit_button() -> &'static str {
     }
 }
 
+/// Analyze settings failure; the filesystem path and OS cause stay verbatim.
+pub fn analyze_ignore_failed_fmt(detail: &str) -> String {
+    format!("{}: {detail}", Msg::SettingsAnalyzeIgnoreFailed.t())
+}
+
+/// A missing pre-rename history path, with the current filename left verbatim.
+pub fn file_history_renamed_fmt(path: &str) -> String {
+    Msg::FileHistoryPathRenamed.t().replace("{path}", path)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // W29-I18N-WAVE2: keyed git-layer validation → localized text
 // ──────────────────────────────────────────────────────────────────────────
@@ -4454,6 +4697,16 @@ pub fn worktree_exists_fmt(path: &str) -> String {
     match lang() {
         Lang::En => format!("Worktree path '{}' already exists.", path),
         Lang::Ja => format!("worktree のパス '{}' は既に存在します。", path),
+    }
+}
+
+impl Msg {
+    /// Name the browser action, not merely the port it points at.
+    pub fn worktree_inspection_open_url(port: u16) -> String {
+        match lang() {
+            Lang::En => format!("Open http://localhost:{port} in browser"),
+            Lang::Ja => format!("http://localhost:{port} をブラウザで開く"),
+        }
     }
 }
 
@@ -4540,6 +4793,27 @@ pub fn smart_model_switch_note(model: &str) -> String {
     }
 }
 
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
+    }
+}
+
 /// Smart Commit provider chip hint when a CLI provider is not on `$PATH`:
 /// "<name> (not found on PATH)". The provider display name stays verbatim.
 pub fn provider_not_found_hint(name: &str) -> String {
@@ -4615,7 +4889,7 @@ pub fn graph_detached_worktree_label(short_oid: &str) -> String {
 /// command table, and translations belong with the rest of the i18n table.
 pub fn command_label_ja(id: &str) -> Option<&'static str> {
     Some(match id {
-        "app.about" => "kagi について",
+        "app.about" => Msg::AboutTitle.t_for(Lang::Ja),
         "app.settings" => "設定…",
         "app.quit" => "kagi を終了",
         "app.hide" => Msg::MenuHideApp.t_for(Lang::Ja),
@@ -4654,6 +4928,9 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
         "commit.compareWorkingTree" => "作業ツリーと比較",
         "window.minimize" => "最小化",
         "window.zoom" => "ズーム",
+        "window.previousTab" => Msg::MenuPreviousTab.t_for(Lang::Ja),
+        "window.nextTab" => Msg::MenuNextTab.t_for(Lang::Ja),
+        "window.bringAllToFront" => Msg::MenuBringAllToFront.t_for(Lang::Ja),
         "window.new" => "新規ウィンドウ",
         "window.close" => "ウィンドウを閉じる",
         "help.shortcuts" => "キーボードショートカット",
@@ -4674,6 +4951,37 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
 mod tests;
 
 #[cfg(test)]
+mod input_name_tests {
+    use super::*;
+
+    #[test]
+    fn input_names_are_nonempty_and_localized() {
+        for message in [
+            Msg::A11yCommandPaletteQuery,
+            Msg::A11yCommitSummary,
+            Msg::A11yCommitDescription,
+            Msg::A11yConflictResult,
+            Msg::A11yIssueTitle,
+            Msg::A11yIssueBody,
+            Msg::A11yCommentBody,
+            Msg::A11yHomeFilter,
+            Msg::A11yListTitleFilter,
+            Msg::A11ySidebarFilter,
+            Msg::A11yPrReviewersFilter,
+            Msg::A11yPrAssigneesFilter,
+            Msg::A11yPrLabelsFilter,
+            Msg::A11yStashMessage,
+            Msg::A11yAnalyzeIgnorePatterns,
+            Msg::A11yEditorFileContents,
+        ] {
+            assert!(!message.t_for(Lang::En).trim().is_empty());
+            assert!(!message.t_for(Lang::Ja).trim().is_empty());
+            assert_ne!(message.t_for(Lang::En), message.t_for(Lang::Ja));
+        }
+    }
+}
+
+#[cfg(test)]
 mod standard_app_menu_tests {
     use super::*;
 
@@ -4687,6 +4995,53 @@ mod standard_app_menu_tests {
         ] {
             assert_eq!(message.t_for(Lang::En), en);
             assert_eq!(message.t_for(Lang::Ja), ja);
+        }
+    }
+}
+
+/// Read-opening list rows preserve literal braces in external titles/names.
+pub fn issue_row_name(number: u64, title: &str, state: &str) -> String {
+    use std::fmt::Write as _;
+    let template = Msg::A11yIssueOpenRow.t();
+    let mut parts = template.split("{}");
+    let mut name = String::with_capacity(template.len() + 20 + title.len() + state.len());
+    name.push_str(parts.next().unwrap_or_default());
+    let _ = write!(name, "{number}");
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(title);
+    name.push_str(parts.next().unwrap_or_default());
+    name.push_str(state);
+    name.push_str(parts.next().unwrap_or_default());
+    name
+}
+
+pub fn recent_row_name(name: &str) -> String {
+    Msg::A11yRecentOpenRow.t().replace("{name}", name)
+}
+
+#[cfg(test)]
+mod rebase_plan_label_tests {
+    use super::*;
+
+    #[test]
+    fn rebase_plan_labels_name_source_not_destination() {
+        for branch in ["feature", "main"] {
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Rebase {branch}")
+            );
+            assert_eq!(
+                Msg::PlanRebaseOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を rebase")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::En).replace("{}", branch),
+                format!("Replay {branch}")
+            );
+            assert_eq!(
+                Msg::PlanReplayOnto.t_for(Lang::Ja).replace("{}", branch),
+                format!("{branch} を replay")
+            );
         }
     }
 }

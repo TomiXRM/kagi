@@ -204,3 +204,19 @@ this negative control does not independently prove reveal or activation.
 - Consistent with the safety thesis: inspection is read-only; connections never
   hang and never silently trust a new host; remote *writes* remain gated on the
   predict→confirm→execute pipeline when they land.
+
+## Amendment — 2026-10-13: bounded SSH task presentation (#1368)
+
+The dense connection/directory task uses the shared `modal_card` viewport cap.
+Connect diagnostics scroll in `modal_scroll_body`; Browse keeps scrollable
+identity/summary/diagnostics separate from its existing virtual directory
+panel, never nesting one scroller inside another (#454). The directory
+ListState/RowList owner, read generation guards, roving Tab stop and keyboard
+reveal remain unchanged. Cancel/Connect/Close are pinned outside both panels.
+Long host/path identity uses native middle ellipsis with full Tooltip and AX
+Label values, not a shortened transport argument. Busy is a separate status,
+not an alteration of the path. Reference: macOS connection sheet/HIG layout;
+take bounded detail and persistent actions, not native material/sheet claims.
+Rest/hover/pressed/focus-visible, unavailable reasons and loading remain owned
+by existing modal buttons; empty/error and selected-directory states remain
+visible and complete. No new handmade interactive control is introduced.

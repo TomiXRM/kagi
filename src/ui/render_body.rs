@@ -96,8 +96,6 @@ impl KagiApp {
         // changed-files/badges inputs from `self` in its render.
         detail: Option<detail_panel::CommitDetail>,
         is_dirty: bool,
-        badge_col_w: f32,
-        graph_col_w: f32,
         commit_scroll_handle: UniformListScrollHandle,
         commit_panel_open: bool,
         // ADR-0118 (Phase 5.2): the Commit Panel is now an `Entity<CommitPanelView>`
@@ -110,6 +108,108 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let compact = self.compact.enabled;
+        // ADR-0120: rendering and keyboard routing resolve the same center
+        // from the same gates; precedence lives only in `resolve_workspace`.
+        let layout = workspace::resolve_workspace(&self.workspace_inputs(
+            commit_panel_open,
+            commit_panel.is_some(),
+            detail.is_some(),
+        ));
+        if compact {
+            if self.bottom_tab == BottomTab::Changes || self.compact.popup_owner.is_some() {
+                let _ = self.prepare_commit_panel_presentation(window, cx);
+            }
+            if layout.center != workspace::CenterPane::CommitList {
+                self.close_compact_composer(window, cx);
+                self.compact.wip_bounds.set(None);
+            }
+        }
+
+        // The sidebar follows its toggle (#955); the right slot follows
+        // resolved visibility (#1001). Whole-workspace takeovers stay instant.
+        let motion_now = super::panel_motion::now();
+        let motion_instant = super::panel_motion::instant();
+        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
+        self.panel_motion.sync_sidebar(
+            sidebar_shown,
+            self.sidebar.visible,
+            motion_now,
+            motion_instant || compact,
+        );
+        let right_shown = matches!(
+            layout.right,
+            workspace::RightPane::Inspector
+                | workspace::RightPane::Compare
+                | workspace::RightPane::CommitPanel
+        );
+        let mode = self.workspace_mode();
+        let graph_body = mode == workspace_mode::WorkspaceMode::Graph
+            && matches!(
+                layout.center,
+                workspace::CenterPane::CommitList | workspace::CenterPane::Diff
+            );
+        self.panel_motion.sync_right(
+            layout.right,
+            selected,
+            graph_body,
+            motion_now,
+            motion_instant || compact,
+        );
+        let sidebar_fraction = if compact {
+            0.
+        } else {
+            self.panel_motion.sidebar.visible(motion_now)
+        };
+        let right_fraction = if compact {
+            0.
+        } else {
+            self.panel_motion.right.visible(motion_now)
+        };
+        let right_pane = if compact {
+            None
+        } else if right_shown {
+            Some(layout.right)
+        } else {
+            self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
+        };
+        let right_width = if right_pane == Some(workspace::RightPane::CommitPanel) {
+            self.commit_panel_viewport_width(window)
+        } else {
+            self.panel_width
+        };
+        self.pane_fit = super::pane_budget::fit(
+            self.sidebar.width,
+            right_width,
+            f32::from(window.viewport_size().width),
+            !compact && (sidebar_shown || sidebar_fraction > 0.),
+            !compact && (right_shown || right_fraction > 0.),
+            right_pane != Some(workspace::RightPane::CommitPanel),
+        );
+        let sidebar_width = self.pane_fit.sidebar;
+        let right_width = self.pane_fit.right;
+        let center_width = (f32::from(window.viewport_size().width)
+            - if compact {
+                theme::scaled(super::compact::RAIL_WIDTH)
+            } else {
+                0.
+            }
+            - theme::scaled(sidebar_width + 4.) * sidebar_fraction
+            - theme::scaled(right_width + 4.) * right_fraction)
+            .max(0.);
+        let columns = super::graph_columns::fit(
+            self.badge_col_w,
+            self.graph_col_w,
+            center_width,
+            f32::from(window.rem_size()) * 1.5, // px_3 on both row edges.
+        );
+        self.graph_column_fit = columns;
+        let (badge_col_w, graph_col_w) = (columns.badge, columns.graph);
+        // Tab switches, zoom and fitting all change the visible lane window.
+        let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
+        let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.);
+        if self.ui().graph_scroll_x > max {
+            self.with_ui(|ui| ui.graph_scroll_x = max);
+        }
         // Build divider 1: sidebar | main.
         let divider1 = div()
             .id("divider-sidebar")
@@ -380,7 +480,7 @@ impl KagiApp {
                     .px_1()
                     .on_scroll_wheel(cx.listener(
                         move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                            this.scroll_graph_by(&e.delta, cx);
+                            this.scroll_graph_by(&e.delta, graph_col_w, cx);
                         },
                     ))
                     .child(
@@ -462,191 +562,159 @@ impl KagiApp {
             .child(col_header)
             // WIP, stash and commit rows share one scroll origin.
             .child({
-                // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
-                // overlay; the other is moved into `track_scroll`.
-                let scrollbar_handle = commit_scroll_handle.clone();
-                let rows = div()
-                    .id("commit-list-roles")
-                    .flex_1()
-                    .min_h(px(0.))
-                    .flex()
-                    .flex_col()
-                    .child(
-                        uniform_list(
-                            "commit-list",
-                            prefix_count + row_count,
-                            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
-                                if this.compact.enabled
-                                    && this.compact.popup_owner.is_some()
-                                    && composer_row
-                                        .is_some_and(|row| !this.compact_wip_visible(row))
-                                {
-                                    this.close_compact_composer(window, cx);
-                                    this.compact.wip_bounds.set(None);
-                                    cx.notify();
-                                }
-                                let rows_len = this.view().rows.len();
-                                let compact = this.graph_compact;
-                                let mut els = Vec::with_capacity(range.len());
-                                if range.start < wip_count {
-                                    let mut passing = Vec::new();
-                                    for (
-                                        i,
-                                        (_, ordinal, label, count, diffstat, click, is_worktree),
-                                    ) in
-                                        wip_params.iter().take(range.end.min(wip_count)).enumerate()
-                                    {
-                                        let anchor = wip_anchors[i];
-                                        let color = anchor.map_or(*ordinal, |anchor| anchor.color);
-                                        if range.contains(&i) {
-                                            els.push(this.render_wip_row(
-                                                color,
-                                                label.clone(),
-                                                *count,
-                                                *diffstat,
-                                                click.clone(),
-                                                *is_worktree,
-                                                commit_panel_open,
-                                                anchor.map(|anchor| anchor.lane),
-                                                &passing,
-                                                this.badge_col_w,
-                                                this.graph_col_w,
+                if self.loading_tab().is_none()
+                    && self.remote_view.is_none()
+                    && self.view().status_summary.is_unborn
+                    && prefix_count + row_count == 0
+                {
+                    self.render_unborn_empty_state(cx)
+                } else {
+                    // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
+                    // overlay; the other is moved into `track_scroll`.
+                    let scrollbar_handle = commit_scroll_handle.clone();
+                    let rows = div()
+                        .id("commit-list-roles")
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            uniform_list(
+                                "commit-list",
+                                prefix_count + row_count,
+                                cx.processor(
+                                    move |this, range: std::ops::Range<usize>, _window, cx| {
+                                        if this.compact.enabled
+                                            && this.compact.popup_owner.is_some()
+                                            && composer_row
+                                                .is_some_and(|row| !this.compact_wip_visible(row))
+                                        {
+                                            this.close_compact_composer(_window, cx);
+                                            this.compact.wip_bounds.set(None);
+                                            cx.notify();
+                                        }
+                                        let rows_len = this.view().rows.len();
+                                        let compact = this.graph_compact;
+                                        let mut els = Vec::with_capacity(range.len());
+                                        if range.start < wip_count {
+                                            let mut passing = Vec::new();
+                                            for (
+                                                i,
+                                                (
+                                                    _,
+                                                    ordinal,
+                                                    label,
+                                                    count,
+                                                    diffstat,
+                                                    click,
+                                                    is_worktree,
+                                                ),
+                                            ) in wip_params
+                                                .iter()
+                                                .take(range.end.min(wip_count))
+                                                .enumerate()
+                                            {
+                                                let anchor = wip_anchors[i];
+                                                let color =
+                                                    anchor.map_or(*ordinal, |anchor| anchor.color);
+                                                if range.contains(&i) {
+                                                    els.push(this.render_wip_row(
+                                                        color,
+                                                        label.clone(),
+                                                        *count,
+                                                        *diffstat,
+                                                        click.clone(),
+                                                        *is_worktree,
+                                                        commit_panel_open,
+                                                        anchor.map(|anchor| anchor.lane),
+                                                        &passing,
+                                                        badge_col_w,
+                                                        graph_col_w,
+                                                        this.ui().graph_scroll_x,
+                                                        (i, prefix_count + rows_len),
+                                                        cx,
+                                                    ));
+                                                }
+                                                if let Some(anchor) = anchor {
+                                                    let trace = (anchor.lane, anchor.color);
+                                                    if !passing.contains(&trace) {
+                                                        passing.push(trace);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if range.start < prefix_count && range.end > wip_count {
+                                            els.extend(this.render_stash_graph_rows(
+                                                badge_col_w,
+                                                graph_col_w,
                                                 this.ui().graph_scroll_x,
-                                                (i, prefix_count + rows_len),
+                                                &wip_passing_lanes,
+                                                range.start.saturating_sub(wip_count)
+                                                    ..range.end.min(prefix_count) - wip_count,
+                                                (wip_count, prefix_count + rows_len),
                                                 cx,
                                             ));
                                         }
-                                        if let Some(anchor) = anchor {
-                                            let trace = (anchor.lane, anchor.color);
-                                            if !passing.contains(&trace) {
-                                                passing.push(trace);
-                                            }
-                                        }
-                                    }
-                                }
-                                if range.start < prefix_count && range.end > wip_count {
-                                    els.extend(this.render_stash_graph_rows(
-                                        this.badge_col_w,
-                                        this.graph_col_w,
-                                        this.ui().graph_scroll_x,
-                                        &wip_passing_lanes,
-                                        range.start.saturating_sub(wip_count)
-                                            ..range.end.min(prefix_count) - wip_count,
-                                        (wip_count, prefix_count + rows_len),
-                                        cx,
-                                    ));
-                                }
-                                let commit_range =
-                                    range.start.saturating_sub(prefix_count).min(rows_len)
-                                        ..range.end.saturating_sub(prefix_count).min(rows_len);
-                                els.extend(
-                                    render_rows(
-                                        &this.view().rows,
-                                        &this.avatars.images,
-                                        commit_range,
-                                        selected,
-                                        this.window_active,
-                                        this.badge_col_w,
-                                        this.graph_col_w,
-                                        compact,
-                                        this.ui().graph_scroll_x,
-                                        &this.view().stash_graph_lanes,
-                                        this.view()
-                                            .branch_solo
-                                            .as_ref()
-                                            .map(|solo| &solo.visible_commits),
-                                        (prefix_count, prefix_count + rows_len),
-                                        &this.context_anchor,
-                                        cx,
-                                    )
-                                    .into_iter()
-                                    .map(gpui::IntoElement::into_any_element),
-                                );
-                                els
-                            }),
-                        )
-                        // T028: wire scroll handle so jump_to_branch can scroll the list.
-                        .track_scroll(&commit_scroll_handle)
+                                        let commit_range = range
+                                            .start
+                                            .saturating_sub(prefix_count)
+                                            .min(rows_len)
+                                            ..range.end.saturating_sub(prefix_count).min(rows_len);
+                                        els.extend(
+                                            render_rows(
+                                                &this.view().rows,
+                                                &this.avatars.images,
+                                                commit_range,
+                                                selected,
+                                                this.window_active,
+                                                badge_col_w,
+                                                graph_col_w,
+                                                columns.subject_min,
+                                                compact,
+                                                this.ui().graph_scroll_x,
+                                                &this.view().stash_graph_lanes,
+                                                this.view()
+                                                    .branch_solo
+                                                    .as_ref()
+                                                    .map(|solo| &solo.visible_commits),
+                                                (prefix_count, prefix_count + rows_len),
+                                                &this.context_anchor,
+                                                cx,
+                                            )
+                                            .into_iter()
+                                            .map(gpui::IntoElement::into_any_element),
+                                        );
+                                        els
+                                    },
+                                ),
+                            )
+                            // T028: wire scroll handle so jump_to_branch can scroll the list.
+                            .track_scroll(&commit_scroll_handle)
+                            .flex_1()
+                            .min_h(px(0.)),
+                        );
+                    let list = with_vertical_scrollbar(
+                        "commit-list-scroll",
+                        &scrollbar_handle,
+                        super::list_a11y::list_box("commit-list", rows, Msg::A11yCommitList.t()),
+                        true,
+                    )
+                    .child(e2e::measure_inside("commit-list-viewport"));
+                    // The pagination Button is a sibling, never a descendant of
+                    // the ListBox, whose virtual children are all Options.
+                    div()
                         .flex_1()
-                        .min_h(px(0.)),
-                    );
-                let list = with_vertical_scrollbar(
-                    "commit-list-scroll",
-                    &scrollbar_handle,
-                    super::list_a11y::list_box("commit-list", rows, Msg::A11yCommitList.t()),
-                    true,
-                )
-                .child(e2e::measure_inside("commit-list-viewport"));
-                // The pagination Button is a sibling, never a descendant of
-                // the ListBox, whose virtual children are all Options.
-                div()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .flex()
-                    .flex_col()
-                    .child(list)
-                    .when(has_more_commits, |column| {
-                        column.child(render_load_more_row(self.graph_compact, cx))
-                    })
+                        .min_h(px(0.))
+                        .flex()
+                        .flex_col()
+                        .child(list)
+                        .when(has_more_commits, |column| {
+                            column.child(render_load_more_row(self.graph_compact, cx))
+                        })
+                        .into_any_element()
+                }
             });
 
-        // ADR-0120: rendering and keyboard routing resolve the same center
-        // from the same gates; precedence lives only in `resolve_workspace`.
-        let layout = workspace::resolve_workspace(&self.workspace_inputs(
-            commit_panel_open,
-            commit_panel.is_some(),
-            detail.is_some(),
-        ));
-        if compact {
-            if self.bottom_tab == BottomTab::Changes || self.compact.popup_owner.is_some() {
-                let _ = self.prepare_commit_panel_presentation(window, cx);
-            }
-            if layout.center != workspace::CenterPane::CommitList {
-                self.close_compact_composer(window, cx);
-                self.compact.wip_bounds.set(None);
-            }
-        }
-
-        // The sidebar follows its toggle (#955); the right slot follows
-        // resolved visibility (#1001). Whole-workspace takeovers stay instant.
-        let motion_now = super::panel_motion::now();
-        let motion_instant = super::panel_motion::instant();
-        let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
-        self.panel_motion.sync_sidebar(
-            sidebar_shown,
-            self.sidebar.visible,
-            motion_now,
-            motion_instant || compact,
-        );
-        let right_shown = matches!(
-            layout.right,
-            workspace::RightPane::Inspector
-                | workspace::RightPane::Compare
-                | workspace::RightPane::CommitPanel
-        );
-        let mode = self.workspace_mode();
-        let graph_body = mode == workspace_mode::WorkspaceMode::Graph
-            && matches!(
-                layout.center,
-                workspace::CenterPane::CommitList | workspace::CenterPane::Diff
-            );
-        self.panel_motion.sync_right(
-            layout.right,
-            selected,
-            graph_body,
-            motion_now,
-            motion_instant || compact,
-        );
-        let sidebar_fraction = if compact {
-            0.
-        } else {
-            self.panel_motion.sidebar.visible(motion_now)
-        };
-        let right_fraction = if compact {
-            0.
-        } else {
-            self.panel_motion.right.visible(motion_now)
-        };
         // The Graph page's panes are drawn this frame only while the sidebar
         // is (or is still closing) and shows that page — the PRs and Issues
         // pages are lists of their own. Their keyboard state follows this
@@ -685,7 +753,7 @@ impl KagiApp {
                     "sidebar-clip",
                     super::panel_motion::Axis::Horizontal,
                     super::panel_motion::Anchor::End,
-                    theme::scaled_px(self.sidebar.width + 4.),
+                    theme::scaled_px(sidebar_width + 4.),
                     sidebar_fraction,
                     sidebar,
                 )
@@ -824,13 +892,7 @@ impl KagiApp {
         // nothing, exactly as the old per-field arms did.
         // Drawn while shown or still closing (then the pane last shown); the
         // divider travels with the pane's edge inside the clip.
-        let right_pane = if compact {
-            None
-        } else if right_shown {
-            Some(layout.right)
-        } else {
-            self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
-        };
+
         let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
             self.panel_motion.inspector_row.and_then(|row| {
                 self.ui_mut()?.sync_inspector_commit_files(row);
@@ -842,11 +904,6 @@ impl KagiApp {
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
         if let Some(el) = right_element {
-            let right_width = if right_pane == Some(workspace::RightPane::CommitPanel) {
-                self.commit_panel_viewport_width(window)
-            } else {
-                self.panel_width
-            };
             let pane = div()
                 .flex()
                 .flex_row()

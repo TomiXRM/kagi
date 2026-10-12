@@ -24,7 +24,7 @@ pub(super) fn action_frame(
     tab_stop: bool,
     disabled: bool,
     pressed: Option<bool>,
-    reason: Option<&'static str>,
+    reason: Option<gpui::SharedString>,
     content: impl IntoElement,
     activate: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
@@ -54,8 +54,10 @@ pub(super) fn action_frame(
             }
         })
         .when_some(reason, |el, reason| {
-            el.aria_description(e2e::commit_panel_labels::description(id, reason))
-                .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(reason).build(w, cx))
+            el.aria_description(e2e::commit_panel_labels::description(id, reason.clone()))
+                .tooltip(move |w, cx| {
+                    gpui_component::tooltip::Tooltip::new(reason.clone()).build(w, cx)
+                })
         })
         .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
             pointer_focus.focus(window, cx);
@@ -91,7 +93,8 @@ pub(super) fn footer_button(
     slot: usize,
     icon: Option<&'static str>,
     label: &'static str,
-    tip: &'static str,
+    tip: impl Into<gpui::SharedString>,
+    description: Option<gpui::SharedString>,
     enabled: bool,
     pressed: Option<bool>,
     accent: u32,
@@ -100,6 +103,7 @@ pub(super) fn footer_button(
         + Clone
         + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    let tip = tip.into();
     let pointer = activate.clone();
     let keyboard = activate;
     let focus = view.controls_focus.get(slot, cx);
@@ -132,7 +136,7 @@ pub(super) fn footer_button(
         })
         .text_xs()
         .text_color(rgb(if enabled { accent } else { theme().text_muted }))
-        .tooltip(tip)
+        .tooltip(tip.clone())
         .relative()
         .child(e2e::measure_inside(id))
         .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
@@ -149,7 +153,7 @@ pub(super) fn footer_button(
         true,
         !enabled,
         pressed,
-        if enabled { None } else { Some(tip) },
+        description,
         button_paint(button),
         cx.listener(move |view, event, window, cx| keyboard(view, event, window, cx)),
     )
@@ -327,12 +331,29 @@ fn generation_glyph(accent: u32) -> gpui::AnyElement {
 pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>) -> gpui::Div {
     let llm_on = view.smart_snapshot.llm_offered();
     let enabled = !view.state.staged.is_empty() && !view.smart_generating;
-    let tip = if view.smart_generating {
-        Msg::SmartGeneratingLocal.t()
+    let generation = view
+        .smart_generation
+        .as_ref()
+        .filter(|_| view.smart_generating);
+    let provider_help = generation.is_some() || (llm_on && enabled);
+    let tip: gpui::SharedString = if let Some(generation) = generation {
+        kagi_ui_core::i18n::smart_footer_provider(
+            generation.provider.display_name(),
+            generation.model.as_deref(),
+            true,
+        )
+        .into()
+    } else if llm_on && enabled {
+        let state = &view.smart_snapshot;
+        let model = (state.provider == crate::ui::smart_commit::SmartProvider::Ollama)
+            .then_some(state.model.as_deref())
+            .flatten();
+        kagi_ui_core::i18n::smart_footer_provider(state.provider.display_name(), model, false)
+            .into()
     } else if view.state.staged.is_empty() {
-        Msg::AdviceCommitNothingStaged.t()
+        Msg::AdviceCommitNothingStaged.t().into()
     } else {
-        Msg::GenerateMessage.t()
+        Msg::GenerateMessage.t().into()
     };
     let accent = if llm_on {
         theme().color_success
@@ -345,7 +366,8 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         4,
         Some("icons/sparkles.svg"),
         Msg::GenerateMessage.t(),
-        tip,
+        tip.clone(),
+        (provider_help || !enabled).then_some(tip),
         enabled,
         None,
         accent,
@@ -365,6 +387,7 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         Some("icons/user-plus.svg"),
         Msg::AddCoAuthor.t(),
         Msg::AddCoAuthor.t(),
+        None,
         true,
         None,
         theme().text_main,
@@ -378,6 +401,7 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         Some("icons/undo-2.svg"),
         Msg::AmendLastCommit.t(),
         Msg::AmendLastCommit.t(),
+        None,
         true,
         None,
         theme().color_warning,
@@ -409,6 +433,7 @@ pub(super) fn template_toggle(
         None,
         Msg::ToggleCommitTemplate.t(),
         Msg::ToggleCommitTemplate.t(),
+        None,
         true,
         Some(on),
         if on {
@@ -508,7 +533,7 @@ fn bulk_button(
         true,
         !enabled,
         None,
-        reason,
+        reason.map(Into::into),
         content,
         cx.listener(move |view: &mut CommitPanelView, _, window, cx| keyboard(view, window, cx)),
     )

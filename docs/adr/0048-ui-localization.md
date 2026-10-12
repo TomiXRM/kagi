@@ -127,3 +127,18 @@ JA 側の match は網羅的になり、フォールバックは消えた。
 1 呼び出しごとに `Msg` を生やすのは非現実的なため、**操作**を key にした
 `Op` enum(`(en, ja)` ラベル表)を持たせている。ここでも ja ラベルは
 上記方針どおり、git ドメインワードは英語のままにする。
+
+## Amendment — 2026-10-13: unborn Graph guidance (#1371)
+
+Clean unborn repositories display `No commits yet` / `まだ commit がありません`
+and `Add files and create the first commit` / `ファイルを追加して最初の commit を作成してください`.
+The primary `Changes` action keeps its English domain label and opens the existing
+Commit Panel; it does not create files, stage content or write a commit. Dirty
+unborn repositories retain their WIP row. The icon/title/hint/action layout reuses
+the Terminal empty-state block (#1273), with theme tokens and scaled icon geometry.
+The guidance is local-only: SSH remote views remain read-only and retain their
+existing empty list, without a Changes action that requires a local repository.
+Visual review fixes the shared block's hierarchy as a pane-centered vertical
+icon/title/hint/action stack (`flex_col`, `items_center`, `justify_center`).
+Native geometry assertions pin vertical order, both center axes and containment
+for Graph and Terminal, including JA at 167% zoom.

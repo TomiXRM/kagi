@@ -40,6 +40,12 @@ impl KagiApp {
             DividerKind::Sidebar | DividerKind::PrModeLeft => {
                 // Divider sits at x = sidebar_width * physical scale.
                 let new_width = ((cursor_x - 2.0 * z) / z).clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+                if matches!(drag.kind, DividerKind::Sidebar) {
+                    let candidate = self.pane_fit.refit(new_width, self.panel_width);
+                    if (candidate.sidebar - self.pane_fit.sidebar).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.sidebar.width).abs() > 0.5 {
                     self.sidebar.width = new_width;
                     cx.notify();
@@ -58,6 +64,14 @@ impl KagiApp {
                 // Divider sits at x = viewport_width - panel_width * physical scale.
                 let viewport_w = f32::from(window.viewport_size().width);
                 let new_width = ((viewport_w - cursor_x - 2.0 * z) / z).clamp(PANEL_MIN, PANEL_MAX);
+                // File History owns a nested divider; only the outer right
+                // slot shares this budget. Ignore already-capped expansions.
+                if self.panel_motion.right_pane.is_some() {
+                    let candidate = self.pane_fit.refit(self.sidebar.width, new_width);
+                    if (candidate.right - self.pane_fit.right).abs() <= 0.5 {
+                        return;
+                    }
+                }
                 if (new_width - self.panel_width).abs() > 0.5 {
                     self.panel_width = new_width;
                     // ADR-0117: the File History detail divider drags `panel_width`
@@ -80,6 +94,12 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(BADGE_COL_MIN, BADGE_COL_MAX);
+                // A capped expansion must not replace the larger saved preference
+                // with a candidate measured from its compressed painted origin.
+                let candidate = self.graph_column_fit.refit(new_w, self.graph_col_w);
+                if (candidate.badge - self.graph_column_fit.badge).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.badge_col_w).abs() > 0.5 {
                     self.badge_col_w = new_w;
                     theme::set_col_width("badge_col_w", new_w);
@@ -92,6 +112,10 @@ impl KagiApp {
                 };
                 let new_w =
                     ((cursor_x - left) / z - INNER_DIV_W / 2.0).clamp(GRAPH_COL_MIN, GRAPH_COL_MAX);
+                let candidate = self.graph_column_fit.refit(self.badge_col_w, new_w);
+                if (candidate.graph - self.graph_column_fit.graph).abs() <= 0.5 {
+                    return;
+                }
                 if (new_w - self.graph_col_w).abs() > 0.5 {
                     self.graph_col_w = new_w;
                     theme::set_col_width("graph_col_w", new_w);
@@ -279,7 +303,7 @@ impl KagiApp {
                 // cursor to pane-relative logical px and let the pane's own
                 // handler do the per-column offset math.
                 let pane_left = if self.sidebar.visible {
-                    self.sidebar.width + INNER_DIV_W
+                    self.pane_fit.sidebar + INNER_DIV_W
                 } else {
                     0.0
                 };

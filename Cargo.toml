@@ -20,7 +20,7 @@ rust-version = "1.92"
 
 [features]
 # Compile the native visual runner only when explicitly requested (ADR-0166).
-gui-e2e = ["gpui/test-support", "gpui_platform/test-support", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e", "kagi-ui-ecosystem/gui-e2e"]
+gui-e2e = ["gpui/test-support", "gpui_platform/test-support", "gpui-component/test-support", "kagi-ui-core/gui-e2e", "kagi-ui-editor/gui-e2e", "kagi-ui-ecosystem/gui-e2e"]
 
 [dependencies]
 # Pure domain layer (ADR-0072). The git2-using code in kagi-git depends on it
@@ -196,5 +196,5 @@ zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d
 ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b" }
-gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "879f3bfa4c7d0cdfd2b91a7f290e1fce744c7f6b" }
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "f5f682757bd5f5d7d55d3964a7d0d4a3415f80f9" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "f5f682757bd5f5d7d55d3964a7d0d4a3415f80f9" }

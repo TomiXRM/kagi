@@ -4,6 +4,8 @@
 //! functions, never Git bindings directly; bypassing that boundary breaks layering.
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
+mod about;
+mod activity_chart;
 pub mod activity_view;
 mod analyze_help;
 pub mod assets;
@@ -35,6 +37,8 @@ pub mod compare_pane;
 pub mod conflict_abort;
 pub mod conflict_binary_view;
 pub mod conflict_editor;
+pub mod conflict_editor_a11y;
+mod conflict_editor_keys;
 pub mod conflict_view;
 pub mod context_menu;
 pub mod detail_panel;
@@ -46,10 +50,13 @@ pub mod ecosystem;
 pub mod editor_fs_ops;
 #[cfg(test)]
 mod env_tests;
+mod palette_scroll;
+pub mod window_menu;
 // ADR-0166: GUI E2E seam — pub helpers the `harness = false` main-thread runner
 // (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
+mod commit_panel_navigation;
 mod diff_selection;
 mod editor_pane_selectors;
 pub mod editor_tree_menu;
@@ -86,17 +93,21 @@ pub mod pr_mode;
 pub mod pr_nav;
 pub mod pr_page;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
+mod graph_columns;
 mod graph_solo;
 pub mod graph_squash;
 pub mod graph_view;
 mod graph_window;
 pub mod graph_wip;
+mod pane_budget;
 pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
+mod branch_picker;
 pub mod dialog_a11y;
 pub mod home;
 pub mod home_clone_card;
 pub mod home_github;
 mod home_github_list;
+mod home_recent;
 pub mod home_work;
 mod home_work_list;
 pub mod inspector;
@@ -104,6 +115,7 @@ mod inspector_metadata;
 mod inspector_model;
 pub(crate) mod keyboard_nav;
 pub mod list_a11y;
+mod list_keyboard;
 pub mod main_diff_pane;
 mod menu_keys;
 pub mod menu_overlay;
@@ -145,6 +157,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod settings_controls;
 mod settings_theme_folder;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
@@ -152,6 +165,7 @@ mod settings_window;
 pub mod sidebar;
 mod sidebar_focus;
 mod sidebar_panes;
+mod sidebar_ref_rows;
 mod sidebar_rows;
 mod sidebar_worktree_row;
 mod slow_reads;
@@ -166,6 +180,7 @@ pub mod terminal;
 mod theme_select;
 mod timeline_row;
 pub mod trust_prompt;
+pub mod window_restore;
 pub use kagi_ui_core::theme; // ADR-0121: was a shim file
 pub mod toast_stack;
 pub mod types;
@@ -215,6 +230,7 @@ actions!(
     kagi,
     [
         ToggleBottomPanel,
+        FocusSidebarFilter,
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
@@ -361,12 +377,6 @@ fn validate_merge_into_from_drag(
 // UI_FONT / MONO_FONT moved to kagi-ui-core::theme (ADR-0121 C1); re-exported
 // here so `super::UI_FONT` call sites keep working.
 pub use kagi_ui_core::theme::{CJK_FONT, MONO_FONT, UI_FONT};
-
-/// Live window size in whole px (w, h), updated each frame while the window
-/// is plain `Windowed` (maximized/fullscreen sizes are not remembered), and
-/// persisted as the `window_size` setting on quit. 0 = not seen yet.
-pub(crate) static LAST_WIN_W: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-pub(crate) static LAST_WIN_H: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 // Sidebar / panel width limits.
 const SIDEBAR_MIN: f32 = 120.0;
@@ -1012,6 +1022,7 @@ pub struct KagiApp {
     pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
     /// Armed only by a press on blank unified chrome, never toolbar controls.
     pub(crate) titlebar_should_move: bool,
+    pub(crate) native_window_title: SharedString,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
@@ -1099,6 +1110,10 @@ pub struct KagiApp {
     /// Unlike the sidebar width, these follow the actual clipped pane position.
     badge_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     graph_col_origin_x: std::rc::Rc<std::cell::Cell<Option<f32>>>,
+    /// Fitted widths and viewport budget for the currently rendered Graph.
+    graph_column_fit: graph_columns::Fit,
+    /// Presentation widths and the last rendered outer-pane drag budget.
+    pane_fit: pane_budget::Fit,
     // ── T-BP-002: Bottom Panel ───────────────────────────────────
     /// Whether the bottom panel is currently open.
     pub bottom_panel_open: bool,
@@ -1111,6 +1126,8 @@ pub struct KagiApp {
     pub bottom_tab: BottomTab,
     /// Shared roving focus for the bottom-panel pane selector.
     pub(crate) bottom_tab_focus: keyboard_nav::TabFocus,
+    pub(crate) activity_period_focus: keyboard_nav::TabFocus,
+    pub(crate) activity_bucket_focus: keyboard_nav::TabFocus,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
     pub activity_granularity: kagi_domain::activity::Granularity,
     /// Index of the chart bucket the pointer is over (instant hover readout),
@@ -1166,6 +1183,7 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    pub(crate) settings_controls: settings_controls::SettingsControls,
     /// Settings' single scroll owner survives control updates and redraws.
     pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
@@ -1199,7 +1217,7 @@ pub struct KagiApp {
     pub(crate) command_palette_pointer: Option<gpui::Point<gpui::Pixels>>,
     /// #1069: lazily created list scroll, retained across redraws and reset on
     /// open. Child-bound reveals keep variable-height disabled reasons intact.
-    pub(crate) command_palette_scroll: Option<gpui::ScrollHandle>,
+    pub(crate) command_palette_scroll: Option<palette_scroll::PaletteScroll>,
     // ── W2-INSPECTOR: Changed-files display mode ─────────────────
     /// When `true` the inspector shows files in tree view; `false` = flat path list.
     /// Default: `true`.
@@ -1291,6 +1309,7 @@ pub struct KagiApp {
     pub(crate) context_anchor: menu_keys::RowAnchor,
     /// Owner-stamped file menu; its path survives row renumbering (#286).
     pub file_menu: Option<file_menu::FileMenu>,
+    pub(crate) file_menu_keys: menu_keys::MenuKeys,
     /// Right-click context menu on an Inspector / Compare changed-file row
     /// (`Some((file_index, cursor_pos))` while open): History / Open in
     /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
@@ -1305,6 +1324,8 @@ pub struct KagiApp {
     pub menu_overlay: Option<commands::MenuOverlay>,
     /// Focus and screen identity captured before an overlay opened (#812 / #976).
     pending_focus: Option<overlay_focus::PendingFocus>,
+    /// Alert opener, kept separate from pending focus applied during rendering.
+    alert_return_focus: Option<overlay_focus::AlertReturnFocus>,
     /// A focus returned while a pane still animates closed; checked for
     /// membership again on later frames when its control may have unmounted.
     restored_focus: Option<gpui::FocusHandle>,
@@ -1460,6 +1481,7 @@ impl KagiApp {
             window_active: true,
             toolbar_layout: render_header::toolbar_overflow::Layout::default(),
             titlebar_should_move: false,
+            native_window_title: SharedString::default(),
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             view_epoch: 0,
@@ -1487,11 +1509,15 @@ impl KagiApp {
                 .unwrap_or(GRAPH_COL_DEFAULT),
             badge_col_origin_x: Default::default(),
             graph_col_origin_x: Default::default(),
+            graph_column_fit: Default::default(),
+            pane_fit: Default::default(),
             bottom_panel_open: true, // user request: terminal visible by default
             bottom_panel_height: BOTTOM_PANEL_H_UNSET,
             panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             bottom_tab_focus: Default::default(),
+            activity_period_focus: Default::default(),
+            activity_bucket_focus: Default::default(),
             activity_granularity: kagi_domain::activity::Granularity::Week,
             activity_hover: None,
             smart_commit: smart_commit::SmartCommitState::load(),
@@ -1508,6 +1534,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_controls: Default::default(),
             settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
@@ -1545,11 +1572,13 @@ impl KagiApp {
             menu_keys: Default::default(),
             context_anchor: Default::default(),
             file_menu: None,
+            file_menu_keys: Default::default(),
             inspector_file_menu: None,
             // W5-MENU
             inspector_visible: true,
             menu_overlay: None,
             pending_focus: None,
+            alert_return_focus: None,
             restored_focus: None,
             platform_menu_open: None,
             // W11-AVATAR
@@ -1719,7 +1748,12 @@ impl KagiApp {
 
     /// Apply a horizontal wheel delta to the graph column scroll offset.
     /// Vertical deltas are ignored (the commit list owns vertical scroll).
-    fn scroll_graph_by(&mut self, delta: &gpui::ScrollDelta, cx: &mut Context<Self>) {
+    fn scroll_graph_by(
+        &mut self,
+        delta: &gpui::ScrollDelta,
+        graph_col_w: f32,
+        cx: &mut Context<Self>,
+    ) {
         let dx = match delta {
             gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
             // W28: one "line" step = one zoom-scaled lane pitch.
@@ -1731,7 +1765,7 @@ impl KagiApp {
         let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
-        let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
+        let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.0);
         let current = self.ui().graph_scroll_x;
         let next = (current - dx).clamp(0.0, max);
         if (next - current).abs() > 0.1 {
@@ -3029,6 +3063,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
@@ -3117,6 +3152,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),
@@ -3239,23 +3275,6 @@ impl KagiApp {
             row_height(self.graph_compact),
         )
     }
-
-    /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
-    ///
-    /// Called from the on_click handler on the filter placeholder area.
-    /// No-op if already created.
-    pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar.filter.is_none() {
-            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
-            self.sidebar.filter = Some(input_entity);
-        }
-        // Focus the input after creation (or if already exists).
-        if let Some(ref ent) = self.sidebar.filter {
-            ent.update(cx, |state, cx| {
-                state.focus(window, cx);
-            });
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -3307,49 +3326,7 @@ pub fn run_app(app_state: KagiApp) {
     application.run(move |cx: &mut App| {
         fonts::load_bundled_fonts(cx);
 
-        // Persist the last plain-Windowed size so the next launch restores it
-        // (open_main_window validates against a floor and falls back to the
-        // default). A debounced background loop writes size changes every 2s
-        // — a quit-time-only hook missed any exit that skips the platform
-        // terminate path (Ctrl-C on a `cargo run`, kill, crash;
-        // user-reported) — and the on_app_quit hook still captures the very
-        // last value on a graceful quit. Skipped under KAGI_WINDOW so
-        // headless test runs never clobber the user's remembered size.
-        if std::env::var("KAGI_WINDOW").is_err() {
-            let persist = |w: u32, h: u32, last: &mut (u32, u32)| {
-                if w > 0 && h > 0 && (w, h) != *last {
-                    settings::write_setting("window_size", Some(&format!("{w}x{h}")));
-                    *last = (w, h);
-                }
-            };
-            cx.background_spawn({
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mut last = (0u32, 0u32);
-                    loop {
-                        executor.timer(std::time::Duration::from_secs(2)).await;
-                        let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
-                        let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
-                        persist(w, h, &mut last);
-                    }
-                }
-            })
-            .detach();
-            cx.on_app_quit(|_cx| {
-                let w = LAST_WIN_W.load(std::sync::atomic::Ordering::Relaxed);
-                let h = LAST_WIN_H.load(std::sync::atomic::Ordering::Relaxed);
-                async move {
-                    if w > 0 && h > 0 {
-                        settings::write_setting("window_size", Some(&format!("{w}x{h}")));
-                    }
-                }
-            })
-            .detach();
-        }
-
-        // #491: settings writes coalesce, so the tail of a burst (a divider
-        // drag, or the window_size write above) can still be in memory at quit.
-        // Registered last, and unconditionally — headless persists themes too.
+        // #491: flush trailing settings-store writes on every exit path.
         cx.on_app_quit(|_cx| async move { settings::flush() })
             .detach();
         cx.on_app_quit(|_cx| async move {
@@ -3391,156 +3368,94 @@ pub fn run_app(app_state: KagiApp) {
 /// window after the user closed it (the one-time init — gpui_component,
 /// keybindings, menus — stays in `run_app`).
 fn open_main_window(app_state: KagiApp, cx: &mut App) {
-    use gpui::{size, Bounds, WindowBounds, WindowOptions};
-
-    // KAGI_WINDOW=WxH (dev/testing only): override the initial window size
-    // verbatim so layout behaviour at specific sizes can be verified headlessly.
-    let (win_w, win_h) = if let Some((w, h)) = std::env::var("KAGI_WINDOW").ok().and_then(|s| {
-        let (w, h) = s.split_once('x')?;
-        Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
-    }) {
-        (w, h)
-    } else {
-        // Last session's size when it's sane, else the preferred default —
-        // either way clamped to the active display so the window never opens
-        // off-screen on small / scaled displays (user-reported). The ideal
-        // size is kept on big screens; only the upper bound is a fraction of
-        // the display (so 4K/ultrawide don't get a needlessly huge window).
-        const PREF_W: f32 = 1440.0;
-        const PREF_H: f32 = 920.0;
-        const MIN_W: f32 = 900.0;
-        const MIN_H: f32 = 600.0;
-        // Restore floor: only guards against corrupt/absurd remembered values
-        // (a deliberately small window — half a laptop screen — must restore
-        // as-is; 900x600 here forced such sizes back up, user-reported).
-        const RESTORE_MIN_W: f32 = 400.0;
-        const RESTORE_MIN_H: f32 = 300.0;
-        let restored = settings::Settings::load()
-            .window_size()
-            .filter(|(w, h)| *w >= RESTORE_MIN_W && *h >= RESTORE_MIN_H);
-        // A restored size keeps its own lower bound; only a fresh default
-        // gets pushed up to the preferred minimum.
-        let ((pref_w, pref_h), (min_w, min_h)) = match restored {
-            Some(wh) => (wh, (RESTORE_MIN_W, RESTORE_MIN_H)),
-            None => ((PREF_W, PREF_H), (MIN_W, MIN_H)),
-        };
-        match cx.primary_display() {
-            Some(display) => {
-                let ds = display.bounds().size;
-                let max_w = f32::from(ds.width) * 0.92;
-                let max_h = f32::from(ds.height) * 0.90;
-                // clamp(low, high) with low never above high (tiny displays fill).
-                (
-                    pref_w.clamp(min_w.min(max_w), max_w),
-                    pref_h.clamp(min_h.min(max_h), max_h),
-                )
-            }
-            None => (pref_w, pref_h),
+    cx.open_window(window_restore::options(cx), |window, cx| {
+        // gpui-component widgets (Input etc.) require the window's
+        // first layer to be a `gpui_component::Root`; rendering
+        // KagiApp directly panics inside Root::read (user-reported
+        // crash when opening the commit panel).
+        //
+        // The entity construction (root focus handle so key events like
+        // cmd-j dispatch; toast stack + op-log child entities that need a
+        // `cx`) is shared with the offscreen GUI E2E mount so both build
+        // the entity identically — see `e2e::build_kagi_entity` (ADR-0166).
+        let kagi: Entity<KagiApp> = e2e::build_kagi_entity(app_state, window, cx);
+        window_restore::observe(&kagi, window, cx);
+        // Regression coverage for the Root::read crash: with
+        // KAGI_COMMIT_PANEL=1, open the panel through the real
+        // window-context path so the InputState + Input element
+        // actually render during headless verification (the
+        // pre-window env path in main.rs cannot create them).
+        if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
+            kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
         }
-    };
-    let bounds = Bounds::centered(None, size(px(win_w), px(win_h)), cx);
-    cx.open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: main_window_titlebar(),
-            app_owns_titlebar_drag: true,
-            window_decorations: main_window_decorations(),
-            // Linux: gpui sets the Wayland app_id / X11 WM_CLASS from this so
-            // GNOME binds the window to com.tomixrm.kagi.desktop instead of a
-            // generic "unknown" entry. See `crate::APP_ID`. No-op on macOS/Windows.
-            app_id: Some(crate::APP_ID.to_string()),
-            ..Default::default()
-        },
-        |window, cx| {
-            // gpui-component widgets (Input etc.) require the window's
-            // first layer to be a `gpui_component::Root`; rendering
-            // KagiApp directly panics inside Root::read (user-reported
-            // crash when opening the commit panel).
-            //
-            // The entity construction (root focus handle so key events like
-            // cmd-j dispatch; toast stack + op-log child entities that need a
-            // `cx`) is shared with the offscreen GUI E2E mount so both build
-            // the entity identically — see `e2e::build_kagi_entity` (ADR-0166).
-            let kagi: Entity<KagiApp> = e2e::build_kagi_entity(app_state, window, cx);
-            // Regression coverage for the Root::read crash: with
-            // KAGI_COMMIT_PANEL=1, open the panel through the real
-            // window-context path so the InputState + Input element
-            // actually render during headless verification (the
-            // pre-window env path in main.rs cannot create them).
-            if std::env::var("KAGI_COMMIT_PANEL").as_deref() == Ok("1") {
-                kagi.update(cx, |app, cx| app.open_commit_panel(window, cx));
-            }
 
-            // T-WS-EDITOR-001: KAGI_EDITOR_WS=1 opens the Editor workspace
-            // through the real window-context path — `open_editor_workspace`
-            // needs an entity `Context<KagiApp>`, which (like `KAGI_COMMIT_PANEL`
-            // above) only exists once the window is open, not in main.rs's
-            // pre-window env-hook path. The entity auto-selects the first
-            // changed file once its working-tree load resolves, emitting the
-            // `editor-ws: …` klog lines for headless verification.
-            if std::env::var("KAGI_EDITOR_WS").as_deref() == Ok("1") {
-                kagi.update(cx, |app, cx| app.open_editor_workspace(cx));
-            }
+        // T-WS-EDITOR-001: KAGI_EDITOR_WS=1 opens the Editor workspace
+        // through the real window-context path — `open_editor_workspace`
+        // needs an entity `Context<KagiApp>`, which (like `KAGI_COMMIT_PANEL`
+        // above) only exists once the window is open, not in main.rs's
+        // pre-window env-hook path. The entity auto-selects the first
+        // changed file once its working-tree load resolves, emitting the
+        // `editor-ws: …` klog lines for headless verification.
+        if std::env::var("KAGI_EDITOR_WS").as_deref() == Ok("1") {
+            kagi.update(cx, |app, cx| app.open_editor_workspace(cx));
+        }
 
-            // T-WS-EDITOR-007: KAGI_EDITOR_WS_NEWFILE=<name> opens the Editor
-            // workspace (if not already open) and creates `<name>` at the
-            // repo root through the REAL confirm path (`open_editor_fs_prompt`
-            // + `confirm_editor_fs_prompt`) — one headlessly-verifiable fs op
-            // for this ticket's tree context-menu operations. `confirm_
-            // editor_fs_prompt` only reads `modal.input` (not `input_state`,
-            // which needs a render cycle to exist), so this is safe to fire
-            // synchronously right here, before the first frame.
-            if let Ok(name) = std::env::var("KAGI_EDITOR_WS_NEWFILE") {
-                kagi.update(cx, |app, cx| {
-                    if app.ui().editor_workspace.is_none() {
-                        app.open_editor_workspace(cx);
-                    }
-                    app.open_editor_fs_prompt(
-                        EditorFsPromptKind::NewFile,
-                        std::path::PathBuf::new(),
-                        name.clone(),
-                        cx,
-                    );
-                    app.confirm_editor_fs_prompt(cx);
-                });
-            }
-
-            // The bottom panel now opens on the Terminal tab by default
-            // (user request) — start the shell as soon as a Window
-            // context exists. activate_terminal is a no-op without a repo
-            // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
-            // headless trigger.
-            if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
-                || kagi.read(cx).bottom_panel_open
-            {
-                kagi.update(cx, |app, cx| app.activate_terminal(window, cx));
-            }
-
-            // W4-TABS / ADR-0027: arm the .git watcher for the initial tab
-            // (if any) using the generation scheme.  Subsequent switch/open/
-            // close re-arm it from within the entity context.
+        // T-WS-EDITOR-007: KAGI_EDITOR_WS_NEWFILE=<name> opens the Editor
+        // workspace (if not already open) and creates `<name>` at the
+        // repo root through the REAL confirm path (`open_editor_fs_prompt`
+        // + `confirm_editor_fs_prompt`) — one headlessly-verifiable fs op
+        // for this ticket's tree context-menu operations. `confirm_
+        // editor_fs_prompt` only reads `modal.input` (not `input_state`,
+        // which needs a render cycle to exist), so this is safe to fire
+        // synchronously right here, before the first frame.
+        if let Ok(name) = std::env::var("KAGI_EDITOR_WS_NEWFILE") {
             kagi.update(cx, |app, cx| {
-                if app.repo_path.is_some() {
-                    app.arm_watcher(cx);
-                    // T-PERF-RENDER-001 (ADR-0116 Wave 2): app-init commit point
-                    // for the per-repo background I/O (conflict detect + reflog
-                    // seed + auto-fetch ticker). The CLI-launch initial tab is
-                    // built by hand (main.rs) and never goes through
-                    // `switch_repo`, so render used to do this work on the first
-                    // frame; arm it here off the UI thread instead.
-                    app.ensure_startup_repo_io(cx);
-                    app.ensure_worktree_inspections(cx);
+                if app.ui().editor_workspace.is_none() {
+                    app.open_editor_workspace(cx);
                 }
+                app.open_editor_fs_prompt(
+                    EditorFsPromptKind::NewFile,
+                    std::path::PathBuf::new(),
+                    name.clone(),
+                    cx,
+                );
+                app.confirm_editor_fs_prompt(cx);
             });
+        }
 
-            // ADR-0102: drain the single-instance accept channel on the UI
-            // thread (opens forwarded repos as tabs + raises the window). No-op
-            // when no listener was bound (bind failed, or headless test mode).
-            kagi.update(cx, |app, cx| app.arm_single_instance_listener(cx));
+        // The bottom panel now opens on the Terminal tab by default
+        // (user request) — start the shell as soon as a Window
+        // context exists. activate_terminal is a no-op without a repo
+        // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
+        // headless trigger.
+        if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1") || kagi.read(cx).bottom_panel_open {
+            kagi.update(cx, |app, cx| app.activate_terminal(window, cx));
+        }
 
-            cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
-        },
-    )
+        // W4-TABS / ADR-0027: arm the .git watcher for the initial tab
+        // (if any) using the generation scheme.  Subsequent switch/open/
+        // close re-arm it from within the entity context.
+        kagi.update(cx, |app, cx| {
+            if app.repo_path.is_some() {
+                app.arm_watcher(cx);
+                // T-PERF-RENDER-001 (ADR-0116 Wave 2): app-init commit point
+                // for the per-repo background I/O (conflict detect + reflog
+                // seed + auto-fetch ticker). The CLI-launch initial tab is
+                // built by hand (main.rs) and never goes through
+                // `switch_repo`, so render used to do this work on the first
+                // frame; arm it here off the UI thread instead.
+                app.ensure_startup_repo_io(cx);
+                app.ensure_worktree_inspections(cx);
+            }
+        });
+
+        // ADR-0102: drain the single-instance accept channel on the UI
+        // thread (opens forwarded repos as tabs + raises the window). No-op
+        // when no listener was bound (bind failed, or headless test mode).
+        kagi.update(cx, |app, cx| app.arm_single_instance_listener(cx));
+
+        cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
+    })
     .unwrap();
 }
 
@@ -3550,7 +3465,7 @@ fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // content fills the title-bar area. macOS still draws the traffic lights,
     // positioned over the unified frame, which reserves an unscaled 80px inset.
     Some(gpui::TitlebarOptions {
-        title: None,
+        title: Some("Kagi".into()),
         appears_transparent: true,
         traffic_light_position: Some(gpui::point(px(9.0), px(16.0))),
     })

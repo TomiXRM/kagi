@@ -442,9 +442,9 @@ and wide-window geometry authoritative rather than estimating text advances.
 The row clips intermediate paint while measurements settle.
 
 Fitting reserves existing group spacing and the equal side columns, with
-room for Refresh and the repository identity. Repository commands overflow
-first; workspace-mode/Analyze/Settings controls collapse last, and the selected
-workspace control is the last candidate. Hidden commands omit their interactive
+room for Refresh and the repository identity. The original repository-first
+collapse priority is superseded by #1316 below; the selected workspace control
+remains the last candidate. Hidden commands omit their interactive
 subtree entirely: GPUI still registers Tab stops when an interactive element
 merely has `display: none`. Growing the row restores commands from cached
 natural widths. The trailing » reuses the header's
@@ -890,4 +890,203 @@ at 65% alpha while hover/drag keeps opaque secondary text, and the active line
 number uses `text_main` instead of the identical secondary token. Unequal-role
 themes keep their existing mappings. Unit coverage pins both Apple input
 boundaries and checks equal-role hover/active distinction across every preset.
+
+## Amendment — 2026-10-12: Apple Dark elevation ladder (#1274)
+
+Floating surfaces are lighter than window chrome in Dark appearance. The
+previous palette, modal shell and toast painted `panel = #161618`, while
+menus and the component popover/tooltip bridge painted `modal = #2c2c2e`.
+They therefore disagreed about elevation. Reuse the existing `modal` field
+as the single elevated fill: `ELEVATED = #2a2a2c`; do not add another
+custom-theme schema field or alias.
+
+| Layer | Apple Dark source sRGB | Consumers |
+|---|---|---|
+| Base | `#101012` | Graph/diff content and sidebar base |
+| Panel | `#161618` | Inspector and bottom-panel body |
+| Chrome | `#1c1c1e` | Unified workspace/Home frame, repository tab strip, status bar, bottom-panel tabs |
+| Elevated | `#2a2a2c` | Command palette, dialog/modal cards, menus, popovers, toasts, tooltips |
+
+The ordering is strict relative luminance: **base < panel < chrome <
+elevated**. Chrome boundaries use the existing `surface = #2c2c2e` as
+literal one-logical-pixel hairlines. Elevated boundaries use opaque neutral
+`ELEVATED_BORDER = #414144`: 1.673:1 against chrome and 1.408:1 against
+elevated, exceeding the 1.3:1 separation target. Status glyphs and text keep
+their existing semantic accent colours; the floating card outline is neutral.
+
+The Apple-only resolution methods preserve every prior caller-specific
+fill/border for Apple Light, other presets and custom themes, including themes
+derived from Apple Dark with explicit overrides. The component bridge uses
+the same elevated fill for popovers/menus/tooltips and the same chrome fill
+for its title bar. Kagi-owned floating outlines resolve `ELEVATED_BORDER`;
+the pinned library retains its stronger shared neutral border. Keyboard/AX
+handlers, single-modal ownership and plan/confirmation semantics are unchanged.
+
+The #1239 WCAG relative-luminance helper is reused, not duplicated. Opaque
+secondary labels `#98989f` have 6.631:1 on the new base, 6.305:1 on panel,
+5.937:1 on chrome and 4.998:1 on elevated. Main white text reaches 14.325:1
+on elevated. ADR-0126's yellow accent `#ffd600` remains 13.459:1 on base and
+10.144:1 on elevated. Resting and active line numbers retain their
+secondary/white distinction. Only Apple Dark's resting scrollbar alpha
+increases from 65% to 80%; composited on base it is `#7d7d83`, 4.646:1,
+with opaque secondary hover/drag remaining distinct. Other themes' alpha
+and identifying input boundary (`#67676a` on Dark) remain unchanged.
+
+Review correction: preserve #1239's generic component border
+`#67676a` at 85% alpha, rather than weakening Markdown tables, Kbd outlines
+and scrollbar tracks by globally assigning `ELEVATED_BORDER`. The library
+has no separate popover-border token; its popup/Tooltip borders retain this
+stronger neutral. Kagi-owned cards and menus set their floating boundaries
+individually.
+
+Inside elevated cards, Settings/palette/platform-menu separators use
+`ELEVATED_BORDER`, not the nearly identical `surface = #2c2c2e`.
+The Settings native oracle pins `#414144` and requires at least 16 channel
+steps between line and fill, well outside both ±2 RGB tolerance bands:
+missing or thickened lines cannot masquerade as a 1px separator.
+Clone/worktree/remote repository chips retain their `surface` fill, with a
+Dark-only `ELEVATED_BORDER` outline; secondary labels therefore keep 4.863:1
+contrast instead of becoming unreadable on an opaque border-coloured fill.
+Remote directory selection and hover use `selected = #3a3a3c` in Dark.
+Trust Repo, the co-author menu and full-hash Tooltip also use the single
+elevated fill with identifying boundaries; their Light styling is unchanged.
+
+Native Tier A `dark_elevation_palette`, `dark_elevation_modal`,
+`dark_elevation_menu`, `dark_elevation_popover`, `dark_elevation_toast`
+sample real Metal-rendered interior pixels against literal `#2a2a2c`.
+Palette/modal/toast Light fills are pinned to `#f7f7f7`, and Light menus/
+overflow remain `#ffffff`. `dark_elevation_chrome` pins chrome fills and
+one-pixel boundary pixels. These are static-preset paint oracles, not a
+claim of native vibrancy/material, focus, VoiceOver or live-input parity.
+
+The existing `settings_quiet` oracle now pins the Dark floating fill and
+neutral frame boundary while preserving its one-pixel separator/adjacent-pixel
+checks and every Light expected RGB; it does not mistake Settings for panel
+chrome. All six elevation scenarios and the neighboring Settings, radio,
+sidebar, pane-hairline, primary-button, system-accent and Commit Panel viewport
+scenarios passed the scoped native runner. Palette/modal Before runs observed
+`#161618` where the new fill oracle requires `#2a2a2c`.
+Review Tier A also passes `remote_browse_dark_elevation`: real native row
+pixels pin accepted selection and pointer hover to `#3a3a3c`, idle rows to
+`#2a2a2c`, and restored idle fill after pointer exit. The tightened Settings
+Before run observed `[44, 44, 46, 255]` instead of separator `#414144`;
+the corrected separators pass the full Light/Dark/zoom matrix.
+
+### AppKit reference measurement and limitations
+
+On this Mac (macOS 26.6 / 25G72), explicit `NSAppearance.darkAqua`,
+Reduce Transparency and Increase Contrast both off, an ordered-out offscreen
+window with forced active/inactive `NSVisualEffectView` state was rendered
+with `cacheDisplay` and converted through an 8-bit sRGB CGContext.
+The central-third histogram contained 28,329 uniformly opaque pixels per
+capture. Native `.popover` / `.menu` material fallback samples were:
+
+| Material | Active within-window | Active behind-window | Inactive |
+|---|---|---|---|
+| Popover | `#232323` | `#4b4b4b` | `#282828` |
+| Menu | `#262626` | `#424242` | `#282828` |
+
+Dark `windowBackgroundColor` sampled `#1e1e1e`. Varying the offscreen
+backdrop black/`#1e1e1e`/white did not change these software fallback captures.
+Evidence: `/tmp/kagi-1274-appkit-reference.0Nduwv/measurements.json` and
+`method-and-findings.txt`, with native material PNGs.
+
+This is **not a measurement of a live NSPopover or tracking NSMenu**:
+macOS 26's realized popover glass produced a nonrepresentative white
+`cacheDisplay` centre; a nontracking menu backing view remained transparent.
+Live menu tracking was not started because it captures pointer events.
+`#2a2a2c` is therefore a deliberately opaque static elevated-family
+approximation, informed by the shared inactive `#282828` material sample,
+not an exact native material match. No user setting, pointer or foreground
+was changed. See Apple's [NSVisualEffectView](https://developer.apple.com/documentation/appkit/nsvisualeffectview)
+and its [popover](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/popover) /
+[menu](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/menu) materials.
+
+
+## Amendment — 2026-10-12: Git-first narrow-toolbar priority (#1316)
+
+This dense application-command surface reuses the existing measured fit cache,
+header buttons and gpui-kit overflow menu; it adds no control or operation path.
+The reference is Finder's secondary-toolbar overflow, adapted to Kagi's Git GUI
+role: repository commands take priority over preferences and inactive navigation.
+
+On shrinking, collapse Update → Settings → non-selected Analyze, Editor, PRs,
+Graph → Terminal → Redo → Undo → Pop → Stash → Branch → Push → Pull → selected
+workspace mode. Absent controls and the selected mode are skipped in the early
+mode tier. Widening recomputes the same priority from cached natural widths,
+restoring controls in reverse. This supersedes #1210's repository-first order.
+When only the selected workspace mode remains visible (or no workspace item
+remains), icon-mode fitting drops its 100-reference-pixel symmetric-column
+floor while retaining actual selected-mode/overflow width and gaps. This
+releases width for Git commands in production Graph mode, where Graph stays
+selected until after Pull. A left-only 96-reference-pixel minimum budgets
+Refresh, a 40-reference-pixel truncating repository/branch summary and the
+drag spacer, so the right column can yield without making identity unreadable.
+Wide windows retain equal flex columns; narrow windows may use asymmetric
+minimums. Caption-mode measured identity/workspace minimums are unchanged.
+
+Overflow menu order, Button/MenuItem roles, localized names, unavailable reasons,
+action-bound shortcuts, keyboard focus and dispatch remain the #1252/#1217
+contract. Hidden modes stay reachable through the existing keyboard shortcuts,
+View menu and command palette as well as ». Rest/hover/pressed/focus-visible,
+selected and disabled states retain their existing owners; no new loading,
+error or safety lifecycle state is introduced.
+
+Tier A `toolbar_overflow_priority` uses native width reductions and reverse
+expansion with an Update offer, all four modes and Graph selected, across EN/JA,
+100%/167% and Apple Light/Dark. Pure fit tests cover production's Graph, PRs
+and Editor selected indices plus the no-selected-mode Takeover sentinel
+(`usize::MAX`); Analyze never supplies selected index 11. Both presentation
+modes run, with a production Graph mask proving selected-only width release.
+The native oracle requires Pull/Push still visible below the old 100px-floor
+fit threshold while Graph is the sole visible workspace item. Existing toolbar
+fit, overflow, accessibility and workspace-mode scenarios retain their contracts.
+Tier B target: inspect the narrow toolbar, readable repository/branch summary
+and » in EN/JA at both zooms and Apple themes; verify hidden-mode shortcuts and
+palette activation in the real application. Native bounds are not VoiceOver or
+real-window visual evidence.
+
+Regression evidence: the unchanged native priority oracle failed before the
+policy change at Apple Light / EN / 100% / width 752: hidden mask `8320`
+(Update + Terminal), expected `12288` (Update + Settings). After the cutover
+it passes all eight language/theme/zoom cells, including final Pull/Push and
+selected-Graph stages and reverse restoration. Existing `toolbar_overflow`
+retains its original menu-membership/shortcut/AX/focus assertions at 940px,
+then uses an explicitly constrained 480px viewport for Undo-reason, Terminal
+focus and Branch activation: these commands no longer necessarily overflow at
+940px under the new policy. Native resize requests use whole logical pixels,
+matching AppKit's rounding rather than waiting for an impossible fractional
+viewport at 167% zoom.
+
+Review correction: the selected-only release is exercised with production
+`present = 0x3fff`, selected Graph (`8`), not a synthetic no-Graph Git toolbar.
+Removing both side reservations exposed a real identity-readability failure;
+the left-only minimum above preserves the existing native >30px identity oracle.
+The right floor still releases genuine space, and the native matrix requires
+Pull/Push visibility below the old symmetric-100px fit threshold in every cell.
+
+
+Tiny-window production review: native 700×500 / EN / Icon Only / 100% recorded
+Terminal x=483.5..512 intersecting selected Graph x=495.5..524, matching the
+reported Tier B overlap. Two coverage gaps had concealed it: the old matrix
+began at 940px, and a feature-only `measure_control` wrapper around the Git group
+changed its flex sizing. The group now records its own bounds with an absolute
+inside probe and no test-only wrapper.
+
+Natural-width canvases measure inside the fixed 2px focus border on each side.
+Caption fitting already added those 4px; icon-only fitting must include them too.
+Hidden command and Update probes carry the same border as visible controls so
+style changes preserve one natural-width convention. The right column retains
+its actual measured workspace/overflow minimum in both presentations; icon-only
+repository identity explicitly shrinks to its existing readable minimum.
+
+The 700×500 long-name matrix checks all visible outer control bounds (including
+the fixed ring) and the actual Git group against every workspace control in both
+presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
+the existing 660px legs retain every operation/menu activation assertion.
+The verification skill is updated. Real-window comparison remains Tier B.
+
+The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusion
+from its non-macOS available width, preserving the same effective content budget
+and collapse expectation rather than assuming macOS geometry on Linux.
 

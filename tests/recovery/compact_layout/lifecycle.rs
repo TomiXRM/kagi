@@ -21,6 +21,7 @@ pub fn scenario_compact_layout_lifecycle(cx: &mut VisualTestAppContext) {
     }
 }
 
+#[track_caller]
 fn root_focused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
     assert!(
         cx.update_window(win, |_, window, cx| {
@@ -316,7 +317,17 @@ fn blocked_plan_focus(cx: &mut VisualTestAppContext, case: Case) {
     press_key(cx, win, "enter");
     assert!(cx.read(|cx| app.read(cx).amend_modal().is_some()));
     assert!(e2e::control_bounds(win.window_id(), "compact-composer").is_none());
-    root_focused(cx, &app, win);
+    assert!(
+        cx.update_window(win, |_, window, cx| {
+            app.read(cx)
+                .modal_focus
+                .as_ref()
+                .unwrap()
+                .contains_focused(window, cx)
+        })
+        .unwrap(),
+        "Amend's existing alert focus trap owns focus while the composer is suspended"
+    );
     press_key(cx, win, "escape");
     assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
     popup_geometry(win, case.dimensions());

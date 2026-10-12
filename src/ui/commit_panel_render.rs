@@ -42,8 +42,8 @@ pub(super) fn render_coauthor_menu(
         .w(width)
         .rounded_sm()
         .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().panel))
+        .border_color(rgb(theme().elevated_border(theme().selected)))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .flex()
         .flex_col()
         .occlude()
@@ -139,8 +139,40 @@ impl CommitPanelView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (staged, index) = match file_ref {
+            CommitPanelFileRef::Staged { index } => (true, index),
+            CommitPanelFileRef::Unstaged { index } => (false, index),
+        };
+        let files = if staged {
+            &self.state.staged
+        } else {
+            &self.state.unstaged
+        };
+        let Some(path) = files.get(index).map(|file| file.path.clone()) else {
+            return;
+        };
+        let source_repo = self.repo_path.clone();
         self.defer_owned(window, cx, move |app, owner, _w, cx| {
-            app.select_commit_panel_file(owner, file_ref, cx)
+            let index = app.ui().commit_panel.as_ref().and_then(|panel| {
+                let panel = panel.read(cx);
+                if panel.owner != owner || panel.repo_path != source_repo {
+                    return None;
+                }
+                let files = if staged {
+                    &panel.state.staged
+                } else {
+                    &panel.state.unstaged
+                };
+                files.iter().position(|file| file.path == path)
+            });
+            if let Some(index) = index {
+                let file_ref = if staged {
+                    CommitPanelFileRef::Staged { index }
+                } else {
+                    CommitPanelFileRef::Unstaged { index }
+                };
+                app.select_commit_panel_file(owner, file_ref, cx);
+            }
         });
     }
 
@@ -232,6 +264,22 @@ impl CommitPanelView {
         self.sync_inputs(window, cx);
         controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
+        self.unstaged_navigation.reconcile(
+            &self.state,
+            false,
+            self.unstaged_scroll_handle.clone(),
+            self.pointer_root_focus.as_ref(),
+            window,
+            cx,
+        );
+        self.staged_navigation.reconcile(
+            &self.state,
+            true,
+            self.staged_scroll_handle.clone(),
+            self.pointer_root_focus.as_ref(),
+            window,
+            cx,
+        );
     }
 
     /// Keep the accessible sibling positions in sync with the displayed tree.
@@ -289,8 +337,8 @@ impl CommitPanelView {
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    // Keep both section headers while sharing space with editing.
-                    .min_h(theme::scaled_px(80.))
+                    // Intrinsic section headers plus one complete keyboard row
+                    // per list set the minimum; the composer gives up space first.
                     .flex()
                     .flex_col()
                     .relative()

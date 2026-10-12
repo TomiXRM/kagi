@@ -6,6 +6,45 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn palette_descriptions_use_localized_sentence_boundaries() {
+    assert_eq!(
+        command_palette_description(Lang::En, "Actions", Some("Unavailable")),
+        "Actions. Unavailable"
+    );
+    assert_eq!(
+        command_palette_description(Lang::Ja, "操作", Some("実行できません")),
+        "操作。実行できません"
+    );
+    assert_eq!(
+        command_palette_description(Lang::En, "Appearance", None),
+        "Appearance"
+    );
+    assert_eq!(command_palette_description(Lang::Ja, "外観", None), "外観");
+}
+
+#[test]
+fn editor_find_controls_have_semantic_names_in_both_languages() {
+    for (message, english, japanese) in [
+        (Msg::EditorFindPrevious, "Previous match", "前の一致"),
+        (Msg::EditorFindNext, "Next match", "次の一致"),
+        (Msg::EditorFindReplace, "Replace", "置換"),
+        (Msg::EditorFindReplaceAll, "Replace all", "すべて置換"),
+        (Msg::EditorFindClose, "Close", "閉じる"),
+        (Msg::EditorFindCase, "Match case", "大文字と小文字を区別"),
+        (
+            Msg::EditorFindReplaceMode,
+            "Show replacement field",
+            "置換欄を表示",
+        ),
+        (Msg::EditorFindField, "Find", "検索"),
+        (Msg::EditorFindReplacementField, "Replacement", "置換文字列"),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+}
+
+#[test]
 fn terminal_empty_states_are_localized_and_keep_os_detail() {
     for (message, english, japanese) in [
         (
@@ -483,4 +522,63 @@ fn ignored_files_remove_warning_renders_counts_in_japanese() {
         "Git が追跡しない ignored ファイル 2 件と ignored フォルダ 1 件(中身は数えていません)があります。削除すると完全に消えます。\nworktree `/wt/a`"
     );
     set_lang_no_persist(Lang::En);
+}
+
+#[test]
+fn native_window_menu_and_about_labels() {
+    for (msg, en, ja) in [
+        (Msg::AboutTitle, "About Kagi", "Kagiについて"),
+        (Msg::MenuHideSidebar, "Hide Sidebar", "サイドバーを非表示"),
+        (Msg::MenuShowSidebar, "Show Sidebar", "サイドバーを表示"),
+        (
+            Msg::MenuEnterFullScreen,
+            "Enter Full Screen",
+            "フルスクリーンにする",
+        ),
+        (
+            Msg::MenuExitFullScreen,
+            "Exit Full Screen",
+            "フルスクリーンを解除",
+        ),
+        (Msg::MenuPreviousTab, "Show Previous Tab", "前のタブを表示"),
+        (Msg::MenuNextTab, "Show Next Tab", "次のタブを表示"),
+        (
+            Msg::MenuBringAllToFront,
+            "Bring All to Front",
+            "すべてを手前に移動",
+        ),
+    ] {
+        assert_eq!(msg.t_for(Lang::En), en);
+        assert_eq!(msg.t_for(Lang::Ja), ja);
+    }
+}
+
+#[test]
+fn chooser_row_names_preserve_external_identity_in_both_languages() {
+    let _lock = LOCK.lock();
+    let old = ACTIVE.load(Ordering::Relaxed);
+    for (language, issue, recent) in [
+        (
+            Lang::En,
+            "Open issue #42, Fix {} {state} 日本語, Open",
+            "Open repository repo {} 日本語",
+        ),
+        (
+            Lang::Ja,
+            "Issue #42 を開く、Fix {} {state} 日本語、Open",
+            "リポジトリ repo {} 日本語 を開く",
+        ),
+    ] {
+        ACTIVE.store(language.index(), Ordering::Relaxed);
+        assert_eq!(issue_row_name(42, "Fix {} {state} 日本語", "Open"), issue);
+        assert_eq!(recent_row_name("repo {} 日本語"), recent);
+        for message in [
+            Msg::BranchPickerCheckout,
+            Msg::BranchPickerDelete,
+            Msg::BranchPickerRename,
+        ] {
+            assert!(!message.t().is_empty());
+        }
+    }
+    ACTIVE.store(old, Ordering::Relaxed);
 }

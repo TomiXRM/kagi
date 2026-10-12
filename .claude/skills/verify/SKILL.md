@@ -64,6 +64,59 @@ The geometry matrix is partitioned across `compact_layout_geometry` (660px,
 (1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
 same assertions and real rail interactions; the broad filter selects every
 partition. This bounds process runtime without dropping matrix cells.
+For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
+`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
+role/name/value/expanded/disabled properties on Appearance controls in the native
+Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
+to the kit's actual focused Select root; confirmation and Escape preserve its
+identity and focus owner. Zoom retains kit activation and discrete caps, hands
+focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
+These probes are not native VoiceOver or Full Keyboard Access evidence.
+Tier B inspects the live ComboBox and option names and both zoom button/value
+nodes at 100%, 70% and 167%, including disabled announcements.
+For #1336/#1337/#1338/#1341 use
+`KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
+with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and
+renderer-applied sanitized AX description while preserving header/hunk bounds.
+Its fixture uses supported 160px sidebar/240px Inspector widths so the high-zoom
+940px leg has a usable center slot; it does not claim to repair workspace
+overcommit with two default-wide side panes.
+Toast coverage checks four kinds and six consecutive arrivals per kind, stable
+newest-arrival role/name/identity through hover/ticks/animation and no focus
+stealing. The pinned GPUI API has no live-region/priority setter; these are
+Status metadata assertions, not native speech or exactly-once announcements.
+Clone checks operation-named elapsed Status across Reduce Motion and running
+ticks, keyboard Hide owner retention, and real success/error settlement.
+Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
+Enter/Space once-only activation, inner-focus retention, Escape row return,
+owner departure, no-port absence, painted extra-small URL chip text and native
+Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
+100%/167% and Apple Light/Dark. Neighbor filter:
+`KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
+Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
+
+For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
+`status_bar_fit` mounts the production footer at 700×500 and 940×660 with
+1/120-character branch identity, status chips, refresh timer and Busy/Failed
+feedback. It checks full branch Tooltip/AX metadata, positive feedback width
+and nonoverlapping in-window panel controls across EN/JA, 100%/167%, both
+toolbar presentations and Apple themes. Probes are flow-neutral; renderer-fed
+metadata is not native VoiceOver delivery. Real hover/Tab and before/after
+screenshots remain Tier B.
+Review legs `status_bar_feedback_min` and `status_bar_short_branch` use the same
+matrix to preserve short Failed/Busy feedback beside a 25-character branch and
+the natural `main`-to-dirty-chip gap, unellipsized rounded text width and right
+footer padding with every chip (including at 700×500/167%). They fail before the
+feedback-first/natural-width/rounding policies. The original fit scenario also
+checks sanitized C1-control branch identity through the label/Tooltip/AX path.
+
+For #1321, `status_bar_busy_height` uses the same matrix and requires Busy
+feedback height not to exceed the actual footer height, with all feedback
+bounds contained inside the footer. The pre-fix spinner/text block stack was
+26.5px high inside a 20px footer at 100%. `status_bar_feedback_min` measures the
+text child's actual bounds, not its spinner-inclusive container; Busy reserves
+the unchanged scaled 10px spinner plus 4px gap in addition to its text budget,
+capped by actual remaining room. Run `KAGI_GUI_E2E_ONLY='status_'` with KEEP_GOING.
 
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
@@ -78,6 +131,112 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
+with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,
+compares its Button role/name/toggled assignments, measures real button bounds,
+and hovers each control to observe invoked Tooltip builders in EN/JA,
+940×660 / 1392×883, 100%/167% and Apple Light/Dark. `Window::focus_next`
+traverses rendered stops; F19 records the control receiving the simulated key.
+Enter/Space exercise navigation, case matching, replacement disclosure,
+Replace/Replace all and Close. Escape returns to the owning code buffer,
+replacement stays unsaved/undoable, and a live locale switch retains the query.
+The ownership leg focuses the replacement-disclosure Button, then sends
+Select All / Backspace / Delete / word deletion / Paste / Cut / Undo / Redo /
+movement keys and asserts that the hidden code buffer never changes. It also
+checks that the case Button cannot edit its containing query and that a native
+padding click directs editing to Find. Actual Issue-body and Conflict-Result
+hosts check initial and retained EN/JA names/help, without replacing their inputs.
+The fork's `test-support` feature is enabled only by the Editor's `gui-e2e`
+feature; normal builds retain no probes. This is renderer/tooltip/simulated-input
+evidence, not physical Tab, Full Keyboard Access, VoiceOver or live IME.
+Tier B: in the real EN/JA Editor window open Cmd+F, Tab through the controls,
+inspect names/help/toggle states in Accessibility Inspector, activate them,
+and check Escape focus return, composition, replacement undo and guarded Save.
+
+For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
+KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
+Tab roles, localized names, selected state, one Tab stop, actual focus
+handles, Left/Right/Home/End/Enter/Space dispatch and native selected-fill
+pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
+0/1/24 buckets' Status names against UTC date/time + commits/merges/authors,
+one roving stop, arrow/Home/End boundary inspection and identical immediate
+hover/keyboard readouts. The actual chart/legend painter records successful
+solid/dash/gap/knockout segment counts and the single-point fallback branch.
+`activity_equal_series_encoding` compares native merge-gap pixels with nearby
+unpainted pixels over equal commit/merge values and 0/0 baseline segments,
+including the legend; do not derive the expected background from the painter's
+theme token. `activity_single_bucket_encoding` requires a genuine two-dash merge
+mark and knockout gap, not the former solid fallback or a clamped counter.
+All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
+Apple Light/Dark; axes and legend must fit.
+Pair with `cargo test -p kagi-domain activity` for per-bucket distinct raw
+email aggregation, and `cargo test -p kagi-ui-core activity_bucket` for
+localized 0/1/plural units. Renderer metadata is not native VoiceOver or
+real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
+both ends with the keyboard, verify the selected fill on hover and the
+dashed merge legend/line, then read each bucket in Accessibility Inspector.
+
+For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
+`conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
+Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,
+and compares Enter adoption with the measured pointer control. It exercises
+Space, both orders, line-level Partial state, file-side Use all, Result
+undo/redo, viewport containment and zero repository writes/receipts at
+940×660 / 1392×883, 100%/167%, EN/JA, Apple Light/Dark.
+The F19 probe observes only the actual focused owner; AX metadata records
+renderer-supplied role/name/state, not native VoiceOver delivery.
+`conflict_resolver_rebuild` replaces a retained path's model with changed hunk
+and then line counts and activates the rebuilt controls. `conflict_resolver_roles`
+checks actual merge/rebase fixtures in EN/JA: roles/identities follow the
+operation, and order selection is announced independently of adoption.
+Tier B (PM-owned): use the existing conflict fixture, Tab through Use all and
+the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
+and read live EN/JA adoption names in Accessibility Inspector. Do not Save
+while comparing buffer-only adoption with pointer behavior.
+For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
+`graph_columns_fit` covers both the exact 1000×660/167% desktop breakpoint and
+the 940×660/167% compact rail, requiring a scaled 120px subject minimum, contained author/time,
+native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
+It pins the before x positions at 1392×883/100%, preserves saved width keys
+and preferred widths through resize/zoom, and leaves existing divider-drag,
+subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
+The pre-compact 940px reproduction had subject x=886.5 width=0, author ending at
+1031 and time starting there; these historical positions are not compact pins.
+`graph_columns_compressed_drag` delivers positive native drags to both capped
+dividers at 1000px/167%, requires preferred widths/settings to stay unchanged, then widens and
+pins the original x positions. `graph_columns_inspector_fit` covers 1440px/167%
+with sidebar 240px and Inspector 360px in EN/JA: subject floor yields below 120px
+while author/time remain contained. Before review: GRAPH preference fell from
+176 to 47.900204 after a capped expansion; the Inspector leg retained the full
+subject floor instead of yielding. Both review regressions pass after correction.
+Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
+back and forth, drag both column dividers, relaunch to check saved preferences,
+and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
+
+For #1355 use `KAGI_GUI_E2E_ONLY='pane_budget_'` with KEEP_GOING.
+The desktop fit and sidebar-anchor scenarios use the exact 1000px breakpoint
+at 167% after compact integration; the 700px leg requires a contained rail and
+no desktop side-pane clips, with preferred widths unchanged. Pure unit tests
+retain the sub-minimum non-collapsed fit cases.
+
+For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
+with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
+across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and
+requires Pull/Push below the old selected-only 100px-floor fit threshold.
+`toolbar_no_overlap` includes 700×500 with long repository/branch names in both
+toolbar presentations, alongside the existing 940/1000/1392 widths. It checks
+every visible control's outer focus-border bounds and the real Git-group bounds
+against workspace controls. Repository-group recording uses `measure_inside`,
+not a feature-only wrapper that changes flex sizing. Absolute natural-width
+canvases exclude the fixed 2px border on each side: icon-only fitting must add
+those 4px just as caption fitting does, and hidden natural probes carry the same
+border. The 500px-tall leg is geometry-only; existing 660px legs retain overflow
+activation, shortcut, unavailable-reason and PTY-focus coverage.
+Before the tiny-window correction, the native 700×500 / EN / Icon Only / 100%
+leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B should
+compare the real 700×500 JA toolbar with a long repository/branch identity at
+100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
+
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
 `conflict_file_selection` finds the actual dashboard Next button through real
 Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
@@ -91,6 +250,26 @@ confirmed Drop records exactly one successful receipt, and root Return leaves
 the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
 and close/reopen owner lifetime remain covered. These are native Tier A oracles,
 not a change to product safety or Tier B evidence.
+
+For #1298 / #1299 use
+`KAGI_GUI_E2E_ONLY='settings_provider_keys,settings_analyze_ignore_feedback'`
+with KEEP_GOING; run `settings_` for the neighboring baseline. These two
+scenarios explicitly select the production 715px macOS Settings host in
+EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
+renderer's named selected Tab recorder and real Enter/Space down/up after
+focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+values and no generation modal. Analyze clicks actual visible/scroll-reachable
+Save/Reset controls against a directory at the target path and a mode-000
+settings directory: errors retain the draft/dirty marker and original bytes;
+removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
+selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
@@ -124,6 +303,38 @@ The feature name Commit Panel and operation-button names intentionally stay Engl
 The AX recorder proves the renderer assignment, not native VoiceOver delivery.
 Tier B remains a real-window comparison of Japanese headers, batch actions and
 unchanged user Template text; `commit_panel_viewport` retains composer geometry.
+
+For #1306/#1307 use
+`KAGI_GUI_E2E_ONLY='graph_subject_identity,inspector_full_message'` and retain
+`graph_,inspector_,detail_` as the neighboring filter. The subject scenario
+compares complete sanitized 71/72/73/300-character and CJK/emoji identities,
+drawn AX names, 29-reference-px row density, author/time geometry, and real
+row-hover Tooltip content and viewport-contained bounds in EN/JA, Apple
+Light/Dark, 100/167%, at 940×660 and 1392×883. The 300-character subject
+must wrap rather than overflow the narrow viewport. The row-wide Tooltip
+also works when existing narrow, high-zoom column widths leave the visible
+subject no space; this does not claim to fix that pre-existing column layout.
+
+The Inspector scenario keeps 1,999/2,000/2,001/10,000-character messages plus
+an 85-paragraph sanitized CJK/emoji message. Its renderer-fed source/HTML,
+complete co-author/trailer counts and full-message clipboard assertions run
+over the same matrix. A real wheel reaches the last trailer inside the
+bounded message frame while the changed-files frame stays fixed; warm draws
+leave SHA-keyed derivation counters unchanged. Native VoiceOver and real
+selectable-text keyboard behavior remain Tier B.
+
+For an opt-in stress measurement, set
+`KAGI_TEXT_CAPS_STRESS_REPO=<read-only 121-local-branch fixture>` and select
+only `KAGI_GUI_E2E_ONLY=text_caps_warm_render`. The native runner mounts that
+real repository, selects its top commit, settles 20 draws, then prints the
+median of 31 batches of ten forced warm draws (milliseconds per frame).
+Compare the same fixture, harness, build profile and presentation state;
+alternate frozen before/after binaries three times each after gates finish
+to mitigate concurrent-compilation noise. This is warm render evidence,
+not application FPS or a cold-load benchmark.
+Without `KAGI_TEXT_CAPS_STRESS_REPO`, the stress scenario prints
+`[gui-e2e] SKIP text_caps_warm_render` and returns before opening a window;
+broader substring filters such as `caps` or `warm` do not require that fixture.
 
 For #1229–#1231 use
 `KAGI_GUI_E2E_ONLY='commit_panel_segment_keys,commit_panel_footer_tab_order,commit_panel_coauthor_keys'`
@@ -203,6 +414,23 @@ rows/header and palette frame/divider; it is not a screenshot-pixel sample.
 Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
 and toolbar scenarios. Real fading, macOS preference changes and JA IME are
 Tier B comparisons, not TestDispatcher assertions.
+
+For #1352 use `KAGI_GUI_E2E_ONLY='pr_dashboard_'` with KEEP_GOING and a
+120-second child timeout. The draft-contrast matrix is split into four
+Light/Dark × narrow/wide children so every native capture fits the timeout,
+without dropping EN/JA, 100%/167% or rest/hover × active/inactive coverage.
+Production cell bounds select actual Metal glyph-interior and blank-background
+pixels for titles, number, author, age and the localized Draft state; inherited
+row opacity is included in the captured pixel, not replaced with theme RGB.
+Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
+There is no selected dashboard row state. Pair with the ui-core
+`apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
+Tier B remains a real-window comparison of draft/ready rows and opening a draft
+in Apple Light/Dark; native VoiceOver and Full Keyboard Access are not proven
+by the recorder or image contrast.
 
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three
@@ -421,6 +649,8 @@ The current suite covers:
   `tests/recovery/reconcile_unobservable.rs`): measured native clicks exercise
   Inspect → arm → final confirmation in EN/JA. The armed warning is drawn;
   Escape and modal displacement discard the arm without releasing the requirement.
+  Escape now dismisses the presentation until a fresh explicit write request
+  (#1366); the scenario re-enters through a real Fetch admission refusal.
   A real append-lock failure preserves the requirement and writer exclusion,
   leaves no durable release row, and renders a Partial receipt rather than raw
   Unknown in the panel. Restoring persistence and confirming again records exactly
@@ -430,6 +660,16 @@ The current suite covers:
   its controls outside the window.
   App-level tests in `app_unobservable_release_test` additionally reject live writers,
   mismatches, failed transports, unknown families, and failed audit persistence.
+- actionable-notice dismissal (`KAGI_GUI_E2E_ONLY='app_notice_,alert_focus_notice,modal_,reconcile_unobservable_release'`,
+  KEEP_GOING): `app_notice_escape_dismiss` and `app_notice_acknowledge_dismiss`
+  exercise EN/JA Escape, five renders, opener focus, non-editing Return and fresh
+  refusal recurrence. `app_notice_queue_recurrence` parks a real panicked checkout
+  in a reconciling queue, dismisses its notice and explicitly enqueues Checkout
+  through `e2e::enqueue_checkout`, which forwards to the unchanged production
+  enqueue boundary (no manufactured queue state or mutation result). It checks
+  active/queued Inspect/Acknowledge deduplication and five subsequent queue ticks
+  without re-presentation. The native dispatcher assertions do not establish
+  live VoiceOver or IME behavior; Tier B checks those and the restored opener.
 - conflict Continue cache (`KAGI_GUI_E2E_ONLY=conflict_continue_cache`,
   `tests/recovery/conflict_continue_cache.rs`): real Result InputState changes
   cover omitted final LF, empty text versus a blank line, marker addition/removal,

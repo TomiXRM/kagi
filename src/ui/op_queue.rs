@@ -180,6 +180,7 @@ impl KagiApp {
                         format!("{}: {label}", queue_text(QueueText::Queued)),
                         cx,
                     );
+                    self.notice_queued_reconcile(id, cx);
                 }
                 QueueEffect::Rejected(EnqueueError::CapacityRejected) => {
                     self.push_toast(super::ToastKind::Error, queue_text(QueueText::Full), cx);

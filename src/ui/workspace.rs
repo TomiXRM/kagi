@@ -474,7 +474,7 @@ pub(super) fn render_inspector_body(
             app.inspector_tree_view,
             app.inspector_split,
             app.inspector_geom.clone(),
-            app.panel_width,
+            app.pane_fit.right,
             // W11-AVATAR: resolved avatar images so the inspector can swap
             // the initial circle for a real image.
             &app.avatars.images,

@@ -112,6 +112,7 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_window_presentation(window, cx);
         self.poll_app_jobs(cx);
         self.present_app_notice();
         // #914: modal button closures bypass root Enter/Escape. A real exit
@@ -138,16 +139,6 @@ impl Render for KagiApp {
         // KAGI_COMPARE_WT run before any gpui context exists).
         if let Some(view) = self.pending_headless_compare.take() {
             self.show_compare(view, cx);
-        }
-
-        // Remember the live window size (persisted on quit → restored next
-        // launch). Only plain Windowed: a maximized/fullscreen size would
-        // restore as a giant floating window.
-        if let gpui::WindowBounds::Windowed(b) = window.window_bounds() {
-            let w = f32::from(b.size.width).round().max(0.0) as u32;
-            let h = f32::from(b.size.height).round().max(0.0) as u32;
-            super::LAST_WIN_W.store(w, std::sync::atomic::Ordering::Relaxed);
-            super::LAST_WIN_H.store(h, std::sync::atomic::Ordering::Relaxed);
         }
 
         // A published read owes the retained panes a pass (#722; no-op unless
@@ -240,6 +231,7 @@ impl Render for KagiApp {
         self.sync_pr_fields_input(window, cx);
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
+        self.sync_sidebar_filter_placeholder(window, cx);
         self.sync_pending_focus(window, cx);
         // GPUI can retain focus on an input whose modal was just unmounted.
         // Only a handle tracked by the last drawn dispatch tree may hold the
@@ -267,6 +259,10 @@ impl Render for KagiApp {
                 .row_focus
                 .yield_focus(fallback.as_ref(), window, cx);
             self.home_github
+                .recent
+                .keyboard
+                .yield_focus(fallback.as_ref(), window, cx);
+            self.home_github
                 .work
                 .pane_focus
                 .yield_focus(fallback.as_ref(), window, cx);
@@ -277,6 +273,24 @@ impl Render for KagiApp {
         if !self.pr_mode_visible() || self.home_in_front() {
             if let Some(mode) = self.pr_mode() {
                 mode.detail_focus
+                    .yield_focus(self.root_focus.as_ref(), window, cx);
+            }
+        }
+        let active = self.active_session();
+        let main_issues = !self.home_in_front()
+            && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Issues;
+        for (owner, ui) in &self.ui {
+            let composer_focused = ui
+                .issue_composer
+                .editors
+                .get(&None)
+                .is_some_and(|editor| editor.focused);
+            if Some(*owner) != active
+                || !main_issues
+                || ui.selected_github_issue.is_some()
+                || composer_focused
+            {
+                ui.issue_rows
                     .yield_focus(self.root_focus.as_ref(), window, cx);
             }
         }
@@ -297,17 +311,6 @@ impl Render for KagiApp {
         // ONTO the `CommitPanelView` entity (`sync_inputs`), run from the entity's
         // own render path. The parent no longer reads the child's input each frame.
 
-        // Graph horizontal scroll: clamp against the current repo's lane
-        // count so the offset self-heals after tab switches and column
-        // resizes.
-        {
-            let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
-            // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
-            let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
-            if self.ui().graph_scroll_x > max {
-                self.with_ui(|ui| ui.graph_scroll_x = max);
-            }
-        }
         // Keep the paging action outside the ListBox: it is a Button, not an
         // Option in the virtual commit list.
         let commit_limit = self.ui().commit_limit;
@@ -396,8 +399,7 @@ impl Render for KagiApp {
         // never rebuild the rows.
         //
         // ADR-0116: owner + `view_epoch` and navigator inputs gate the
-        // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
-        // so its current value is folded in every frame.
+        // O(all-refs) clone+collect.
         let sidebar_filter_text: String = self
             .sidebar
             .filter
@@ -457,6 +459,7 @@ impl Render for KagiApp {
         // #985: a menu that just opened takes the focus; one that closed
         // gives it back. The selected row records where it is drawn anew.
         self.sync_menu_keys(window, cx);
+        self.sync_file_menu_keys(window, cx);
         self.context_anchor.clear();
         let commit_menu_overlay = self
             .commit_menu
@@ -518,11 +521,6 @@ impl Render for KagiApp {
             toolbar_state.undo_on = false;
         }
         let status_summary = self.view().status_summary.clone();
-
-        // T030: inner column widths for the commit list. The sidebar's own
-        // width is read by its renderer (`render_sidebar_pages`).
-        let badge_col_w = self.badge_col_w;
-        let graph_col_w = self.graph_col_w;
 
         // T028: clone scroll handle for wiring into uniform_list via track_scroll.
         let commit_scroll_handle = self.ui().commit_scroll_handle.clone();
@@ -644,6 +642,11 @@ impl Render for KagiApp {
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
+            .on_action(
+                cx.listener(|this, _: &super::FocusSidebarFilter, window, cx| {
+                    this.focus_sidebar_filter(window, cx);
+                }),
+            )
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             .on_action(
@@ -813,8 +816,6 @@ impl Render for KagiApp {
                     selected,
                     detail,
                     is_dirty,
-                    badge_col_w,
-                    graph_col_w,
                     commit_scroll_handle,
                     commit_panel_open,
                     commit_panel.clone(),
@@ -849,7 +850,7 @@ impl Render for KagiApp {
             //    intents and cancel list, directly above the status bar. ──
             .children(self.render_queue_strip(cx))
             // ── Status bar slot (T017) — last operation result ─
-            .child(self.render_status_bar(status_footer, bottom_panel_open, cx));
+            .child(self.render_status_bar(status_footer, bottom_panel_open, window, cx));
         // The one collector Home also uses keeps popup/modal ordering intact.
         // Attach it after the opaque footer, so window-fitted menus and modals
         // are not overpainted by workspace chrome.

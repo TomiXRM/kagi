@@ -46,6 +46,7 @@ use crate::graph::WipAnchor;
 #[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
+    pub window_title: SharedString,
     pub rows: Vec<CommitRow>,
     pub stash_graph_rows: Vec<commit_list::StashRow>,
     pub stash_graph_lanes: Vec<usize>,
@@ -232,6 +233,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     toolbar_state.log_headless();
 
     TabViewState {
+        window_title: format!("{repo_name} — {}", status_summary.branch).into(),
         header,
         rows,
         stash_graph_rows,
@@ -368,6 +370,7 @@ pub struct TabUiState {
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
     pub smart_commit_generating: bool,
+    pub smart_commit_generation: Option<super::smart_commit::SmartGeneration>,
     pub smart_commit_status: Option<String>,
     /// Identifies the published model, independently of read-request revisions.
     pub view_publish_gen: u64,
@@ -426,6 +429,7 @@ pub struct TabUiState {
     pub github_issues_loading_more: bool,
     pub github_issues_page: usize,
     pub github_issues_list: gpui::ListState,
+    pub(super) issue_rows: super::list_keyboard::ListKeyboard,
     pub github_issue_mentions: Vec<u64>,
     pub github_issue_tab: kagi_domain::github::IssueListTab,
     /// #753 this session's Issue-list filter intent ([`default_issue_filter`]
@@ -528,6 +532,7 @@ impl Default for TabUiState {
             inspector_message_scroll: gpui::ScrollHandle::new(),
             activity_ranking_scroll: gpui::ScrollHandle::new(),
             smart_commit_generating: false,
+            smart_commit_generation: None,
             smart_commit_status: None,
             cleanup_selected: HashSet::new(),
             branch_cleanup_open: false,
@@ -568,6 +573,7 @@ impl Default for TabUiState {
             github_issues_loading_more: false,
             github_issues_page: 0,
             github_issues_list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
+            issue_rows: Default::default(),
             github_issue_mentions: Vec::new(),
             github_issue_tab: Default::default(),
             github_issue_filter: default_issue_filter(),

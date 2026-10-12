@@ -20,6 +20,52 @@ use super::i18n::{self, Lang};
 use super::theme::{self, theme};
 use super::KagiApp;
 
+pub use super::palette_scroll::PaletteScroll;
+
+/// Sections are derived from existing action kinds, never selectable entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteSection {
+    Actions,
+    Appearance,
+    Language,
+}
+
+impl PaletteSection {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Actions => "actions",
+            Self::Appearance => "appearance",
+            Self::Language => "language",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Actions => i18n::Msg::CommandPaletteActions.t(),
+            Self::Appearance => i18n::Msg::SettingsAppearance.t(),
+            Self::Language => i18n::Msg::SettingsLanguage.t(),
+        }
+    }
+}
+
+impl PaletteRow {
+    pub fn section(&self) -> PaletteSection {
+        match &self.action {
+            PaletteAction::Command(_) => PaletteSection::Actions,
+            PaletteAction::SetTheme(_) => PaletteSection::Appearance,
+            PaletteAction::SetLang(_) => PaletteSection::Language,
+        }
+    }
+
+    fn description(&self) -> String {
+        i18n::command_palette_description(
+            i18n::lang(),
+            self.section().label(),
+            self.disabled_reason.as_deref(),
+        )
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Pure: fuzzy matcher
 // ──────────────────────────────────────────────────────────────────────────
@@ -249,7 +295,7 @@ impl KagiApp {
         klog!("palette: open");
         let scroll = self
             .command_palette_scroll
-            .get_or_insert_with(gpui::ScrollHandle::new);
+            .get_or_insert_with(PaletteScroll::new);
         scroll.set_offset(Default::default());
         if self.command_palette_input.is_none() {
             let input = cx.new(|cx| {
@@ -399,9 +445,9 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().surface))
+            .border_color(rgb(theme().elevated_border(theme().surface)))
             .map(|panel| super::e2e::probe_chrome_border("palette-frame", panel))
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg();
         #[cfg(feature = "gui-e2e")]
         {
@@ -421,12 +467,28 @@ impl KagiApp {
                             .child(super::e2e::measure_inside("palette-input"))
                     })
                     .border_b_1()
-                    .border_color(rgb(theme().surface))
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
                     .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
-                    .child(Input::new(input).appearance(true)),
+                    .child(
+                        Input::new(input)
+                            .aria_label(i18n::Msg::A11yCommandPaletteQuery.t())
+                            .appearance(true),
+                    ),
             );
         }
 
+        let list = self.render_palette_results(&query, &rows, selected, cx);
+        let panel_el = panel.child(list).into_any_element();
+        self.wrap_command_palette(panel_el, top, cx)
+    }
+
+    fn render_palette_results(
+        &self,
+        query: &str,
+        rows: &[PaletteRow],
+        selected: usize,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         // Results list.
         let mut list = div()
             .id("command-palette-list")
@@ -441,7 +503,7 @@ impl KagiApp {
             i18n::Msg::CommandPalettePlaceholder.t(),
         );
         if let Some(scroll) = &self.command_palette_scroll {
-            list = list.track_scroll(scroll);
+            list = list.track_scroll(scroll.handle());
         }
 
         if rows.is_empty() {
@@ -455,12 +517,39 @@ impl KagiApp {
             );
         }
 
-        for (i, row) in rows.iter().enumerate() {
-            list = list.child(self.render_palette_row(i, rows.len(), row, i == selected, cx));
+        super::e2e::palette::begin_sections();
+        if query.trim().is_empty() {
+            let mut start = 0;
+            while start < rows.len() {
+                let section = rows[start].section();
+                let end = start
+                    + rows[start..]
+                        .iter()
+                        .take_while(|row| row.section() == section)
+                        .count();
+                let group =
+                    palette_section(section, start..end).children((start..end).map(|i| {
+                        self.render_palette_row(i, rows.len(), &rows[i], i == selected, cx)
+                    }));
+                let group = group.into_any_element();
+                let group = match &self.command_palette_scroll {
+                    Some(scroll) => scroll.measure_group(start, group),
+                    None => group,
+                };
+                list = list.child(group);
+                start = end;
+            }
+        } else {
+            list =
+                list.children(rows.iter().enumerate().map(|(i, row)| {
+                    self.render_palette_row(i, rows.len(), row, i == selected, cx)
+                }));
         }
 
-        let panel_el = panel.child(list).into_any_element();
-        self.wrap_command_palette(panel_el, top, cx)
+        match &self.command_palette_scroll {
+            Some(scroll) => scroll.wrap(list.into_any_element(), rows.len()),
+            None => list.into_any_element(),
+        }
     }
 
     fn render_palette_row(
@@ -496,9 +585,7 @@ impl KagiApp {
             label.clone(),
             is_selected,
         )
-        .when_some(row.disabled_reason.clone(), |el, reason| {
-            el.aria_description(reason)
-        })
+        .aria_description(super::e2e::palette::description(index, row.description()))
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
         })
@@ -529,21 +616,13 @@ impl KagiApp {
         r = r.child(palette_row_label(index, row, label));
 
         if let Some(ks) = &row.keystroke {
-            r = r.child(
-                div()
-                    .flex_shrink_0()
-                    .text_right()
-                    .when(cfg!(feature = "gui-e2e"), |el| {
-                        el.relative().child(super::e2e::measure_inside(format!(
-                            "palette-shortcut-{index}"
-                        )))
-                    })
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .child(super::e2e::palette::shortcut(index, ks.clone())),
-            );
+            r = r.child(palette_row_shortcut(index, ks));
         }
-        r.into_any_element()
+        let row = r.into_any_element();
+        match &self.command_palette_scroll {
+            Some(scroll) => scroll.measure_row(index, row),
+            None => row,
+        }
     }
 
     /// Centre the palette over a dim, click-to-dismiss backdrop (mirrors
@@ -587,6 +666,47 @@ impl KagiApp {
             .child(panel)
             .into_any_element()
     }
+}
+
+fn palette_section(
+    section: PaletteSection,
+    rows: std::ops::Range<usize>,
+) -> gpui::Stateful<gpui::Div> {
+    super::e2e::palette::section(
+        section.id(),
+        section.label(),
+        rows,
+        div().id(section.id()).flex().flex_col().flex_shrink_0(),
+    )
+    .child(
+        div()
+            .px_4()
+            .py(theme::scaled_px(6.))
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(theme().text_muted))
+            .when(cfg!(feature = "gui-e2e"), |heading| {
+                heading.relative().child(super::e2e::measure_inside(format!(
+                    "palette-heading-{}",
+                    section.id()
+                )))
+            })
+            .child(section.label()),
+    )
+}
+
+fn palette_row_shortcut(index: usize, keystroke: &str) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .text_right()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.relative().child(super::e2e::measure_inside(format!(
+                "palette-shortcut-{index}"
+            )))
+        })
+        .text_xs()
+        .text_color(rgb(theme().text_muted))
+        .child(super::e2e::palette::shortcut(index, keystroke.to_string()))
 }
 
 fn palette_row_label(index: usize, row: &PaletteRow, text: SharedString) -> gpui::Div {

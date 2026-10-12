@@ -119,6 +119,35 @@ impl KagiApp {
         }
     }
 
+    /// Only a new explicit intent reopens a dismissed recovery notice, never a tick.
+    pub(super) fn notice_queued_reconcile(&mut self, id: IntentId, cx: &mut Context<Self>) {
+        if !self
+            .op_queue
+            .queue
+            .intent(id)
+            .is_some_and(|intent| self.op_queue.queue.is_reconciling(intent.owner))
+        {
+            return;
+        }
+        let Some(requirement) = self.app_sessions.blocking_reconcile() else {
+            return;
+        };
+        let already_presented = self
+            .app_notice()
+            .into_iter()
+            .chain(self.app_notices.iter())
+            .any(|notice| {
+                notice.inspect == Some(requirement)
+                    || notice
+                        .acknowledge
+                        .as_ref()
+                        .is_some_and(|read| read.operation() == requirement)
+            });
+        if !already_presented {
+            self.report_admission_refusal(AdmissionError::NeedsReconcile, cx);
+        }
+    }
+
     pub(super) fn ensure_queue_ticker(&mut self, cx: &mut Context<Self>) {
         if self.op_queue.ticker_alive || self.op_queue.queue.is_empty() {
             return;

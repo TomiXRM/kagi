@@ -71,7 +71,22 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error_line_height = (_window.rem_size() * 1.4).round();
-        let mut stack = div().flex().flex_col().gap_2();
+        // Pinned GPUI has no live/priority setter. A stable Status node exposes
+        // arrival text without stealing focus or promoting dismissed old cards.
+        let arrival = self.status();
+        let label = arrival
+            .map(|(_, message)| message.clone())
+            .unwrap_or_default();
+        let role = gpui::Role::Status;
+        let mut stack = div()
+            .id("toast-stack")
+            .role(role)
+            .aria_label(label.clone())
+            .flex()
+            .flex_col()
+            .gap_2();
+        #[cfg(feature = "gui-e2e")]
+        toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
         for toast in self.toasts() {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();
@@ -138,6 +153,8 @@ fn toast_card(
     div()
         .w_full()
         .id(("toast-card", id))
+        .relative()
+        .child(e2e::measure_inside("toast-card"))
         .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
             this.set_hovered(id, *hovered);
         }))
@@ -148,9 +165,9 @@ fn toast_card(
         .px_4()
         .py_3()
         .rounded(theme::scaled_px(8.))
-        .bg(rgb(theme().panel))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .border_1()
-        .border_color(rgb(accent))
+        .border_color(rgb(theme().elevated_border(accent)))
         .text_base()
         .text_color(rgb(theme().text_main))
         .child(div().flex_shrink_0().child(icon))
@@ -343,6 +360,11 @@ impl KagiApp {
         use super::front_layer::{LayerKind, Z_ORDER};
         let mut el = el;
         for kind in Z_ORDER.iter().copied().filter(|kind| kind.in_modal_layer()) {
+            // Keep the workspace out of the trap's subtree. Input cards own
+            // their named frame; alerts reuse that same gpui-kit trap here.
+            let alert_parent = (kind == LayerKind::EarlyModal
+                && self.active_modal_needs_alert_trap())
+            .then(|| std::mem::replace(&mut el, div().size_full().absolute().top_0().left_0()));
             el = match kind {
                 LayerKind::EarlyModal => el
                     .when_some(plan_modal.take(), |el, modal| {
@@ -483,6 +505,9 @@ impl KagiApp {
                             window,
                             cx,
                         ))
+                    })
+                    .when(self.about_modal().is_some(), |el| {
+                        el.child(super::about::render_about(modal_focus.clone(), window, cx))
                     })
                     .when_some(self.apply_suggestion_modal().cloned(), |el, modal| {
                         el.child(
@@ -704,7 +729,12 @@ impl KagiApp {
                 LayerKind::FileMenu => el
                     // ── Unstaged file context menu (right-click → Discard) ──
                     .when_some(file_menu.take(), |el, menu| {
-                        el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+                        el.child(render_file_menu_overlay(
+                            menu,
+                            self.file_menu_keys.clone(),
+                            window,
+                            cx,
+                        ))
                     }),
                 LayerKind::CommitPlan => el
                     // ── Commit plan modal overlay (T025) ─────────────
@@ -741,6 +771,14 @@ impl KagiApp {
                 | LayerKind::MenuOverlay
                 | LayerKind::PlatformMenu => unreachable!("outer render layer"),
             };
+            if let Some(parent) = alert_parent {
+                use gpui_component::FocusTrapElement as _;
+                if let Some(focus) = &self.modal_focus {
+                    el = parent.child(el.focus_trap("alert-modal-frame", focus));
+                } else {
+                    el = parent.child(el);
+                }
+            }
         }
         el
     }

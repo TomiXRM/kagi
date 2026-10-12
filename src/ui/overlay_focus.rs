@@ -40,6 +40,11 @@ pub(super) struct PendingFocus {
     screen: FocusScreen,
 }
 
+pub(super) struct AlertReturnFocus {
+    opener: Option<PendingFocus>,
+    trap: FocusHandle,
+}
+
 impl KagiApp {
     fn focus_screen(&self) -> FocusScreen {
         if self.home_in_front() {
@@ -129,6 +134,22 @@ impl KagiApp {
     /// Settings yields to a visible modal that arrives while it is open
     /// (#976 review). Its return target is dropped rather than applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_modal_needs_alert_trap()
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.alert_return_focus.is_none()
+        {
+            let trap = self
+                .modal_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            self.alert_return_focus = Some(AlertReturnFocus {
+                opener: window.focused(cx).map(|focus| PendingFocus {
+                    focus,
+                    screen: self.focus_screen(),
+                }),
+                trap,
+            });
+        }
         // A restored control may remain drawn during its close animation and
         // unmount later. Only rescue that exact focus; user-directed focus
         // changes must never be stolen by an old restore target.
@@ -204,16 +225,62 @@ impl KagiApp {
                 }
             }
         }
-        // The menu overlays that hold no focus of their own (Info, the
-        // branch picker) route their keys through the root, so a pending
-        // focus lands while they are open too.
+        // Focus-owning overlays retain their opener until they close; Info
+        // alone continues routing its keys through the root.
         if !menu_visible
             && !matches!(
                 self.menu_overlay,
-                Some(MenuOverlay::Settings | MenuOverlay::CommandPalette)
+                Some(
+                    MenuOverlay::Settings
+                        | MenuOverlay::CommandPalette
+                        | MenuOverlay::BranchPicker { .. }
+                )
             )
         {
             self.apply_pending_focus(window, cx);
+        }
+        if !menu_visible
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.active_modal_needs_alert_trap()
+        {
+            let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
+            if let Some(saved) = self.alert_return_focus.as_mut() {
+                if saved.trap != *focus {
+                    saved.trap = focus.clone();
+                }
+            }
+            if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
+                window.focus(focus, cx);
+            }
+        }
+        if !self.active_modal_needs_alert_trap() {
+            if let Some(saved) = self.alert_return_focus.take() {
+                let trapped =
+                    saved.trap.is_focused(window) || saved.trap.contains_focused(window, cx);
+                // A new named frame may intentionally reuse modal_focus.
+                // Its own focus is not a stranded alert focus.
+                let new_owner = self.active_modal_has_named_frame()
+                    || self.active_modal_input_focused(window, cx);
+                if trapped && !new_owner && !menu_visible {
+                    let opener = (!self.has_active_modal())
+                        .then_some(saved.opener)
+                        .flatten()
+                        .filter(|opener| {
+                            opener.screen == self.focus_screen()
+                                && self
+                                    .root_focus
+                                    .as_ref()
+                                    .is_some_and(|root| root.contains(&opener.focus, window))
+                        });
+                    if let Some(focus) = opener
+                        .map(|opener| opener.focus)
+                        .or_else(|| self.root_focus.clone())
+                    {
+                        window.focus(&focus, cx);
+                        self.restored_focus = Some(focus);
+                    }
+                }
+            }
         }
     }
 
@@ -258,11 +325,9 @@ impl KagiApp {
         }
     }
 
-    /// Another menu overlay replaces Settings (About / Keyboard Shortcuts /
-    /// the branch picker from the native menu, #976 review): the trap is
-    /// unmounted with it, so the focus must not stay there. Those overlays
-    /// own Escape through the root, so the focus goes to the root on the
-    /// next render pass ([`Self::sync_pending_focus`]).
+    /// A menu overlay or named task replaces Settings (Keyboard Shortcuts,
+    /// About, or the native-menu branch picker). Release the unmounted trap;
+    /// named dialogs take their own focus, and ordinary overlays use the root.
     pub(super) fn leave_settings_for_overlay(&mut self) {
         self.with_ui(|ui| ui.retire_issue_conversation_scope());
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {

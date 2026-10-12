@@ -127,16 +127,24 @@ impl KagiApp {
         {
             status_vm.chips.push(chip);
         }
-        let branch_text = SharedString::from(status_vm.branch.clone());
+        let branch_text = SharedString::from(status_vm.branch);
+        let branch_tip = branch_text.clone();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_status_branch_identity(branch_text.clone(), branch_tip.clone());
 
         // ── Last refresh time ──────────────────────────────────
         let refresh_label = if summary.last_refresh_secs > 0 {
             Some(
                 div()
+                    .id("status-refresh-time")
+                    .relative()
                     .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
-                    .child(SharedString::from(format_hms(summary.last_refresh_secs))),
+                    .child(SharedString::from(format_hms(summary.last_refresh_secs)))
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.child(super::e2e::measure_inside("status-refresh-time"))
+                    }),
             )
         } else {
             None
@@ -228,9 +236,19 @@ impl KagiApp {
             // Branch label
             .child(
                 div()
-                    .flex_shrink_0()
+                    .id("status-branch")
+                    .role(gpui::Role::Label)
+                    .aria_label(branch_text.clone())
+                    .relative()
+                    .flex_shrink(1.)
+                    .min_w(theme::scaled_px(60.))
+                    .truncate()
                     .text_color(rgb(theme().text_main))
-                    .child(branch_text),
+                    .tooltip(move |window, cx| Tooltip::new(branch_tip.clone()).build(window, cx))
+                    .child(branch_text)
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        el.child(super::e2e::measure_inside("status-branch"))
+                    }),
             );
 
         // Status chips (dirty bullet, staged/unstaged, conflict/stash,
@@ -251,10 +269,16 @@ impl KagiApp {
             };
             bar = bar.child(
                 div()
+                    .relative()
                     .ml(theme::scaled_px(margin))
                     .text_color(rgb(color))
                     .flex_shrink_0()
-                    .child(SharedString::from(chip.text.clone())),
+                    .child(SharedString::from(chip.text.clone()))
+                    .when(cfg!(feature = "gui-e2e"), |el| match chip.role {
+                        AheadBehind => el.child(super::e2e::measure_inside("status-ahead-behind")),
+                        UpstreamName => el.child(super::e2e::measure_inside("status-upstream")),
+                        _ => el,
+                    }),
             );
         }
         // Refresh time
@@ -271,9 +295,12 @@ impl KagiApp {
         // it one line at any width; `min_w_0` lets it shrink past its own text
         // so the Terminal / Operation Log icons stay reachable at 320 px. The
         // untruncated body is unchanged in the Operation Log and the oplog.
+        // A natural basis shares compression with branch identity instead
+        // of a zero-basis flex_1 leaving all remaining space to the branch.
         let mut message = div()
             .id("status-footer-msg")
-            .flex_1()
+            .flex_grow(1.)
+            .flex_shrink(1.)
             .min_w_0()
             .ml(theme::scaled_px(6.))
             .truncate()
@@ -295,6 +322,13 @@ impl KagiApp {
         bar = bar.child(message);
 
         // Icon buttons at the right end.
-        bar.child(icon_terminal).child(icon_oplog)
+        bar.child(
+            div()
+                .flex()
+                .items_center()
+                .flex_shrink_0()
+                .child(icon_terminal)
+                .child(icon_oplog),
+        )
     }
 }

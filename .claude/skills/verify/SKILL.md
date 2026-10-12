@@ -56,6 +56,15 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
+`status_bar_fit` mounts the production footer at 700×500 and 940×660 with
+1/120-character branch identity, status chips, refresh timer and Busy/Failed
+feedback. It checks full branch Tooltip/AX metadata, positive feedback width
+and nonoverlapping in-window panel controls across EN/JA, 100%/167%, both
+toolbar presentations and Apple themes. Probes are flow-neutral; renderer-fed
+metadata is not native VoiceOver delivery. Real hover/Tab and before/after
+screenshots remain Tier B.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:

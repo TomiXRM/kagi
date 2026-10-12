@@ -37,3 +37,10 @@ localized filter wording and clear affordance. Tab reaches it immediately;
 Cmd+F focuses it in Graph, and Escape clears it and returns to the local
 list's first available stop (the header when empty/collapsed). This does not
 change the window-global ownership in decision 3 or copy state on tab switches.
+
+Review clarification: only the gpui-kit Input carries TextInput; its immediate
+Group ancestor carries the EN/JA filter name. The pinned Input has no direct
+accessible-name API, so naming its focused inner node requires an upstream
+gpui-kit seam. Do not simulate that name with a second unfocused TextInput.
+The placeholder uses a language cache and updates the retained state before
+drawing after a language switch.

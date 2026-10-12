@@ -144,6 +144,26 @@ fn pane_keys(body: &[SidebarRow]) -> RowKeys {
 }
 
 impl KagiApp {
+    pub(super) fn sync_sidebar_filter_placeholder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lang = super::i18n::lang();
+        if self.sidebar.filter_placeholder_lang == Some(lang) {
+            return;
+        }
+        if let Some(input) = &self.sidebar.filter {
+            let placeholder = super::i18n::Msg::HomeGithubFilter.t();
+            input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder, window, cx);
+            });
+            #[cfg(feature = "gui-e2e")]
+            super::sidebar::record_filter_placeholder(placeholder);
+            self.sidebar.filter_placeholder_lang = Some(lang);
+        }
+    }
+
     /// Escape leaves the filter and restores the first local list stop.
     pub(super) fn clear_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(input) = &self.sidebar.filter {

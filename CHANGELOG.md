@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Sidebar filtering is a real localized Input from the first frame, reachable by Tab or Cmd+F without a preliminary click. Escape clears the filter and returns focus to the local list; the clear affordance and existing window-owned state remain intact. (#1309)
+  - Review: retain one TextInput role on the actual input with a named Group ancestor, rather than a second unfocused TextInput; language changes update the retained field's placeholder before drawing. Direct input naming needs a gpui-kit API not exposed by the pinned revision.
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)
 - Long status-bar branch names shrink to a zoom-scaled readable minimum and end ellipsis, with the complete name retained in the tooltip and accessibility label. Status chips and refresh time keep their natural widths; feedback truncates before the nonshrinking Terminal / Operation Log cluster in both toolbar presentations. (#1310)
   - Review: short branch names keep their measured natural widths, nonempty feedback reserves up to 80 reference pixels before branch identity within the actual remaining footer budget, and labels/tooltips/AX share the existing control-byte sanitizer without changing raw refs or klog.

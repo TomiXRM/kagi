@@ -239,6 +239,7 @@ impl Render for KagiApp {
         self.sync_pr_fields_input(window, cx);
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
+        self.sync_sidebar_filter_placeholder(window, cx);
         self.sync_pending_focus(window, cx);
         // GPUI can retain focus on an input whose modal was just unmounted.
         // Only a handle tracked by the last drawn dispatch tree may hold the
@@ -395,8 +396,7 @@ impl Render for KagiApp {
         // never rebuild the rows.
         //
         // ADR-0116: owner + `view_epoch` and navigator inputs gate the
-        // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
-        // so its current value is folded in every frame.
+        // O(all-refs) clone+collect.
         let sidebar_filter_text: String = self
             .sidebar
             .filter

@@ -28,6 +28,19 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
         }
     }
     assert!(reached, "Tab reaches the initial sidebar filter");
+    let (focused_input, ancestor_role, input_role, label) =
+        kagi::ui::sidebar::filter_semantics_for_e2e().expect("rendered filter semantics");
+    assert_eq!(
+        focused_input, input_id,
+        "semantics belong to the focused Input"
+    );
+    assert_eq!(input_role, gpui::Role::TextInput);
+    assert_eq!(
+        ancestor_role,
+        gpui::Role::Group,
+        "only the actual Input is a TextInput"
+    );
+    assert_eq!(label, kagi::ui::i18n::Msg::HomeGithubFilter.t());
     keys(cx, window, "f i l t e r - t a r g e t");
     paint(cx, window);
     cx.read(|cx| {
@@ -79,6 +92,36 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
         cx.read(|cx| app.read(cx).sidebar.filter.as_ref().unwrap().entity_id()),
         input_id
     );
+    assert_live_language(cx, &app, window, input_id);
     drop(input);
     unmount(cx, app, window);
+}
+
+fn assert_live_language(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: gpui::AnyWindowHandle,
+    input_id: gpui::EntityId,
+) {
+    use kagi::ui::i18n::{lang, Lang, Msg};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let previous = lang();
+    for language in [Lang::Ja, Lang::En, Lang::Ja, Lang::En] {
+        app.update(cx, |app, cx| app.set_lang(language, cx));
+        paint(cx, window);
+        let (id, group, role, label) =
+            kagi::ui::sidebar::filter_semantics_for_e2e().expect("rendered filter semantics");
+        assert_eq!(
+            (id, group, role),
+            (input_id, gpui::Role::Group, gpui::Role::TextInput)
+        );
+        assert_eq!(label, Msg::HomeGithubFilter.t());
+        assert_eq!(
+            kagi::ui::sidebar::filter_placeholder_for_e2e(),
+            Some(Msg::HomeGithubFilter.t()),
+            "language switch updates the retained Input's placeholder"
+        );
+    }
+    app.update(cx, |app, cx| app.set_lang(previous, cx));
+    paint(cx, window);
 }

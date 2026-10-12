@@ -233,6 +233,10 @@ mod conflict_file_selection;
 mod repo_health;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/analyze_a11y.rs"]
+mod analyze_a11y;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_polish_b.rs"]
 mod modal_polish_b;
 
@@ -2035,6 +2039,10 @@ mod macos {
                 "repo_health_proposal",
                 Box::new(crate::repo_health::scenario_repo_health_proposal),
             ),
+            ("analyze_a11y_controls", Box::new(crate::analyze_a11y::scenario_analyze_a11y_controls)),
+            ("analyze_a11y_risk", Box::new(crate::analyze_a11y::scenario_analyze_a11y_risk)),
+            ("analyze_a11y_truncation", Box::new(crate::analyze_a11y::scenario_analyze_a11y_truncation)),
+            ("analyze_a11y_help", Box::new(crate::analyze_a11y::scenario_analyze_a11y_help)),
             (
                 "refusal_reasons",
                 Box::new(crate::refusal_reasons::scenario_refusal_reasons),

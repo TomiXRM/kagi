@@ -161,3 +161,72 @@ first step rather than a cleanup afterwards.
   code surface in kagi must set the font itself. Known remaining duplicate:
   `src/ui/inspector.rs::change_badge` is a third copy of
   `kagi_ui_core::file_tree::status_badge` — flagged, not yet merged.
+
+## Amendment — 2026-10-12: immutable selectable historical content (#1264)
+
+Historical snapshots must not own an `InputState`. The previous independent
+code editor accepted input without dirty tracking or a persistence owner:
+its edits appeared real until switching revisions discarded them. The pinned
+gpui-kit Input has no read-only-but-selectable mode; disabling it also prevents
+the focus/selection needed for copy. Do not vendor or fork the widget for this
+surface.
+
+Use the existing selectable `TextView` for literal monospace code, with encoded
+content prepared once when the accepted snapshot is installed. No typing,
+paste, cut, delete, undo or IME mutation path exists, and no insertion caret is
+drawn. The working-tree Input and its save/dirty owner remain independent.
+
+The snapshot pane header exposes an EN/JA read-only indicator with historical
+file path and full revision SHA to accessibility and its tooltip. Two bounded
+rows keep the read-only title separate from the truncated identity and named
+`Open current` Button, rather than allowing a full SHA to consume the body
+height at high zoom. Open current returns to the already-owned live buffer,
+without reloading or discarding edits. No restore action exists on this Editor
+surface and none is added: historical content must not become a working-tree
+write outside the existing approved write lifecycle.
+
+Copy retains the pinned selectable TextView's existing clipboard semantics:
+the shared Root trims outer whitespace, including the final newline. Snapshot
+source content remains unchanged; no local clipboard override or second
+selection owner is introduced. Native coverage checks the copied literal code
+before and after editing attempts and separately compares the complete raw
+snapshot content.
+
+The snapshot body additionally has an `EditorSnapshot` key context, but key
+predicates alone are not a safety boundary: selecting a revision leaves root
+focus, and its header Button is outside the body. Save and repository Undo/Redo
+handlers therefore require foreground `WorkspaceMode::Editor` and
+`showing_history_commit()` (History right pane with a selected commit),
+independent of focus. A retained historical Editor behind PRs, Issues or a
+takeover must not block those surfaces' normal shortcuts. Native coverage
+switches from a selected historical commit to PRs and opens its real Undo modal.
+A dirty live buffer in the foreground historical Editor must remain
+dirty and unchanged on disk before and after clicking the reader. Native
+coverage retains a real undo-capable history entry and verifies no modal opens.
+Open current leaves historical state with the same live Input focused.
+
+For LF content, each literal block contains at most 32 source lines so
+TextView's existing `ListState` virtualizes chunks rather than laying out the
+whole file on every frame. Syntax highlighting is disabled above 128 KiB or
+2,048 lines; initial
+parsing/measurement is still proportional to source size. Native coverage
+copies the complete 20,000-line fixture, then compares median warm forced
+TextView redraws against a 102-line fixture (8× plus 15 ms allowance, not the
+196× source growth).
+Small-file highlighting follows the kit's block-local behavior; multiline syntax
+context is not carried across chunk boundaries.
+
+CRLF content deliberately uses a single literal block: Markdown consumes the CR
+before a closing fence, so splitting on line boundaries would silently replace
+those source separators with LF in copied text. The native 102-line CRLF leg
+compares complete clipboard content across the former 32-line boundaries.
+This correctness fallback does not provide bounded warm layout for large CRLF
+files; the 20,000-line performance claim applies to LF content only.
+
+Accepted presentation trade-off: this pinned selectable reader loses the former
+CodeEditor's line-number gutter and horizontal no-wrap scrolling; long lines
+wrap. Genuine immutability and the shared selection/copy owner take precedence
+over an editable-looking viewer or a fork. [#1275](https://github.com/TomiXRM/kagi/issues/1275)
+tracks restoring these capabilities, preferably by aligning a line-number
+column with source rows/chunks in the same `ListState`, never an independent
+scroll or selection owner.

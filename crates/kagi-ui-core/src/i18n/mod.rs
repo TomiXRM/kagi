@@ -1524,6 +1524,10 @@ pub enum Msg {
     /// Snapshot tab placeholder when the load finished but found nothing
     /// (e.g. the path didn't exist yet at that commit).
     EditorSnapshotUnavailable,
+    /// Historical content is selectable, never editable.
+    EditorSnapshotReadOnly,
+    /// Return from a historical revision to the live buffer.
+    EditorOpenCurrent,
 
     // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ────
     /// File/dir row: rename.
@@ -3890,6 +3894,10 @@ impl Msg {
             (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
             (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
             (Ja, EditorSnapshotUnavailable) => "この commit 時点のコンテンツは取得できません。",
+            (En, EditorSnapshotReadOnly) => "Snapshot — read only",
+            (Ja, EditorSnapshotReadOnly) => "スナップショット — 読み取り専用",
+            (En, EditorOpenCurrent) => "Open current",
+            (Ja, EditorOpenCurrent) => "現在のファイルを開く",
 
             // ── Editor Workspace tree context menu (T-WS-EDITOR-007) ──
             (En, EditorTreeRename) => "Rename…",

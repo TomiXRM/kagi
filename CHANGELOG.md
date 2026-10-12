@@ -7,6 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Changes file rows use stable path-and-section keyboard focus, one roving stop per section, arrows/Home/End and Enter/Space diff selection. Shift+F10/Menu opens the same file-action menu as right-click; keyboard menu navigation preserves the frozen owner/path and Discard's plan/confirmation with root Return cancelling. All three menu items fit inside the viewport, including at 167% zoom. (#1333–#1335)
+  - Both section scrollers reserve one complete row before the composer shrinks; high-zoom keyboard focus no longer lands in a shorter-than-row viewport. Tree metadata and flat accessibility names share the localized status/full-path label.
+  - Review: virtual-list measurement no longer replaces a remembered non-first-row Tab stop; expanded Generated/Agent artifact files retain TreeItem roles. File names are lazily cached by status/layout revision and language, and only the row containing focus (including its Stage/Unstage button) measures the section's reusable context-menu anchor, keeping menu placement current after resize or scrolling.
+  - Only the remembered row's Stage/Unstage button participates in Tab, preserving its keyboard action without preceding rows intercepting Shift+Tab out of the section. A surviving focused path is revealed when refresh reorders it.
 - Diff headers retain the full sanitized path in their tooltip and accessibility description without enlarging the title or displacing header controls. (#1336)
 - Toast feedback exposes a stable Status node named by the newest arrival; animation, hover and timer paints do not replace its arrival identity. The pinned GPUI API has no live-region/priority setter, so automatic VoiceOver delivery is not claimed. (#1337)
 - Running Clone exposes an operation-named EN/JA Status label with elapsed seconds; Hide remains non-cancelling and the existing completion/error feedback is unchanged. (#1341)

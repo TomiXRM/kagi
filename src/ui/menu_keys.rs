@@ -100,6 +100,32 @@ struct Inner {
 }
 
 impl MenuKeys {
+    /// Reconcile a compact overlay's independent focus lifecycle.
+    pub(crate) fn sync(
+        &self,
+        open: bool,
+        covered: bool,
+        fallback: Option<&FocusHandle>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if open && !self.0.open.replace(true) {
+            self.0.focus_first.set(true);
+            *self.0.return_to.borrow_mut() = window.focused(cx).or_else(|| fallback.cloned());
+        } else if !open && self.0.open.replace(false) {
+            let back = self.0.return_to.borrow_mut().take();
+            if window.focused(cx).is_none() || self.holds_focus(window) {
+                if let Some(target) = if covered {
+                    fallback.cloned()
+                } else {
+                    back.or_else(|| fallback.cloned())
+                } {
+                    target.focus(window, cx);
+                }
+            }
+        }
+    }
+
     /// Item `slot`'s focus handle.
     pub(crate) fn item(&self, slot: usize, cx: &App) -> FocusHandle {
         self.0.items.get(slot, cx)
@@ -279,6 +305,10 @@ pub(crate) enum Step {
 pub struct RowAnchor(Rc<Cell<Option<Bounds<Pixels>>>>);
 
 impl RowAnchor {
+    pub(crate) fn point(&self, window: &Window) -> Point<Pixels> {
+        menu_point(self, window)
+    }
+
     /// A probe filling its parent (painting nothing), recording the parent's
     /// bounds: give it to the selected row only.
     pub(crate) fn probe(&self) -> impl IntoElement {

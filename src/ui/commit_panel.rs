@@ -413,6 +413,8 @@ pub struct CommitPanelView {
     pub state: CommitPanelState,
     pub(crate) view_focus: super::keyboard_nav::TabFocus,
     pub(crate) controls_focus: super::keyboard_nav::FocusSlots,
+    pub(crate) unstaged_navigation: super::commit_panel_navigation::ChangesNavigation,
+    pub(crate) staged_navigation: super::commit_panel_navigation::ChangesNavigation,
     pub(crate) window_active: bool,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
@@ -510,6 +512,8 @@ impl CommitPanelView {
             state,
             view_focus: super::keyboard_nav::TabFocus::default(),
             controls_focus: super::keyboard_nav::FocusSlots::default(),
+            unstaged_navigation: Default::default(),
+            staged_navigation: Default::default(),
             pointer_root_focus: None,
             window_active: true,
             window_activation_subscription: None,
@@ -548,6 +552,8 @@ impl CommitPanelView {
     pub(crate) fn replace_state(&mut self, state: CommitPanelState) {
         self.state = state;
         self.tree_layout_for = None;
+        self.unstaged_navigation.invalidate();
+        self.staged_navigation.invalidate();
     }
 
     /// Whether a body line is a git trailer (`Key: value` with a hyphenated,

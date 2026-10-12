@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Editor Find/Replace controls expose localized Button names and hover help, with case/replacement toggled state. Keyboard traversal reaches the actions after the field; Escape and Close return focus to the same editable buffer without changing its query, undo history or Save boundary. (#1348)
+- Find/Replace controls in the Editor, conflict Result editor and Issue composer expose localized Button names and hover help, with case/replacement toggled state. Keyboard traversal reaches the actions after the field; Escape and Close return focus to the same editable buffer. Find Buttons consume inherited editing actions, and clicking bar padding focuses its query rather than allowing hidden code/draft edits. Query, undo history and guarded Save remain owned by the existing inputs. (#1348)
 - Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
 - Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
 - Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)

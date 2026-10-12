@@ -24,7 +24,6 @@
 
 mod blame;
 mod bottom_panel;
-mod find;
 pub mod markdown;
 mod pane_selectors;
 mod panes;
@@ -60,6 +59,7 @@ use kagi_domain::load_request::RequestSlot;
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
 use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::file_tree::{self, status_badge, TreeRow};
+use kagi_ui_core::find;
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};

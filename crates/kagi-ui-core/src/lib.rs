@@ -17,6 +17,7 @@ pub mod commit_row;
 pub mod diff_list;
 pub mod divider;
 pub mod file_tree;
+pub mod find;
 pub mod fonts;
 pub mod header_fit;
 pub mod i18n;

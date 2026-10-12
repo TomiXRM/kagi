@@ -235,15 +235,18 @@ scroll or selection owner.
 
 The editable code buffer keeps gpui-kit's built-in SearchPanel: Kagi does not
 introduce a second query, matcher, text input or replacement owner. The fork
-provides `InputState::search_labels` / `set_search_labels` and English defaults;
-Kagi supplies EN/JA `Msg` names, including live language changes without
-resetting the query or editor. Previous/Next, case, replacement disclosure,
+provides `InputState::search_labels` / `set_search_labels`: standalone replacement
+captions keep their existing rust_i18n translation and `Replace All` spelling,
+while the new default icon names are English. `kagi-ui-core::find` supplies EN/JA
+`Msg` names to every code-editor caller (Editor, Conflict Result and Issue body),
+including retained language changes without resetting query or buffer.
+Previous/Next, case, replacement disclosure,
 Close, Replace and Replace all remain real Buttons with their existing
 callbacks, icon geometry, unavailable states and theme styling. Accessible
 Button names and lazily constructed hover help share the localized text;
 case and replacement disclosure additionally expose `aria_toggled`.
 Both `gpui-component` and `gpui-component-assets` are pinned to the published
-TomiXRM/gpui-kit revision `3dad9fccedc6a858ecb5a0def1b044bfc5750976`; the
+TomiXRM/gpui-kit revision `ac2f8ceb088541251d0badca4b81743b5c745c65`; the
 production dependency graph contains no local development path patch.
 
 The search field precedes case/disclosure/navigation/Close in focus traversal;
@@ -257,11 +260,20 @@ the field's handle. Its Buttons' Return key suppresses the ancestor Input's
 Find Next binding so the normal GPUI keyboard click invokes the named action.
 When replacement can disable its focused action, focus goes to the replacement
 field rather than leaving Escape on an untracked control.
+Find Buttons and the bar consume inherited editing/selection/movement actions
+before they can reach the enclosing code Input. The case Button also guards
+its enclosing query Input. A mouse-down on unclaimed padding focuses the query,
+preserving either field's normal mouse selection and never selecting underlying
+code. The Issue body's existing capture-stage fenced-paste handler only runs
+when the body itself is focused, not when a descendant Find control is focused.
 Input shortcuts, IME handling, replacement history and the host-owned guarded
 Save path remain unchanged. No Git/backend dependency enters the Editor crate.
 
 Tier A observes assignments from the actual component renderer, native bounds,
 invoked Tooltip builders, rendered focus traversal and simulated activation.
 Its matrix is 940×660 / 1392×883, EN/JA, 100%/167%, Apple Light/Dark.
+The ownership regression records a before-FAIL when Button-focused Backspace
+clears the hidden buffer, then checks editing refusal and padding focus. Actual
+Issue-body and Conflict-Result legs check initial/live EN/JA names and help.
 Native VoiceOver, Full Keyboard Access and live IME are separate PM-owned
 Tier B checks, not claims from these renderer/TestDispatcher observations.

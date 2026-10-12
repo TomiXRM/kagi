@@ -101,6 +101,12 @@ traverses rendered stops; F19 records the control receiving the simulated key.
 Enter/Space exercise navigation, case matching, replacement disclosure,
 Replace/Replace all and Close. Escape returns to the owning code buffer,
 replacement stays unsaved/undoable, and a live locale switch retains the query.
+The ownership leg focuses the replacement-disclosure Button, then sends
+Select All / Backspace / Delete / word deletion / Paste / Cut / Undo / Redo /
+movement keys and asserts that the hidden code buffer never changes. It also
+checks that the case Button cannot edit its containing query and that a native
+padding click directs editing to Find. Actual Issue-body and Conflict-Result
+hosts check initial and retained EN/JA names/help, without replacing their inputs.
 The fork's `test-support` feature is enabled only by the Editor's `gui-e2e`
 feature; normal builds retain no probes. This is renderer/tooltip/simulated-input
 evidence, not physical Tab, Full Keyboard Access, VoiceOver or live IME.

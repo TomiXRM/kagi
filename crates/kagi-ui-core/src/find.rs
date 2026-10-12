@@ -1,8 +1,8 @@
-//! Locale adapter for the component-owned Find/Replace bar; no second matcher.
+//! Locale adapter for every component-owned Find/Replace bar; no second matcher.
+use crate::i18n::Msg;
 use gpui_component::input::SearchPanelLabels;
-use kagi_ui_core::i18n::Msg;
 
-pub(super) fn labels() -> SearchPanelLabels {
+pub fn labels() -> SearchPanelLabels {
     SearchPanelLabels {
         previous: Msg::EditorFindPrevious.t().into(),
         next: Msg::EditorFindNext.t().into(),

@@ -17,9 +17,9 @@ use std::{
 
 const FILE: &str = "find.rs";
 const TEXT: &str = "alpha Alpha alpha alpha\n";
-const ICONS: [&str; 5] = ["case", "mode", "prev", "next", "close"];
+pub(super) const ICONS: [&str; 5] = ["case", "mode", "prev", "next", "close"];
 
-fn probe(cx: &VisualTestAppContext, input: &Entity<InputState>) -> SearchPanelProbe {
+pub(super) fn probe(cx: &VisualTestAppContext, input: &Entity<InputState>) -> SearchPanelProbe {
     cx.read(|cx| {
         input
             .read(cx)
@@ -48,7 +48,7 @@ fn expected(lang: Lang, id: &str) -> &'static str {
     }
 }
 
-fn names_and_help(
+pub(super) fn names_and_help(
     cx: &mut VisualTestAppContext,
     input: &Entity<InputState>,
     window: AnyWindowHandle,
@@ -86,7 +86,7 @@ fn names_and_help(
     }
 }
 
-fn focus_next(
+pub(super) fn focus_next(
     cx: &mut VisualTestAppContext,
     input: &Entity<InputState>,
     window: AnyWindowHandle,
@@ -103,7 +103,7 @@ fn focus_next(
     );
 }
 
-fn close_and_return(
+pub(super) fn close_and_return(
     cx: &mut VisualTestAppContext,
     input: &Entity<InputState>,
     window: AnyWindowHandle,
@@ -126,6 +126,38 @@ fn close_and_return(
     );
 }
 
+fn protected_edit_keys(
+    cx: &mut VisualTestAppContext,
+    input: &Entity<InputState>,
+    window: AnyWindowHandle,
+) {
+    for key in [
+        "cmd-a",
+        "backspace",
+        "delete",
+        "alt-backspace",
+        "alt-delete",
+        "cmd-v",
+        "cmd-x",
+        "cmd-z",
+        "cmd-shift-z",
+        "left",
+        "right",
+        "shift-left",
+        "shift-right",
+        "home",
+        "end",
+    ] {
+        keys(cx, window, key);
+        paint(cx, window);
+        assert_eq!(
+            cx.read(|cx| input.read(cx).value().to_string()),
+            TEXT,
+            "Find Button owns {key}; it must not edit the hidden code buffer"
+        );
+    }
+}
+
 fn exercise(
     cx: &mut VisualTestAppContext,
     input: &Entity<InputState>,
@@ -144,11 +176,19 @@ fn exercise(
     assert_eq!(probe(cx, input).controls["case"].toggled, Some(false));
     assert_eq!(probe(cx, input).controls["mode"].toggled, Some(false));
     focus_next(cx, input, window, "case");
+    keys(cx, window, "cmd-a backspace");
+    paint(cx, window);
+    assert_eq!(
+        probe(cx, input).match_count,
+        4,
+        "case Button must not edit its containing query Input"
+    );
     keys(cx, window, "space");
     paint(cx, window);
     assert_eq!(probe(cx, input).match_count, 3);
     assert_eq!(probe(cx, input).controls["case"].toggled, Some(true));
     focus_next(cx, input, window, "mode");
+    protected_edit_keys(cx, input, window);
     focus_next(cx, input, window, "prev");
     keys(cx, window, "enter");
     paint(cx, window);
@@ -158,6 +198,37 @@ fn exercise(
     paint(cx, window);
     assert_eq!(probe(cx, input).match_index, 0);
     focus_next(cx, input, window, "close");
+    close_and_return(cx, input, window);
+}
+
+fn padding_ownership(
+    cx: &mut VisualTestAppContext,
+    input: &Entity<InputState>,
+    window: AnyWindowHandle,
+) {
+    keys(cx, window, "cmd-f");
+    paint(cx, window);
+    focus_next(cx, input, window, "case");
+    focus_next(cx, input, window, "mode");
+    let panel = probe(cx, input).bounds["panel"];
+    let padding = panel.origin + gpui::point(px(1.), px(1.));
+    cx.simulate_mouse_move(window, padding, None, Modifiers::none());
+    cx.simulate_click(window, padding, Modifiers::none());
+    keys(cx, window, "cmd-a backspace");
+    paint(cx, window);
+    assert_eq!(
+        probe(cx, input).match_count,
+        0,
+        "padding click focuses the real Find field"
+    );
+    cx.simulate_keystrokes(window, "alpha");
+    paint(cx, window);
+    assert_eq!(probe(cx, input).match_count, 3);
+    assert_eq!(
+        cx.read(|cx| input.read(cx).value().to_string()),
+        TEXT,
+        "padding never edits the hidden buffer"
+    );
     close_and_return(cx, input, window);
 }
 
@@ -306,6 +377,7 @@ fn leg(
     let input = cx.read(|cx| editor.read(cx).editor.clone().unwrap());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         exercise(cx, &input, window, lang);
+        padding_ownership(cx, &input, window);
         replacement(cx, &input, window, lang);
         retained_locale_and_close(cx, &app, &input, window, lang);
         assert_eq!(
@@ -337,6 +409,7 @@ pub fn scenario_editor_find_controls_a11y(cx: &mut VisualTestAppContext) {
             }
         }
     }
+    crate::editor_find_hosts::exercise(cx);
     theme::set_active(&old_theme);
     cx.update(theme::sync_gpui_component_theme);
     eprintln!("[gui-e2e] PASS editor_find_controls_a11y");

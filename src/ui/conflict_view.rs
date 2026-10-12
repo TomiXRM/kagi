@@ -966,6 +966,11 @@ impl ConflictView {
     /// mode signature changes, so an in-progress edit is never clobbered); in Edit
     /// mode it instead *pulls* the editor's text into the buffer.
     pub fn sync_editor_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(inputs) = &self.editor_inputs {
+            inputs.result.update(cx, |state, cx| {
+                state.set_search_labels(kagi_ui_core::find::labels(), cx);
+            });
+        }
         // Only relevant while editing a content file with a hunk model.
         let Some(path) = self.editing.clone() else {
             self.editor_inputs = None;
@@ -1037,6 +1042,7 @@ impl ConflictView {
             let result = cx.new(|cx| {
                 InputState::new(window, cx)
                     .code_editor(lang)
+                    .search_labels(kagi_ui_core::find::labels())
                     .line_number(true)
             });
             self.editor_inputs = Some(super::ConflictEditorInputs {

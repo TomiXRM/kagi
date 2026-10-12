@@ -375,6 +375,10 @@ mod editor_tabs;
 mod editor_find;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_find_hosts.rs"]
+mod editor_find_hosts;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
 mod pr_threads;
 

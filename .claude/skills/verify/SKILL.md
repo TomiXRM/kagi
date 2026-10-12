@@ -107,6 +107,19 @@ real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
 both ends with the keyboard, verify the selected fill on hover and the
 dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
+For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
+`graph_columns_fit` reproduces the default-column 940×660/167% zero-width
+subject, then requires a scaled 120px subject minimum, contained author/time,
+native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
+It pins the before x positions at 1392×883/100%, preserves saved width keys
+and preferred widths through resize/zoom, and leaves existing divider-drag,
+subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
+Before: subject x=886.5 width=0, author ends at 1031 and time starts there.
+After: subject x=547 width=180.5; author x=727.5..850 and time x=850..922.
+Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
+back and forth, drag both column dividers, relaunch to check saved preferences,
+and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
+
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
 across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and

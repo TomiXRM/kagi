@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph columns compress before commit subjects at narrow/high-zoom widths: subjects retain a 120-reference-pixel minimum, authors shrink with middle ellipsis and full-name tooltips, and compact times remain visible inside the row. Header, commit, WIP and stash columns share fitted widths without overwriting saved divider preferences; wide-window positions stay unchanged. (#1317)
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)
 - Long status-bar branch names shrink to a zoom-scaled readable minimum and end ellipsis, with the complete name retained in the tooltip and accessibility label. Status chips and refresh time keep their natural widths; feedback truncates before the nonshrinking Terminal / Operation Log cluster in both toolbar presentations. (#1310)
   - Review: short branch names keep their measured natural widths, nonempty feedback reserves up to 80 reference pixels before branch identity within the actual remaining footer budget, and labels/tooltips/AX share the existing control-byte sanitizer without changing raw refs or klog.

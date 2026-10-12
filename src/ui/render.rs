@@ -296,17 +296,6 @@ impl Render for KagiApp {
         // ONTO the `CommitPanelView` entity (`sync_inputs`), run from the entity's
         // own render path. The parent no longer reads the child's input each frame.
 
-        // Graph horizontal scroll: clamp against the current repo's lane
-        // count so the offset self-heals after tab switches and column
-        // resizes.
-        {
-            let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
-            // W28: clamp against the scaled lane pitch (matches scroll_graph_by).
-            let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
-            if self.ui().graph_scroll_x > max {
-                self.with_ui(|ui| ui.graph_scroll_x = max);
-            }
-        }
         // Keep the paging action outside the ListBox: it is a Button, not an
         // Option in the virtual commit list.
         let commit_limit = self.ui().commit_limit;
@@ -517,11 +506,6 @@ impl Render for KagiApp {
             toolbar_state.undo_on = false;
         }
         let status_summary = self.view().status_summary.clone();
-
-        // T030: inner column widths for the commit list. The sidebar's own
-        // width is read by its renderer (`render_sidebar_pages`).
-        let badge_col_w = self.badge_col_w;
-        let graph_col_w = self.graph_col_w;
 
         // T028: clone scroll handle for wiring into uniform_list via track_scroll.
         let commit_scroll_handle = self.ui().commit_scroll_handle.clone();
@@ -811,8 +795,6 @@ impl Render for KagiApp {
                     selected,
                     detail,
                     is_dirty,
-                    badge_col_w,
-                    graph_col_w,
                     commit_scroll_handle,
                     commit_panel_open,
                     commit_panel.clone(),

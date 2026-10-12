@@ -3320,6 +3320,10 @@ mod macos {
                 "graph_column_divider_hidden",
                 Box::new(crate::graph_column_divider::scenario_graph_column_divider_hidden),
             ),
+            (
+                "graph_columns_fit",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_fit),
+            ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",

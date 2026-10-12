@@ -79,6 +79,7 @@ pub mod pr_mode;
 pub mod pr_nav;
 pub mod pr_page;
 pub use kagi_ui_core::file_tree; // ADR-0121: was a shim file
+mod graph_columns;
 mod graph_solo;
 pub mod graph_squash;
 pub mod graph_view;
@@ -1718,7 +1719,12 @@ impl KagiApp {
 
     /// Apply a horizontal wheel delta to the graph column scroll offset.
     /// Vertical deltas are ignored (the commit list owns vertical scroll).
-    fn scroll_graph_by(&mut self, delta: &gpui::ScrollDelta, cx: &mut Context<Self>) {
+    fn scroll_graph_by(
+        &mut self,
+        delta: &gpui::ScrollDelta,
+        graph_col_w: f32,
+        cx: &mut Context<Self>,
+    ) {
         let dx = match delta {
             gpui::ScrollDelta::Pixels(p) => f32::from(p.x),
             // W28: one "line" step = one zoom-scaled lane pitch.
@@ -1730,7 +1736,7 @@ impl KagiApp {
         let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
         // W28: scroll content extent uses the scaled lane pitch so a fully
         // zoomed graph can still be scrolled to reveal its rightmost lanes.
-        let max = (lane_count as f32 * graph_view::lane_w() - self.graph_col_w).max(0.0);
+        let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.0);
         let current = self.ui().graph_scroll_x;
         let next = (current - dx).clamp(0.0, max);
         if (next - current).abs() > 0.1 {

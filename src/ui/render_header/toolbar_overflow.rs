@@ -132,8 +132,13 @@ impl Layout {
                     }
                     + 28. * scale;
             }
+            let workspace_minimum = if visible & 0x3f00 != 0 {
+                100. * scale
+            } else {
+                0.
+            };
             repo + repo_spacing
-                + 2. * (workspace + workspace_spacing + overflow).max(100. * scale)
+                + 2. * (workspace + workspace_spacing + overflow).max(workspace_minimum)
                 // Frame padding, native lights (unscaled) and trailing +.
                 + 24. * scale
                 + if cfg!(target_os = "macos") { 80. - 12. * scale } else { 0. }
@@ -144,9 +149,9 @@ impl Layout {
             return 0;
         }
         let mut hidden = 0;
-        // Repository commands collapse first; preserve the selected workspace
-        // until every other command has moved to the menu.
-        for i in [13, 7, 6, 5, 4, 3, 2, 1, 0, 12, 11, 10, 9, 8] {
+        // Git commands outlast preferences and inactive workspace modes; only
+        // the selected workspace mode remains after Pull has overflowed.
+        for i in [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0] {
             if i == selected || present & (1 << i) == 0 {
                 continue;
             }
@@ -647,6 +652,67 @@ impl gpui::RenderOnce for OverflowMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn toolbar_overflow_priority_preserves_git_until_inactive_modes_hide() {
+        for icon_only in [true, false] {
+            for language in [i18n::Lang::En, i18n::Lang::Ja] {
+                for scale in [1_f32, 1.67] {
+                    for selected in 8..=11 {
+                        let key = (icon_only, language, scale.to_bits());
+                        let mut layout = Layout::default();
+                        layout.measure(None, 3000. * scale, key);
+                        for index in 0..16 {
+                            layout.measure(Some(index), 60., key);
+                        }
+                        let present = 0x3fff;
+                        let mut order = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+                        let position = order.iter().position(|i| *i == selected).unwrap();
+                        order[position..].rotate_left(1);
+                        let mut stages = 0_u16;
+                        for available in (1..=3000).rev() {
+                            layout.measure(None, available as f32 * scale, key);
+                            let hidden = layout.hidden(present, selected, key);
+                            let count = hidden.count_ones() as usize;
+                            let expected = order[..count]
+                                .iter()
+                                .fold(0, |mask, index| mask | (1 << index));
+                            assert_eq!(hidden, expected, "{key:?}/{selected}/{available}");
+                            stages |= 1 << count;
+                        }
+                        assert_eq!(stages, 0x7fff, "all 15 stages must be reachable");
+                        for available in 1..=3000 {
+                            layout.measure(None, available as f32 * scale, key);
+                            let hidden = layout.hidden(present, selected, key);
+                            let count = hidden.count_ones() as usize;
+                            assert_eq!(
+                                hidden,
+                                order[..count]
+                                    .iter()
+                                    .fold(0, |mask, index| mask | (1 << index)),
+                                "expansion must restore the same priority"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn toolbar_overflow_releases_empty_workspace_reservation_for_git() {
+        let key = (true, i18n::Lang::En, 1_f32.to_bits());
+        let mut layout = Layout::default();
+        layout.measure(None, 560., key);
+        for index in 0..IDS.len() {
+            layout.measure(Some(index), 36., key);
+        }
+        assert_eq!(
+            layout.hidden(0x10ff, usize::MAX, key),
+            1 << 12,
+            "once Settings hides, every Git command fits without an empty 100px side reservation"
+        );
+    }
 
     #[test]
     fn toolbar_overflow_keeps_fit_while_new_style_is_measuring() {

@@ -339,8 +339,8 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                         && zoom == 1.67
                         && display == settings::ToolbarDisplay::IconAndText
                     {
-                        // Force the secondary overflow tier too; normal matrix
-                        // widths may fit every workspace control after actions collapse.
+                        // Keep a strongly constrained viewport to exercise every
+                        // hidden workspace action independently of natural captions.
                         resize_overflow_window(cx, win, 480.);
                         for id in ids {
                             e2e::clear_control_bounds(win.window_id(), id);
@@ -640,6 +640,9 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                         "open overflow must not render its trigger tooltip"
                     );
                     resize_overflow_window(cx, win, 480.);
+                    for id in IDS {
+                        e2e::clear_control_bounds(win.window_id(), id);
+                    }
                     for _ in 0..4 {
                         frame(cx, win);
                     }
@@ -651,16 +654,12 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                             <= px(448.),
                         "open menu must refresh its cap after shrinking to 480px"
                     );
-                    resize_overflow_window(cx, win, width);
-                    for _ in 0..4 {
-                        frame(cx, win);
-                    }
                     assert!(
                         e2e::control_bounds(win.window_id(), "tb-overflow-shortcut-5").is_some(),
                         "Undo retains its actual shortcut"
                     );
                     let unavailable = e2e::control_bounds(win.window_id(), "tb-overflow-item-5")
-                        .expect("Undo overflows before workspace modes");
+                        .expect("Undo belongs in the explicitly constrained 480px menu");
                     cx.simulate_click(win, unavailable.center(), gpui::Modifiers::none());
                     cx.run_until_parked();
                     assert!(cx.read(|cx| matches!(&app.read(cx).status_footer,
@@ -736,8 +735,8 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                     frame(cx, win);
                     if display == settings::ToolbarDisplay::IconAndText {
                         assert!(
-                            !visible[2],
-                            "Create Branch belongs in the constrained caption menu"
+                            e2e::control_bounds(win.window_id(), "tb-branch").is_none(),
+                            "Create Branch belongs in the explicitly constrained caption menu"
                         );
                         let item =
                             e2e::control_bounds(win.window_id(), "tb-overflow-item-2").unwrap();
@@ -794,7 +793,7 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
     }
 }
 
-fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
+pub(crate) fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     cx.update_window(win, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -907,8 +906,13 @@ fn hover_overflow(
     frame(cx, win);
 }
 
-fn resize_overflow_window(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f32) {
-    let wanted = size(px(width), px(660.));
+pub(crate) fn resize_overflow_window(
+    cx: &mut VisualTestAppContext,
+    win: AnyWindowHandle,
+    width: f32,
+) {
+    // AppKit rounds native frame dimensions to whole logical pixels.
+    let wanted = size(px(width.round()), px(660.));
     cx.update_window(win, |_, window, _| window.resize(wanted))
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);

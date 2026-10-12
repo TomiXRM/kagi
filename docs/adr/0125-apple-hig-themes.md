@@ -442,9 +442,9 @@ and wide-window geometry authoritative rather than estimating text advances.
 The row clips intermediate paint while measurements settle.
 
 Fitting reserves existing group spacing and the equal side columns, with
-room for Refresh and the repository identity. Repository commands overflow
-first; workspace-mode/Analyze/Settings controls collapse last, and the selected
-workspace control is the last candidate. Hidden commands omit their interactive
+room for Refresh and the repository identity. The original repository-first
+collapse priority is superseded by #1316 below; the selected workspace control
+remains the last candidate. Hidden commands omit their interactive
 subtree entirely: GPUI still registers Tab stops when an interactive element
 merely has `display: none`. Growing the row restores commands from cached
 natural widths. The trailing » reuses the header's
@@ -1001,4 +1001,51 @@ not an exact native material match. No user setting, pointer or foreground
 was changed. See Apple's [NSVisualEffectView](https://developer.apple.com/documentation/appkit/nsvisualeffectview)
 and its [popover](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/popover) /
 [menu](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/menu) materials.
+
+
+## Amendment — 2026-10-12: Git-first narrow-toolbar priority (#1316)
+
+This dense application-command surface reuses the existing measured fit cache,
+header buttons and gpui-kit overflow menu; it adds no control or operation path.
+The reference is Finder's secondary-toolbar overflow, adapted to Kagi's Git GUI
+role: repository commands take priority over preferences and inactive navigation.
+
+On shrinking, collapse Update → Settings → non-selected Analyze, Editor, PRs,
+Graph → Terminal → Redo → Undo → Pop → Stash → Branch → Push → Pull → selected
+workspace mode. Absent controls and the selected mode are skipped in the early
+mode tier. Widening recomputes the same priority from cached natural widths,
+restoring controls in reverse. This supersedes #1210's repository-first order.
+When no workspace item remains visible, icon-mode fitting drops its 100-reference-
+pixel symmetric-column floor while retaining actual overflow width and gaps;
+the existing truncating repository/branch summary remains visible. Caption-mode
+measured identity/workspace minimums and wide-window centering are unchanged.
+
+Overflow menu order, Button/MenuItem roles, localized names, unavailable reasons,
+action-bound shortcuts, keyboard focus and dispatch remain the #1252/#1217
+contract. Hidden modes stay reachable through the existing keyboard shortcuts,
+View menu and command palette as well as ». Rest/hover/pressed/focus-visible,
+selected and disabled states retain their existing owners; no new loading,
+error or safety lifecycle state is introduced.
+
+Tier A `toolbar_overflow_priority` uses native width reductions and reverse
+expansion with an Update offer, all four modes and Graph selected, across EN/JA,
+100%/167% and Apple Light/Dark. Pure fit tests cover every selected mode and
+both presentation modes, plus the empty-workspace reservation. Existing toolbar
+fit, overflow, accessibility and workspace-mode scenarios retain their contracts.
+Tier B target: inspect the narrow toolbar, readable repository/branch summary
+and » in EN/JA at both zooms and Apple themes; verify hidden-mode shortcuts and
+palette activation in the real application. Native bounds are not VoiceOver or
+real-window visual evidence.
+
+Regression evidence: the unchanged native priority oracle failed before the
+policy change at Apple Light / EN / 100% / width 752: hidden mask `8320`
+(Update + Terminal), expected `12288` (Update + Settings). After the cutover
+it passes all eight language/theme/zoom cells, including final Pull/Push and
+selected-Graph stages and reverse restoration. Existing `toolbar_overflow`
+retains its original menu-membership/shortcut/AX/focus assertions at 940px,
+then uses an explicitly constrained 480px viewport for Undo-reason, Terminal
+focus and Branch activation: these commands no longer necessarily overflow at
+940px under the new policy. Native resize requests use whole logical pixels,
+matching AppKit's rounding rather than waiting for an impossible fractional
+viewport at 167% zoom.
 

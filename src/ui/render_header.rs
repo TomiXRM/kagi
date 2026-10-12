@@ -1051,6 +1051,7 @@ impl KagiApp {
                                         .role(gpui::Role::Button)
                                         .aria_label(chip_text.clone())
                                         .relative()
+                                        .child(super::e2e::measure_inside("tb-update"))
                                         .flex_shrink_0()
                                         .child(toolbar_overflow::probe(
                                             layout_app.clone(),

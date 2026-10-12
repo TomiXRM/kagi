@@ -25,6 +25,10 @@ use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 /// Maximum entries kept in the in-memory ring buffer.
 const OP_ENTRIES_MAX: usize = 200;
 
+// Keyboard ownership and renderer-fed accessibility observations.
+#[path = "oplog_keyboard.rs"]
+pub mod keyboard;
+
 /// Self-contained operation log ring buffer + panel UI state.
 pub struct OpLogPanel {
     entries: VecDeque<OpLogEntry>,
@@ -42,24 +46,37 @@ pub struct OpLogPanel {
     reflog: Option<(EntryKey, ReflogDetail)>,
     /// Bumped per request; a read that finishes under an older value is dropped.
     reflog_generation: u64,
+    pub(super) keyboard: keyboard::OpLogKeyboard,
 }
 
 /// Which entry a reflog detail belongs to. `id` alone is `0` for an attempted
 /// entry whose append failed, so time and op name complete it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EntryKey {
+pub(super) struct EntryKey {
     id: u64,
     timestamp: i64,
     op: String,
+    repo: String,
+    worktree: Option<String>,
 }
 
 impl EntryKey {
-    fn of(entry: &OpLogEntry) -> Self {
+    pub(super) fn of(entry: &OpLogEntry) -> Self {
         Self {
             id: entry.id,
             timestamp: entry.timestamp,
             op: entry.op.clone(),
+            repo: entry.repo.clone(),
+            worktree: entry.worktree.clone(),
         }
+    }
+
+    fn matches(&self, entry: &OpLogEntry) -> bool {
+        self.id == entry.id
+            && self.timestamp == entry.timestamp
+            && self.op == entry.op
+            && self.repo == entry.repo
+            && self.worktree == entry.worktree
     }
 }
 
@@ -154,6 +171,7 @@ impl OpLogPanel {
             scroll_handle: new_oplog_list_state(),
             reflog: None,
             reflog_generation: 0,
+            keyboard: keyboard::OpLogKeyboard::default(),
         }
     }
 
@@ -163,6 +181,12 @@ impl OpLogPanel {
         if self.entries.len() > OP_ENTRIES_MAX {
             self.entries.pop_back();
         }
+        self.keyboard.invalidate();
+        // A new receipt changes positions, not the identity of the open detail.
+        self.expanded = self.expanded.and_then(|i| {
+            let shifted = i + 1;
+            (shifted < self.entries.len()).then_some(shifted)
+        });
     }
 
     /// Read-only access to the entries (for rendering).
@@ -284,6 +308,36 @@ impl OpLogPanel {
             return;
         };
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(entry_clipboard_text(entry)));
+    }
+
+    /// Resolve a drawn disclosure by identity after a receipt shifts indices.
+    pub(super) fn select_entry(&mut self, key: &EntryKey, cx: &mut gpui::Context<Self>) {
+        if let Some(i) = self.entries.iter().position(|entry| key.matches(entry)) {
+            self.select_row(i, cx);
+        }
+    }
+
+    pub(super) fn copy_entry_key(&self, key: &EntryKey, cx: &mut gpui::App) {
+        if let Some(i) = self.entries.iter().position(|entry| key.matches(entry)) {
+            self.copy_entry(i, cx);
+        }
+    }
+
+    pub(super) fn keyboard_rows(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> super::keyboard_nav::RowList {
+        self.keyboard
+            .rows(&self.entries, self.scroll_handle.clone(), window, cx)
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn focused_entry_for_e2e(&self, window: &gpui::Window) -> Option<usize> {
+        let key = self.keyboard.focused(window)?;
+        self.entries
+            .iter()
+            .position(|entry| keyboard::entry_key(entry) == key)
     }
 }
 

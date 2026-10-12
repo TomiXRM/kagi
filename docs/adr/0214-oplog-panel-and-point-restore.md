@@ -306,3 +306,19 @@ entry は outcome が確定した時点(ref が動いた後)に時刻を刻む�
   - #953 記録外と記録済みの交錯: 実 reflog を有効にした tag と branch の両方で、対象の A→外部 B→記録済み C を作る。記録に残る B→C が実際に観測されたことを確かめ、それでも計画と preflight が RefChangedOutsideRecord で拒否し、ref が C に留まる。ref 名だけに戻す変異では両 fixture が落ちる。
   - kagi-git integration: absorb は作業 branch の移動を、merged branch の一括削除は削除(new = 無し)を `ref_moves` に記録する。
 - 変異確認: Solo の全行を使わない → 消える数 0、PR head を根にしない → 3、上限を外す → 箱が 957px、Copy all の clipboard を空にする → Tier A が落ちる。NotLoaded の見出しを `preview_heading(0)` に戻す・entry コピーから移動を外す → unit、absorb / 一括削除の記録を `None` にする → integration が落ちる。focus の変更は現状の入口では観測できないためテストなし(実ボタンのクリックで root が focus を得ることを確認した)。
+
+## Amendment (2026-10-12): entry-keyed keyboard disclosure (#1300)
+
+Operation Log keeps the variable-height list and the selectable-detail threshold.
+The existing `RowFocus` / `RowList` owner provides one roving summary Tab stop,
+arrow/Home/End movement and an inset focus-visible ring. Each summary is a named
+EN/JA Button with expanded state and absolute set position; Enter/Space uses the
+same single-entry expansion/reflog path as a click. The quiet pinned Copy Button
+becomes a Tab stop on the expanded row and copies the entire original entry text.
+Disclosure and Copy callbacks resolve the rendered entry's identity (including
+repository/worktree), never a captured list index. A newly pushed receipt shifts
+the expanded identity and retained focus rather than displaying or copying its
+neighbour. Existing callers that deliberately collapse on a receipt still do so.
+Tier A records installed attributes and dispatches keys; native Tab/VoiceOver
+delivery remains a separate Tier B observation.
+

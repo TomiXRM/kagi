@@ -53,7 +53,7 @@ const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 ///
 /// App-global (not per-tab), preserved across repository reloads. `new()`
 /// restores the five-pane weights and collapsed sections from settings once;
-/// the filter `InputState` is created lazily on first focus.
+/// the filter `InputState` is created with the window before its first frame.
 pub struct SidebarState {
     /// Current sidebar width in pixels (T023: user-resizable).
     pub width: f32,

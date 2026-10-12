@@ -594,6 +594,13 @@ pub fn build_kagi_entity(
 ) -> Entity<KagiApp> {
     let kagi: Entity<KagiApp> = cx.new(|cx: &mut gpui::Context<KagiApp>| {
         app_state.root_focus = Some(cx.focus_handle());
+        app_state.sidebar.filter = Some(cx.new(|cx| {
+            gpui_component::input::InputState::new(window, cx)
+                .placeholder(super::i18n::Msg::HomeGithubFilter.t())
+        }));
+        if let Some(input) = &app_state.sidebar.filter {
+            cx.observe(input, |_, _, cx| cx.notify()).detach();
+        }
         app_state.toast_stack = Some(cx.new(|_| toast_stack::ToastStack::new()));
         if let Some(stack) = app_state.toast_stack.as_ref() {
             cx.subscribe_in(

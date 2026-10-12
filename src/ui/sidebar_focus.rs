@@ -144,6 +144,33 @@ fn pane_keys(body: &[SidebarRow]) -> RowKeys {
 }
 
 impl KagiApp {
+    /// Escape leaves the filter and restores the first local list stop.
+    pub(super) fn clear_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(input) = &self.sidebar.filter {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.sidebar.focus.headers.get(0, cx).focus(window, cx);
+        self.sidebar.focus.open_first[0] = true;
+        cx.notify();
+    }
+
+    pub(super) fn focus_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.home_in_front()
+            || self.conflict_body_visible()
+            || self.front_layer(cx) != super::front_layer::FrontLayer::None
+            || self.workspace_mode() != super::workspace_mode::WorkspaceMode::Graph
+        {
+            return;
+        }
+        self.sidebar.visible = true;
+        if let Some(input) = &self.sidebar.filter {
+            input.update(cx, |input, cx| input.focus(window, cx));
+        }
+        cx.notify();
+    }
+}
+
+impl KagiApp {
     /// Each workspace frame, as the body is laid out: every pane's Tab stop
     /// and rows. `front` is whether this frame draws the panes — the sidebar
     /// is shown (or still closing) and on its Graph page. Decided from this

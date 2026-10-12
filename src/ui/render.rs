@@ -642,6 +642,11 @@ impl Render for KagiApp {
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
+            .on_action(
+                cx.listener(|this, _: &super::FocusSidebarFilter, window, cx| {
+                    this.focus_sidebar_filter(window, cx);
+                }),
+            )
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             .on_action(

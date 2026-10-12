@@ -81,8 +81,12 @@ latest name for a missing pre-rename path. The operation label stays English in
 EN/JA under ADR-0048.
 
 The host probes file availability/binary content off the UI thread before
-switching workspace. Missing and binary files show the existing localized Editor
-reason in a toast while History and any retained Editor stay unchanged. On
+switching workspace. PNG/JPEG/WebP/GIF pass the same magic-byte detector used
+by the Editor hook, applied to the already-read 8 KiB prefix without allocating
+or decoding a second image. Unsupported binary files retain the existing
+localized Editor reason. Missing pre-rename names explain the rename and name
+the current path in EN/JA; missing current names retain the deleted-file reason.
+All refusals keep History and any retained Editor unchanged. On
 success, reveal or create the Editor through `show_editor_mode` and reuse
 `open_tab` so dirty buffers survive and retained PR/Issues modes step aside.
 History closes as part of that successful workspace handoff. Both request

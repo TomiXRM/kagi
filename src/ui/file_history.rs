@@ -244,6 +244,13 @@ impl KagiApp {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) {
+        let Some(pane) = self.ui().file_history.as_ref() else {
+            return;
+        };
+        let renamed_to = {
+            let pane = pane.read(cx);
+            (pane.data.rel_path != path).then(|| pane.data.rel_path.clone())
+        };
         let full_path = repo_path.join(&path);
         let task = cx.background_spawn(async move {
             use std::io::Read;
@@ -262,7 +269,10 @@ impl KagiApp {
                 }
                 count += read;
             }
-            if kagi_domain::checklist::content_looks_binary(&bytes[..count]) {
+            let prefix = &bytes[..count];
+            if kagi_domain::checklist::content_looks_binary(prefix)
+                && super::avatar_fetch::detect_format(prefix).is_none()
+            {
                 Err(Msg::EditorWorkspaceBinary)
             } else {
                 Ok(())
@@ -281,7 +291,13 @@ impl KagiApp {
                     return;
                 }
                 if let Err(reason) = result {
-                    app.push_toast(ToastKind::Error, reason.t(), cx);
+                    let message = match (reason, renamed_to) {
+                        (Msg::EditorWorkspaceDeleted, Some(current_path)) => SharedString::from(
+                            i18n::file_history_renamed_fmt(&current_path.to_string_lossy()),
+                        ),
+                        (reason, _) => SharedString::from(reason.t()),
+                    };
+                    app.push_toast(ToastKind::Error, message, cx);
                     cx.notify();
                     return;
                 }

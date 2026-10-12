@@ -54,7 +54,7 @@ fn observe(
     (events, sub)
 }
 
-fn assert_refused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, reason: Msg) {
+fn assert_refused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, reason: &str) {
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(
@@ -69,7 +69,7 @@ fn assert_refused(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, reason: 
             .toasts()
             .last()
             .unwrap();
-        assert_eq!(toast.message.as_ref(), reason.t());
+        assert_eq!(toast.message.as_ref(), reason);
     });
 }
 
@@ -153,7 +153,11 @@ fn check_unavailable(
         draw(cx, window, dimensions);
     }
     click(cx, &pane, window, "fh-open-file");
-    assert_refused(cx, app, Msg::EditorWorkspaceDeleted);
+    let reason = match i18n::lang() {
+        Lang::En => "File was renamed; open renamed.txt instead.",
+        Lang::Ja => "ファイル名が変更されています。renamed.txt を開いてください。",
+    };
+    assert_refused(cx, app, reason);
     assert_eq!(
         cx.read(|cx| editor.read(cx).open_path.clone()),
         Some("renamed.txt".into())
@@ -167,7 +171,7 @@ fn check_unavailable(
         let pane = open_history(cx, app, window, dimensions, path);
         let (events, sub) = observe(cx, app, &pane);
         click(cx, &pane, window, "fh-open-file");
-        assert_refused(cx, app, reason);
+        assert_refused(cx, app, reason.t());
         assert_eq!(events.borrow().len(), 1);
         assert_eq!(
             cx.read(|cx| editor.read(cx).open_path.clone()),
@@ -178,11 +182,45 @@ fn check_unavailable(
     app.update(cx, |app, _| app.close_editor_workspace());
     let pane = open_history(cx, app, window, dimensions, "deleted.txt");
     click(cx, &pane, window, "fh-open-file");
-    assert_refused(cx, app, Msg::EditorWorkspaceDeleted);
+    assert_refused(cx, app, Msg::EditorWorkspaceDeleted.t());
     assert!(
         cx.read(|cx| app.read(cx).ui().editor_workspace.is_none()),
         "failed open creates no Editor"
     );
+    drop(pane);
+}
+
+fn check_image(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    editor: &Entity<kagi_ui_editor::EditorWorkspaceView>,
+    window: AnyWindowHandle,
+    dimensions: (f32, f32),
+) {
+    let pane = open_history(cx, app, window, dimensions, "preview.png");
+    let (events, sub) = observe(cx, app, &pane);
+    click(cx, &pane, window, "fh-open-file");
+    assert!(
+        cx.read(|cx| app.read(cx).ui().file_history.is_none()),
+        "Open File must admit a PNG that the Editor can preview"
+    );
+    assert_eq!(events.borrow().len(), 1);
+    for _ in 0..3 {
+        cx.run_until_parked();
+        draw(cx, window, dimensions);
+    }
+    cx.read(|cx| {
+        let editor = editor.read(cx);
+        assert_eq!(editor.open_path.as_deref(), Some(Path::new("preview.png")));
+        assert!(
+            editor.content_image.is_some(),
+            "Editor loaded the real PNG preview"
+        );
+        assert!(editor.any_dirty(), "image navigation keeps dirty text tabs");
+    });
+    drop((pane, sub));
+    let pane = open_history(cx, app, window, dimensions, "renamed.txt");
+    click(cx, &pane, window, "fh-open-file");
     drop(pane);
 }
 
@@ -231,6 +269,7 @@ fn check_case(
     assert!(events.borrow()[0].starts_with("OpenFileRequested"));
     drop((pane, sub));
     check_retained(cx, &app, &editor, window, dimensions);
+    check_image(cx, &app, &editor, window, dimensions);
     check_unavailable(cx, &app, &editor, window, dimensions);
 
     drop((editor, captured));
@@ -244,6 +283,11 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     std::fs::write(repo.join("original.txt"), "rename content\n").unwrap();
     std::fs::write(repo.join("deleted.txt"), "deleted content\n").unwrap();
     std::fs::write(repo.join("binary.dat"), b"binary\0data").unwrap();
+    std::fs::write(
+        repo.join("preview.png"),
+        crate::diff_highlight::png_bytes([255, 0, 0, 255]),
+    )
+    .unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-qm", "history open fixture"]);
     git(repo, &["mv", "original.txt", "renamed.txt"]);

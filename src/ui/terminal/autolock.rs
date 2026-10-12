@@ -13,6 +13,29 @@ use crate::ui::{FooterStatus, KagiApp, SharedString, ToastKind, UnlockWorktreeMo
 use kagi_domain::worktree_autolock::{AutoLockToken, AutoUnlockTarget};
 
 impl KagiApp {
+    /// Showing a stopped terminal preserves its explanation. Only Restart
+    /// requests another spawn; first activation remains lazy-started.
+    pub fn activate_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let stopped = self
+            .active_session()
+            .and_then(|owner| self.ui.get(&owner))
+            .and_then(|ui| ui.terminal_session.as_ref())
+            .is_some_and(|session| {
+                matches!(
+                    session.state,
+                    TerminalState::Exited { .. } | TerminalState::Failed { .. }
+                )
+            });
+        if stopped {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        } else {
+            self.ensure_terminal(window, cx);
+        }
+        cx.notify();
+    }
+
     /// Ensure the active session's terminal exists and its shell is running.
     /// The session owner is frozen into the exit callback so completion cannot
     /// clear another tab's terminal.

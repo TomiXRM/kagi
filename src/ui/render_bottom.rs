@@ -111,7 +111,7 @@ impl KagiApp {
                         .flatten();
                     this.bottom_tab = TABS[slot];
                     if this.bottom_tab == BottomTab::Terminal {
-                        this.ensure_terminal(window, cx);
+                        this.activate_terminal(window, cx);
                     }
                     // Lazy startup focuses the terminal; keyboard activation
                     // must keep the selector's focus until Tab leaves it.

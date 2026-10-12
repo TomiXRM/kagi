@@ -182,6 +182,14 @@ fn exited_restarts(
         exit_three(cx, app);
         assert_block(cx, window, TerminalState::Exited { code: 3 }, title);
         let spawns = cx.read(|cx| app.read(cx).ui().terminal_session.as_ref().unwrap().spawns);
+        crate::app_conflict::click_control(cx, window, "tab-oplog");
+        crate::app_conflict::click_control(cx, window, "tab-terminal");
+        assert_block(cx, window, TerminalState::Exited { code: 3 }, title);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).ui().terminal_session.as_ref().unwrap().spawns),
+            spawns,
+            "returning to Exited must not respawn until Restart"
+        );
         press_restart(cx, window, key);
         assert_running(cx, app, window);
         assert_eq!(
@@ -202,9 +210,18 @@ fn failed_recovers(
     draw(cx, window);
     KagiApp::set_terminal_shell_for_e2e(Some(repo.join("nonexistent-shell").display().to_string()));
     crate::app_conflict::click_control(cx, window, "terminal-restart");
-    // Keep the existing failed-start Operation Log presentation; inspect
-    // Terminal without calling ensure_terminal and making another attempt.
-    show_terminal(cx, app, window);
+    // Failed starts still auto-open Operation Log. The real Terminal tab must
+    // return to Failed without immediately retrying or bouncing back to the log.
+    let failed_attempts = || {
+        kagi_ui_core::klog::tail()
+            .iter()
+            .filter(|line| line.starts_with("[kagi] terminal: start failed:"))
+            .count()
+    };
+    let attempts = failed_attempts();
+    crate::app_conflict::click_control(cx, window, "tab-terminal");
+    assert_eq!(cx.read(|cx| app.read(cx).bottom_tab), BottomTab::Terminal);
+    assert_eq!(failed_attempts(), attempts, "showing Failed must not retry");
     let failed = cx.read(|cx| {
         app.read(cx)
             .ui()

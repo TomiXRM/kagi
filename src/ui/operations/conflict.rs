@@ -757,7 +757,7 @@ impl KagiApp {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = true;
         self.bottom_tab = BottomTab::Terminal;
-        self.ensure_terminal(window, cx);
+        self.activate_terminal(window, cx);
     }
 
     /// Copy the selected conflict file's absolute path to the clipboard

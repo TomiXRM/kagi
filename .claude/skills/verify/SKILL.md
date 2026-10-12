@@ -274,7 +274,8 @@ For #1273 use `KAGI_GUI_E2E_ONLY='terminal_states,terminal_auto_lock'`.
 hint and Primary Restart bounds in EN/JA at 100%/167%; Enter/Space and pointer
 activation use the existing spawn seam. Failed starts target a nonexistent
 fixture binary, never `$SHELL`; the OS reason and unchanged failed-start
-Operation Log path are retained. Native log-tail assertions require the
+Operation Log path are retained. Real tab round-trips preserve Exited/Failed
+without another spawn; Restart alone retries. Native log-tail assertions require the
 unchanged shell-exited line once, before the shell-wait status line. The
 recorder proves renderer state, not real VoiceOver or Tier B focus delivery.
 

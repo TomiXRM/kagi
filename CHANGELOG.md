@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
+  - Review: opening/closing Generated splices only its children, retaining the disclosure's scroll position and focus. Reaching the final row also reveals the unfocusable overflow notice, including after its rows have been measured.
+- File History remembers its focused entry when visiting header actions. Shift+Tab from Back and Tab from Follow Renames reveal and return to that row; list arrows/Home/End update the existing entry and diff without a pointer. (#1376)
 - Inline Editor blame maps the live buffer back to HEAD using the existing domain diff: inserted and modified rows show a muted EN/JA Uncommitted label, while unchanged rows retain their original attribution after insertions or deletions. Blame and HEAD text still come through the backend read path. (#1374)
   - Review: line mapping runs off-thread with revision-tagged results only while Blame is visible. Edited regions exceeding one million diff cells remain conservatively Uncommitted; unchanged trimmed edges keep attribution. LF/CRLF checkout differences do not erase authors.
 - Inline blame retains complete sanitized author, relative date and commit subject in its tooltip and accessibility name; middle ellipsis affects layout only. (#1378)

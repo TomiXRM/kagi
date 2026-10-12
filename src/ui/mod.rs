@@ -47,6 +47,7 @@ pub mod window_menu;
 // (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
 pub mod e2e;
 pub use kagi_ui_editor::markdown as editor_markdown; // ADR-0121: was a shim file
+mod commit_panel_navigation;
 mod diff_selection;
 mod editor_pane_selectors;
 pub mod editor_tree_menu;
@@ -1300,6 +1301,7 @@ pub struct KagiApp {
     pub(crate) context_anchor: menu_keys::RowAnchor,
     /// Owner-stamped file menu; its path survives row renumbering (#286).
     pub file_menu: Option<file_menu::FileMenu>,
+    pub(crate) file_menu_keys: menu_keys::MenuKeys,
     /// Right-click context menu on an Inspector / Compare changed-file row
     /// (`Some((file_index, cursor_pos))` while open): History / Open in
     /// Editor / Copy Path. Replaces the old right-click-jumps-straight-to-
@@ -1560,6 +1562,7 @@ impl KagiApp {
             menu_keys: Default::default(),
             context_anchor: Default::default(),
             file_menu: None,
+            file_menu_keys: Default::default(),
             inspector_file_menu: None,
             // W5-MENU
             inspector_visible: true,

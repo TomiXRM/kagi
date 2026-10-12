@@ -385,7 +385,7 @@ fn separator() -> impl IntoElement {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn with_menu_keys(
+pub(crate) fn with_menu_keys(
     menu: gpui::Stateful<gpui::Div>,
     keys: &MenuKeys,
     parent: Option<&MenuKeys>,
@@ -514,7 +514,7 @@ fn base_row<A>(control: &SharedString, item: &MenuItem<A>) -> gpui::Stateful<gpu
         .child(div().flex_1().truncate().child(text))
 }
 
-fn focus_row(
+pub(crate) fn focus_row(
     row: gpui::Stateful<gpui::Div>,
     keys: &MenuKeys,
     slot: usize,

@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Activity period selection uses named EN/JA keyboard tabs with one Tab stop, arrow/Home/End navigation and Enter/Space activation; the selected fill remains visible on hover in active and inactive windows. (#1301)
+- Activity chart buckets expose localized UTC dates, commits, merges and distinct-author counts, with arrow-key inspection sharing the existing instant hover readout. Solid commit and dashed merge strokes use the same encoding in the legend, including equal/zero series and single buckets. (#1302)
 - Apple Dark uses one lighter elevated fill for palettes, dialogs, menus, popovers, toasts and tooltips, with a neutral identifying boundary. Window chrome sits above panels and content, with literal 1px separators; readable secondary text, line numbers, scrollbar thumbs and the yellow accent retain at least 4.5:1 contrast. Apple Light and other/custom themes retain their existing fills. (#1274)
   - Review: elevated-card separators and outlined chips remain visible, Remote Browse selection/hover uses a distinct neutral, and Trust Repo, the co-author menu and full-hash tooltip share the floating fill. Generic component borders keep their existing stronger value; the Settings 1px oracle distinguishes its separator from the fill outside both RGB tolerance bands.
 - Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)

@@ -117,6 +117,10 @@ mod recovery_hairline_dividers;
 mod recovery_bottom_panel;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/activity_a11y.rs"]
+mod activity_a11y;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
 
@@ -3108,6 +3112,14 @@ mod macos {
                 Box::new(crate::pr_pagination::scenario_pr_single_page_periodic_scroll_retention),
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
+            (
+                "activity_granularity_keys",
+                Box::new(crate::activity_a11y::scenario_activity_granularity_keys),
+            ),
+            (
+                "activity_bucket_a11y",
+                Box::new(crate::activity_a11y::scenario_activity_bucket_a11y),
+            ),
             (
                 "bottom_panel_tab_hover",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_tab_hover),

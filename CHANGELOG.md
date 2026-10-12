@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)
 - Conflict image previews use the same zoom-scaled geometry for columns, boxes, gaps and captions; equal-width previews shrink to fit the pane while preserving image aspect ratio. Current/Incoming headers and size/dimension captions support EN/JA. (#1269)
   - Review: image boxes prefer a square aspect and only shrink; binary previews retain an external comparison button immediately below their captions. A view-owned scroll handle preserves scrolling across redraws, and native image coverage requires positive bounded height and zero horizontal/vertical extent.
 - Terminal not-started, exited and failed states now show an icon, localized EN/JA title and concise hint with a keyboard-reachable Primary Restart button. Exit status comes from the owned shell's wait result; failed starts retain the OS reason and the existing Operation Log receipt. (#1273)

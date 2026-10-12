@@ -6,7 +6,7 @@ use crate::ui::dialog_a11y::{apply_dialog, dialog_a11y, DialogHandler};
 use crate::ui::modal_command::{equivalent_command, plan_ready};
 use crate::ui::modal_copy::modal_copy_button;
 use crate::ui::modal_renderers::modal_overlay;
-use crate::ui::modal_shell::{modal_body, modal_card, MODAL_W_LG};
+use crate::ui::modal_shell::{modal_card, MODAL_W_LG};
 use crate::ui::modals::oplog_restore::OplogRestoreModal;
 use crate::ui::plan_card_rows::render_note_row;
 use crate::ui::theme::{self, theme};
@@ -63,7 +63,7 @@ fn delete_chip(label: impl Into<SharedString>) -> gpui::AnyElement {
         .into_any_element()
 }
 
-fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyElement {
+fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::Stateful<gpui::Div> {
     let name = ref_name(&row.refname);
     let is_head = row.refname.strip_prefix("refs/heads/") == head;
     let color = if is_head {
@@ -113,12 +113,14 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyEleme
     div()
         .id(SharedString::from(format!("restore-ref-{index}")))
         .relative()
+        .w_full()
         .flex_shrink_0()
         .flex()
         .items_center()
         .gap_2()
         .px_2()
         .h(theme::scaled_px(31.))
+        .min_h(theme::scaled_px(31.))
         .child(name_chip)
         .child(div().flex_1())
         .child(
@@ -159,7 +161,6 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::AnyEleme
         .child(crate::ui::e2e::measure_inside(format!(
             "restore-ref-{index}"
         )))
-        .into_any_element()
 }
 
 fn title_chip(title: &PlanTitle) -> String {
@@ -239,7 +240,7 @@ fn copy_text(modal: &OplogRestoreModal) -> String {
         modal.i18n_op().t(),
         text(OplogPanelMsg::RestoreRefs)
     );
-    for row in &modal.restores {
+    for row in modal.restores.iter() {
         out.push_str(&format!(
             "{}: {} → {}\n",
             row.refname,
@@ -304,6 +305,7 @@ fn unchanged_items() -> [OplogPanelMsg; 6] {
 pub(crate) fn render(
     modal: OplogRestoreModal,
     overrides: &HashMap<&'static str, bool>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let op_chip = title_chip(&modal.plan.title);
@@ -374,34 +376,73 @@ pub(crate) fn render(
     } else {
         6. * 31.
     });
-    let refs = div()
-        .id("restore-refs")
-        .relative()
-        .flex()
-        .flex_col()
-        .max_h(theme::scaled_px((modal.restores.len().max(1) as f32) * 31.).min(refs_h))
-        // These are the destructive targets; supporting detail yields first.
-        .min_h(theme::scaled_px(
-            modal.restores.len().clamp(1, 3) as f32 * 31.,
+    let inspection = modal.inspection.clone();
+    let ref_rows = inspection.refs.rows(
+        modal
+            .restores
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| (row.refname.as_str(), ix)),
+        None,
+        window,
+        cx,
+    );
+    let render_rows = ref_rows.clone();
+    let snapshot = modal.clone();
+    let head = head.map(str::to_owned);
+    let content = gpui::list(
+        inspection.refs.scroll.clone(),
+        move |index, _window, _cx| {
+            let row = &snapshot.restores[index];
+            let focus = render_rows.clone();
+            render_rows
+                .row(
+                    index,
+                    crate::ui::list_a11y::list_item(
+                        "restore-refs",
+                        ref_row(row, head.as_deref(), index),
+                        index,
+                        snapshot.restores.len(),
+                        crate::ui::render_helpers::safe_text(&format!(
+                            "{}: {} → {}",
+                            row.refname,
+                            ref_short(row.expect.as_deref()),
+                            row.restore_to
+                                .as_deref()
+                                .unwrap_or(text(OplogPanelMsg::RestoreDelete)),
+                        ))
+                        .to_string(),
+                    ),
+                )
+                .on_click(move |_, window, cx| focus.focus_row(index, window, cx))
+                .into_any_element()
+        },
+    )
+    .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
+    .w_full();
+    let refs = ref_rows
+        .list(crate::ui::list_a11y::plain_list(
+            "restore-refs",
+            div()
+                .id("restore-refs")
+                .relative()
+                .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
+                .flex_shrink_0()
+                .child(crate::ui::e2e::measure_inside("restore-refs")),
+            text(OplogPanelMsg::RestoreRefs),
         ))
-        .flex_shrink_0()
-        .overflow_y_scroll()
-        .child(crate::ui::e2e::measure_inside("restore-refs"))
-        .children(
-            modal
-                .restores
-                .iter()
-                .enumerate()
-                .map(|(index, row)| ref_row(row, head, index)),
-        );
-    let mut body = modal_body();
+        .child(crate::ui::render_helpers::with_system_vertical_scrollbar(
+            "restore-refs-scrollbar",
+            &inspection.refs.scroll,
+            content,
+            cx,
+        ));
+    let mut body = inspection.body(title);
     if !modal.plan.blockers.is_empty() {
         body = body.child(
             div()
                 .id("restore-blockers")
                 .flex_shrink_0()
-                .max_h(theme::scaled_px(70.))
-                .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -412,13 +453,16 @@ pub(crate) fn render(
                         .iter()
                         .enumerate()
                         .map(|(index, blocker)| {
-                            render_note_row(
-                                format!("plan-blocker-{index}").into(),
-                                true,
-                                "✗",
-                                theme().color_blocker,
-                                &plan_note_text(blocker),
-                                true,
+                            crate::ui::e2e::measure_control(
+                                format!("restore-blocker-{index}"),
+                                render_note_row(
+                                    format!("plan-blocker-{index}").into(),
+                                    true,
+                                    "✗",
+                                    theme().color_blocker,
+                                    &plan_note_text(blocker),
+                                    true,
+                                ),
                             )
                         }),
                 ),
@@ -468,8 +512,6 @@ pub(crate) fn render(
             div()
                 .id("restore-warnings")
                 .flex_shrink_0()
-                .max_h(theme::scaled_px(60.))
-                .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -502,12 +544,16 @@ pub(crate) fn render(
                 })),
         );
     }
-    if let Some(preview) = modal.preview.as_deref() {
+    if let Some(preview) = modal.preview.clone() {
         body = body.child(
             div()
-                .min_h(gpui::px(0.))
-                .overflow_hidden()
-                .child(super::oplog_restore_preview::render(preview)),
+                .flex_shrink_0()
+                .child(super::oplog_restore_preview::render(
+                    preview,
+                    &inspection.preview,
+                    window,
+                    cx,
+                )),
         );
     }
     if let Some(cmd) = equivalent_command(&modal.plan) {
@@ -527,6 +573,18 @@ pub(crate) fn render(
                 .child(error.clone()),
         );
     }
+    inspection
+        .refs
+        .reveal_parent(&inspection.body_scroll, window);
+    inspection
+        .preview
+        .reveal_parent(&inspection.body_scroll, window);
+    let body = crate::ui::render_helpers::with_system_vertical_scrollbar(
+        "restore-body-scrollbar",
+        &inspection.body_scroll,
+        crate::ui::e2e::measure_control("restore-body", body),
+        cx,
+    );
     let mut buttons = crate::ui::button_style::modal_button_row()
         .flex_shrink_0()
         .child(crate::ui::e2e::measure_control(

@@ -179,7 +179,12 @@ fn preview_scroll(lanes: usize, focus_lane: usize, width: f32, zoom: f32) -> f32
     )
 }
 
-pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
+pub(crate) fn render(
+    preview: Arc<RestoreGraphPreview>,
+    inspection: &super::oplog_restore_inspection::InspectionList,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) -> gpui::AnyElement {
     let muted = |text: String| {
         div()
             .text_xs()
@@ -250,95 +255,138 @@ pub(crate) fn render(preview: &RestoreGraphPreview) -> gpui::AnyElement {
         .map(|graph| graph_window::column_of(&columns, graph.lane))
         .unwrap_or(0);
     let scroll = preview_scroll(columns.len(), focus_lane, width, theme::scaled(1.));
-    let rail = Rail {
-        width,
-        scroll,
-        columns: &columns,
-        avatars: None,
-    };
-    let list = div()
-        .id("restore-preview-rows")
-        .relative()
-        .flex()
-        .flex_col()
-        .min_h(px(0.))
-        // Fit short previews; cap long histories at six rows with independent scrolling.
-        .h(theme::scaled_px(
-            rows.len().min(6) as f32 * graph_view::ROW_H,
-        ))
-        .overflow_y_scroll()
-        .child(crate::ui::e2e::measure_inside("restore-preview-rows"))
-        .children(rows.iter().enumerate().map(|(n, row)| {
-            let graph = &preview.rails[n];
-            let is_head = preview.head_branch.as_deref().is_some_and(|head| {
-                !row.off_branch
-                    && (row.moved_here.iter().any(|branch| branch == head)
-                        || row.branches.iter().any(|branch| branch == head))
-            });
+    let navigation = inspection.rows(
+        rows.iter()
+            .enumerate()
+            .map(|(n, row)| (row.id.0.as_str(), n)),
+        None,
+        window,
+        cx,
+    );
+    let render_rows = navigation.clone();
+    let snapshot = preview.clone();
+    let count = rows.len();
+    let height = theme::scaled_px(count.min(6) as f32 * graph_view::ROW_H);
+    let content = gpui::list(inspection.scroll.clone(), move |n, _window, _cx| {
+        let preview = &snapshot;
+        let RestorePreview::Graph { rows, .. } = &preview.graph else {
+            unreachable!()
+        };
+        let row = &rows[n];
+        let graph = &preview.rails[n];
+        let rail = Rail {
+            width,
+            scroll,
+            columns: &columns,
+            avatars: None,
+        };
+        let is_head = preview.head_branch.as_deref().is_some_and(|head| {
+            !row.off_branch
+                && (row.moved_here.iter().any(|branch| branch == head)
+                    || row.branches.iter().any(|branch| branch == head))
+        });
+        let focus = render_rows.clone();
+        crate::ui::e2e::measure_control(
+            format!("restore-preview-row-{n}"),
+            render_rows
+                .row(
+                    n,
+                    crate::ui::list_a11y::list_item(
+                        "restore-preview-rows",
+                        div()
+                            .id(format!("restore-preview-inspect-{n}"))
+                            .relative()
+                            .w_full()
+                            .flex_shrink_0()
+                            .h(theme::scaled_px(graph_view::ROW_H))
+                            .min_h(theme::scaled_px(graph_view::ROW_H))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .when(row.off_branch, |el| {
+                                el.opacity(graph_window::CONTEXT_OPACITY)
+                            })
+                            .child(graph_window::render_rail(
+                                graph.lane,
+                                graph.color,
+                                &graph.edges,
+                                graph_view::GraphNode::Commit {
+                                    is_head,
+                                    is_merge: preview.merges[n],
+                                },
+                                None,
+                                graph_view::ROW_H,
+                                &rail,
+                            ))
+                            .children(row.moved_here.iter().map(|b| {
+                                chip(
+                                    format!("{b} ←"),
+                                    if preview.head_branch.as_deref() == Some(b.as_str()) {
+                                        theme().color_head
+                                    } else {
+                                        theme().color_warning
+                                    },
+                                )
+                            }))
+                            .children(
+                                row.branches
+                                    .iter()
+                                    .map(|b| chip(b.clone(), theme().color_branch)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .truncate()
+                                    .text_color(rgb(theme().text_sub))
+                                    .child(preview.summaries[n].clone()),
+                            )
+                            .child(muted(row.id.short().to_string()))
+                            .when(!row.moved_here.is_empty(), |d| {
+                                d.child(crate::ui::e2e::measure_inside(format!(
+                                    "restore-preview-moved-{}-{}",
+                                    row.moved_here.join(","),
+                                    row.id.short()
+                                )))
+                            })
+                            .when(row.off_branch, |d| {
+                                d.child(crate::ui::e2e::measure_inside(format!(
+                                    "restore-preview-ghost-{}",
+                                    row.id.short()
+                                )))
+                            }),
+                        n,
+                        count,
+                        crate::ui::render_helpers::safe_text(&format!(
+                            "{} {}",
+                            row.id.0, preview.summaries[n],
+                        ))
+                        .to_string(),
+                    ),
+                )
+                .on_click(move |_, window, cx| focus.focus_row(n, window, cx)),
+        )
+    })
+    .h(height)
+    .w_full();
+    let list = navigation
+        .list(crate::ui::list_a11y::plain_list(
+            "restore-preview-rows",
             div()
+                .id("restore-preview-rows")
                 .relative()
-                .flex_shrink_0()
-                .h(theme::scaled_px(graph_view::ROW_H))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_2()
-                .when(row.off_branch, |el| {
-                    el.opacity(graph_window::CONTEXT_OPACITY)
-                })
-                .child(graph_window::render_rail(
-                    graph.lane,
-                    graph.color,
-                    &graph.edges,
-                    graph_view::GraphNode::Commit {
-                        is_head,
-                        is_merge: preview.merges[n],
-                    },
-                    None,
-                    graph_view::ROW_H,
-                    &rail,
-                ))
-                .children(row.moved_here.iter().map(|b| {
-                    chip(
-                        format!("{b} ←"),
-                        if preview.head_branch.as_deref() == Some(b.as_str()) {
-                            theme().color_head
-                        } else {
-                            theme().color_warning
-                        },
-                    )
-                }))
-                .children(
-                    row.branches
-                        .iter()
-                        .map(|b| chip(b.clone(), theme().color_branch)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .truncate()
-                        .text_color(rgb(theme().text_sub))
-                        .child(preview.summaries[n].clone()),
-                )
-                .child(muted(row.id.short().to_string()))
-                .when(!row.moved_here.is_empty(), |d| {
-                    d.child(crate::ui::e2e::measure_inside(format!(
-                        "restore-preview-moved-{}-{}",
-                        row.moved_here.join(","),
-                        row.id.short()
-                    )))
-                })
-                .when(row.off_branch, |d| {
-                    d.child(crate::ui::e2e::measure_inside(format!(
-                        "restore-preview-ghost-{}",
-                        row.id.short()
-                    )))
-                })
-                .child(crate::ui::e2e::measure_inside(format!(
-                    "restore-preview-row-{n}"
-                )))
-        }));
+                .h(height)
+                .min_h(px(0.))
+                .child(crate::ui::e2e::measure_inside("restore-preview-rows")),
+            Msg::OplogPanel(OplogPanelMsg::RestoreAfter).t(),
+        ))
+        .child(crate::ui::render_helpers::with_system_vertical_scrollbar(
+            "restore-preview-scrollbar",
+            &inspection.scroll,
+            content,
+            cx,
+        ));
     section
         .child(
             div()

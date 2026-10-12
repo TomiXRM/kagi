@@ -26,6 +26,7 @@ pub mod merge;
 pub mod modal_state;
 pub(crate) mod oplog_restore;
 pub(crate) mod oplog_restore_card;
+pub(crate) mod oplog_restore_inspection;
 pub(crate) mod oplog_restore_preview;
 pub mod pull_push;
 pub mod rebase;

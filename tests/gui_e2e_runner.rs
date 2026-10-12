@@ -493,6 +493,9 @@ mod recovery_oplog_keyboard;
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_restore_keys.rs"]
+mod recovery_oplog_restore_keys;
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_select.rs"]
 mod recovery_oplog_select;
 #[cfg(target_os = "macos")]
@@ -3662,6 +3665,10 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_keyboard",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_keyboard),
             ),
             (
                 "oplog_restore_guarded_rows",

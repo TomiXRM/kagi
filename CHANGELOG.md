@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Draft PR dashboard rows retain full-contrast titles and readable number/author/age metadata in Apple Light and Dark. The existing localized Draft state uses `text_muted` rather than fading the whole interactive row; hover and open behavior remain unchanged. (#1352)
+  - Review: mute STATE only when its attention reason is Draft; conflicting, changes-requested and other actionable draft states retain their attention colour rather than losing the Needs You signal.
 - Smart Commit footer tooltips and accessibility descriptions name the selected Ollama model, Claude Code or Codex in EN/JA, including provider-specific generation wording; CLI generation no longer claims to use a local LLM. (#1342)
   - Review: freeze dispatch provider/model in the initiating session until completion, so settings changes cannot rename an in-flight generation. Rule-based suggestion omits a redundant AX description; loading text and provider display names each have one source.
 - Issues rows and Home's recent repositories use stable-keyed, single-stop keyboard lists with arrow/Home/End navigation, focused-row reveal and Enter/Space activation. Localized row names retain complete Issue and repository identities; removed or hidden rows release focus. (#1346, #1347)

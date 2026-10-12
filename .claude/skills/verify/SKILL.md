@@ -369,6 +369,23 @@ Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
 and toolbar scenarios. Real fading, macOS preference changes and JA IME are
 Tier B comparisons, not TestDispatcher assertions.
 
+For #1352 use `KAGI_GUI_E2E_ONLY='pr_dashboard_'` with KEEP_GOING and a
+120-second child timeout. The draft-contrast matrix is split into four
+Light/Dark × narrow/wide children so every native capture fits the timeout,
+without dropping EN/JA, 100%/167% or rest/hover × active/inactive coverage.
+Production cell bounds select actual Metal glyph-interior and blank-background
+pixels for titles, number, author, age and the localized Draft state; inherited
+row opacity is included in the captured pixel, not replaced with theme RGB.
+Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
+There is no selected dashboard row state. Pair with the ui-core
+`apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
+Tier B remains a real-window comparison of draft/ready rows and opening a draft
+in Apple Light/Dark; native VoiceOver and Full Keyboard Access are not proven
+by the recorder or image contrast.
+
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three
 scenarios draw the Editor name form (including invalid names, valid action,

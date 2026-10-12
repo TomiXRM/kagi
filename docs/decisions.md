@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-12
+> **Last updated:** 2026-10-13
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,8 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-13 | #1352 review: draft identity does not override the actionable STATE colour | Apply the muted override only to `PrReason::Draft`; all other reasons preserve their `attention_color(bucket)`, including Needs You for conflicting or changes-requested drafts. Native coverage seeds only L2 freshness for a conflicting fixture, then exercises production ownership/classification and STATE pixels. [ADR-0200](adr/0200-pr-workspace-layout.md). |
+| 2026-10-12 | #1352: draft PR dashboard rows use an explicit muted Draft state, never whole-row opacity | Keep the open-row table density, title hierarchy and existing localized state/AX identity. Number, author and age retain the readable `text_muted` token on actual base/hover backgrounds; no selected-row state exists in this plain action list. Native Metal glyph/background pixels supplement the shared WCAG unit helper. [ADR-0200](adr/0200-pr-workspace-layout.md). |
 | 2026-10-13 | #1342 review: freeze in-flight footer identity at dispatch and omit redundant rule-based descriptions | Provider/model identity lives beside the owner session's generating flag and is cleared at settlement; the renderer shares its model storage rather than copying it per frame. Settings changes affect only the next generation. Shared provider display names and SmartGeneratingProvider localization avoid divergent footer copy. [ADR-0099](adr/0099-smart-commit-cli-providers.md). |
 | 2026-10-12 | #1342: Smart Commit footer help follows the existing persisted provider snapshot and only Ollama's model | Share one EN/JA tooltip/AX description for idle and generating states; CLI providers own their model and must not display the saved Ollama model or claim local LLM generation. Empty staging retains its existing reason; rule-based suggestion remains unchanged. [ADR-0099](adr/0099-smart-commit-cli-providers.md). |
 | 2026-10-12 | #1351 review: BranchPicker Rename yields pending root focus to the input modal | Checkout/Delete still transfer to the root before their approval cards. Rename clears the pending target so sync_modal_inputs can retain the new-name field's initial focus; native Enter/Space legs assert actual Input focus and typing without another click. [ADR-0049](adr/0049-branch-context-menu-architecture.md). |

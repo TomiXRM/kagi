@@ -101,6 +101,10 @@ mod dark_elevation;
 mod inactive_selection;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/tab_strip.rs"]
+mod tab_strip;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -1433,6 +1437,14 @@ mod macos {
             (
                 "repo_tabs_neutral",
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
+            ),
+            (
+                "tab_strip_overflow",
+                Box::new(crate::tab_strip::scenario_tab_strip_overflow),
+            ),
+            (
+                "tab_close_names",
+                Box::new(crate::tab_strip::scenario_tab_close_names),
             ),
             (
                 "unified_toolbar",

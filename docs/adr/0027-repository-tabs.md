@@ -32,3 +32,18 @@
 - toast / busy_op はアプリ全域の状態として tab 切替後も維持(busy 中の switch は許可するが、
   busy 操作の finish はその repo_path に対して記録されるため安全)
 - 既存 headless 経路(引数1つで起動)は「初期 tab が1枚ある状態」として互換維持
+
+## Amendment — 2026-10-12: bounded document strip (#1339 / #1340)
+
+The document-count visibility rule and zoom-scaled strip height remain unchanged.
+Tabs share the measured horizontal viewport, shrinking from scaled 200px to a
+scaled 80px minimum with middle ellipsis. Beyond that minimum the viewport scrolls;
+active selection and roving keyboard focus reveal their actual child bounds.
+A trailing named » menu lists all repository tabs and Home, reusing the toolbar's
+overflow affordance and gpui-kit PopupMenu/Popover keyboard/focus contract.
+This is independent of compact workspace-pane width breakpoints (#1225).
+
+The visible × remains a non-Tab-stop kit Button. Its independent accessibility
+name is `Close <repo>` / `<repo> を閉じる` (Home uses `Close Home` /
+`Home を閉じる`). Repository close callbacks resolve their frozen session identity,
+not a stale strip index; existing dirty-close guards and Cmd+W remain authoritative.

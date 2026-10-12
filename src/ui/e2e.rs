@@ -23,6 +23,8 @@ pub mod sidebar_labels;
 pub mod activity;
 #[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
+#[cfg(feature = "gui-e2e")]
+pub mod tab_strip;
 
 #[cfg(feature = "gui-e2e")]
 pub mod text_caps;

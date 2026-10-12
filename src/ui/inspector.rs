@@ -22,7 +22,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 
-use kagi_git::{is_url, parse_coauthors, parse_trailers, sanitize_trailer_value, CommitId};
+use kagi_git::{is_url, sanitize_trailer_value, CommitId};
 
 use kagi_ui_core::file_tree::status_badge;
 
@@ -427,6 +427,11 @@ pub(super) fn render_inspector(
         ))
         .flex_shrink(1.)
         .px_3()
+        .when(cfg!(feature = "gui-e2e"), |frame| {
+            frame
+                .relative()
+                .child(super::e2e::measure_inside("inspector-files-frame"))
+        })
         .children(compare_banner)
         .children(counts_row)
         .child(files_header)
@@ -648,12 +653,8 @@ pub(super) fn render_inspector(
             hash_chip,
         ));
 
-    // ── Co-author rows (W18-COAUTHOR-COPY) ────────────────────────────────
-    // Parse `Co-authored-by:` trailers from the full message.  Each co-author
-    // gets a muted text_xs row with a 16px avatar (resolved GitHub image when
-    // available, else the initial-on-colour circle) and the email in a
-    // tooltip.  Nothing is rendered when there are no co-authors.
-    let coauthors = parse_coauthors(d.full_message.as_ref());
+    // #1307: complete co-authors/trailers are prepared once per immutable SHA.
+    let coauthors = model.coauthors();
     let coauthor_rows: Vec<gpui::AnyElement> = coauthors
         .iter()
         .enumerate()
@@ -737,11 +738,15 @@ pub(super) fn render_inspector(
         Some(block.into_any())
     };
 
-    // ── Trailer table (issue #336) ────────────────────────────────────────
-    // All `git interpret-trailers`-detected trailers as a key/value table
-    // below the body. URL values open in the external browser; every value is
-    // run through the control/ANSI sanitizer before display (#356 guard).
-    let trailers = parse_trailers(d.full_message.as_ref());
+    // Trailer metadata uses the same complete sanitized source as Copy.
+    let trailers = model.trailers();
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::text_caps::record_message(super::e2e::text_caps::Message {
+        source: d.full_message.clone(),
+        html: message_html.clone(),
+        coauthors: coauthors.len(),
+        trailers: trailers.len(),
+    });
     let trailer_rows: Vec<gpui::AnyElement> = trailers
         .iter()
         .enumerate()
@@ -781,6 +786,13 @@ pub(super) fn render_inspector(
                         .child(key),
                 )
                 .child(div().flex_1().min_w(px(0.)).child(value_el))
+                .when(
+                    i + 1 == trailers.len() && cfg!(feature = "gui-e2e"),
+                    |row| {
+                        row.relative()
+                            .child(super::e2e::measure_inside("inspector-trailer-tail"))
+                    },
+                )
                 .into_any()
         })
         .collect();
@@ -937,7 +949,9 @@ pub(super) fn render_inspector(
                 message_html,
             )
             .selectable(true),
-        );
+        )
+        .children(coauthors_block)
+        .children(trailers_block);
     // The scroll lives on an inner size_full child, NOT on the flex-sized box:
     // with overflow_y_scroll directly on the flex_basis box, the wrapped-text
     // content size feeds back into the flex solve and the layout flip-flops
@@ -964,6 +978,11 @@ pub(super) fn render_inspector(
         .flex_shrink(1.)
         .overflow_hidden()
         .px_3()
+        .when(cfg!(feature = "gui-e2e"), |frame| {
+            frame
+                .relative()
+                .child(super::e2e::measure_inside("inspector-message-frame"))
+        })
         .child(super::render_helpers::with_system_vertical_scrollbar(
             "inspector-message-scrollbar",
             message_handle,
@@ -1021,8 +1040,6 @@ pub(super) fn render_inspector(
         .pb_1()
         .child(title_el)
         .child(meta_row)
-        .children(coauthors_block)
-        .children(trailers_block)
         .child(badges_row)
         .child(actions_row);
 

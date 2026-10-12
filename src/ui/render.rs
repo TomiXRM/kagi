@@ -846,7 +846,7 @@ impl Render for KagiApp {
             //    intents and cancel list, directly above the status bar. ──
             .children(self.render_queue_strip(cx))
             // ── Status bar slot (T017) — last operation result ─
-            .child(self.render_status_bar(status_footer, bottom_panel_open, cx));
+            .child(self.render_status_bar(status_footer, bottom_panel_open, window, cx));
         // The one collector Home also uses keeps popup/modal ordering intact.
         // Attach it after the opaque footer, so window-fitted menus and modals
         // are not overpainted by workspace chrome.

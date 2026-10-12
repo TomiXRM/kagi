@@ -56,6 +56,21 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
+`status_bar_fit` mounts the production footer at 700×500 and 940×660 with
+1/120-character branch identity, status chips, refresh timer and Busy/Failed
+feedback. It checks full branch Tooltip/AX metadata, positive feedback width
+and nonoverlapping in-window panel controls across EN/JA, 100%/167%, both
+toolbar presentations and Apple themes. Probes are flow-neutral; renderer-fed
+metadata is not native VoiceOver delivery. Real hover/Tab and before/after
+screenshots remain Tier B.
+Review legs `status_bar_feedback_min` and `status_bar_short_branch` use the same
+matrix to preserve short Failed/Busy feedback beside a 25-character branch and
+the natural `main`-to-dirty-chip gap, unellipsized rounded text width and right
+footer padding with every chip (including at 700×500/167%). They fail before the
+feedback-first/natural-width/rounding policies. The original fit scenario also
+checks sanitized C1-control branch identity through the label/Tooltip/AX path.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
@@ -68,6 +83,29 @@ selected session and selected file. `KagiApp::set_window_active_for_e2e` overrid
 activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
+
+For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
+KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
+Tab roles, localized names, selected state, one Tab stop, actual focus
+handles, Left/Right/Home/End/Enter/Space dispatch and native selected-fill
+pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
+0/1/24 buckets' Status names against UTC date/time + commits/merges/authors,
+one roving stop, arrow/Home/End boundary inspection and identical immediate
+hover/keyboard readouts. The actual chart/legend painter records successful
+solid/dash/gap/knockout segment counts and the single-point fallback branch.
+`activity_equal_series_encoding` compares native merge-gap pixels with nearby
+unpainted pixels over equal commit/merge values and 0/0 baseline segments,
+including the legend; do not derive the expected background from the painter's
+theme token. `activity_single_bucket_encoding` requires a genuine two-dash merge
+mark and knockout gap, not the former solid fallback or a clamped counter.
+All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
+Apple Light/Dark; axes and legend must fit.
+Pair with `cargo test -p kagi-domain activity` for per-bucket distinct raw
+email aggregation, and `cargo test -p kagi-ui-core activity_bucket` for
+localized 0/1/plural units. Renderer metadata is not native VoiceOver or
+real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
+both ends with the keyboard, verify the selected fill on hover and the
+dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
@@ -153,6 +191,38 @@ The feature name Commit Panel and operation-button names intentionally stay Engl
 The AX recorder proves the renderer assignment, not native VoiceOver delivery.
 Tier B remains a real-window comparison of Japanese headers, batch actions and
 unchanged user Template text; `commit_panel_viewport` retains composer geometry.
+
+For #1306/#1307 use
+`KAGI_GUI_E2E_ONLY='graph_subject_identity,inspector_full_message'` and retain
+`graph_,inspector_,detail_` as the neighboring filter. The subject scenario
+compares complete sanitized 71/72/73/300-character and CJK/emoji identities,
+drawn AX names, 29-reference-px row density, author/time geometry, and real
+row-hover Tooltip content and viewport-contained bounds in EN/JA, Apple
+Light/Dark, 100/167%, at 940×660 and 1392×883. The 300-character subject
+must wrap rather than overflow the narrow viewport. The row-wide Tooltip
+also works when existing narrow, high-zoom column widths leave the visible
+subject no space; this does not claim to fix that pre-existing column layout.
+
+The Inspector scenario keeps 1,999/2,000/2,001/10,000-character messages plus
+an 85-paragraph sanitized CJK/emoji message. Its renderer-fed source/HTML,
+complete co-author/trailer counts and full-message clipboard assertions run
+over the same matrix. A real wheel reaches the last trailer inside the
+bounded message frame while the changed-files frame stays fixed; warm draws
+leave SHA-keyed derivation counters unchanged. Native VoiceOver and real
+selectable-text keyboard behavior remain Tier B.
+
+For an opt-in stress measurement, set
+`KAGI_TEXT_CAPS_STRESS_REPO=<read-only 121-local-branch fixture>` and select
+only `KAGI_GUI_E2E_ONLY=text_caps_warm_render`. The native runner mounts that
+real repository, selects its top commit, settles 20 draws, then prints the
+median of 31 batches of ten forced warm draws (milliseconds per frame).
+Compare the same fixture, harness, build profile and presentation state;
+alternate frozen before/after binaries three times each after gates finish
+to mitigate concurrent-compilation noise. This is warm render evidence,
+not application FPS or a cold-load benchmark.
+Without `KAGI_TEXT_CAPS_STRESS_REPO`, the stress scenario prints
+`[gui-e2e] SKIP text_caps_warm_render` and returns before opening a window;
+broader substring filters such as `caps` or `warm` do not require that fixture.
 
 For #1229–#1231 use
 `KAGI_GUI_E2E_ONLY='commit_panel_segment_keys,commit_panel_footer_tab_order,commit_panel_coauthor_keys'`

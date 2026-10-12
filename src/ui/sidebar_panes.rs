@@ -209,10 +209,28 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         let slot = div().id((pane_id, absolute)).w_full().h(row_h);
+                        let slot = match &row {
+                            SidebarRow::Tag { name, target } => slot.when_some(
+                                super::sidebar_ref_rows::tag_navigation_reason(this, target),
+                                |slot, reason| {
+                                    slot.aria_description(super::e2e::sidebar_labels::description(
+                                        name,
+                                        gpui::SharedString::from(reason.t()),
+                                    ))
+                                },
+                            ),
+                            _ => slot,
+                        };
                         let slot = match rows.as_ref().filter(|rows| position < rows.len()) {
-                            Some(rows) => {
-                                super::sidebar_focus::row(this, rows, position, slot, row, el, cx)
-                            }
+                            Some(rows) => super::sidebar_focus::row(
+                                this,
+                                rows,
+                                position,
+                                slot,
+                                (row, el),
+                                cx,
+                                window,
+                            ),
                             None => slot.child(el),
                         };
                         Some(

@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Sidebar stash accessibility names include the visible `stash@{N}: message` identity while focus remains tied to the stash OID. (#1303)
+- Unloaded tag targets show a muted row and localized accessibility/tooltip explanation; click and Enter report the reason and request the existing read-only history page instead of silently doing nothing. (#1304)
+- Remote/prefix group headers reserve separate disclosure and count columns, ellipsize only the name, and reveal the complete identity through bounded tooltips, Shift+F10/Menu keyboard cards and accessibility metadata. Escape closes the card without moving row focus. (#1305)
 - Apple Dark uses one lighter elevated fill for palettes, dialogs, menus, popovers, toasts and tooltips, with a neutral identifying boundary. Window chrome sits above panels and content, with literal 1px separators; readable secondary text, line numbers, scrollbar thumbs and the yellow accent retain at least 4.5:1 contrast. Apple Light and other/custom themes retain their existing fills. (#1274)
   - Review: elevated-card separators and outlined chips remain visible, Remote Browse selection/hover uses a distinct neutral, and Trust Repo, the co-author menu and full-hash tooltip share the floating fill. Generic component borders keep their existing stronger value; the Settings 1px oracle distinguishes its separator from the fill outside both RGB tolerance bands.
 - Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)

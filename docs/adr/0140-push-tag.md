@@ -67,3 +67,14 @@ discoverable.
   product avoids. One tag, named, per confirmation.
 - There is still no delete-tag (local or remote). Deleting a published tag is
   the genuinely dangerous direction, and it can wait for its own ADR.
+
+## Amendment (2026-10-12): unloaded sidebar targets (#1304)
+
+Tag navigation is separate from tag write availability. A target absent from
+the current commit window remains activatable: its row uses the muted theme
+label and exposes the same EN/JA reason in the TreeItem description and
+tooltip. Click and Enter share one read-only path that first reports
+“Commit not loaded; load more history.”, then invokes existing history paging.
+Once loaded, activation jumps normally; paging does not silently change the
+current selection or create a tag-operation receipt. Push/Delete menu plans,
+approval targets and safety checks remain unchanged.

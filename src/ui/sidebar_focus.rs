@@ -60,6 +60,8 @@ pub(crate) struct SidebarFocus {
     open_first: [bool; PANES],
     /// The worktree whose inspection card the keyboard opened.
     pub(super) card: Option<PathBuf>,
+    /// Full dynamic group identity revealed by its context key.
+    pub(super) group_reveal: Option<String>,
     /// The panes were not drawn last frame.
     away: bool,
     /// The window's focus as this frame began: the row holding it carries
@@ -260,7 +262,8 @@ impl KagiApp {
                     self.focus_root_for_modal();
                 }
             }
-            SidebarRow::RemoteLeaf { target, .. } | SidebarRow::Tag { target, .. } => {
+            SidebarRow::Tag { target, .. } => self.activate_sidebar_tag(target, cx),
+            SidebarRow::RemoteLeaf { target, .. } => {
                 if self.view().commit_row_index.contains_key(target) {
                     self.jump_to_commit(target);
                 }
@@ -319,30 +322,11 @@ pub(super) fn row(
     list: &RowList,
     at: usize,
     el: Stateful<Div>,
-    row: SidebarRow,
-    drawn: AnyElement,
+    (row, drawn): (SidebarRow, AnyElement),
     cx: &mut Context<KagiApp>,
+    window: &mut Window,
 ) -> Stateful<Div> {
-    let card = match &row {
-        SidebarRow::Worktree {
-            name,
-            branch,
-            path,
-            port,
-            ..
-        } if app.sidebar.focus.card.as_ref() == Some(path) => Some((
-            path.clone(),
-            super::sidebar_worktree_row::keyboard_card(
-                app,
-                path.clone(),
-                name,
-                branch.as_deref(),
-                *port,
-                cx,
-            ),
-        )),
-        _ => None,
-    };
+    let card = keyboard_worktree_card(app, &row, cx);
     // #985: the focused row opens its menu from the keyboard (Shift+F10,
     // the Menu key) below itself; only that row pays for the listener.
     let focused = app
@@ -352,6 +336,8 @@ pub(super) fn row(
         .as_ref()
         .is_some_and(|focus| list.is_handle(at, focus));
     let menu_row = focused.then(|| row.clone());
+    let el =
+        super::sidebar_ref_rows::with_keyboard_group_reveal(app, &row, focused, el, window, cx);
     let el = list
         .row(at, el)
         .child(under_ring(drawn, app.root_focus.clone()))
@@ -394,6 +380,33 @@ pub(super) fn row(
             ))
         }
         _ => el,
+    }
+}
+
+fn keyboard_worktree_card(
+    app: &KagiApp,
+    row: &SidebarRow,
+    cx: &mut Context<KagiApp>,
+) -> Option<(PathBuf, AnyElement)> {
+    match row {
+        SidebarRow::Worktree {
+            name,
+            branch,
+            path,
+            port,
+            ..
+        } if app.sidebar.focus.card.as_ref() == Some(path) => Some((
+            path.clone(),
+            super::sidebar_worktree_row::keyboard_card(
+                app,
+                path.clone(),
+                name,
+                branch.as_deref(),
+                *port,
+                cx,
+            ),
+        )),
+        _ => None,
     }
 }
 

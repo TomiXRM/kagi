@@ -8,129 +8,36 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context, SharedString, Window};
-use gpui_component::input::Input;
+use gpui::{div, px, relative, rgb, uniform_list, AnyElement, Context};
 
 use kagi_domain::file_history::{CommitSummary, FileHistoryEntry, FileHistoryEntryKind};
 use kagi_ui_core::avatar::AvatarImages;
 use kagi_ui_core::commit_header::render_commit_header;
 use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLayout};
 use kagi_ui_core::i18n::Msg;
-use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::theme::theme;
 
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
 /// `InspectorSplit`-style divider, at least not in this v1).
 const HISTORY_HEADER_RATIO: f32 = 0.3;
 
-use crate::{
-    placeholder_text, with_vertical_scrollbar, EditorWorkspaceView, MiddlePaneTab, RightPaneTab,
-};
+use crate::{placeholder_text, with_vertical_scrollbar, EditorWorkspaceView};
 
-/// One tab chip, shared visual style between the right-pane and center-pane
-/// switchers — mirrors `render_source_chip`'s look (see `lib.rs`) with a
-/// generic click callback since each switcher dispatches to a different
-/// setter (`set_right_tab` / `set_middle_tab`).
-fn render_tab_chip(
-    id: (&'static str, usize),
-    label: SharedString,
-    active: bool,
-    on_click: impl Fn(&mut EditorWorkspaceView, &mut Window, &mut Context<EditorWorkspaceView>)
-        + 'static,
-    cx: &mut Context<EditorWorkspaceView>,
-) -> AnyElement {
-    let click = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
-        on_click(this, window, cx);
-    });
-    div()
-        .id(id)
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .py_px()
-        .rounded_sm()
-        .cursor_pointer()
-        .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
-        } else {
-            theme().text_muted
-        }))
-        .bg(rgb(if active {
-            theme().selected
-        } else {
-            theme().panel
-        }))
-        .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-        .on_click(click)
-        .child(label)
-        .into_any_element()
-}
-
-/// Right pane's Diff/History tab strip.
+/// Right pane's Diff/History selector, using the host's shared keyboard owner.
 pub(crate) fn render_right_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-right-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-right-tab", 0),
-            Msg::EditorRightTabDiff.t().into(),
-            view.right_tab == RightPaneTab::Diff,
-            |this, window, cx| this.set_right_tab(RightPaneTab::Diff, window, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-right-tab", 1),
-            Msg::EditorRightTabHistory.t().into(),
-            view.right_tab == RightPaneTab::History,
-            |this, window, cx| this.set_right_tab(RightPaneTab::History, window, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, false, cx)
 }
 
-/// Center pane's Diff/Snapshot tab strip (only rendered once a History row
-/// is selected — see the early-return branch in `render_center_pane`).
+/// Center pane's Diff/Snapshot selector for the selected historical commit.
 pub(crate) fn render_middle_pane_tabs(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
-    div()
-        .id("ews-middle-tabs")
-        .flex()
-        .flex_row()
-        .items_center()
-        .flex_shrink_0()
-        .gap_1()
-        .px_2()
-        .py_1()
-        .bg(rgb(theme().panel))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 0),
-            Msg::EditorMiddleTabDiff.t().into(),
-            view.middle_tab == MiddlePaneTab::Diff,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Diff, cx),
-            cx,
-        ))
-        .child(render_tab_chip(
-            ("ews-middle-tab", 1),
-            Msg::EditorMiddleTabSnapshot.t().into(),
-            view.middle_tab == MiddlePaneTab::Snapshot,
-            |this, _window, cx| this.set_middle_tab(MiddlePaneTab::Snapshot, cx),
-            cx,
-        ))
-        .into_any_element()
+    view.hooks.pane_selectors.render(view, true, cx)
 }
 
 /// Right pane's History tab body: a virtualized, clickable commit list for
@@ -279,18 +186,10 @@ fn render_history_row(
     )
 }
 
-/// Center pane's Snapshot tab body: the selected commit's full file text via
-/// `view.snapshot_editor` (`sync_snapshot_editor`, `lib.rs`) — the same
-/// `code_editor` `InputState` widget the WIP buffer uses, so Snapshot gets
-/// the same monospace font, line numbers, and text selection/copy for free
-/// (bug report: an earlier hand-rolled `uniform_list` of styled divs had
-/// none of the three). Deliberately a SEPARATE `InputState` from `editor`
-/// (the live, saveable WIP buffer) — typing here is inert, never read back
-/// or persisted (see `snapshot_editor`'s doc comment for why: gpui-component
-/// has no read-only-but-selectable input mode in this version).
+/// Immutable selectable historical text, distinct from the live buffer.
 pub(crate) fn render_snapshot_pane(
     view: &EditorWorkspaceView,
-    _cx: &mut Context<EditorWorkspaceView>,
+    cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
     if view.snapshot_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
@@ -308,22 +207,35 @@ pub(crate) fn render_snapshot_pane(
     if snapshot.content.is_none() {
         return placeholder_text(Msg::EditorWorkspaceDeleted.t()).into_any_element();
     }
-    let Some(editor) = view.snapshot_editor.clone() else {
-        return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
-    };
     div()
         .id("ews-snapshot")
+        .key_context("EditorSnapshot")
         .flex_1()
         .min_h(px(0.))
         .w_full()
-        // Same reason as the WIP editor's container in `lib.rs`: `code_editor()`
-        // inherits its font, and the root sets the proportional `UI_FONT`.
-        .font_family(theme::MONO_FONT)
-        .child(
-            Input::new(&editor)
-                .appearance(false)
-                .bordered(false)
-                .h_full(),
-        )
+        .flex()
+        .flex_col()
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            #[cfg(feature = "gui-e2e")]
+            {
+                let view = cx.entity().downgrade();
+                return el.child(
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            _ = view.update(cx, |view, _| view.snapshot_bounds = Some(bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
+            }
+            #[cfg(not(feature = "gui-e2e"))]
+            el
+        })
+        .child(crate::snapshot::text(view, cx))
         .into_any_element()
 }

@@ -9,6 +9,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::workspace_mode::WorkspaceMode;
 use super::*;
 
 impl KagiApp {
@@ -731,6 +732,15 @@ impl Render for KagiApp {
             // keybinding's `!Input && !Terminal` predicate already keeps these
             // off text fields and the terminal.
             .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
+                if this.workspace_mode() == WorkspaceMode::Editor
+                    && this
+                        .ui()
+                        .editor_workspace
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).showing_history_commit())
+                {
+                    return;
+                }
                 if this.ui().operation_history.can_undo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_undo_modal();
@@ -742,6 +752,15 @@ impl Render for KagiApp {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
+                if this.workspace_mode() == WorkspaceMode::Editor
+                    && this
+                        .ui()
+                        .editor_workspace
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).showing_history_commit())
+                {
+                    return;
+                }
                 if this.ui().operation_history.can_redo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_redo_modal();

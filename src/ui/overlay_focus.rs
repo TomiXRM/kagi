@@ -215,6 +215,15 @@ impl KagiApp {
         {
             self.apply_pending_focus(window, cx);
         }
+        if !menu_visible
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.active_modal_needs_alert_trap()
+        {
+            let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
+            if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
+                window.focus(focus, cx);
+            }
+        }
     }
 
     /// The restored-focus check, against the frame drawn last. Returns

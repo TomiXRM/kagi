@@ -1362,6 +1362,10 @@ mod macos {
                 Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
             ),
             (
+                "dirty_guard_focus_trap",
+                Box::new(crate::destructive_modal_return::scenario_dirty_guard_focus_trap),
+            ),
+            (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),

@@ -4602,6 +4602,25 @@ pub fn smart_model_switch_note(model: &str) -> String {
     }
 }
 
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    match (lang(), generating) {
+        (Lang::En, false) => format!("Generate commit message with {name}"),
+        (Lang::Ja, false) => format!("{name} で commit メッセージを生成"),
+        (Lang::En, true) => format!("Generating with {name}…"),
+        (Lang::Ja, true) => format!("{name} で生成中…"),
+    }
+}
+
 /// Smart Commit provider chip hint when a CLI provider is not on `$PATH`:
 /// "<name> (not found on PATH)". The provider display name stays verbatim.
 pub fn provider_not_found_hint(name: &str) -> String {

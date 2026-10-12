@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-12 | #1342: Smart Commit footer help follows the existing persisted provider snapshot and only Ollama's model | Share one EN/JA tooltip/AX description for idle and generating states; CLI providers own their model and must not display the saved Ollama model or claim local LLM generation. Empty staging retains its existing reason; rule-based suggestion remains unchanged. [ADR-0099](adr/0099-smart-commit-cli-providers.md). |
 | 2026-10-12 | #1343: Japanese Rebase action names the source as an object, not the destination | Preserve the EN source label and correct JA to `{} を rebase`; operation/branch domain words stay English under [ADR-0048](adr/0048-ui-localization.md), and the approved `onto` operation argument is unchanged. |
 | 2026-10-12 | #1344: Rebase/Replay action captions use a scaled 160px middle-ellipsis layout, with full identities outside the width budget | Reuse the pinned Button and shared modal footer, retain full names in the plan heading and action tooltip/AX description, and keep armed warning text and two-stage approval unchanged. [ADR-0052](adr/0052-branch-merge-rebase-direction.md). |
 | 2026-10-12 | #1345: Push preview subjects are model identities, not 72-character captions | Checked-out/named-branch preview builders retain sanitized subjects through the same 4 KiB UTF-8-safe bound as graph subjects; layout alone ellipsizes and both clipboard paths read the complete model. The 100-commit plan cap remains unchanged. |

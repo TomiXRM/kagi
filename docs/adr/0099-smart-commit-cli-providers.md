@@ -126,3 +126,12 @@ focus movement and Enter/Space activation. Unavailable CLI choices remain
 focusable for their localized unavailability reason but activation is inert.
 The existing setters alone persist selection; choosing a provider never starts
 generation and the cost/quota/privacy warning remains unchanged.
+
+## Amendment — 2026-10-12: Commit footer provider identity (#1342)
+
+The footer reads the existing settings-backed SmartCommitState snapshot for
+provider-aware EN/JA tooltip and accessibility descriptions. Ollama includes
+the selected model; Claude Code and Codex never display Ollama's saved model.
+Generation wording names the actual provider (for example, “Generating with
+Codex…”), without implying that external CLI generation is local. Empty staging
+and rule-based suggestion keep their existing explanations and behavior.

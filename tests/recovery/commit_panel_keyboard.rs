@@ -17,6 +17,10 @@ mod commit_panel_coauthor_tab;
 #[path = "commit_panel_keyboard_focus.rs"]
 mod focus_regressions;
 
+#[path = "smart_footer_provider.rs"]
+mod smart_footer_provider;
+pub use smart_footer_provider::scenario_smart_commit_footer_provider;
+
 const TEMPLATE: &str = "# Keyboard regression template\n";
 
 #[derive(Clone, Copy)]

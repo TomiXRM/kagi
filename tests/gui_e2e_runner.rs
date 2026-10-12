@@ -2758,6 +2758,10 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_footer_tab_order),
             ),
             (
+                "smart_commit_footer_provider",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_commit_footer_provider),
+            ),
+            (
                 "commit_panel_coauthor_keys",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_coauthor_keys),
             ),

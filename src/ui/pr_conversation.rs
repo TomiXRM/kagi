@@ -4,8 +4,11 @@
 //! Split out of `pr_mode.rs` — these are pure renderers over a `PrTab`, with
 //! no state of their own.
 
+use super::button_style::{ButtonRole, KagiButton};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
+use gpui_component::button::Button;
 use gpui_component::text::TextViewStyle;
+use gpui_component::{Icon, Sizable as _};
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
@@ -592,9 +595,23 @@ fn render_diff_hunk(hunk: &str, id: usize, cx: &mut Context<KagiApp>) -> gpui::A
     let skipped = all.len().saturating_sub(MAX_LINES);
     let shown = &all[skipped..];
 
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("pr-convo-hunk-copy-{id}");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(Msg::PrHunkCopy.t()),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, None);
+    }
     let full = hunk.to_string();
     let copy = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-convo-hunk-copy-{id}"));
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.clone()));
         this.push_toast(
             ToastKind::Info,
@@ -649,41 +666,30 @@ fn render_diff_hunk(hunk: &str, id: usize, cx: &mut Context<KagiApp>) -> gpui::A
         .border_color(rgb(theme().selected))
         .bg(rgb(theme().bg_base))
         .child(rows)
-        // Copy the WHOLE hunk (not just the shown tail) — hover-revealed so
-        // it never competes with the code.
+        // Copy the WHOLE hunk (not just the shown tail).
         .child(
             div()
                 .absolute()
                 .top_1()
                 .right_1()
-                .id(("pr-convo-hunk-copy", id))
-                .p_1()
-                .rounded_sm()
-                .bg(rgb(theme().surface))
-                .border_1()
-                .border_color(rgb(theme().selected))
-                .cursor_pointer()
-                // Quiet until hovered (no `visible_on_hover` in this gpui).
-                .opacity(0.55)
-                .hover(|s| s.bg(rgb(theme().selected)).opacity(1.0))
-                .tooltip(|w, cx| {
-                    gpui_component::tooltip::Tooltip::new(Msg::PrHunkCopy.t()).build(w, cx)
-                })
-                // Swallow the mouse-DOWN too, not just the click: otherwise it
-                // reaches the selectable TextViews underneath and starts a
-                // window text-selection that then tracks the cursor after the
-                // button is released (user report).
-                .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
-                    cx.stop_propagation();
-                })
-                .on_click(copy)
-                .child(
-                    gpui::svg()
-                        .path("icons/copy.svg")
-                        .w(theme::scaled_px(12.))
-                        .h(theme::scaled_px(12.))
-                        .text_color(rgb(theme().text_sub)),
-                ),
+                .child(super::e2e::measure_control(
+                    format!("pr-convo-hunk-copy-{id}"),
+                    Button::new(("pr-convo-hunk-copy", id))
+                        .icon(Icon::empty().path("icons/copy.svg"))
+                        .small()
+                        .size(theme::scaled_px(24.))
+                        .tab_stop(true)
+                        .tooltip(Msg::PrHunkCopy.t())
+                        .map(|button| {
+                            super::button_style::named_button(button, Msg::PrHunkCopy.t(), None)
+                        })
+                        // Swallow mouse-down as well: the selectable TextViews
+                        // underneath must not start window text selection.
+                        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
+                            cx.stop_propagation();
+                        })
+                        .on_click(copy),
+                )),
         )
         .into_any_element()
 }
@@ -698,25 +704,37 @@ fn render_apply_suggestion(
 ) -> gpui::AnyElement {
     let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-convo-apply-suggestion-{id}"));
         this.open_apply_suggestion_modal(suggestion.clone(), cx);
         cx.notify();
     });
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("pr-convo-apply-suggestion-{id}");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(Msg::PrApplySuggestion.t()),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, Some(ButtonRole::Secondary));
+    }
     super::e2e::measure_control(
         format!("pr-convo-apply-suggestion-{id}"),
-        div()
-            .id(("pr-convo-apply-suggestion", id))
-            .px_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(theme().color_branch))
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().selected)))
-            // The selectable text under the row would start a selection.
-            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-            .on_click(open)
-            .child(SharedString::from(Msg::PrApplySuggestion.t())),
+        KagiButton::styled(
+            ("pr-convo-apply-suggestion", id),
+            Msg::PrApplySuggestion.t(),
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .tab_stop(true)
+        .map(|button| super::button_style::named_button(button, Msg::PrApplySuggestion.t(), None))
+        // The selectable text under the row would start a selection.
+        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+        .on_click(open),
     )
     .into_any_element()
 }

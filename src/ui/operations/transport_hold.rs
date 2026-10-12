@@ -32,6 +32,18 @@ impl TransportHolds {
     }
 }
 impl KagiApp {
+    #[cfg(feature = "gui-e2e")]
+    pub fn set_pr_merge_held_for_e2e(&mut self, number: u64, held: bool) {
+        let Some(repo) = self.repo_path.as_ref() else {
+            return;
+        };
+        let key = (repo.clone(), format!("pr-merge #{number}"));
+        if held {
+            self.transport_holds.0.insert(key);
+        } else {
+            self.transport_holds.0.remove(&key);
+        }
+    }
     /// Settlement for one run-family receipt, before the stale-tab guard: what
     /// the execution boundary made durable is delivered whatever the tab is
     /// doing now (#501, ADR-0196 Wave 3).

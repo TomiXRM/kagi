@@ -606,8 +606,8 @@ pub(super) fn render_composer(
                         // GitHub requires words on a "request changes" review and
                         // allows a wordless approval, so only one of the three is
                         // usable with an empty box (mock 7a).
-                        // The verdicts carry their colour; a plain comment is the
-                        // composer's own amber submit.
+                        // Verdicts carry their semantic colour; ordinary
+                        // comments use the composer's Primary submit.
                         .child(
                             super::button_style::KagiButton::icon(
                                 "pr-review-request-changes",
@@ -616,6 +616,25 @@ pub(super) fn render_composer(
                                 super::button_style::ButtonRole::Warning,
                                 cx,
                             )
+                            .map(|button| {
+                                #[cfg(feature = "gui-e2e")]
+                                {
+                                    super::e2e::pr_detail::record_control(
+                                        "pr-review-request-changes",
+                                        Some(gpui::Role::Button),
+                                        Some(Msg::PrReviewRequestChanges.t()),
+                                        None,
+                                        None,
+                                    );
+                                    super::e2e::pr_detail::record_button_state(
+                                        "pr-review-request-changes",
+                                        true,
+                                        empty || review_held,
+                                        Some(super::button_style::ButtonRole::Warning),
+                                    );
+                                }
+                                button
+                            })
                             .small()
                             .disabled(empty || review_held)
                             .on_click(request_changes),

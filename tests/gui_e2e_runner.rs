@@ -59,6 +59,9 @@ mod gui_evidence;
 #[path = "support/gui_isolation.rs"]
 mod gui_isolation;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_detail_a11y.rs"]
+mod pr_detail_a11y;
+#[cfg(target_os = "macos")]
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
@@ -2201,6 +2204,12 @@ mod macos {
                 "pr_detail_lifecycle",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_lifecycle),
             ),
+            ("pr_detail_a11y_1255", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1255)),
+            ("pr_detail_a11y_1256", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1256)),
+            ("pr_detail_a11y_1257", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1257)),
+            ("pr_detail_a11y_1259", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1259)),
+            ("pr_detail_a11y_1260_en", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1260_en)),
+            ("pr_detail_a11y_1260_ja", Box::new(crate::pr_detail_a11y::scenario_pr_detail_a11y_1260_ja)),
             (
                 "pr_diff_extent_unified",
                 Box::new(crate::pr_diff_extent::scenario_pr_diff_extent_unified),

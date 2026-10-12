@@ -26,6 +26,9 @@ pub mod diff_presentation;
 pub mod diff_controls;
 
 #[cfg(feature = "gui-e2e")]
+pub mod pr_detail;
+
+#[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
     super::modal_command::recorded_disclosure(id)
 }

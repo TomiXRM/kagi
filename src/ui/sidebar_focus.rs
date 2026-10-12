@@ -169,7 +169,17 @@ impl KagiApp {
         if std::mem::take(&mut self.sidebar.focus.away) {
             window.request_animation_frame();
         }
+        let compact_open = super::compact_sidebar::is_open(window, cx);
+        let compact_pane = super::compact_sidebar::active_pane(window, cx);
+        if compact_open && compact_pane.is_none() {
+            self.yield_sidebar_focus(window, cx);
+            return;
+        }
         for pane in 0..PANES {
+            if compact_open && compact_pane != Some(pane) {
+                self.sidebar.focus.lists[pane] = None;
+                continue;
+            }
             let header = self.sidebar.focus.headers.get(pane, cx);
             let drawn = std::mem::take(&mut self.sidebar.focus.drawn[pane]);
             let scroll = RowScroll::Uniform(self.sidebar.scroll_handles[pane].clone(), drawn);
@@ -352,11 +362,14 @@ pub(super) fn row(
         .as_ref()
         .is_some_and(|focus| list.is_handle(at, focus));
     let menu_row = focused.then(|| row.clone());
+    let compact = app.compact.enabled;
     let el = list
         .row(at, el)
         .child(under_ring(drawn, app.root_focus.clone()))
         .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
-            if event.is_keyboard() {
+            if event.is_keyboard()
+                && (!compact || !super::compact_sidebar::select_worktree(this, &row, cx))
+            {
                 this.activate_sidebar_row(&row, cx);
             }
         }));

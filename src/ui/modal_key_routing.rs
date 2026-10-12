@@ -7,6 +7,7 @@
 use super::*;
 
 impl KagiApp {
+    /// Diff-local overlays outrank notifications and compact projections.
     fn cancel_workspace_overlay(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
         if diff_selection::clear() {
             cx.notify();
@@ -84,6 +85,8 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let escape = cx.listener(move |this, _: &CloseMainDiff, window, cx| {
+            // The front-layer boundary owns modal/menu cancellation, including
+            // the co-author ListBox's focus return. Do not close menus again here.
             if this.cancel_active_modal(cx) {
                 return;
             }
@@ -97,10 +100,38 @@ impl KagiApp {
             {
                 return;
             }
+            if workspace_fallbacks && super::compact_sidebar::is_open(window, cx) {
+                super::compact_sidebar::dismiss(window, cx);
+                cx.notify();
+                return;
+            }
+            if workspace_fallbacks && this.compact.enabled && this.compact.popup_owner.is_some() {
+                this.close_compact_composer(window, cx);
+                cx.notify();
+                return;
+            }
             if workspace_fallbacks {
                 this.cancel_workspace_key_target(window, cx);
             }
         });
+        let composer = cx.listener(
+            move |this, _: &super::compact::OpenCommitComposer, window, cx| {
+                if !workspace_fallbacks
+                    || !super::compact::for_window(window)
+                    || this.has_modal_or_visible_plan(cx)
+                    || this.workspace_mode() != super::workspace_mode::WorkspaceMode::Graph
+                    || this.conflict_body_visible()
+                    || !this.compact_shortcut_anchor_visible(window, cx)
+                {
+                    cx.propagate();
+                    return;
+                }
+                if this.compact.popup_owner != this.active_session() {
+                    this.open_commit_panel(window, cx);
+                    cx.notify();
+                }
+            },
+        );
         let enter = cx.listener(move |this, e: &KeyDownEvent, window, cx| {
             if std::env::var("KAGI_DEBUG_KEYS").as_deref() == Ok("1") {
                 eprintln!(
@@ -129,6 +160,7 @@ impl KagiApp {
         div()
             .size_full()
             .on_action(escape)
+            .on_action(composer)
             .on_key_down(enter)
             .child(content)
             .into_any()

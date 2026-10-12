@@ -322,6 +322,13 @@ fn render_cp_file_row(
         } else {
             "cp-row-stage"
         }))
+        .when(fi == 0, |button| {
+            button.child(super::e2e::measure_inside(if staged {
+                "cp-first-row-unstage"
+            } else {
+                "cp-first-row-stage"
+            }))
+        })
         .on_click(action_click),
     )
 }

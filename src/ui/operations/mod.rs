@@ -643,6 +643,14 @@ impl KagiApp {
 
     fn apply_run_presentation(&mut self, presentation: RunPresentation, cx: &mut Context<Self>) {
         if let Some((repo, message)) = presentation.consume_commit_message {
+            if self
+                .ui()
+                .commit_panel
+                .as_ref()
+                .is_some_and(|panel| panel.read(cx).repo_path == repo)
+            {
+                self.compact.popup_owner = None;
+            }
             match message {
                 Some((branch, frozen)) => {
                     let panel_matches = self.ui().commit_panel.as_ref().is_some_and(|panel| {

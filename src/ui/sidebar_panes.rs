@@ -159,7 +159,12 @@ impl SidebarState {
 
 /// A pane keeps its header fixed while only its leaves scroll. All five Tree
 /// wrappers exist, even for empty sections.
-fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(super) fn render_pane(
+    app: &KagiApp,
+    index: usize,
+    compact: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let range = &app.sidebar.pane_ranges[index];
     let Some(header) = app.sidebar.rows.get(range.start) else {
         return div().into_any_element();
@@ -206,6 +211,18 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
                     .filter_map(|position| {
                         let absolute = body_start + position;
                         let row = this.sidebar.rows.get(absolute).cloned()?;
+                        let leaf = match &row {
+                            SidebarRow::LocalBranchLeaf { .. } | SidebarRow::Stash { .. } => true,
+                            SidebarRow::RemoteLeaf { target, .. }
+                            | SidebarRow::Tag { target, .. } => {
+                                this.view().commit_row_index.contains_key(target)
+                            }
+                            SidebarRow::Worktree { .. } => this.remote_view.is_none(),
+                            _ => false,
+                        };
+                        let worktree =
+                            (compact && leaf && matches!(&row, SidebarRow::Worktree { .. }))
+                                .then(|| row.clone());
                         let spec = super::sidebar_a11y::tree_item(&row);
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         let slot = div().id((pane_id, absolute)).w_full().h(row_h);
@@ -214,6 +231,20 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
                                 super::sidebar_focus::row(this, rows, position, slot, row, el, cx)
                             }
                             None => slot.child(el),
+                        };
+                        let slot = if compact && leaf {
+                            slot.on_click(cx.listener(
+                                move |this, event: &gpui::ClickEvent, window, cx| {
+                                    if !event.is_keyboard() {
+                                        if let Some(row) = &worktree {
+                                            super::compact_sidebar::select_worktree(this, row, cx);
+                                        }
+                                    }
+                                    super::compact_sidebar::dismiss_selection(window, cx);
+                                },
+                            ))
+                        } else {
+                            slot
                         };
                         Some(
                             super::list_a11y::tree_item(
@@ -348,7 +379,7 @@ fn pane_divider(app: &KagiApp, index: usize) -> gpui::AnyElement {
 /// `render` owns the cached flat rows and ranges, so drawing another workspace
 /// page cannot start a Git read or rebuild refs.
 pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
-    let filter_input = app.sidebar.filter.clone();
+    let filter_area = render_filter(app, cx);
     // The five pane bodies share `sidebar.rows`, never copied on layout changes.
     // ADR-0128: the badge counts merged-class rows only (stale-only rows are
     // listed in the table but don't count as "merged").
@@ -358,42 +389,6 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .iter()
         .filter(|r| r.status != kagi_git::ops::MergedBranchStatus::NotMerged)
         .count();
-
-    // ── Filter input row (pinned above the virtualized list) ──────
-    let filter_area: gpui::AnyElement = if let Some(input_entity) = &filter_input {
-        div()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(Input::new(input_entity).xsmall().appearance(true))
-            .into_any_element()
-    } else {
-        // Placeholder: clicking creates the InputState (requires Window).
-        let create_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-            this.ensure_sidebar_filter(window, cx);
-            cx.notify();
-        });
-        div()
-            .id("sidebar-filter-placeholder")
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .on_click(create_handler)
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .child(
-                div()
-                    .h(theme::scaled_px(22.))
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .bg(rgb(theme().bg_base))
-                    .rounded(theme::scaled_px(4.))
-                    .child(SharedString::from("filter…")),
-            )
-            .into_any_element()
-    };
 
     // ── Branch Cleanup entry (ADR-0128, pinned above the list) ────
     // "Merged branches (N)" — N counts the merged-class rows (full / squash?
@@ -451,7 +446,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             // sidebar's bottom edge. Leaf lists still scroll independently.
             .overflow_y_scroll(),
         |container, index| {
-            let container = container.child(render_pane(app, index, cx));
+            let container = container.child(render_pane(app, index, false, cx));
             if index + 1 < SECTIONS.len() {
                 container.child(pane_divider(app, index))
             } else {
@@ -474,6 +469,42 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .child(cleanup_entry)
         .child(panes)
         .into_any_element()
+}
+
+/// The same lazy InputState and filter chrome in wide panes and compact popovers.
+pub(super) fn render_filter(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    if let Some(input) = &app.sidebar.filter {
+        div()
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .child(Input::new(input).xsmall().appearance(true))
+            .into_any_element()
+    } else {
+        div()
+            .id("sidebar-filter-placeholder")
+            .px_2()
+            .py_1()
+            .flex_shrink_0()
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.ensure_sidebar_filter(window, cx);
+                cx.notify();
+            }))
+            .hover(|s| s.bg(rgb(theme().surface)))
+            .child(
+                div()
+                    .h(theme::scaled_px(22.))
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+                    .bg(rgb(theme().bg_base))
+                    .rounded(theme::scaled_px(4.))
+                    .child(SharedString::from("filter…")),
+            )
+            .into_any_element()
+    }
 }
 
 #[cfg(test)]

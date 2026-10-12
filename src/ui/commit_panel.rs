@@ -412,6 +412,7 @@ pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
     pub(crate) view_focus: super::keyboard_nav::TabFocus,
+    pub(crate) staged_view_focus: super::keyboard_nav::TabFocus,
     pub(crate) controls_focus: super::keyboard_nav::FocusSlots,
     pub(crate) window_active: bool,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
@@ -509,6 +510,7 @@ impl CommitPanelView {
         Self {
             state,
             view_focus: super::keyboard_nav::TabFocus::default(),
+            staged_view_focus: super::keyboard_nav::TabFocus::default(),
             controls_focus: super::keyboard_nav::FocusSlots::default(),
             pointer_root_focus: None,
             window_active: true,

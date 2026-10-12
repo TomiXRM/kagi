@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inline Editor blame maps the live buffer back to HEAD using the existing domain diff: inserted and modified rows show a muted EN/JA Uncommitted label, while unchanged rows retain their original attribution after insertions or deletions. Blame and HEAD text still come through the backend read path. (#1374)
+  - Review: line mapping runs off-thread with revision-tagged results only while Blame is visible. Edited regions exceeding one million diff cells remain conservatively Uncommitted; unchanged trimmed edges keep attribution. LF/CRLF checkout differences do not erase authors.
+- Inline blame retains complete sanitized author, relative date and commit subject in its tooltip and accessibility name; middle ellipsis affects layout only. (#1378)
 - Split diff keyboard navigation follows aligned visual rows rather than revisiting the top of replacement blocks; Home/End and viewport-sized PageUp/PageDown use the same order. Unified navigation and inclusive selection/copy semantics remain unchanged. (#1373)
   - Review: retain monotonic source ranges when a right-column caret crosses left-only fillers, count measured visible Row bounds for wrapped/expanded pages, and reuse the pane's captured split projection.
   - Second review: Up reverses the same affinity-side replacement route as Down, preserving one-sided additions/deletions; page counting visits only visible list items.

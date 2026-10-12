@@ -266,8 +266,17 @@ Restoring state:
 - A scenario that starts a terminal holds `gui_isolation::PortStore::keep()`,
   and `gui_isolation::StandInShell::install()` unless it sets its own seam shell
   (`KagiApp::set_terminal_shell_for_e2e`). The stand-in is a `/bin/sh` script
-  that reads lines until `exit` or EOF; its PID and cwd are real, so the
+  that reads lines until `exit`, `exit N` (returning code N) or EOF; its PID and cwd are real, so the
   auto-lock cwd probe and exit delivery behave as with a login shell.
+
+For #1273 use `KAGI_GUI_E2E_ONLY='terminal_states,terminal_auto_lock'`.
+`terminal_states` measures NotStarted / Exited(3) / Failed(reason) icon, title,
+hint and Primary Restart bounds in EN/JA at 100%/167%; Enter/Space and pointer
+activation use the existing spawn seam. Failed starts target a nonexistent
+fixture binary, never `$SHELL`; the OS reason and unchanged failed-start
+Operation Log path are retained. Native log-tail assertions require the
+unchanged shell-exited line once, before the shell-wait status line. The
+recorder proves renderer state, not real VoiceOver or Tier B focus delivery.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`

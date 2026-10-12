@@ -6,6 +6,44 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn terminal_empty_states_are_localized_and_keep_os_detail() {
+    for (message, english, japanese) in [
+        (
+            Msg::TerminalNotStartedTitle,
+            "Shell not started",
+            "シェルは未起動です",
+        ),
+        (
+            Msg::TerminalExitedTitle,
+            "Shell exited",
+            "シェルが終了しました",
+        ),
+        (
+            Msg::TerminalFailedTitle,
+            "Shell could not start",
+            "シェルを起動できませんでした",
+        ),
+        (
+            Msg::TerminalNotStartedHint,
+            "Start a shell in this repository.",
+            "このリポジトリでシェルを起動します。",
+        ),
+        (
+            Msg::TerminalRestartHint,
+            "Restart to open a new shell in this repository.",
+            "再起動すると、このリポジトリで新しいシェルが開きます。",
+        ),
+        (Msg::TerminalRestart, "Restart", "Restart"),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+    assert!(terminal_exited_title(3).ends_with(" (code 3)"));
+    let reason = "spawn '/missing/{shell}': No such file or directory (os error 2)";
+    assert!(terminal_failed_hint(reason).ends_with(reason));
+}
+
+#[test]
 fn slug_roundtrip() {
     assert_eq!(Lang::from_slug("en"), Some(Lang::En));
     assert_eq!(Lang::from_slug("JA"), Some(Lang::Ja));

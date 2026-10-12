@@ -138,3 +138,7 @@ unborn repositories retain their WIP row. The icon/title/hint/action layout reus
 the Terminal empty-state block (#1273), with theme tokens and scaled icon geometry.
 The guidance is local-only: SSH remote views remain read-only and retain their
 existing empty list, without a Changes action that requires a local repository.
+Visual review fixes the shared block's hierarchy as a pane-centered vertical
+icon/title/hint/action stack (`flex_col`, `items_center`, `justify_center`).
+Native geometry assertions pin vertical order, both center axes and containment
+for Graph and Terminal, including JA at 167% zoom.

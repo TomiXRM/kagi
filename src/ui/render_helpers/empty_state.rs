@@ -20,43 +20,46 @@ pub(crate) fn empty_state(
         .w_full()
         .overflow_y_scroll()
         .bg(rgb(theme().panel))
+        .relative()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .p_3()
+        .child(e2e::measure_inside(id))
+        .child(e2e::measure_control(
+            probes[0],
+            Icon::new(icon)
+                .size(theme::scaled_px(20.))
+                .text_color(rgb(icon_color)),
+        ))
         .child(
             div()
-                .flex()
-                .items_start()
-                .gap_3()
-                .p_3()
-                .child(e2e::measure_control(
-                    probes[0],
-                    Icon::new(icon)
-                        .size(theme::scaled_px(20.))
-                        .text_color(rgb(icon_color)),
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(e2e::measure_control(
-                            probes[1],
-                            div()
-                                .text_sm()
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(theme().text_main))
-                                .child(title),
-                        ))
-                        .child(e2e::measure_control(
-                            probes[2],
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_sub))
-                                .child(hint),
-                        )),
-                )
-                .child(e2e::measure_control(probes[3], action)),
+                .relative()
+                .w_full()
+                .flex_shrink_0()
+                .text_center()
+                .text_sm()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(rgb(theme().text_main))
+                .child(e2e::measure_inside(probes[1]))
+                .child(title),
         )
+        .child(
+            div()
+                .id(probes[2])
+                .relative()
+                .w_full()
+                .min_h(px(0.))
+                .overflow_y_scroll()
+                .text_center()
+                .text_xs()
+                .text_color(rgb(theme().text_sub))
+                .child(e2e::measure_inside(probes[2]))
+                .child(hint),
+        )
+        .child(e2e::measure_control(probes[3], action))
         .into_any()
 }
 

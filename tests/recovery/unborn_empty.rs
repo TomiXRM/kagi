@@ -17,6 +17,39 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
+pub(crate) fn assert_centered_block(
+    window: AnyWindowHandle,
+    pane: &'static str,
+    names: [&'static str; 4],
+) {
+    let rects = names.map(|name| e2e::control_bounds(window.window_id(), name).unwrap());
+    for pair in rects.windows(2) {
+        assert!(
+            pair[0].bottom() <= pair[1].top(),
+            "empty state must stack icon, title, hint and Button vertically"
+        );
+    }
+    let pane = e2e::control_bounds(window.window_id(), pane).expect("empty pane measured");
+    for rect in rects {
+        assert!(
+            rect.left() >= pane.left()
+                && rect.right() <= pane.right()
+                && rect.top() >= pane.top()
+                && rect.bottom() <= pane.bottom(),
+            "empty state child must fit inside pane: {rect:?} {pane:?}"
+        );
+        assert!(
+            (f32::from(rect.center().x - pane.center().x)).abs() <= 1.,
+            "empty state children must be horizontally centered: {rect:?} {pane:?}"
+        );
+    }
+    let content_center = (f32::from(rects[0].top()) + f32::from(rects[3].bottom())) / 2.;
+    assert!(
+        (content_center - f32::from(pane.center().y)).abs() <= 1.,
+        "empty state must be vertically centered in its pane"
+    );
+}
+
 fn clean(cx: &mut VisualTestAppContext, lang: Lang) {
     let fixture = tempfile::tempdir().unwrap();
     assert!(std::process::Command::new("git")
@@ -28,24 +61,16 @@ fn clean(cx: &mut VisualTestAppContext, lang: Lang) {
     let before = repo_fingerprint(fixture.path());
     let (app, window) = mount(cx, fixture.path());
     draw(cx, window);
-    for name in [
-        "unborn-state-icon",
-        "unborn-state-title",
-        "unborn-state-hint",
-        "unborn-open-changes",
-    ] {
-        let rect = e2e::control_bounds(window.window_id(), name)
-            .unwrap_or_else(|| panic!("clean unborn repository must render {name}"));
-        cx.update_window(window, |_, window, _| {
-            assert!(rect.left() >= gpui::px(0.) && rect.top() >= gpui::px(0.));
-            assert!(
-                rect.right() <= window.viewport_size().width
-                    && rect.bottom() <= window.viewport_size().height,
-                "{name} must fit at 167%: {rect:?}"
-            );
-        })
-        .unwrap();
-    }
+    assert_centered_block(
+        window,
+        "unborn-empty-state",
+        [
+            "unborn-state-icon",
+            "unborn-state-title",
+            "unborn-state-hint",
+            "unborn-open-changes",
+        ],
+    );
     let state = e2e::unborn::take().expect("clean guidance rendered");
     let (title, hint) = match lang {
         Lang::En => ("No commits yet", "Add files and create the first commit"),

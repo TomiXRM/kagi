@@ -345,6 +345,11 @@ impl KagiApp {
         use super::front_layer::{LayerKind, Z_ORDER};
         let mut el = el;
         for kind in Z_ORDER.iter().copied().filter(|kind| kind.in_modal_layer()) {
+            // Keep the workspace out of the trap's subtree. Input cards own
+            // their named frame; alerts reuse that same gpui-kit trap here.
+            let alert_parent = (kind == LayerKind::EarlyModal
+                && self.active_modal_needs_alert_trap())
+            .then(|| std::mem::replace(&mut el, div().size_full().absolute().top_0().left_0()));
             el = match kind {
                 LayerKind::EarlyModal => el
                     .when_some(plan_modal.take(), |el, modal| {
@@ -743,6 +748,14 @@ impl KagiApp {
                 | LayerKind::MenuOverlay
                 | LayerKind::PlatformMenu => unreachable!("outer render layer"),
             };
+            if let Some(parent) = alert_parent {
+                use gpui_component::FocusTrapElement as _;
+                if let Some(focus) = &self.modal_focus {
+                    el = parent.child(el.focus_trap("alert-modal-frame", focus));
+                } else {
+                    el = parent.child(el);
+                }
+            }
         }
         el
     }

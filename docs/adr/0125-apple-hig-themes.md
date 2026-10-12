@@ -442,9 +442,9 @@ and wide-window geometry authoritative rather than estimating text advances.
 The row clips intermediate paint while measurements settle.
 
 Fitting reserves existing group spacing and the equal side columns, with
-room for Refresh and the repository identity. Repository commands overflow
-first; workspace-mode/Analyze/Settings controls collapse last, and the selected
-workspace control is the last candidate. Hidden commands omit their interactive
+room for Refresh and the repository identity. The original repository-first
+collapse priority is superseded by #1316 below; the selected workspace control
+remains the last candidate. Hidden commands omit their interactive
 subtree entirely: GPUI still registers Tab stops when an interactive element
 merely has `display: none`. Growing the row restores commands from cached
 natural widths. The trailing » reuses the header's
@@ -1001,4 +1001,92 @@ not an exact native material match. No user setting, pointer or foreground
 was changed. See Apple's [NSVisualEffectView](https://developer.apple.com/documentation/appkit/nsvisualeffectview)
 and its [popover](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/popover) /
 [menu](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/menu) materials.
+
+
+## Amendment — 2026-10-12: Git-first narrow-toolbar priority (#1316)
+
+This dense application-command surface reuses the existing measured fit cache,
+header buttons and gpui-kit overflow menu; it adds no control or operation path.
+The reference is Finder's secondary-toolbar overflow, adapted to Kagi's Git GUI
+role: repository commands take priority over preferences and inactive navigation.
+
+On shrinking, collapse Update → Settings → non-selected Analyze, Editor, PRs,
+Graph → Terminal → Redo → Undo → Pop → Stash → Branch → Push → Pull → selected
+workspace mode. Absent controls and the selected mode are skipped in the early
+mode tier. Widening recomputes the same priority from cached natural widths,
+restoring controls in reverse. This supersedes #1210's repository-first order.
+When only the selected workspace mode remains visible (or no workspace item
+remains), icon-mode fitting drops its 100-reference-pixel symmetric-column
+floor while retaining actual selected-mode/overflow width and gaps. This
+releases width for Git commands in production Graph mode, where Graph stays
+selected until after Pull. A left-only 96-reference-pixel minimum budgets
+Refresh, a 40-reference-pixel truncating repository/branch summary and the
+drag spacer, so the right column can yield without making identity unreadable.
+Wide windows retain equal flex columns; narrow windows may use asymmetric
+minimums. Caption-mode measured identity/workspace minimums are unchanged.
+
+Overflow menu order, Button/MenuItem roles, localized names, unavailable reasons,
+action-bound shortcuts, keyboard focus and dispatch remain the #1252/#1217
+contract. Hidden modes stay reachable through the existing keyboard shortcuts,
+View menu and command palette as well as ». Rest/hover/pressed/focus-visible,
+selected and disabled states retain their existing owners; no new loading,
+error or safety lifecycle state is introduced.
+
+Tier A `toolbar_overflow_priority` uses native width reductions and reverse
+expansion with an Update offer, all four modes and Graph selected, across EN/JA,
+100%/167% and Apple Light/Dark. Pure fit tests cover production's Graph, PRs
+and Editor selected indices plus the no-selected-mode Takeover sentinel
+(`usize::MAX`); Analyze never supplies selected index 11. Both presentation
+modes run, with a production Graph mask proving selected-only width release.
+The native oracle requires Pull/Push still visible below the old 100px-floor
+fit threshold while Graph is the sole visible workspace item. Existing toolbar
+fit, overflow, accessibility and workspace-mode scenarios retain their contracts.
+Tier B target: inspect the narrow toolbar, readable repository/branch summary
+and » in EN/JA at both zooms and Apple themes; verify hidden-mode shortcuts and
+palette activation in the real application. Native bounds are not VoiceOver or
+real-window visual evidence.
+
+Regression evidence: the unchanged native priority oracle failed before the
+policy change at Apple Light / EN / 100% / width 752: hidden mask `8320`
+(Update + Terminal), expected `12288` (Update + Settings). After the cutover
+it passes all eight language/theme/zoom cells, including final Pull/Push and
+selected-Graph stages and reverse restoration. Existing `toolbar_overflow`
+retains its original menu-membership/shortcut/AX/focus assertions at 940px,
+then uses an explicitly constrained 480px viewport for Undo-reason, Terminal
+focus and Branch activation: these commands no longer necessarily overflow at
+940px under the new policy. Native resize requests use whole logical pixels,
+matching AppKit's rounding rather than waiting for an impossible fractional
+viewport at 167% zoom.
+
+Review correction: the selected-only release is exercised with production
+`present = 0x3fff`, selected Graph (`8`), not a synthetic no-Graph Git toolbar.
+Removing both side reservations exposed a real identity-readability failure;
+the left-only minimum above preserves the existing native >30px identity oracle.
+The right floor still releases genuine space, and the native matrix requires
+Pull/Push visibility below the old symmetric-100px fit threshold in every cell.
+
+
+Tiny-window production review: native 700×500 / EN / Icon Only / 100% recorded
+Terminal x=483.5..512 intersecting selected Graph x=495.5..524, matching the
+reported Tier B overlap. Two coverage gaps had concealed it: the old matrix
+began at 940px, and a feature-only `measure_control` wrapper around the Git group
+changed its flex sizing. The group now records its own bounds with an absolute
+inside probe and no test-only wrapper.
+
+Natural-width canvases measure inside the fixed 2px focus border on each side.
+Caption fitting already added those 4px; icon-only fitting must include them too.
+Hidden command and Update probes carry the same border as visible controls so
+style changes preserve one natural-width convention. The right column retains
+its actual measured workspace/overflow minimum in both presentations; icon-only
+repository identity explicitly shrinks to its existing readable minimum.
+
+The 700×500 long-name matrix checks all visible outer control bounds (including
+the fixed ring) and the actual Git group against every workspace control in both
+presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
+the existing 660px legs retain every operation/menu activation assertion.
+The verification skill is updated. Real-window comparison remains Tier B.
+
+The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusion
+from its non-macOS available width, preserving the same effective content budget
+and collapse expectation rather than assuming macOS geometry on Linux.
 

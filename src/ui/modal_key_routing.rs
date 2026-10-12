@@ -76,7 +76,7 @@ impl KagiApp {
 
     /// Return is the safe default, not an implicit selection of a danger action.
     /// Focused buttons consume their own Enter/Space before this root handler.
-    fn active_modal_defaults_to_cancel(&self) -> bool {
+    pub(super) fn active_modal_defaults_to_cancel(&self) -> bool {
         use modals::ActiveModal as M;
         let danger_plan = |plan: &kagi_git::OperationPlan| {
             modal_renderers::plan_confirm_kind(plan.destructive, &plan.title, false)
@@ -138,6 +138,77 @@ impl KagiApp {
                 | M::StashApply(_)
                 | M::ConflictContinue(_)
                 | M::EditorFsPrompt(_)
+                | M::TrustRepo(_),
+            ) => false,
+        }
+    }
+
+    /// Alert-style confirmations have no text field to take focus for them.
+    /// Share the named-dialog focus trap, including the owner-trust prompt.
+    pub(super) fn active_modal_needs_alert_trap(&self) -> bool {
+        self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some()
+    }
+
+    /// Cards rendered through input_dialog_frame own their replacement focus,
+    /// including fieldless named tasks that reuse the shared modal handle.
+    pub(super) fn active_modal_has_named_frame(&self) -> bool {
+        use modals::ActiveModal as M;
+        match self.active_modal.as_ref() {
+            Some(
+                M::CreateBranch(_)
+                | M::CreateTag(_)
+                | M::CreateWorktree(_)
+                | M::StashPush(_)
+                | M::RenameBranch(_)
+                | M::SetUpstream(_)
+                | M::WorktreeLockReason(_)
+                | M::EditorFsPrompt(_)
+                | M::RemoteBrowse(_)
+                | M::PrFields(_)
+                | M::Clone(_)
+                | M::AnalyzeHelp(_),
+            ) => true,
+            None
+            | Some(
+                M::Amend(_)
+                | M::StashDrop(_)
+                | M::DeleteBranch(_)
+                | M::DeleteRemoteBranch(_)
+                | M::ResetCurrent(_)
+                | M::ForceLeasePush(_)
+                | M::BranchCleanup(_)
+                | M::Discard(_)
+                | M::OplogRestore(_)
+                | M::ConflictAbort(_)
+                | M::EditorDirtyGuard(_)
+                | M::EditorDeleteConfirm(_)
+                | M::RemoveWorktree(_)
+                | M::PruneWorktrees(_)
+                | M::Checkout(_)
+                | M::Pull(_)
+                | M::Push(_)
+                | M::BranchPlan(_)
+                | M::History(_)
+                | M::PrMerge(_)
+                | M::RebaseCurrentOnto(_)
+                | M::QueuedCommit(_)
+                | M::PushTag(_)
+                | M::Merge(_)
+                | M::TrackingCheckout(_)
+                | M::SwitchToLatest(_)
+                | M::CherryPick(_)
+                | M::Revert(_)
+                | M::Pop(_)
+                | M::ApplySuggestion(_)
+                | M::AppNotice(_)
+                | M::Update(_)
+                | M::SmartCommit(_)
+                | M::UnlockWorktree(_)
+                | M::LockWorktree(_)
+                | M::RepairWorktrees(_)
+                | M::RepoHealth(_)
+                | M::StashApply(_)
+                | M::ConflictContinue(_)
                 | M::TrustRepo(_),
             ) => false,
         }

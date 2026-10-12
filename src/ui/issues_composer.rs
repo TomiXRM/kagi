@@ -432,9 +432,9 @@ pub(super) fn render_composer(
                 100.
             }))
             .when(editor.focused, |body| {
-                // The focused frame has the pane's definite height. Flex gives
-                // only the space left after the nonshrinking fields/footer to
-                // the Input; its own scroll handles longer drafts.
+                // Flex gives the Input only space left after the nonshrinking
+                // fields/footer. Short panes scroll the frame's intrinsic
+                // minimum; the Input's own scroll handles longer drafts.
                 body.h_auto()
                     .flex_1()
                     .min_h(theme::scaled_px(25.5 * 2.))
@@ -613,12 +613,17 @@ pub(super) fn render_composer(
         &app.avatars.images,
         content,
     )
-    .when(editor.focused, |composer| composer.h_full().flex_none())
+    .when(editor.focused, |composer| {
+        composer.h_auto().flex_grow(1.).flex_shrink_0()
+    })
     .border_b_1()
     .border_color(rgb(theme().selected))
     .key_context("IssueComposer")
     .on_action(cx.listener(move |app, _: &FocusIssueEditor, window, cx| {
         app.toggle_issue_focus(number, window, cx)
     }));
-    super::e2e::measure_control(id, composer).into_any_element()
+    composer
+        .relative()
+        .child(super::e2e::measure_inside(id))
+        .into_any_element()
 }

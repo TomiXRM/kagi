@@ -9,6 +9,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Review hunks retain their last twelve lines with an EN/JA Show previous lines / Collapse button, preserve full-hunk copying, and expose long lines through a horizontal system scrollbar without replacing the virtualized PR feed. Copy is outside the code, and vertical wheels only move the feed. (#1258)
 - Issue composer body heights scale with the text line height, preserving the ordinary visible-line budget at 100% and 167% zoom. Focused composition fits the remaining pane around nonshrinking fields/footer with a two-line minimum and an internally scrolling Input. (#1261)
+  - Focused composition keeps its actual pane as the scroll viewport, without an auto-height content wrapper; flow-neutral probes check the window viewport and a long draft's usable height.
 - Destructive dialogs make Cancel the Return default; danger confirmation requires explicit keyboard focus or a pointer/AX action. Escape still cancels, non-destructive Return confirmation and existing two-stage safety gates remain unchanged. (#1270)
 - Command Palette has one highlighted activation target: real pointer motion selects its row, while scrolling beneath a resting pointer leaves the keyboard selection unchanged. Enter runs that same row; unavailable commands remain inert. (#1271)
 - macOS Command Palette shortcuts use the shared gpui-kit formatter's native ⌃⌥⇧⌘ glyph order in the right-aligned column, including remapped and named keys. EN/JA share bindings and glyphs; other platforms retain text shortcuts. (#1272)

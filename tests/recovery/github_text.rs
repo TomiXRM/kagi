@@ -226,7 +226,9 @@ fn focused_issue_body(
     cx.simulate_keystrokes(window, "secondary-shift-enter");
     cx.run_until_parked();
     assert!(cx.read(|cx| app.read(cx).issue_composer_snapshot_for_e2e().1));
-    let pane = bounds(cx, window, "issue-mode-center-pane");
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
     let long = "line\n".repeat(50);
     for source in [
         "",
@@ -247,13 +249,40 @@ fn focused_issue_body(
             "focused body retains at least two lines"
         );
         assert!(
-            body.bottom() <= pane.bottom() + gpui::px(1.),
-            "focused Input must be bounded by the remaining pane"
+            body.bottom() <= viewport.height + gpui::px(1.),
+            "focused Input must fit the actual window viewport: {body:?}, {viewport:?}"
         );
-        let submit = bounds(cx, window, "issue-composer-submit");
-        assert!(
-            submit.top() >= pane.top() && submit.bottom() <= pane.bottom() + gpui::px(1.),
-            "focused submit remains inside the compact zoomed pane: {submit:?}, {pane:?}"
-        );
+        focused_footer_reachable(cx, window);
     }
+    let open_pane = bounds(cx, window, "issue-mode-center-pane");
+    cx.simulate_keystrokes(window, "secondary-j");
+    cx.run_until_parked();
+    let closed_pane = bounds(cx, window, "issue-mode-center-pane");
+    assert!(
+        closed_pane.size.height > open_pane.size.height,
+        "the existing bottom-panel action releases height to the editor"
+    );
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e(&long, window, cx)
+        });
+    })
+    .unwrap();
+    let body = bounds(cx, window, "issue-composer-body");
+    assert!(body.size.height > theme::scaled_px(25.5 * 2.) + gpui::px(1.),
+        "a long focused draft must receive more than the two-line minimum when the panel is closed: {body:?}");
+    focused_footer_reachable(cx, window);
+}
+
+fn focused_footer_reachable(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let pane = bounds(cx, window, "issue-mode-center-pane");
+    let gutter = Bounds::new(
+        gpui::point(pane.right() - gpui::px(2.), pane.top()),
+        gpui::size(gpui::px(2.), pane.size.height),
+    );
+    wheel(cx, window, gutter, 0., -10000.);
+    let submit = bounds(cx, window, "issue-composer-submit");
+    assert!(submit.top() >= pane.top() && submit.bottom() <= pane.bottom() + gpui::px(1.),
+        "outer scrolling must expose the focused submit inside the actual pane: {submit:?}, {pane:?}");
+    wheel(cx, window, gutter, 0., 10000.);
 }

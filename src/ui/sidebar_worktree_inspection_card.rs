@@ -160,7 +160,7 @@ fn named_button(
     focus_slot: Option<ActionFocus>,
 ) -> InspectionButton {
     InspectionButton {
-        button,
+        button: button.tab_stop(focus_slot.is_some()),
         id,
         focus_slot,
         #[cfg(feature = "gui-e2e")]
@@ -222,6 +222,7 @@ fn url_button(card: &WorktreeHoverCard, port: u16, cx: &gpui::App) -> Inspection
     let url = format!("http://localhost:{port}");
     named_button(
         action_button(URL, theme().color_branch, cx)
+            .xsmall()
             .h(theme::scaled_px(20.))
             .px_1()
             .gap_0p5()

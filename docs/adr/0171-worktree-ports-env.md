@@ -208,3 +208,8 @@ mounted while its worktree row or a card control holds focus. Tab orders
 Refresh before URL; Enter/Space use the same callbacks as pointer input.
 Escape returns focus to the owning row. Owner/surface departure closes the
 card rather than restoring its actions in a different repository.
+
+Pointer-only hover cards do not register action Tab stops: their transient
+tooltip lifetime cannot own keyboard focus. Explicitly keyboard-opened cards
+alone supply the retained action focus slots. The URL Button keeps the
+original extra-small chip typography rather than the kit's small default.

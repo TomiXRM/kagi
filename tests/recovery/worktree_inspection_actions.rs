@@ -159,6 +159,16 @@ fn open(
     (app, window)
 }
 
+fn assert_url_typography(window: AnyWindowHandle) {
+    let url_font = e2e::control_paint(window.window_id(), URL)
+        .expect("URL typography painted")
+        .font_size;
+    assert!(
+        (f32::from(url_font) - f32::from(theme::scaled_px(12.))).abs() < 0.001,
+        "local URL preserves extra-small chip typography: {url_font:?}"
+    );
+}
+
 fn keyboard_actions(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -196,6 +206,7 @@ fn keyboard_actions(
     assert_eq!(url.name.as_ref(), expected_url_name.as_str());
     contained(card, bounds(window, REFRESH), "Refresh");
     contained(card, bounds(window, URL), "URL");
+    assert_url_typography(window);
     press(cx, window, case, "tab");
     assert_focus(cx, window, REFRESH);
     cx.advance_clock(Duration::from_secs(1));
@@ -288,6 +299,33 @@ fn owner_switch(
     );
 }
 
+fn assert_hover_not_in_tab_order(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let actions = [REFRESH, URL].map(|id| {
+        probes::action(id)
+            .expect("hover action rendered")
+            .focus
+            .expect("hover action has a real focus handle")
+    });
+    // Traverse the actual tab map of this painted hover scene before a focus
+    // change repaints and removes the temporary tooltip.
+    cx.update_window(window, |_, window, cx| {
+        window.focus_next(cx);
+        let first = window.focused(cx).expect("window has normal tab stops");
+        for _ in 0..128 {
+            assert!(
+                actions.iter().all(|focus| !focus.is_focused(window)),
+                "pointer-only inspection actions must not enter native Tab traversal"
+            );
+            window.focus_next(cx);
+            if first.is_focused(window) {
+                return;
+            }
+        }
+        panic!("native Tab traversal did not complete a cycle");
+    })
+    .unwrap();
+}
+
 fn hover_actions(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -312,6 +350,7 @@ fn hover_actions(
     cx.advance_clock(Duration::from_secs(1));
     paint(cx, window, case);
     bounds(window, CARD);
+    assert_hover_not_in_tab_order(cx, window);
     for id in [REFRESH, URL] {
         let target = bounds(window, id).center();
         cx.simulate_mouse_move(window, target, None, Modifiers::none());

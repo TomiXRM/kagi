@@ -2112,6 +2112,14 @@ mod macos {
                 Box::new(crate::conflict_text_keyboard::scenario_conflict_text_keyboard),
             ),
             (
+                "conflict_resolver_rebuild",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_rebuild),
+            ),
+            (
+                "conflict_resolver_roles",
+                Box::new(crate::conflict_text_keyboard::scenario_conflict_resolver_roles),
+            ),
+            (
                 "modal_polish_editor_fs",
                 Box::new(crate::modal_polish_b::scenario_modal_polish_editor_fs),
             ),

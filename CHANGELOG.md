@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Conflict resolver adoption controls are named EN/JA Buttons with keyboard-only focus rings. One roving hunk list uses Up/Down between hunks and Left/Right between side, order and line controls; Enter/Space share pointer activation. Selection remains buffer-only and the conflict FSM and Save boundary are unchanged. (#1311)
+  - Review: rebuild roving ownership when a retained path's hunk/line structure changes, including consecutive operation steps. AX names use sanitized operation-dependent roles/identities; order controls announce selected output order, never adoption.
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)
 - Long status-bar branch names shrink to a zoom-scaled readable minimum and end ellipsis, with the complete name retained in the tooltip and accessibility label. Status chips and refresh time keep their natural widths; feedback truncates before the nonshrinking Terminal / Operation Log cluster in both toolbar presentations. (#1310)
   - Review: short branch names keep their measured natural widths, nonempty feedback reserves up to 80 reference pixels before branch identity within the actual remaining footer budget, and labels/tooltips/AX share the existing control-byte sanitizer without changing raw refs or klog.

@@ -10,7 +10,7 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     Sizable,
 };
-use kagi_git::resolution::{HunkModel, Region};
+use kagi_git::resolution::{HunkModel, Region, SelectionSide, TriState};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -24,9 +24,24 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("right", NextControl, Some("KagiConflictResolver")),
     ]);
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RegionShape {
+    Context(usize),
+    Hunk(usize, usize),
+}
+impl RegionShape {
+    fn of(region: &Region) -> Self {
+        match region {
+            Region::Passthrough(lines) => Self::Context(lines.len()),
+            Region::Hunk(hunk) => Self::Hunk(hunk.current.len(), hunk.incoming.len()),
+        }
+    }
+}
 #[derive(Default)]
 pub struct ResolverKeyboard {
     path: PathBuf,
+    structure: Vec<RegionShape>,
+    pub side_names: [String; 2],
     rows: RowKeys,
     focus: RowFocus,
     list: Option<RowList>,
@@ -45,9 +60,18 @@ impl ResolverKeyboard {
             self.release(window, cx);
             return;
         };
-        if self.path != path {
+        if self.path != path
+            || !self
+                .structure
+                .iter()
+                .copied()
+                .eq(model.regions.iter().map(RegionShape::of))
+        {
             self.release(window, cx);
             self.path = path.into();
+            self.structure
+                .extend(model.regions.iter().map(RegionShape::of));
+            scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
             let mut rows = Vec::new();
             let mut row = 0;
             for region in &model.regions {
@@ -112,9 +136,16 @@ impl ResolverKeyboard {
         self.focus.release(None, window, cx);
         self.path.clear();
         self.controls.clear();
+        self.structure.clear();
         self.rows = Rc::default();
         self.list = None;
         self.drawn = 0..0;
+    }
+    pub(crate) fn side_name(&self, side: SelectionSide) -> &str {
+        &self.side_names[match side {
+            SelectionSide::Current => 0,
+            SelectionSide::Incoming => 1,
+        }]
     }
     fn move_control(
         &self,
@@ -141,13 +172,40 @@ impl ResolverKeyboard {
         }
     }
 }
+pub(crate) enum ControlState {
+    Adoption(TriState),
+    Order { selected: bool, description: String },
+}
+impl ControlState {
+    fn parts(self) -> (&'static str, SharedString, bool) {
+        use super::i18n::Msg;
+        match self {
+            Self::Adoption(state) => {
+                let (key, message) = match state {
+                    TriState::None => ("none", Msg::EditorSelectionNone),
+                    TriState::Partial => ("partial", Msg::EditorSelectionPartial),
+                    TriState::All => ("all", Msg::EditorSelectionAll),
+                };
+                (key, message.t().into(), state == TriState::All)
+            }
+            Self::Order {
+                selected,
+                description,
+            } => (
+                if selected { "selected" } else { "unselected" },
+                description.into(),
+                selected,
+            ),
+        }
+    }
+}
 /// The pinned Button owns pointer feedback; its enclosing roving owner handles
 /// keyboard clicks. Both call the very same listener, never duplicate mutation.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn adoption(
     id: String,
     name: String,
-    state: &'static str,
+    state: ControlState,
     content: impl IntoElement,
     hunk: Option<usize>,
     owner: &Rc<RefCell<ResolverKeyboard>>,
@@ -156,14 +214,9 @@ pub(crate) fn adoption(
 ) -> gpui::Stateful<gpui::Div> {
     let activate = Rc::new(activate);
     let pointer = activate.clone();
+    let (_state, description, toggled) = state.parts();
     #[cfg(feature = "gui-e2e")]
-    super::conflict_editor_a11y::record(&id, &name, state);
-    let description = match state {
-        "all" => super::i18n::Msg::EditorSelectionAll,
-        "partial" => super::i18n::Msg::EditorSelectionPartial,
-        _ => super::i18n::Msg::EditorSelectionNone,
-    }
-    .t();
+    super::conflict_editor_a11y::record(&id, &name, _state, &description);
     let button = super::button_style::named_button(
         Button::new(SharedString::from(format!("{id}-button")))
             .ghost()
@@ -178,14 +231,14 @@ pub(crate) fn adoption(
                 pointer(event, window, cx);
             }),
         SharedString::from(name.clone()),
-        Some(state == "all"),
+        Some(toggled),
     );
     let mut el = gpui::div()
         .id(SharedString::from(id.clone()))
         .role(Role::Button)
         .aria_label(SharedString::from(name))
         .aria_description(description)
-        .aria_toggled(if state == "all" {
+        .aria_toggled(if toggled {
             gpui::Toggled::True
         } else {
             gpui::Toggled::False

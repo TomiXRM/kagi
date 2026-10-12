@@ -31,8 +31,8 @@
 //! same tree-sitter + per-theme pipeline as the diff (ADR-0133), cached per
 //! (path, theme) so selection clicks never re-parse.
 //!
-//! Visual side labels come from `mode.labels()` (ADR-0058); accessibility names
-//! explicitly identify ours/theirs adoption. All prose is via [`Msg`] (en + ja). Sizes
+//! All side names use the operation-dependent role/name labels (ADR-0058).
+//! All prose is via [`Msg`] (en + ja). Sizes
 //! go through [`theme::scaled_px`] so the editor respects zoom.
 
 use std::ops::Range;
@@ -258,6 +258,10 @@ fn render_panes(
     };
 
     let labels = mode.labels();
+    chrome.resolver_keyboard.borrow_mut().side_names = [
+        Msg::conflict_side(&labels.current.role, &labels.current.name),
+        Msg::conflict_side(&labels.incoming.role, &labels.incoming.name),
+    ];
     let current_label = format!("{} — {}", Msg::EditorCurrentSide.t(), labels.current.name);
     let incoming_label = format!("{} — {}", Msg::EditorIncomingSide.t(), labels.incoming.name);
 
@@ -560,12 +564,7 @@ fn side_use_all_pill(
     let on = state == TriState::All;
     super::conflict_editor_keys::adoption(
         format!("resolver-file-{}", side_key(side)),
-        match side {
-            SelectionSide::Current => Msg::EditorUseAllOurs,
-            SelectionSide::Incoming => Msg::EditorUseAllTheirs,
-        }
-        .t()
-        .into(),
+        Msg::conflict_file(chrome.resolver_keyboard.borrow().side_name(side)),
         selection_state(state),
         div()
             .px(theme::scaled_px(6.))
@@ -942,7 +941,7 @@ fn render_hunk_header_row(
         .child(
             super::conflict_editor_keys::adoption(
                 format!("resolver-hunk-{hunk_index}-{}", side_key(side)),
-                Msg::conflict_hunk(side == SelectionSide::Current, hunk_index + 1),
+                Msg::conflict_hunk(keyboard.borrow().side_name(side), hunk_index + 1),
                 selection_state(state),
                 div()
                     .pl(theme::scaled_px(6.))
@@ -976,13 +975,16 @@ fn render_hunk_header_row(
         .child(
             super::conflict_editor_keys::adoption(
                 format!("resolver-hunk-{hunk_index}-{}-first", side_key(side)),
-                match side {
-                    SelectionSide::Current => Msg::EditorBothOursFirst,
-                    SelectionSide::Incoming => Msg::EditorBothTheirsFirst,
-                }
-                .t()
-                .into(),
-                if order == target_order { "all" } else { "none" },
+                Msg::conflict_order(keyboard.borrow().side_name(side)),
+                super::conflict_editor_keys::ControlState::Order {
+                    selected: order == target_order,
+                    description: Msg::conflict_selected_order(keyboard.borrow().side_name(
+                        match order {
+                            LineOrder::CurrentFirst => SelectionSide::Current,
+                            LineOrder::IncomingFirst => SelectionSide::Incoming,
+                        },
+                    )),
+                },
                 div()
                     .px(theme::scaled_px(6.))
                     .text_size(theme::scaled_px(10.))
@@ -1051,12 +1053,8 @@ fn side_key(side: SelectionSide) -> &'static str {
     }
 }
 
-fn selection_state(state: TriState) -> &'static str {
-    match state {
-        TriState::None => "none",
-        TriState::Partial => "partial",
-        TriState::All => "all",
-    }
+fn selection_state(state: TriState) -> super::conflict_editor_keys::ControlState {
+    super::conflict_editor_keys::ControlState::Adoption(state)
 }
 
 /// The side accent as a translucent row background — the diff-view idiom
@@ -1153,8 +1151,8 @@ fn render_code_line_row(
             "resolver-hunk-{hunk_index}-{}-line-{line_index}",
             side_key(side)
         ),
-        Msg::conflict_line(side == SelectionSide::Current, line_no),
-        if taken { "all" } else { "none" },
+        Msg::conflict_line(keyboard.borrow().side_name(side), line_no),
+        selection_state(if taken { TriState::All } else { TriState::None }),
         content,
         Some(hunk_index),
         keyboard,

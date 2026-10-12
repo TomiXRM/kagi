@@ -12,6 +12,9 @@ use kagi_ui_core::{
 use std::path::Path;
 
 fn fixture() -> tempfile::TempDir {
+    fixture_for_operation(false)
+}
+fn fixture_for_operation(rebase: bool) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q", "-b", "main"]);
     for side in ["base", "theirs", "ours"] {
@@ -29,8 +32,15 @@ fn fixture() -> tempfile::TempDir {
         git(dir.path(), &["add", "."]);
         git(dir.path(), &["commit", "-qm", side]);
     }
+    if rebase {
+        git(dir.path(), &["checkout", "-q", "feature"]);
+    }
     assert!(!std::process::Command::new("git")
-        .args(["merge", "feature"])
+        .args(if rebase {
+            ["rebase", "main"]
+        } else {
+            ["merge", "feature"]
+        })
         .current_dir(dir.path())
         .output()
         .unwrap()
@@ -77,6 +87,8 @@ fn horizontal_controls(
     conflict: &Entity<ConflictView>,
     lang: Lang,
 ) {
+    let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
+    let incoming = format!("{} ({})", labels.incoming.role, labels.incoming.name);
     keys(cx, window, "left");
     keys(cx, window, "space");
     assert_eq!(ax::control("resolver-hunk-1-current").unwrap().2, "all");
@@ -96,9 +108,9 @@ fn horizontal_controls(
     assert_eq!(
         ax::control("resolver-hunk-1-incoming-first").unwrap().1,
         if lang == Lang::En {
-            "Use both, theirs first"
+            format!("Order: {incoming} first")
         } else {
-            "両方を採用、theirs を先に"
+            format!("順序: {incoming} を先に")
         }
     );
     keys(cx, window, "space");
@@ -110,9 +122,9 @@ fn horizontal_controls(
     assert_eq!(
         ax::control(line).unwrap().1,
         if lang == Lang::En {
-            "Use ours line 18"
+            "Use Current branch (main) line 18"
         } else {
-            "ours の 18 行目を採用"
+            "Current branch (main) の 18 行目を採用"
         }
     );
     keys(cx, window, "enter");
@@ -166,12 +178,14 @@ fn hunk_adoption(
     assert_eq!(probe(cx, window).as_deref(), Some(id));
     let (role, name, state) = ax::control(id).expect("named adoption Button");
     assert_eq!(role, gpui::Role::Button);
+    let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
+    let incoming = format!("{} ({})", labels.incoming.role, labels.incoming.name);
     assert_eq!(
         name,
         if lang == Lang::En {
-            "Use theirs for hunk 2"
+            format!("Use {incoming} for hunk 2")
         } else {
-            "hunk 2 に theirs を採用"
+            format!("hunk 2 に {incoming} を採用")
         }
     );
     assert_eq!(state, "none");
@@ -255,4 +269,186 @@ pub fn scenario_conflict_text_keyboard(cx: &mut VisualTestAppContext) {
     theme::set_zoom(original.1);
     theme::set_active(&original.2);
     cx.update(theme::sync_gpui_component_theme);
+}
+
+fn replace_model(
+    cx: &mut VisualTestAppContext,
+    conflict: &Entity<ConflictView>,
+    repo: &Path,
+    hunks: usize,
+    lines: usize,
+) {
+    let backend = kagi_git::Backend::open(repo).unwrap();
+    let mut buffer = backend.resolution_buffer_from_repo().unwrap();
+    let mut markers = String::new();
+    for hunk in 0..hunks {
+        markers.push_str("context\n<<<<<<< Current\n");
+        for line in 0..lines {
+            markers.push_str(&format!("current {hunk} {line}\n"));
+        }
+        markers.push_str("=======\n");
+        for line in 0..lines {
+            markers.push_str(&format!("incoming {hunk} {line}\n"));
+        }
+        markers.push_str(">>>>>>> Incoming\n");
+    }
+    assert!(buffer.ensure_hunks(Path::new("notes.txt"), &markers));
+    conflict.update(cx, |view, cx| {
+        view.mode.as_mut().unwrap().buffer = buffer;
+        cx.notify();
+    });
+}
+
+pub fn scenario_conflict_resolver_rebuild(cx: &mut VisualTestAppContext) {
+    let fixture = fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| app.detect_conflict_mode(cx));
+    cx.run_until_parked();
+    let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+    conflict.update(cx, |view, cx| {
+        view.conflict_open_editor(Path::new("notes.txt"));
+        cx.notify();
+    });
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
+    })
+    .unwrap();
+    tab_to(cx, window, "resolver-hunk-0-current");
+    replace_model(cx, &conflict, fixture.path(), 3, 1);
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
+    })
+    .unwrap();
+    tab_to(cx, window, "resolver-hunk-0-current");
+    keys(cx, window, "end right");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("resolver-hunk-2-incoming")
+    );
+    keys(cx, window, "enter");
+    assert!(assembled(cx, &conflict).contains("incoming 2 0"));
+    replace_model(cx, &conflict, fixture.path(), 3, 4);
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx)
+    })
+    .unwrap();
+    tab_to(cx, window, "resolver-hunk-0-current");
+    keys(cx, window, "end right right right right right right right");
+    assert_eq!(
+        probe(cx, window).as_deref(),
+        Some("resolver-hunk-2-current-line-3")
+    );
+    keys(cx, window, "space");
+    assert!(assembled(cx, &conflict).contains("current 2 3"));
+    drop(conflict);
+    unmount(cx, app, window);
+}
+
+pub fn scenario_conflict_resolver_roles(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let original = i18n::lang();
+    for lang in [Lang::En, Lang::Ja] {
+        for rebase in [false, true] {
+            let fixture = fixture_for_operation(rebase);
+            let (app, window) = mount(cx, fixture.path());
+            app.update(cx, |app, cx| {
+                app.set_lang(lang, cx);
+                app.detect_conflict_mode(cx);
+            });
+            cx.run_until_parked();
+            let conflict = cx.read(|cx| app.read(cx).ui().conflict.clone()).unwrap();
+            conflict.update(cx, |view, cx| {
+                view.conflict_open_editor(Path::new("notes.txt"));
+                cx.notify();
+            });
+            paint(cx, window);
+            let labels = cx.read(|cx| conflict.read(cx).mode.as_ref().unwrap().labels());
+            assert_eq!(
+                labels.current.role,
+                if rebase { "New base" } else { "Current branch" }
+            );
+            assert_eq!(
+                labels.incoming.role,
+                if rebase {
+                    "Your commit being replayed"
+                } else {
+                    "Merging in"
+                }
+            );
+            for (side, label) in [("current", &labels.current), ("incoming", &labels.incoming)] {
+                let identity = format!("{} ({})", label.role, label.name);
+                let name = ax::control(&format!("resolver-hunk-0-{side}")).unwrap().1;
+                assert_eq!(
+                    name,
+                    if lang == Lang::En {
+                        format!("Use {identity} for hunk 1")
+                    } else {
+                        format!("hunk 1 に {identity} を採用")
+                    }
+                );
+                assert_eq!(
+                    ax::control(&format!("resolver-hunk-0-{side}")).unwrap().2,
+                    "none"
+                );
+                let order = format!("resolver-hunk-0-{side}-first");
+                assert_eq!(
+                    ax::control(&order).unwrap().2,
+                    if side == "current" {
+                        "selected"
+                    } else {
+                        "unselected"
+                    }
+                );
+                let selected = format!("{} ({})", labels.current.role, labels.current.name);
+                assert_eq!(
+                    ax::description(&order).unwrap(),
+                    if lang == Lang::En {
+                        format!("Selected output order: {selected} first")
+                    } else {
+                        format!("選択中の出力順序: {selected} を先に")
+                    }
+                );
+            }
+            assert_order_only(
+                cx,
+                window,
+                lang,
+                &format!("{} ({})", labels.incoming.role, labels.incoming.name),
+            );
+            drop(conflict);
+            unmount(cx, app, window);
+        }
+    }
+    i18n::set_lang(original);
+}
+
+fn assert_order_only(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    lang: Lang,
+    incoming: &str,
+) {
+    click_control(cx, window, "resolver-hunk-0-incoming-first");
+    paint(cx, window);
+    assert_eq!(ax::control("resolver-hunk-0-current").unwrap().2, "none");
+    assert_eq!(ax::control("resolver-hunk-0-incoming").unwrap().2, "none");
+    assert_eq!(
+        ax::control("resolver-hunk-0-incoming-first").unwrap().2,
+        "selected"
+    );
+    assert_eq!(
+        ax::control("resolver-hunk-0-current-first").unwrap().2,
+        "unselected"
+    );
+    assert_eq!(
+        ax::description("resolver-hunk-0-current-first").unwrap(),
+        if lang == Lang::En {
+            format!("Selected output order: {incoming} first")
+        } else {
+            format!("選択中の出力順序: {incoming} を先に")
+        }
+    );
 }

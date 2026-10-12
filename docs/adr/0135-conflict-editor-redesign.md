@@ -93,9 +93,15 @@ and line controls, and Enter/Space uses the same activation listener as a click.
 File-side Use all controls are separate named Buttons. Focus-visible uses the
 shared fixed-width ring, without changing the syntax highlighting or dimming.
 
-Visual Current/Incoming captions remain operation-dependent. Accessibility
-names explicitly identify ours/theirs, hunk or line number, and both-order in
-EN/JA. Adoption describes None/Partial/All and exposes toggled state for All.
-The order controls still change only the existing LineOrder setter: they do
-not implicitly adopt any unselected line. Domain selection, undo/redo and the
-Save/Continue/Commit separation (ADR-0068/0106) are unchanged.
+Visual captions and accessibility names use the operation-dependent side roles
+and actual sanitized identities from `mode.labels()` (ADR-0058), not raw
+ours/theirs. EN/JA names include the relevant hunk or line number. Adoption
+describes None/Partial/All and exposes toggled state for All. Order controls
+instead name the requested first side and describe the currently selected
+output order; they change only the existing LineOrder setter and do not
+implicitly adopt any unselected line.
+
+Roving ownership is rebuilt when the selected path or its context/hunk/line
+structure changes, including consecutive rebase/cherry-pick steps on the same
+path. Domain selection, undo/redo and the Save/Continue/Commit separation
+(ADR-0068/0106) are unchanged.

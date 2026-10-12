@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Graph commit rows retain complete sanitized subjects for accessibility and hover tooltips; only their one-line layout ellipsizes. An explicit 4 KiB UTF-8-safe display bound replaces the old 72-character cut. (#1306)
+- Graph commit rows retain complete sanitized subjects for accessibility and hover tooltips; only their one-line layout ellipsizes. Tooltips constrain their width and wrap long subjects inside the viewport. An explicit 4 KiB UTF-8-safe display bound replaces the old 72-character cut. (#1306)
 - Inspector retains and copies the complete sanitized commit message, including late co-authors and trailers. Metadata is prepared once per commit, and the existing independent message scroller keeps long bodies and trailer tables reachable without displacing changed files or the footer. (#1307)
 - Apple Dark uses one lighter elevated fill for palettes, dialogs, menus, popovers, toasts and tooltips, with a neutral identifying boundary. Window chrome sits above panels and content, with literal 1px separators; readable secondary text, line numbers, scrollbar thumbs and the yellow accent retain at least 4.5:1 contrast. Apple Light and other/custom themes retain their existing fills. (#1274)
   - Review: elevated-card separators and outlined chips remain visible, Remote Browse selection/hover uses a distinct neutral, and Trust Repo, the co-author menu and full-hash tooltip share the floating fill. Generic component borders keep their existing stronger value; the Settings 1px oracle distinguishes its separator from the fill outside both RGB tolerance bands.

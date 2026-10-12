@@ -157,6 +157,18 @@ fn graph_tooltips(
             Some(kagi_domain::text_safety::sanitize_control_bytes(expected).as_str()),
             "actual hover exposes complete subject {i}: target={subject:?}, row={row:?}, at={at:?}"
         );
+        let tooltip = e2e::control_bounds(window.window_id(), "graph-subject-tooltip")
+            .expect("actual tooltip painted");
+        let viewport = cx
+            .update_window(window, |_, window, _| window.viewport_size())
+            .unwrap();
+        assert!(
+            tooltip.left() >= gpui::px(0.)
+                && tooltip.top() >= gpui::px(0.)
+                && tooltip.right() <= viewport.width + gpui::px(1.)
+                && tooltip.bottom() <= viewport.height + gpui::px(1.),
+            "full subject tooltip fits native viewport: {tooltip:?}, viewport={viewport:?}"
+        );
         cx.simulate_mouse_move(
             window,
             gpui::point(gpui::px(1.), gpui::px(1.)),
@@ -344,8 +356,10 @@ pub fn scenario_inspector_full_message(cx: &mut VisualTestAppContext) {
 }
 
 pub fn scenario_text_caps_warm_render(cx: &mut VisualTestAppContext) {
-    let repo =
-        std::env::var_os("KAGI_TEXT_CAPS_STRESS_REPO").expect("stress fixture path is required");
+    let Some(repo) = std::env::var_os("KAGI_TEXT_CAPS_STRESS_REPO") else {
+        eprintln!("[gui-e2e] SKIP text_caps_warm_render: set KAGI_TEXT_CAPS_STRESS_REPO to the read-only stress fixture");
+        return;
+    };
     let (app, window) = mount(cx, std::path::Path::new(&repo));
     assert_eq!(
         cx.read(|cx| app.read(cx).view().branches.len()),

@@ -247,11 +247,7 @@ pub(crate) fn render_rows(
             // leaves the subject no width. Child ref/author tooltips keep priority.
             .tooltip({
                 let subject = row.summary.clone();
-                move |window, cx| {
-                    #[cfg(feature = "gui-e2e")]
-                    super::e2e::text_caps::record_tooltip(subject.clone());
-                    gpui_component::tooltip::Tooltip::new(subject.clone()).build(window, cx)
-                }
+                move |window, cx| metadata::subject_tooltip(subject.clone(), window, cx)
             })
             .when(is_dimmed, |el| el.opacity(0.32))
             // ── Badges column: user-resizable width (T030) ──

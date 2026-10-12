@@ -334,7 +334,8 @@ pub struct CommitRow {
     /// Short (8-hex) commit id. Retained for Detail Panel / oplog (T021: not rendered in row).
     #[allow(dead_code)]
     pub short_id: SharedString,
-    /// First line of the commit message (truncated to 72 chars at build time).
+    /// Sanitized first message line, bounded to 4 KiB on a UTF-8 boundary.
+    /// Ordinary subjects remain complete; one-line layout supplies ellipsis.
     pub summary: SharedString,
     /// Author name (display only).
     pub author: SharedString,

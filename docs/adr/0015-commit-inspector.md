@@ -33,16 +33,18 @@ The native `text_caps_warm_render` scenario mounted the read-only
 `stress-pr-repo` fixture (121 local branches, 126 commits, 120 graph lanes),
 selected its first commit and settled 20 draws. Each measurement is the median
 of 31 ten-draw batches, in the same debug profile and default 1440×900
-presentation. After the gates completed, frozen original `50b28c69` production
-sources and the fixed production sources ran alternately three times each
-with the same harness:
+presentation. After the review-follow-up gates completed, frozen original
+`50b28c69` production sources and the final production sources ran alternately
+three times each with the same harness:
 
-- Before: 14.590008, 15.574479, 34.361996 ms/frame; median **15.574479 ms**.
-- After: 13.507179, 44.905217, 16.146421 ms/frame; median **16.146421 ms**.
-- Median change: **+3.67%**, within the requested 5% bound.
+- Before: 23.536750, 13.202917, 13.132425 ms/frame; median **13.202917 ms**.
+- After: 13.603454, 13.594504, 13.192571 ms/frame; median **13.594504 ms**.
+- Median change: **+2.97%**, within the requested 5% bound.
 
 Concurrent machine load remains a limitation: earlier non-alternating After
-runs ranged from 13.425571 to 19.909288 ms/frame, and the alternating series
-also has large outliers. These are forced warm-render timings, not real-app
-FPS, an idle-machine guarantee, or a cold-message preparation benchmark.
+runs ranged from 13.425571 to 19.909288 ms/frame. The earlier alternating
+series measured +3.67% and had 34.361996/44.905217 ms outliers; the final
+series also has a 23.536750 ms Before outlier. These are forced warm-render
+timings, not real-app FPS, an idle-machine guarantee, or a cold-message
+preparation benchmark.
 

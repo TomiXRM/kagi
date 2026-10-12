@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Sidebar and Inspector / Compare widths fit the window and zoom without replacing preferred divider widths: the Inspector shrinks first, then the sidebar, reserving a scaled 320px centre whenever their presentation minima fit. Capped drags preserve preferences and widening restores the original geometry; diff-header controls remain inside the narrow/high-zoom centre. (#1355)
+  - Review: worktree keyboard cards, group identity reveals and Branch Cleanup column drag origins follow the fitted sidebar edge rather than its larger preferred width.
 - Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
 - Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
 - Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)

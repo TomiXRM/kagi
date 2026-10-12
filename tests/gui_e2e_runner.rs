@@ -3390,6 +3390,14 @@ mod macos {
                 Box::new(crate::pane_budget::scenario_pane_budget_fit),
             ),
             (
+                "pane_budget_worktree_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_worktree_anchor),
+            ),
+            (
+                "pane_budget_group_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_group_anchor),
+            ),
+            (
                 "graph_column_divider_hidden",
                 Box::new(crate::graph_column_divider::scenario_graph_column_divider_hidden),
             ),

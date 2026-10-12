@@ -303,7 +303,7 @@ impl KagiApp {
                 // cursor to pane-relative logical px and let the pane's own
                 // handler do the per-column offset math.
                 let pane_left = if self.sidebar.visible {
-                    self.sidebar.width + INNER_DIV_W
+                    self.pane_fit.sidebar + INNER_DIV_W
                 } else {
                     0.0
                 };

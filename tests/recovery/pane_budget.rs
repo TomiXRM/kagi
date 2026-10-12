@@ -143,3 +143,79 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pane_budget_fit");
 }
+
+fn check_sidebar_anchor(cx: &mut VisualTestAppContext, worktree: bool) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixture = build_fixture();
+    crate::macos::git(fixture.path(), &["branch", "feat/a"]);
+    crate::macos::git(fixture.path(), &["branch", "feat/b"]);
+    let linked = fixture.path().join("linked");
+    crate::macos::git(
+        fixture.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.sidebar.width = 240.;
+        app.sidebar.visible = true;
+        app.panel_width = 360.;
+        app.inspector_visible = true;
+        app.bottom_panel_open = false;
+        app.select(0);
+        cx.notify();
+    });
+    theme::set_zoom(1.67);
+    settle(cx, window, 940., 660.);
+    let pane = if worktree { 2 } else { 0 };
+    let key = if worktree {
+        app.read_with(cx, |app, _| {
+            app.sidebar_row_keys_for_e2e(pane)
+                .into_iter()
+                .find(|key| key.starts_with("worktree:"))
+                .expect("linked worktree row")
+        })
+    } else {
+        "group:local:feat".to_owned()
+    };
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.focus_sidebar_row_for_e2e(pane, &key, window, cx)
+        });
+    })
+    .unwrap();
+    settle(cx, window, 940., 660.);
+    crate::keyboard_nav::keys(cx, window, if worktree { "enter" } else { "shift-f10" });
+    settle(cx, window, 940., 660.);
+    let name = if worktree {
+        "sidebar-worktree-keyboard-card"
+    } else {
+        "sidebar-group-local:feat-reveal"
+    };
+    let card = bounds(window, name);
+    let sidebar_right = bounds(window, "divider-sidebar").left();
+    assert!(
+        (card.left() - sidebar_right).abs() <= px(1.),
+        "{name}: card left {:?} must follow painted sidebar right {:?}, not preferred width",
+        card.left(),
+        sidebar_right
+    );
+    assert_eq!(app.read_with(cx, |app, _| app.sidebar.width), 240.);
+    unmount(cx, app, window);
+}
+
+pub fn scenario_pane_budget_worktree_anchor(cx: &mut VisualTestAppContext) {
+    check_sidebar_anchor(cx, true);
+    eprintln!("[gui-e2e] PASS pane_budget_worktree_anchor");
+}
+
+pub fn scenario_pane_budget_group_anchor(cx: &mut VisualTestAppContext) {
+    check_sidebar_anchor(cx, false);
+    eprintln!("[gui-e2e] PASS pane_budget_group_anchor");
+}

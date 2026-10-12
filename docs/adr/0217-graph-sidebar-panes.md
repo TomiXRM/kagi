@@ -92,3 +92,14 @@ trailers shorter than the message viewport. A value that wraps taller than the
 viewport at the fitted width must expose its bottom and then its top through
 the same native wheel scroller; requiring the whole oversized row visible in
 one frame would instead force truncation or invalidate this valid layout.
+
+Review clarification: deferred worktree keyboard cards, group identity reveals
+and Branch Cleanup column drag origins must all use the fitted sidebar width.
+Using the preferred width for those local anchors detaches them from the
+painted sidebar after compression. `pane_budget_worktree_anchor` and
+`pane_budget_group_anchor` assert the real card/reveal left edge against the
+painted sidebar's content edge at 940×660 / 167%, without changing preferences.
+Local card/reveal anchors subtract `keyboard_nav::RING`: RowList always lays
+out its transparent 2px focus border, so its local content origin is inset
+even before the ring is visible. This keeps the actual card edge on the
+sidebar edge rather than accepting a larger geometry-test tolerance.

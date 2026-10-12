@@ -1086,3 +1086,7 @@ presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
 the existing 660px legs retain every operation/menu activation assertion.
 The verification skill is updated. Real-window comparison remains Tier B.
 
+The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusion
+from its non-macOS available width, preserving the same effective content budget
+and collapse expectation rather than assuming macOS geometry on Linux.
+

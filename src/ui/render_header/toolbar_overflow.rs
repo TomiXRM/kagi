@@ -715,7 +715,13 @@ mod tests {
     fn toolbar_overflow_releases_selected_only_workspace_reservation_for_git() {
         let key = (true, i18n::Lang::En, 1_f32.to_bits());
         let mut layout = Layout::default();
-        layout.measure(None, 620., key);
+        // Keep the same content budget with and without native traffic lights.
+        let available = if cfg!(target_os = "macos") {
+            620.
+        } else {
+            552.
+        };
+        layout.measure(None, available, key);
         for index in 0..IDS.len() {
             layout.measure(Some(index), 36., key);
         }

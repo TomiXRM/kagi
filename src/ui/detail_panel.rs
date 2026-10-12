@@ -38,8 +38,8 @@ pub struct CommitDetail {
     pub committed_date: SharedString,
     /// Short IDs of parent commits, e.g. `["a1b2c3d4", "e5f6a7b8"]`.
     pub parent_ids: Vec<SharedString>,
-    /// Full commit message (may be multi-line) — raw, trimmed trailing whitespace.
-    /// Capped at 2000 chars to avoid extreme panel heights.
+    /// Complete sanitized commit message, with trailing whitespace trimmed.
+    /// Presentation is bounded by the Inspector's independent scroll region.
     pub full_message: SharedString,
 }
 
@@ -86,21 +86,10 @@ fn commit_to_detail(c: &Commit) -> CommitDetail {
         .map(|p| SharedString::from(p.short().to_string()))
         .collect();
 
-    // Message: trim trailing whitespace; cap at 2000 chars to avoid extreme heights.
-    // No ZWSP — render layer splits on '\n' and truncates per line.
-    // issue #356: the commit message is remote-origin text; neutralize terminal
-    // control bytes (ANSI escapes, bare CR, DEL, C1) before display. CJK/emoji
-    // are preserved by `sanitize_control_bytes`.
+    // #1307: retain the entire message for selection, Copy and trailer parsing.
+    // #356: neutralize display controls while preserving CJK/emoji/newlines.
     let sanitized_msg = kagi_domain::text_safety::sanitize_control_bytes(c.message.trim_end());
-    let raw_msg = sanitized_msg.trim_end();
-    const MAX_MSG_CHARS: usize = 2000;
-    let capped: String = if raw_msg.chars().count() > MAX_MSG_CHARS {
-        let s: String = raw_msg.chars().take(MAX_MSG_CHARS - 1).collect();
-        format!("{}\u{2026}", s) // append ellipsis
-    } else {
-        raw_msg.to_string()
-    };
-    let full_message = SharedString::from(capped);
+    let full_message = SharedString::from(sanitized_msg);
 
     // committed_date is always set so the inspector can show it unconditionally.
     let committed_date = SharedString::from(format_local(c.committer.time));

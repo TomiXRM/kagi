@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::settings::{read_setting, write_setting};
 
 // Lang + active-language atomic
+pub mod activity;
 pub mod analyze;
 /// UI language.  `En` is index 0 (the default), `Ja` is index 1.
 pub mod busy;
@@ -959,6 +960,13 @@ pub enum Msg {
     ToolbarTerminal,
     BottomTabOperationLog,
     BottomTabActivity,
+    ActivityPeriod,
+    ActivityChart,
+    ActivityDay,
+    ActivityWeek,
+    ActivityMonth,
+    ActivityYear,
+    ActivityAll,
     StatusShowTerminal,
     StatusHideTerminal,
     StatusShowOperationLog,
@@ -3413,6 +3421,20 @@ impl Msg {
             (Ja, BottomTabOperationLog) => "操作ログ",
             (En, BottomTabActivity) => "Activity",
             (Ja, BottomTabActivity) => "アクティビティ",
+            (En, ActivityPeriod) => "Activity period",
+            (Ja, ActivityPeriod) => "アクティビティの期間",
+            (En, ActivityChart) => "Commit activity",
+            (Ja, ActivityChart) => "commit の推移",
+            (En, ActivityDay) => "Day",
+            (Ja, ActivityDay) => "日",
+            (En, ActivityWeek) => "Week",
+            (Ja, ActivityWeek) => "週",
+            (En, ActivityMonth) => "Month",
+            (Ja, ActivityMonth) => "月",
+            (En, ActivityYear) => "Year",
+            (Ja, ActivityYear) => "年",
+            (En, ActivityAll) => "All",
+            (Ja, ActivityAll) => "全期間",
             (En, StatusShowTerminal) => "Show Terminal",
             (Ja, StatusShowTerminal) => "ターミナルを表示",
             (En, StatusHideTerminal) => "Hide Terminal (⌘J)",

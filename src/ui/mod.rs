@@ -4,6 +4,7 @@
 //! functions, never Git bindings directly; bypassing that boundary breaks layering.
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
+mod activity_chart;
 pub mod activity_view;
 mod analyze_help;
 pub mod assets;
@@ -1103,6 +1104,8 @@ pub struct KagiApp {
     pub bottom_tab: BottomTab,
     /// Shared roving focus for the bottom-panel pane selector.
     pub(crate) bottom_tab_focus: keyboard_nav::TabFocus,
+    pub(crate) activity_period_focus: keyboard_nav::TabFocus,
+    pub(crate) activity_bucket_focus: keyboard_nav::TabFocus,
     /// Time bucketing for the bottom-panel "Activity" chart (Day/Week/Month).
     pub activity_granularity: kagi_domain::activity::Granularity,
     /// Index of the chart bucket the pointer is over (instant hover readout),
@@ -1297,6 +1300,8 @@ pub struct KagiApp {
     pub menu_overlay: Option<commands::MenuOverlay>,
     /// Focus and screen identity captured before an overlay opened (#812 / #976).
     pending_focus: Option<overlay_focus::PendingFocus>,
+    /// Alert opener, kept separate from pending focus applied during rendering.
+    alert_return_focus: Option<overlay_focus::AlertReturnFocus>,
     /// A focus returned while a pane still animates closed; checked for
     /// membership again on later frames when its control may have unmounted.
     restored_focus: Option<gpui::FocusHandle>,
@@ -1483,6 +1488,8 @@ impl KagiApp {
             panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             bottom_tab_focus: Default::default(),
+            activity_period_focus: Default::default(),
+            activity_bucket_focus: Default::default(),
             activity_granularity: kagi_domain::activity::Granularity::Week,
             activity_hover: None,
             smart_commit: smart_commit::SmartCommitState::load(),
@@ -1541,6 +1548,7 @@ impl KagiApp {
             inspector_visible: true,
             menu_overlay: None,
             pending_focus: None,
+            alert_return_focus: None,
             restored_focus: None,
             platform_menu_open: None,
             // W11-AVATAR

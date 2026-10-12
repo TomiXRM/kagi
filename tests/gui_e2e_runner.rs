@@ -140,6 +140,10 @@ mod recovery_sidebar_panes;
 mod sidebar_filter;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/input_names.rs"]
+mod input_names;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
 mod recovery_hairline_dividers;
 
@@ -1363,6 +1367,10 @@ mod macos {
             (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
+            ),
+            (
+                "input_names_inventory",
+                Box::new(crate::input_names::scenario_input_names_inventory),
             ),
             (
                 "hairline_dividers",

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Escape dismisses actionable operation notices instead of immediately re-presenting them on every render, and restores focus to the opener. Dismissal discards any armed release approval but keeps the reconcile requirement, write restrictions and durable Operation Log detail; a new explicit write refusal can offer Inspect again. Unread queued notices and notices displaced by another dialog remain available. (#1366)
 - Find/Replace controls in the Editor, conflict Result editor and Issue composer expose localized Button names and hover help, with case/replacement toggled state. Keyboard traversal reaches the actions after the field; Escape and Close return focus to the same editable buffer. Find Buttons consume inherited editing actions, and clicking bar padding focuses its query rather than allowing hidden code/draft edits. Query, undo history and guarded Save remain owned by the existing inputs. (#1348)
 - Settings' theme picker exposes a localized ComboBox name, current theme value and open/closed state, with named options. UI zoom controls announce localized decrease/increase actions with the current percentage; the value is a named Status and bound buttons are disabled. (#1349, #1350)
   - Review: theme semantics belong to the actual focused Select trigger, not an unfocused wrapper. Reaching a zoom bound keeps keyboard focus on the opposite stepper, and the next Tab continues beside the zoom row; Japanese announcements use the visible UI ズーム term.

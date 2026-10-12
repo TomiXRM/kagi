@@ -463,3 +463,32 @@ command、fixture manifest、raw artifact、result、limitation、affected API�
 - `FamilyEvidence` に variant を足さない family は移行できない（Wave 2 の完了条件）
 - `LegacyBusy` と `busy_op` の削除が Wave 3 の完了条件 — **2026-09-13 達成**（#703 の Windows stop proof は #728 の blocking CI 化で完了）
 - 本 ADR の時点で**コードは 1 行も変えていない**。固定したのは型・表・順序だけである
+
+## Amendment — 2026-10-13: actionable notice dismissal (#1366)
+
+Escape or a dismissal/Close route acknowledges the **presentation**, not the
+underlying reconcile requirement. Remove the active AppNotice from the immediate
+presentation queue instead of putting it back for the next render. Dropping its
+payload also drops `release_armed` and the old reconciliation read; it must never
+release a lease, acknowledge the requirement or record an unobservable release.
+The existing #1292 alert-focus lifecycle restores the valid opener (or the root
+if the opener is no longer drawn).
+
+A fresh explicit mutation admission refusal is a recurring condition and may
+offer Inspect again through `blocking_reconcile`. Planless writers (Fetch,
+Editor Save and the other `reserve_write_for` callers) share the existing
+capability-aware refusal presenter rather than enqueueing a plain dead-end
+message. Ordinary renders and reads do not recreate dismissed notices. The
+Operation Log retains the original durable detail; this fix does not add an
+OpLog Inspect action or a new mapping between receipts and in-session operation
+IDs. Reinspection uses the existing refusal route and obtains a fresh read
+before either release step.
+
+Return keeps the existing non-destructive primary action (Inspect, ordinary
+Acknowledge or the first arm step). Handled modal Return is consumed before
+default text input delivery, so it cannot insert a newline into the retained
+Input that opened the notice. Root Return on the armed destructive release
+continues to cancel, now dismissing its presentation rather than reopening an
+unarmed copy. Unread notices already queued may present next; a notice displaced
+by another user-opened dialog is still unread and remains queued under #718.
+

@@ -131,6 +131,7 @@ fn key(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: &str) {
 pub fn scenario_analyze_a11y_controls(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, app, view, window| {
         named_controls(window);
+        row_geometry(cx, view, window, "hot");
         tab_controls(cx, view, window);
         selector(cx, view, window, "mode", 0);
         let bounds = e2e::bounds(window.window_id(), "eco-mode-Hotspots").unwrap();
@@ -147,6 +148,7 @@ pub fn scenario_analyze_a11y_controls(cx: &mut VisualTestAppContext) {
         let row = e2e::node("eco-coup-row-1").unwrap();
         assert_eq!((row.role, row.expanded), (Role::Button, Some(false)));
         assert!(!row.name.is_empty());
+        row_geometry(cx, view, window, "coup");
         focus(cx, view, window, "eco-coup-row-1");
         key(cx, window, "enter");
         assert_eq!(e2e::node("eco-coup-row-1").unwrap().expanded, Some(true));
@@ -181,6 +183,61 @@ pub fn scenario_analyze_a11y_controls(cx: &mut VisualTestAppContext) {
         );
         copy_close(cx, app, view, window);
     });
+}
+
+fn row_geometry(
+    cx: &mut VisualTestAppContext,
+    view: &Entity<EcosystemView>,
+    window: AnyWindowHandle,
+    kind: &str,
+) {
+    let id = format!("eco-{kind}-row-1");
+    let before = e2e::bounds(window.window_id(), &id).unwrap();
+    let path = e2e::bounds(window.window_id(), &format!("eco-{kind}-path-1")).unwrap();
+    let expected = path.size.height + kagi::ui::theme::scaled_px(8.) + px(1.);
+    assert!(
+        (before.size.height - expected).abs() <= px(0.5),
+        "{kind}: original row height {expected:?}, actual {:?}",
+        before.size.height
+    );
+    assert!(
+        (path.top() - before.top() - kagi::ui::theme::scaled_px(4.)).abs() <= px(0.5),
+        "original content inset"
+    );
+    row_separator(cx, window, before);
+    focus(cx, view, window, &id);
+    key(cx, window, "tab");
+    key(cx, window, "shift-tab");
+    assert_eq!(
+        before,
+        e2e::bounds(window.window_id(), &id).unwrap(),
+        "row focus preserves bounds"
+    );
+    row_separator(cx, window, before);
+}
+
+fn row_separator(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    bounds: gpui::Bounds<gpui::Pixels>,
+) {
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("Analyze separator pixels");
+        let scale = window.scale_factor();
+        let pixel = image
+            .get_pixel(
+                (f32::from(bounds.center().x) * scale) as u32,
+                (f32::from(bounds.bottom() - px(0.5)) * scale) as u32,
+            )
+            .0;
+        let color = kagi::ui::theme::theme().surface;
+        assert_eq!(
+            &pixel[..3],
+            &[(color >> 16) as u8, (color >> 8) as u8, color as u8],
+            "row separator stays neutral before/after focus"
+        );
+    })
+    .unwrap();
 }
 
 fn named_controls(window: AnyWindowHandle) {

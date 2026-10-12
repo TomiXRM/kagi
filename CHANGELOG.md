@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Analyze mode, period, view and export selectors expose selected keyboard tabs; Copy, Help and Close are named buttons, and coupling disclosures report expanded state and support Enter/Space. (#1265)
+  - Review: Hotspots and Coupling keep their original dense row height and content inset; a separate neutral separator remains visible before and after keyboard focus. Analyze Help follows the typed modal getter/setter/clear convention.
 - Hotspots shows numeric risk alongside relative bars and explains the 0–1 scale; Map tooltips and accessibility text include path, risk, LOC and commit count. (#1266)
 - Analyze explicitly announces truncated Map/List coverage in EN/JA while retaining the 150-tile/300-row rendering bounds. (#1267)
 - Analyze Help uses the application's single named modal slot, traps keyboard focus, closes on Escape and restores its opener. (#1268)

@@ -286,16 +286,21 @@ pub(super) fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui:
     // shows the full path so a clipped name is always readable (user request:
     // "hidden text is unusable").
     let full = SharedString::from(text.clone());
-    div()
-        .id(SharedString::from(id))
-        .flex_1()
-        .min_w(px(0.0))
-        .overflow_x_scroll()
-        .whitespace_nowrap()
-        .text_size(theme::scaled_px(13.0))
-        .text_color(rgb(theme().text_main))
-        .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
-        .child(text)
+    let id = SharedString::from(id);
+    controls::probe(
+        &id,
+        div()
+            .id(id.clone())
+            .relative()
+            .flex_1()
+            .min_w(px(0.0))
+            .overflow_x_scroll()
+            .whitespace_nowrap()
+            .text_size(theme::scaled_px(13.0))
+            .text_color(rgb(theme().text_main))
+            .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
+            .child(text),
+    )
 }
 
 /// Secondary text action used by the Mermaid source panel.

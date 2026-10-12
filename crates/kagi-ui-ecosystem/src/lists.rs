@@ -92,8 +92,6 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64, focus: gpui::FocusHand
         .gap_3()
         .px(kagi_ui_core::keyboard_nav::inset(12.))
         .py(kagi_ui_core::keyboard_nav::inset(4.))
-        .border_b_1()
-        .border_color(rgb(theme().surface))
         .child(
             div()
                 .flex_shrink_0()
@@ -122,7 +120,29 @@ fn render_row(rank: usize, f: &FileMetric, max_risk: f64, focus: gpui::FocusHand
                         .bg(rgb(theme().color_warning)),
                 ),
         );
-    controls::probe(&id, kagi_ui_core::keyboard_nav::with_ring(row)).into_any_element()
+    framed_row(&id, row).into_any_element()
+}
+
+/// Keep the fixed separator outside the ring, preserving the original row box.
+fn framed_row(id: &str, row: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
+    controls::probe(
+        id,
+        div()
+            .id(SharedString::from(format!("{id}-frame")))
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .flex_shrink_0()
+            .child(kagi_ui_core::keyboard_nav::with_ring(row))
+            .child(
+                div()
+                    .w_full()
+                    .h(gpui::px(1.))
+                    .flex_shrink_0()
+                    .bg(rgb(theme().surface)),
+            ),
+    )
 }
 
 fn risk_value(rank: usize, risk: f64) -> gpui::Stateful<gpui::Div> {
@@ -320,10 +340,7 @@ pub(super) fn render_coupling_list(
             .track_focus(&view.navigation.handle(&id, cx).tab_index(0).tab_stop(true))
             .on_key_down(kagi_ui_core::keyboard_nav::stop_activation_keys)
             .on_click(click);
-        list = list.child(controls::probe(
-            &id,
-            kagi_ui_core::keyboard_nav::with_ring(row),
-        ));
+        list = list.child(framed_row(&id, row));
         if focus == Some(i) {
             list = list.child(render_partners(&p.a, &view.data.coupling_partners));
         }
@@ -350,10 +367,8 @@ fn render_coupling_row(
         .flex_shrink_0()
         .items_center()
         .gap_3()
-        .px_3()
-        .py_1()
-        .border_b_1()
-        .border_color(rgb(theme().surface))
+        .px(kagi_ui_core::keyboard_nav::inset(12.))
+        .py(kagi_ui_core::keyboard_nav::inset(4.))
         .cursor_pointer()
         .when(expanded, |d| d.bg(rgb(theme().selected)))
         .child(

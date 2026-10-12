@@ -9,13 +9,16 @@ impl KagiApp {
             _ => None,
         }
     }
+    pub fn set_analyze_help_modal(&mut self, opener: FocusHandle) {
+        self.replace_modal_from_user(ActiveModal::AnalyzeHelp(opener));
+    }
     pub(crate) fn open_analyze_help_from_control(
         &mut self,
         opener: FocusHandle,
         cx: &mut Context<Self>,
     ) {
         self.modal_focus = Some(cx.focus_handle());
-        self.replace_modal_from_user(ActiveModal::AnalyzeHelp(opener));
+        self.set_analyze_help_modal(opener);
     }
     pub fn clear_analyze_help_modal(&mut self) {
         if let Some(opener) = self.analyze_help_modal().cloned() {

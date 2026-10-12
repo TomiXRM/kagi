@@ -35,23 +35,25 @@ impl KagiApp {
         self.tab_strip_focus
             .release_closed(self.root_focus.as_ref(), window, cx);
         let focused = self.tab_strip_focus.focused(window);
-        let (mut viewport, width) = overflow::viewport(
+        let (mut viewport, width, has_overflow) = overflow::viewport(
             &list,
             repos + usize::from(home_slot.is_some()),
+            overflow::signature(&self.tabs, home_slot.is_some(), window.scale_factor()),
             selected,
             focused,
             window,
             cx,
         );
         viewport = self.document_tab_cells(viewport, &list, selected, width, window, cx);
-        viewport = viewport.child(overflow::probe(cx.weak_entity(), window, cx));
-        let menu = overflow::menu(
+        let probe = overflow::probe(
             cx.weak_entity(),
-            overflow::entries(&self.tabs),
-            home_slot.is_some(),
+            repos + usize::from(home_slot.is_some()),
+            width.is_none(),
+            has_overflow,
             window,
             cx,
         );
+        let menu = self.document_tab_menu(has_overflow, window, cx);
         Some(
             div()
                 .id("tab-strip")
@@ -67,9 +69,30 @@ impl KagiApp {
                 .border_color(rgb(theme().surface))
                 .child(super::super::e2e::measure_inside("repo-tab-strip"))
                 .child(viewport)
-                .child(menu)
+                .children(menu)
+                .child(probe)
                 .into_any_element(),
         )
+    }
+
+    fn document_tab_menu(
+        &self,
+        visible: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<overflow::Menu> {
+        if visible {
+            Some(overflow::menu(
+                cx.weak_entity(),
+                overflow::entries(&self.tabs),
+                self.home.is_some(),
+                window,
+                cx,
+            ))
+        } else {
+            overflow::dismiss(self.root_focus.clone(), window, cx);
+            None
+        }
     }
 
     fn document_tab_cells(
@@ -77,7 +100,7 @@ impl KagiApp {
         mut viewport: gpui::Stateful<gpui::Div>,
         list: &TabList,
         selected: Option<usize>,
-        width: gpui::Pixels,
+        width: Option<gpui::Pixels>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -154,7 +177,7 @@ fn repository_tab(
     selected: bool,
     focused: bool,
     window_active: bool,
-    width: gpui::Pixels,
+    width: Option<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let name = super::super::render_helpers::safe_text(&tab.name);
@@ -200,7 +223,11 @@ fn repository_tab(
             "repo-tab-{slot}"
         )))
         .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
-        .child(tab_label(format!("repo-tab-label-{slot}"), label))
+        .child(tab_label(
+            format!("repo-tab-label-{slot}"),
+            label,
+            width.is_some(),
+        ))
         .child(close)
         .into_any_element()
 }
@@ -212,7 +239,7 @@ fn home_tab(
     selected: bool,
     focused: bool,
     window_active: bool,
-    width: gpui::Pixels,
+    width: Option<gpui::Pixels>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let close_name = i18n::tab_close_name(Msg::HomeTabTitle.t());
@@ -233,6 +260,7 @@ fn home_tab(
         .child(tab_label(
             "home-tab-label".into(),
             format!("⌂ {}", Msg::HomeTabTitle.t()).into(),
+            width.is_some(),
         ))
         .child(close)
         .into_any_element()
@@ -264,15 +292,21 @@ fn tab_cell(
     cell: gpui::Stateful<gpui::Div>,
     selected: bool,
     window_active: bool,
-    width: gpui::Pixels,
+    width: Option<gpui::Pixels>,
 ) -> gpui::Stateful<gpui::Div> {
     let (bg, fg) = tab_colors(&theme(), selected, window_active);
+    let min = if width.is_some() {
+        px(f32::from(theme::scaled_px(TAB_MIN_W)).ceil())
+    } else {
+        theme::scaled_px(TAB_MIN_W)
+    };
     cell.relative()
         .flex()
         .flex_row()
         .items_center()
         .h_full()
-        .w(width)
+        .min_w(min)
+        .max_w(width.unwrap_or_else(|| theme::scaled_px(TAB_MAX_W)))
         .flex_shrink_0()
         .px(super::super::keyboard_nav::inset(8.))
         .gap_1()
@@ -286,11 +320,11 @@ fn tab_cell(
         .cursor(gpui::CursorStyle::PointingHand)
 }
 
-fn tab_label(id: String, label: SharedString) -> gpui::Div {
+fn tab_label(id: String, label: SharedString, compressed: bool) -> gpui::Div {
     div()
         .relative()
         .flex_1()
-        .min_w_0()
+        .when(compressed, |label| label.min_w_0())
         .overflow_hidden()
         .text_ellipsis_middle()
         .whitespace_nowrap()

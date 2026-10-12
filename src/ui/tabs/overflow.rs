@@ -10,35 +10,69 @@ use gpui_component::{
 pub(super) struct Layout {
     available: f32,
     scroll: ScrollHandle,
-    reveal: Option<(usize, usize, u32, u32)>,
+    reveal: Option<(usize, usize, u32, u32, u32)>,
     selected: Option<usize>,
     focused: Option<usize>,
+    signature: Option<u64>,
+    natural: f32,
+    reserved: f32,
+}
+
+pub(super) fn signature(tabs: &[RepoTab], home: bool, scale: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    theme::zoom().to_bits().hash(&mut hash);
+    scale.to_bits().hash(&mut hash);
+    home.hash(&mut hash);
+    if home {
+        (i18n::lang() as u8).hash(&mut hash);
+    }
+    for tab in tabs {
+        (&tab.name, tab.remote.is_some(), tab.is_worktree).hash(&mut hash);
+    }
+    hash.finish()
 }
 
 pub(super) fn viewport(
     tabs: &super::super::keyboard_nav::TabList,
     slots: usize,
+    signature: u64,
     selected: Option<usize>,
     focused: Option<usize>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
-) -> (gpui::Stateful<gpui::Div>, gpui::Pixels) {
+) -> (gpui::Stateful<gpui::Div>, Option<gpui::Pixels>, bool) {
     let layout = window.use_keyed_state("repository-tab-layout", cx, |_, _| Layout::default());
-    let (available, scroll) = {
+    layout.update(cx, |state, _| {
+        if state.signature != Some(signature) {
+            state.signature = Some(signature);
+            state.natural = 0.;
+            state.reserved = f32::from(theme::scaled_px(36.));
+        }
+    });
+    let (available, natural, reserved, scroll) = {
         let state = layout.read(cx);
-        (state.available, state.scroll.clone())
+        (
+            state.available,
+            state.natural,
+            state.reserved,
+            state.scroll.clone(),
+        )
     };
     #[cfg(feature = "gui-e2e")]
     super::super::e2e::tab_strip::record_scroll(scroll.clone());
-    let width = ((available / slots.max(1) as f32) - 1.)
-        .clamp(
-            f32::from(theme::scaled_px(TAB_MIN_W)).ceil(),
-            f32::from(theme::scaled_px(TAB_MAX_W)).floor(),
-        )
-        .floor();
+    let overflow = natural > available + 0.1;
+    let width = overflow.then(|| {
+        let available = available - reserved;
+        px(((available / slots.max(1) as f32) - 1.)
+            .clamp(
+                f32::from(theme::scaled_px(TAB_MIN_W)).ceil(),
+                f32::from(theme::scaled_px(TAB_MAX_W)).floor(),
+            )
+            .floor())
+    });
     layout.update(cx, |state, _| {
-        // Selection changes outrank a still-focused old cell. Keep that reveal
-        // until focus actually moves again, rather than undoing it next frame.
+        // Selection changes outrank old focus and stay revealed next frame.
         let target = if state.selected != selected {
             selected.unwrap_or(0)
         } else if state.focused != focused {
@@ -48,7 +82,13 @@ pub(super) fn viewport(
         };
         state.selected = selected;
         state.focused = focused;
-        let reveal = (target, slots, available.to_bits(), theme::zoom().to_bits());
+        let reveal = (
+            target,
+            slots,
+            available.to_bits(),
+            theme::zoom().to_bits(),
+            width.map(|width| f32::from(width).to_bits()).unwrap_or(0),
+        );
         if state.reveal != Some(reveal) {
             state.scroll.scroll_to_item(target);
             state.reveal = Some(reveal);
@@ -69,12 +109,16 @@ pub(super) fn viewport(
                 viewport
             })
             .track_scroll(&scroll),
-        px(width),
+        width,
+        overflow,
     )
 }
 
 pub(super) fn probe(
     app: gpui::WeakEntity<KagiApp>,
+    slots: usize,
+    natural_layout: bool,
+    overflow: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
@@ -82,12 +126,30 @@ pub(super) fn probe(
     gpui::canvas(
         move |bounds, _, cx| {
             let changed = layout.update(cx, |state, _| {
-                let width = f32::from(bounds.size.width);
-                if (state.available - width).abs() < 0.1 {
-                    return false;
+                // Measure the whole strip directly; the trigger's snapped
+                // width comes from the actual viewport, not an estimate.
+                let available = f32::from(bounds.size.width);
+                let reserved = if overflow {
+                    (available - f32::from(state.scroll.bounds().size.width)).max(0.)
+                } else {
+                    f32::from(theme::scaled_px(36.))
+                };
+                let natural = natural_layout
+                    .then(|| {
+                        let first = state.scroll.bounds_for_item(0)?;
+                        let last = state.scroll.bounds_for_item(slots.checked_sub(1)?)?;
+                        Some(f32::from(last.right() - first.left() + px(1.)).ceil())
+                    })
+                    .flatten();
+                let changed = (state.available - available).abs() >= 0.1
+                    || (state.reserved - reserved).abs() >= 0.1
+                    || natural.is_some_and(|width| (state.natural - width).abs() >= 0.1);
+                state.available = available;
+                state.reserved = reserved;
+                if let Some(natural) = natural {
+                    state.natural = natural;
                 }
-                state.available = width;
-                true
+                changed
             });
             if changed {
                 let _ = app.update(cx, |_, cx| cx.notify());
@@ -96,6 +158,8 @@ pub(super) fn probe(
         |_, _, _, _| {},
     )
     .absolute()
+    .top_0()
+    .left_0()
     .size_full()
 }
 

@@ -48,6 +48,7 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     theme::set_zoom(1.);
     let fixtures: Vec<_> = (0..12).map(|_| crate::macos::build_fixture()).collect();
     let (app, window) = mount(cx, fixtures[0].path());
+    two_tab_pin(cx, window, &app);
     for fixture in fixtures.iter().skip(1) {
         app.update(cx, |app, cx| {
             assert!(app.open_repository(fixture.path().to_path_buf(), cx));
@@ -95,24 +96,38 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     keyboard_tail(cx, window, &app);
     selection_reveal(cx, window, &app);
     wheel_axes(cx, window);
-    // Retiring the strip while its popover owns focus must dismiss the real
-    // kit menu without retaining a deferred popover registration.
+    retire_menu(cx, window, &app);
+    unmount(cx, app, window);
+}
+
+fn retire_menu(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
     click(cx, window, "tab-overflow");
     cx.run_until_parked();
     app.update(cx, |app, cx| {
-        while app.tabs.len() > 1 {
+        while app.tabs.len() > 2 {
             app.close_tab(app.tabs.len() - 1, cx);
         }
     });
+    e2e::clear_control_bounds(window.window_id(), "tab-overflow");
     draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "tab-overflow").is_none(),
+        "» disappears again when the remaining natural-width tabs fit"
+    );
     assert!(
         cx.update_window(window, |_, window, cx| {
             app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
         })
         .unwrap(),
-        "hidden overflow returns focus to the root"
+        "retired overflow returns focus to the root"
     );
-    unmount(cx, app, window);
+    app.update(cx, |app, cx| app.close_tab(1, cx));
+    draw(cx, window);
+    assert!(e2e::control_bounds(window.window_id(), "tab-overflow").is_none());
 }
 
 fn keyboard_tail(
@@ -207,8 +222,11 @@ pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
     let paths: Vec<_> = fixtures
         .iter()
         .map(|fixture| {
-            crate::macos::git(fixture.path(), &["clone", "-q", ".", "same-repository"]);
-            fixture.path().join("same-repository")
+            crate::macos::git(
+                fixture.path(),
+                &["clone", "-q", ".", "same-repository-with-a-long-name"],
+            );
+            fixture.path().join("same-repository-with-a-long-name")
         })
         .collect();
     let (app, window) = mount(cx, &paths[0]);
@@ -227,6 +245,7 @@ pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.open_home_tab(window, cx))
     })
     .unwrap();
+    theme::set_zoom(1.67);
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(lang);
         draw(cx, window);
@@ -236,9 +255,9 @@ pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {
                 Some((
                     Role::Button,
                     if lang == i18n::Lang::En {
-                        "Close same-repository"
+                        "Close same-repository-with-a-long-name"
                     } else {
-                        "same-repository を閉じる"
+                        "same-repository-with-a-long-name を閉じる"
                     }
                     .to_owned()
                 ))
@@ -293,7 +312,7 @@ fn duplicate_menu(
             Some((
                 Role::MenuItem,
                 format!(
-                    "{marker}same-repository — {}",
+                    "{marker}same-repository-with-a-long-name — {}",
                     path.parent().unwrap().display()
                 )
             ))
@@ -304,5 +323,85 @@ fn duplicate_menu(
         );
     }
     crate::keyboard_nav::keys(cx, window, "escape");
+    draw(cx, window);
+}
+
+fn two_tab_pin(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
+    let old_theme = theme::theme().slug.clone();
+    app.update(cx, |app, cx| {
+        app.tabs[0].name = "stress-pr-repo".into();
+        app.set_theme("apple-light", cx);
+    });
+    theme::set_zoom(1.67);
+    i18n::set_lang(i18n::Lang::Ja);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    e2e::clear_control_bounds(window.window_id(), "tab-overflow");
+    draw(cx, window);
+    let repo = e2e::control_bounds(window.window_id(), "repo-tab-0").unwrap();
+    let home = e2e::control_bounds(window.window_id(), "home-tab").unwrap();
+    // Baseline Apple Light / JA / 167%: inactive repo, naturally-sized Home,
+    // then plain chrome. These pins reject the equal-width stretched tabs.
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().unwrap();
+        let scale = window.scale_factor();
+        for (x, color, label) in [
+            (8., theme::theme().surface, "inactive repository"),
+            (
+                220.,
+                theme::theme().bg_base,
+                "Home at its baseline position",
+            ),
+            (
+                380.,
+                theme::theme().chrome_surface(),
+                "natural-width trailing chrome",
+            ),
+        ] {
+            let pixel = image
+                .get_pixel(
+                    (x * scale) as u32,
+                    ((f32::from(repo.top()) + 5.) * scale) as u32,
+                )
+                .0;
+            assert_eq!(
+                &pixel[..3],
+                &[(color >> 16) as u8, (color >> 8) as u8, color as u8],
+                "{label}"
+            );
+        }
+    })
+    .unwrap();
+    assert!(
+        (190. ..=215.).contains(&f32::from(repo.size.width)),
+        "natural repo width: {repo:?}"
+    );
+    assert!(
+        (130. ..=155.).contains(&f32::from(home.size.width)),
+        "natural Home width: {home:?}"
+    );
+    let scroll = e2e::tab_strip::scroll().unwrap();
+    assert_eq!(
+        scroll.bounds_for_item(1).unwrap().left(),
+        scroll.bounds_for_item(0).unwrap().right() + px(1.)
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "tab-overflow").is_none(),
+        "no » when both natural-width tabs fit"
+    );
+    app.update(cx, |app, cx| {
+        app.close_home_tab(cx);
+        app.set_theme(&old_theme, cx);
+    });
+    i18n::set_lang(i18n::Lang::En);
+    theme::set_zoom(1.);
+    cx.run_until_parked();
     draw(cx, window);
 }

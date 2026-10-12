@@ -36,11 +36,14 @@
 ## Amendment — 2026-10-12: bounded document strip (#1339 / #1340)
 
 The document-count visibility rule and zoom-scaled strip height remain unchanged.
-Tabs share the measured horizontal viewport, shrinking from scaled 200px to a
-scaled 80px minimum with middle ellipsis. Beyond that minimum the viewport scrolls;
-active selection and roving keyboard focus reveal their actual child bounds.
-A trailing named » menu lists all repository tabs and Home, reusing the toolbar's
-overflow affordance and gpui-kit PopupMenu/Popover keyboard/focus contract.
+Tabs keep their previous natural widths while they fit. When the measured natural
+widths exceed the strip capacity, tab widths are capped progressively toward a
+scaled 80px minimum with middle ellipsis, then the viewport scrolls horizontally.
+Active selection and roving keyboard focus reveal their actual child bounds.
+Only the constrained strip shows a trailing named » menu listing all repository
+tabs and Home, reusing the toolbar's overflow affordance and gpui-kit
+PopupMenu/Popover keyboard/focus contract. The unconstrained two-tab appearance
+is protected by Apple Light / JA / 167% native pixel pins.
 Repository menu items retain ☁/🌲 markers and full-path accessibility descriptions.
 Duplicate names display a parent-directory qualifier (the full repository path
 when the parent itself is shared). Vertical wheel input is not remapped to tab

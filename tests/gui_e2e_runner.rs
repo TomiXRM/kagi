@@ -172,6 +172,10 @@ mod recovery_unborn_empty;
 mod bottom_panel_motion;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/bottom_panel_divider_drag.rs"]
+mod bottom_panel_divider_drag;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/graph_column_divider.rs"]
 mod graph_column_divider;
 #[cfg(target_os = "macos")]
@@ -3554,6 +3558,10 @@ mod macos {
                 Box::new(crate::bottom_panel_motion::scenario_bottom_panel_motion),
             ),
             (
+                "bottom_panel_divider_drag",
+                Box::new(crate::bottom_panel_divider_drag::scenario_bottom_panel_divider_drag),
+            ),
+            (
                 "side_panel_motion",
                 Box::new(crate::side_panel_motion::scenario_side_panel_motion),
             ),
@@ -4390,6 +4398,7 @@ mod macos {
     /// Native layout and interactions: the bottom panel occupies the center
     /// column only; Cmd-J, the action, and resizing keep that geometry.
     fn scenario_bottom_panel(cx: &mut VisualTestAppContext) {
+        let _saved = crate::gui_isolation::SavedKeys::keep(&["bottom_panel_height"]);
         let fixture = build_fixture();
         let repo_path = fixture.path().canonicalize().unwrap();
         let before_fp = repo_fingerprint(&repo_path);

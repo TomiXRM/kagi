@@ -724,7 +724,14 @@ impl KagiApp {
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
         let panel_visible = self.panel_motion.bottom.visible(motion_now);
-        let panel_height = self.bottom_panel_height;
+        // Fit only the presentation; shrinking a window or increasing zoom
+        // must not replace the larger preferred height.
+        let max_height = (f32::from(window.viewport_size().height) * BOTTOM_PANEL_MAX_FRAC
+            / theme::scaled(1.))
+        .max(BOTTOM_PANEL_MIN_H);
+        let panel_height = self
+            .bottom_panel_height
+            .clamp(BOTTOM_PANEL_MIN_H, max_height);
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
             .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, window, cx)

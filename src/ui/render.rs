@@ -638,6 +638,15 @@ impl Render for KagiApp {
             }))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
+            .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, _, _| {
+                if event.button == MouseButton::Left {
+                    this.finish_bottom_panel_resize();
+                }
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.finish_bottom_panel_resize()),
+            )
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
             .on_action(

@@ -88,6 +88,16 @@ impl KagiApp {
                 }
             })
             .cursor_row_resize()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
+                    this.bottom_panel_drag_origin = Some((
+                        f32::from(event.position.y),
+                        height,
+                        this.bottom_panel_height,
+                    ));
+                }),
+            )
             .on_drag(
                 DividerDrag {
                     kind: DividerKind::BottomPanel,

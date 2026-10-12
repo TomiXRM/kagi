@@ -290,6 +290,9 @@ mod palette_polish;
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_identity.rs"]
+mod sidebar_identity;
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_rows.rs"]
 mod sidebar_rows;
 #[cfg(target_os = "macos")]
@@ -1158,6 +1161,11 @@ mod macos {
     /// deterministic assertions are the oracle, screenshots are triage only) and
     /// prints a `[gui-e2e] PASS …` line. A failed assertion panics → exit 101.
     pub fn run() -> i32 {
+        use crate::sidebar_identity::{
+            scenario_remote_group_header_fit_cell as group_cell,
+            scenario_tag_unloaded_target_cell as tag_cell,
+        };
+        use kagi_ui_core::i18n::Lang::{En, Ja};
         // Opt-in: real Metal + a main-thread window is an *evidence lane*, not a
         // required gate (ADR-0166 §CI). Unset → skip so `cargo test --workspace`
         // stays fast and non-flaky. Set `KAGI_GUI_E2E=1` to run it.
@@ -2262,6 +2270,114 @@ mod macos {
             (
                 "sidebar_rows_keys",
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_keys),
+            ),
+            (
+                "stash_row_identity",
+                Box::new(crate::sidebar_identity::scenario_stash_row_identity),
+            ),
+            (
+                "tag_unloaded_target",
+                Box::new(crate::sidebar_identity::scenario_tag_unloaded_target),
+            ),
+            (
+                "remote_group_header_fit",
+                Box::new(crate::sidebar_identity::scenario_remote_group_header_fit),
+            ),
+            (
+                "tag_unloaded_target_solo",
+                Box::new(crate::sidebar_identity::scenario_tag_unloaded_target_solo),
+            ),
+            (
+                "sidebar_group_reveal_lifetime",
+                Box::new(crate::sidebar_identity::scenario_sidebar_group_reveal_lifetime),
+            ),
+            (
+                "tag_unloaded_target_en_light_100_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_light_167_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_light_167_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_100_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_100_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_167_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_167_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_100_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_100_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_167_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_167_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_100_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_100_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_167_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_167_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1392., 883.))),
+            ),
+            (
+                "remote_group_header_fit_en_light_167",
+                Box::new(|cx| group_cell(cx, En, "apple-light", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_en_dark_100",
+                Box::new(|cx| group_cell(cx, En, "apple-dark", 1.)),
+            ),
+            (
+                "remote_group_header_fit_en_dark_167",
+                Box::new(|cx| group_cell(cx, En, "apple-dark", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_ja_light_100",
+                Box::new(|cx| group_cell(cx, Ja, "apple-light", 1.)),
+            ),
+            (
+                "remote_group_header_fit_ja_light_167",
+                Box::new(|cx| group_cell(cx, Ja, "apple-light", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_ja_dark_100",
+                Box::new(|cx| group_cell(cx, Ja, "apple-dark", 1.)),
+            ),
+            (
+                "remote_group_header_fit_ja_dark_167",
+                Box::new(|cx| group_cell(cx, Ja, "apple-dark", 1.67)),
             ),
             (
                 "repo_tab_panels",

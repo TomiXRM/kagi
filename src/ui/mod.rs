@@ -145,6 +145,7 @@ mod settings_window;
 pub mod sidebar;
 mod sidebar_focus;
 mod sidebar_panes;
+mod sidebar_ref_rows;
 mod sidebar_rows;
 mod sidebar_worktree_row;
 mod slow_reads;

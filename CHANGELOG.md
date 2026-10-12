@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Sidebar stash accessibility names include the visible `stash@{N}: message` identity while focus remains tied to the stash OID. (#1303)
+- Unloaded tag targets show a muted row and localized accessibility/tooltip explanation; click and Enter report the reason and request the existing read-only history page only while more history is available. Loaded targets hidden by Branch Solo retain the filter and show a localized hint instead of paging. (#1304)
+- Remote/prefix group headers reserve separate disclosure and count columns, ellipsize only the name, and reveal the complete identity through bounded tooltips, Shift+F10/Menu keyboard cards and accessibility metadata. Escape closes the card without moving row focus; leaving the row or sidebar retires it. (#1305)
 - Graph commit rows retain complete sanitized subjects for accessibility and hover tooltips; only their one-line layout ellipsizes. Tooltips constrain their width and wrap long subjects inside the viewport. An explicit 4 KiB UTF-8-safe display bound replaces the old 72-character cut. (#1306)
 - Inspector retains and copies the complete sanitized commit message, including late co-authors and trailers. Metadata is prepared once per commit, and the existing independent message scroller keeps long bodies and trailer tables reachable without displacing changed files or the footer. (#1307)
 - Activity period selection uses named EN/JA keyboard tabs with one Tab stop, arrow/Home/End navigation and Enter/Space activation; the selected fill remains visible on hover in active and inactive windows. (#1301)

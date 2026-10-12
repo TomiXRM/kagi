@@ -63,3 +63,10 @@ The retained native list virtualizes viewport rows. A scaled height estimate
 gives unmeasured rows a scroll extent; actual measurements replace it, and
 zoom changes remeasure while preserving the scroll anchor. The existing
 100-file display cap and generated grouping remain unchanged.
+Disclosure changes splice only generated children, preserving the existing
+list anchor and the disclosure's measured bounds. A native list with a
+trailing overflow note reveals that note when its last focusable row is
+reached, without turning the note into another Tab stop or replacing the
+file's real entry index. Regression coverage uses a viewport-exceeding
+Generated fixture and freshly cleared overflow probes after measured-row
+arrow navigation, so old offscreen probe bounds cannot satisfy the check.

@@ -64,6 +64,33 @@ impl Default for State {
         }
     }
 }
+
+impl State {
+    fn rebuild(&mut self, files: Option<&Rc<InspectorFiles>>, tree: bool, expanded: bool) {
+        let (entries, keys) = entries(files, tree, expanded);
+        let splice_start = self
+            .layout
+            .filter(|&(old_tree, _, old_lang)| old_tree == tree && old_lang == i18n::lang())
+            .and_then(|_| {
+                self.entries
+                    .iter()
+                    .position(|entry| matches!(entry, Entry::Generated { .. }))
+            })
+            .map(|at| at + 1);
+        if let Some(start) = splice_start {
+            let old_end = self.entries.len()
+                - usize::from(matches!(self.entries.last(), Some(Entry::More(_))));
+            let new_end =
+                entries.len() - usize::from(matches!(entries.last(), Some(Entry::More(_))));
+            self.scroll.splice(start..old_end, new_end - start);
+        } else {
+            self.scroll.reset(entries.len());
+        }
+        self.entries = entries.into();
+        self.keys = keys.into();
+        self.layout = Some((tree, expanded, i18n::lang()));
+    }
+}
 #[derive(Default)]
 pub(super) struct InspectorKeyboard(RefCell<State>);
 impl InspectorKeyboard {
@@ -96,11 +123,7 @@ impl InspectorKeyboard {
     ) -> gpui::AnyElement {
         let mut state = self.0.borrow_mut();
         if state.layout != Some((tree, expanded, i18n::lang())) {
-            let (entries, keys) = entries(files.as_ref(), tree, expanded);
-            state.scroll.reset(entries.len());
-            state.entries = entries.into();
-            state.keys = keys.into();
-            state.layout = Some((tree, expanded, i18n::lang()));
+            state.rebuild(files.as_ref(), tree, expanded);
         }
         // Unmeasured rows need an extent so wheel/scrollbar input can reach the tail.
         let scroll = state
@@ -108,12 +131,12 @@ impl InspectorKeyboard {
             .clone()
             .with_uniform_item_height(theme::scaled_px(24.));
         let keys = state.keys.clone();
-        let rows =
-            Rc::new(
-                state
-                    .focus
-                    .rows(keys, &RowScroll::List(scroll.clone()), fallback, window, cx),
-            );
+        let row_scroll = if matches!(state.entries.last(), Some(Entry::More(_))) {
+            RowScroll::ListWithTail(scroll.clone(), keys.last().unwrap().1)
+        } else {
+            RowScroll::List(scroll.clone())
+        };
+        let rows = Rc::new(state.focus.rows(keys, &row_scroll, fallback, window, cx));
         let entries = state.entries.clone();
         drop(state);
         let presentation = Presentation {

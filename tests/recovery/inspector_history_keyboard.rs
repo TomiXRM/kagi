@@ -355,12 +355,23 @@ fn sparse_inspector(cx: &mut VisualTestAppContext, count: usize, generated: bool
             draw(cx, window);
             assert_eq!(focused(cx, &app, window).as_deref(), Some("Cargo.lock"));
         } else {
+            if count > 100 {
+                keys(cx, window, "home");
+                for _ in 1..100 {
+                    keys(cx, window, "down");
+                    draw(cx, window);
+                }
+                kagi::ui::e2e::clear_control_bounds(window.window_id(), "inspector-files-more");
+            }
             keys(cx, window, "end");
             draw(cx, window);
             assert_eq!(
                 focused(cx, &app, window).as_deref(),
                 Some(format!("file-{:03}.txt", count.min(100) - 1).as_str())
             );
+            if count > 100 {
+                assert_overflow_revealed(window);
+            }
         }
         keys(cx, window, "enter");
         draw(cx, window);
@@ -368,4 +379,90 @@ fn sparse_inspector(cx: &mut VisualTestAppContext, count: usize, generated: bool
     }
     unmount(cx, app, window);
     assert_eq!(before, repo_fingerprint(fixture.path()));
+}
+
+pub fn overflow_keyboard(cx: &mut VisualTestAppContext) {
+    sparse_inspector(cx, 200, false);
+}
+
+pub fn generated_focus_retained(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixture = tempfile::tempdir().unwrap();
+    git(fixture.path(), &["init", "-q", "-b", "main"]);
+    for ix in 0..40 {
+        std::fs::write(
+            fixture.path().join(format!("file-{ix:03}.txt")),
+            "contents\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(fixture.path().join("Cargo.lock"), "version = 3\n").unwrap();
+    git(fixture.path(), &["add", "."]);
+    git(
+        fixture.path(),
+        &["commit", "-qm", "Wide generated inspector"],
+    );
+    let before = repo_fingerprint(fixture.path());
+    for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+        i18n::set_lang(lang);
+        for tree in [false, true] {
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                let (app, window) = mount(cx, fixture.path());
+                app.update(cx, |app, cx| {
+                    app.inspector_tree_view = tree;
+                    app.inspector_generated_expanded = false;
+                    app.select(0);
+                    cx.notify();
+                });
+                draw(cx, window);
+                for _ in 0..80 {
+                    keys(cx, window, "tab");
+                    draw(cx, window);
+                    if focused(cx, &app, window).is_some() {
+                        break;
+                    }
+                }
+                keys(cx, window, "end");
+                draw(cx, window);
+                assert_eq!(focused(cx, &app, window).as_deref(), Some("\0generated"));
+                for expanded in [true, false, true, false] {
+                    let before = control_bounds(window, "generated-fold-header");
+                    keys(cx, window, "space");
+                    draw(cx, window);
+                    assert_eq!(
+                        cx.read(|cx| app.read(cx).inspector_generated_expanded),
+                        expanded
+                    );
+                    assert_eq!(
+                        focused(cx, &app, window).as_deref(),
+                        Some("\0generated"),
+                        "Generated fold focus survives Space in a long list"
+                    );
+                    assert_eq!(
+                        control_bounds(window, "generated-fold-header"),
+                        before,
+                        "Generated fold keeps its scroll position"
+                    );
+                }
+                assert!(cx.read(|cx| app.read(cx).ui().main_diff.is_none()));
+                unmount(cx, app, window);
+            }
+        }
+    }
+    assert_eq!(before, repo_fingerprint(fixture.path()));
+}
+
+fn control_bounds(window: AnyWindowHandle, name: &str) -> gpui::Bounds<gpui::Pixels> {
+    kagi::ui::e2e::control_bounds(window.window_id(), name)
+        .unwrap_or_else(|| panic!("{name} must be drawn"))
+}
+
+fn assert_overflow_revealed(window: AnyWindowHandle) {
+    let viewport = control_bounds(window, "inspector-files-scroll");
+    let notice = control_bounds(window, "inspector-files-more");
+    assert!(
+        notice.top() >= viewport.top() && notice.bottom() <= viewport.bottom(),
+        "End must reveal the overflow notice inside the Inspector viewport"
+    );
 }

@@ -2853,6 +2853,14 @@ mod macos {
                 Box::new(crate::inspector_history_keyboard::history),
             ),
             (
+                "inspector_generated_focus_retained",
+                Box::new(crate::inspector_history_keyboard::generated_focus_retained),
+            ),
+            (
+                "inspector_overflow_keyboard",
+                Box::new(crate::inspector_history_keyboard::overflow_keyboard),
+            ),
+            (
                 "header_fit",
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),

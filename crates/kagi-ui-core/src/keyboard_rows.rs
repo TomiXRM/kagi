@@ -42,6 +42,8 @@ pub type RowKeys = Rc<[(String, usize)]>;
 #[derive(Clone)]
 pub enum RowScroll {
     List(ListState),
+    /// A native list with an unfocusable note after its last focusable entry.
+    ListWithTail(ListState, usize),
     Uniform(UniformListScrollHandle, std::ops::Range<usize>),
 }
 
@@ -60,7 +62,7 @@ impl RowScroll {
     /// The entry at the top of the list's viewport.
     fn top(&self) -> usize {
         match self {
-            Self::List(state) => state.logical_scroll_top().item_ix,
+            Self::List(state) | Self::ListWithTail(state, _) => state.logical_scroll_top().item_ix,
             // The first item it drew is the one at the top (the handle's own
             // `logical_scroll_top_index` is test-only in gpui).
             Self::Uniform(_, drawn) => drawn.start,
@@ -70,7 +72,7 @@ impl RowScroll {
     /// Whether entry `ix` was drawn last frame.
     fn drawn(&self, ix: usize) -> bool {
         match self {
-            Self::List(state) => state.bounds_for_item(ix).is_some(),
+            Self::List(state) | Self::ListWithTail(state, _) => state.bounds_for_item(ix).is_some(),
             Self::Uniform(_, drawn) => drawn.contains(&ix),
         }
     }
@@ -79,6 +81,10 @@ impl RowScroll {
     fn reveal(&self, ix: usize) {
         match self {
             Self::List(state) => reveal_list_row(state, ix),
+            Self::ListWithTail(state, last_row) if ix == *last_row => {
+                state.scroll_to_reveal_item(state.item_count() - 1);
+            }
+            Self::ListWithTail(state, _) => reveal_list_row(state, ix),
             // Not strict: it scrolls only when the item is out of view.
             Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
         }
@@ -88,7 +94,7 @@ impl RowScroll {
     /// at the top.
     fn page_size(&self, keys: &[(String, usize)], first: usize) -> usize {
         match self {
-            Self::List(state) => {
+            Self::List(state) | Self::ListWithTail(state, _) => {
                 let viewport = state.viewport_bounds();
                 page(
                     keys.iter()

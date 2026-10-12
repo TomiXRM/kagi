@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native cherry-pick abort-sequence coverage: valid plans still require Tab-focused confirmation, while blocked plans assert their disabled reason and exercise the guarded application boundary for refusal receipts without expecting an inert button in the Tab order. Production focus and destructive Return behavior are unchanged. (#1398)
 - Status-bar chips expose localized explanatory tooltips and accessibility names, including ahead/behind counts, unavailable counts, upstream identity and full fetch ages. Stale fetches add a visible `!` cue rather than relying on warning colour alone; informational chips remain outside the Tab order and existing rounded-up text fitting is retained. (#1377)
   - Review: sanitize upstream identity once per footer render rather than once per chip; the fresh-fetch regression uses a midpoint within its minute to avoid a wall-clock boundary flake.
 - Bottom-panel divider resizing starts from the pressed body height, including the rendered tab strip without a start jump; scaled pointer deltas clamp without drift and the final height is saved through the settings store on release. The existing divider has no focus handle, so its pointer-only keyboard scope is unchanged. (#1372)

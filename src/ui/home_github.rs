@@ -87,7 +87,7 @@ pub struct HomeGithub {
     /// rows are measured once per build, so a change resets it.
     pub(super) list: Option<gpui::ListState>,
     /// Home's Recent sidebar is application-wide, independent of repository tabs.
-    pub(super) recent_scroll: gpui::ScrollHandle,
+    pub(super) recent: super::home_recent::RecentList,
     pub(super) list_key: Option<super::home_github_list::ListKey>,
     /// The list's entries as last built for [`Self::list_key`] (#937):
     /// rebuilt only when the key changes, not on every frame.

@@ -45,3 +45,12 @@
   declared role/name, measured geometry, traversal/activation, selection fill,
   code-only copy and cancellation. They do not claim native VoiceOver delivery.
 
+
+## Amendment — 2026-10-12: full header identity (#1336)
+
+The shared DiffHeader title remains the complete sanitized original path.
+Only its one-line paint truncates: a Label node exposes that same full value
+as its description and the pinned Tooltip reveals it on hover. Title shrink
+priority, mode/action/stat geometry and the hunk viewport do not change.
+Renderer-fed metadata and invoked-tooltip/native-bound Tier A coverage do
+not claim native VoiceOver delivery.

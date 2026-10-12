@@ -57,6 +57,10 @@ impl KagiApp {
             return;
         };
         ui.smart_commit_generating = true;
+        ui.smart_commit_generation = Some(smart_commit::SmartGeneration {
+            provider,
+            model: (provider == smart_commit::SmartProvider::Ollama).then(|| model.clone().into()),
+        });
         ui.smart_commit_status = Some(match provider {
             smart_commit::SmartProvider::Ollama => Msg::SmartGeneratingLocal.t().to_string(),
             smart_commit::SmartProvider::Cli(p) => Msg::SmartGeneratingProvider
@@ -115,6 +119,7 @@ impl KagiApp {
                     return;
                 };
                 ui.smart_commit_generating = false;
+                ui.smart_commit_generation = None;
                 // Upgrade only now: `release_session` dropped the entity when
                 // the tab closed, so a completion that lost its panel writes
                 // nothing instead of resurrecting it (#722 P1).

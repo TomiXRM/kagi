@@ -71,7 +71,22 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error_line_height = (_window.rem_size() * 1.4).round();
-        let mut stack = div().flex().flex_col().gap_2();
+        // Pinned GPUI has no live/priority setter. A stable Status node exposes
+        // arrival text without stealing focus or promoting dismissed old cards.
+        let arrival = self.status();
+        let label = arrival
+            .map(|(_, message)| message.clone())
+            .unwrap_or_default();
+        let role = gpui::Role::Status;
+        let mut stack = div()
+            .id("toast-stack")
+            .role(role)
+            .aria_label(label.clone())
+            .flex()
+            .flex_col()
+            .gap_2();
+        #[cfg(feature = "gui-e2e")]
+        toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
         for toast in self.toasts() {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();
@@ -714,7 +729,12 @@ impl KagiApp {
                 LayerKind::FileMenu => el
                     // ── Unstaged file context menu (right-click → Discard) ──
                     .when_some(file_menu.take(), |el, menu| {
-                        el.child(render_file_menu_overlay(menu, window.viewport_size(), cx))
+                        el.child(render_file_menu_overlay(
+                            menu,
+                            self.file_menu_keys.clone(),
+                            window,
+                            cx,
+                        ))
                     }),
                 LayerKind::CommitPlan => el
                     // ── Commit plan modal overlay (T025) ─────────────

@@ -56,6 +56,27 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1336/#1337/#1338/#1341 use
+`KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
+with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and
+renderer-applied sanitized AX description while preserving header/hunk bounds.
+Its fixture uses supported 160px sidebar/240px Inspector widths so the high-zoom
+940px leg has a usable center slot; it does not claim to repair workspace
+overcommit with two default-wide side panes.
+Toast coverage checks four kinds and six consecutive arrivals per kind, stable
+newest-arrival role/name/identity through hover/ticks/animation and no focus
+stealing. The pinned GPUI API has no live-region/priority setter; these are
+Status metadata assertions, not native speech or exactly-once announcements.
+Clone checks operation-named elapsed Status across Reduce Motion and running
+ticks, keyboard Hide owner retention, and real success/error settlement.
+Inspection checks row Enter, Tab to named Refresh/local URL Buttons,
+Enter/Space once-only activation, inner-focus retention, Escape row return,
+owner departure, no-port absence, painted extra-small URL chip text and native
+Tab-map exclusion of pointer-only hover actions. All cover 940×660/1392×883, EN/JA,
+100%/167% and Apple Light/Dark. Neighbor filter:
+`KAGI_GUI_E2E_ONLY='diff_,toast_,clone_,worktree_inspection'`.
+Native VoiceOver, Full Keyboard Access and real-window focus remain Tier B.
+
 For #1310 use `KAGI_GUI_E2E_ONLY='status_bar_fit,status_,bottom_panel'`.
 `status_bar_fit` mounts the production footer at 700×500 and 940×660 with
 1/120-character branch identity, status chips, refresh timer and Busy/Failed

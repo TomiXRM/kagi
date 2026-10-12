@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - The main repository window remembers its display-relative position, size and display UUID across launches. Reachable saved frames restore on the matching display, fitting its usable area; disconnected displays or inaccessible titlebars fall back to the main display centre. Drag/resize saves coalesce at rest, secondary windows remain independent, and `KAGI_NO_RESTORE=1` skips geometry persistence. (#1367)
+- Remote SSH Connect/Browse and repository Trust confirmations cap their cards to the viewport and keep action buttons pinned while long diagnostics scroll. Long directory/repository identities use middle ellipsis with their full values in tooltips and accessibility labels; directory keyboard ownership and Trust's Return policy are unchanged. (#1368, #1369)
 - Clean repositories without a first commit show an icon, localized “No commits yet” guidance and a primary Changes button opening the Commit Panel. Dirty unborn repositories retain their WIP row; opening guidance performs no Git write. (#1371)
   - Review: read-only SSH remote views retain their empty list rather than offering an unavailable local Changes action.
   - Visual review: the shared Graph/Terminal empty-state block centers its vertical icon/title/hint/action stack in the pane, with the Button below the hint rather than at the banner's trailing edge.

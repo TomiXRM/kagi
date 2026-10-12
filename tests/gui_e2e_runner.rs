@@ -395,6 +395,14 @@ mod editor_diff_extent_reload;
 mod editor_tabs;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_find.rs"]
+mod editor_find;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_find_hosts.rs"]
+mod editor_find_hosts;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
 mod pr_threads;
 
@@ -2604,6 +2612,10 @@ mod macos {
             (
                 "editor_toggle_keys",
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
+            ),
+            (
+                "editor_find_controls_a11y",
+                Box::new(crate::editor_find::scenario_editor_find_controls_a11y),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),

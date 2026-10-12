@@ -10,7 +10,7 @@ edition = "2021"
 license = "MIT"
 
 [features]
-gui-e2e = []
+gui-e2e = ["gpui-component/test-support"]
 
 [dependencies]
 kagi-domain = { path = "../kagi-domain" }

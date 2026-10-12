@@ -710,9 +710,9 @@ impl KagiApp {
             .when(cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("toolbar-row"))
             })
-            // ── LEFT column (flex_1, equal width to the RIGHT column so the
-            // centre cluster is window-centred regardless of side widths).
-            // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──
+            // Equal flex side columns center commands when space permits.
+            // At narrow widths the left retains readable repository identity,
+            // while the right may yield its secondary-workspace reservation.
             .child(
                 div()
                     .flex()
@@ -720,6 +720,9 @@ impl KagiApp {
                     .items_center()
                     .flex_1()
                     .min_w_0()
+                    .when(icon_only, |el| {
+                        el.min_w(theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH))
+                    })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
                     // ── LEFT: Refresh (user request: left of the repo title) ──
                     .child({
@@ -806,6 +809,7 @@ impl KagiApp {
                             .flex_col()
                             .w(theme::scaled_px(180.))
                             .min_w_0()
+                            .when(icon_only, |el| el.min_w(theme::scaled_px(40.)))
                             .relative()
                             .when(!icon_only, |el| {
                                 el.flex_shrink_0().child(toolbar_overflow::probe(
@@ -984,7 +988,7 @@ impl KagiApp {
                         ))
                     }),
             ) // ── end CENTRE cluster ──
-            // ── RIGHT column (flex_1, equal width to the LEFT column) ──
+            // ── RIGHT column (flex_1; natural workspace/overflow minimum) ──
             // Settings — now a standard toolbar button (icon + "Settings"
             // label) matching Pull/Push (T-SETTINGS-001 / ADR-0080). Opens the
             // Settings overlay; also reachable via the kagi menu and cmd-,.

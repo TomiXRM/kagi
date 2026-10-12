@@ -62,6 +62,7 @@ pub fn scenario_toolbar_overflow_priority(cx: &mut VisualTestAppContext) {
                 let mut width = initial_width;
                 let mut history = Vec::new();
                 let mut previous = 0;
+                let mut selected_only_reclaims_git_width = false;
                 loop {
                     let hidden = hidden_at_width(cx, win, width);
                     let count = hidden.count_ones() as usize;
@@ -75,6 +76,20 @@ pub fn scenario_toolbar_overflow_priority(cx: &mut VisualTestAppContext) {
                         previous,
                         "shrinking must not restore commands"
                     );
+                    if count == 11 {
+                        // Only Pull, Push and selected Graph remain. The old
+                        // symmetric 100px floor would already have hidden Push.
+                        let repo = e2e::control_bounds(win.window_id(), "tb-repo-actions").unwrap();
+                        let graph = e2e::control_bounds(win.window_id(), "tb-graph-mode").unwrap();
+                        let overflow = e2e::control_bounds(win.window_id(), "tb-overflow").unwrap();
+                        let workspace = f32::from(graph.size.width + overflow.size.width);
+                        let old_required =
+                            f32::from(repo.size.width) + 2. * 100. * zoom + 24. * zoom + 80.
+                                - 12. * zoom
+                                + 28. * zoom;
+                        selected_only_reclaims_git_width |=
+                            workspace < 100. * zoom && width.round() < old_required - 1.;
+                    }
                     if history.is_empty() || hidden != previous {
                         history.push((width, hidden));
                     }
@@ -85,6 +100,8 @@ pub fn scenario_toolbar_overflow_priority(cx: &mut VisualTestAppContext) {
                     width -= 16. * zoom;
                     assert!(width >= 160., "must reach fully overflowed toolbar");
                 }
+                assert!(selected_only_reclaims_git_width,
+                    "{slug}/{language}/{zoom}: removing the selected-only 100px floor must keep Pull/Push visible below their old fit threshold");
                 for count in [0, 1, 2, 11, 12, 13, 14] {
                     assert!(history.iter().any(|(_, mask)| mask.count_ones() == count),
                         "must observe Update, Settings, Pull/Push, Pull, selected mode and full overflow stages");

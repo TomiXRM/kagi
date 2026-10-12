@@ -27,6 +27,7 @@ pub(super) const IDS: [&str; 14] = [
 ];
 
 pub(super) type StyleKey = (bool, i18n::Lang, u32);
+pub(super) const ICON_IDENTITY_MIN_WIDTH: f32 = 96.;
 #[derive(Default)]
 pub(crate) struct Layout {
     available: f32,
@@ -98,6 +99,11 @@ impl Layout {
             return self.last_hidden & present;
         }
         let scale = f32::from_bits(key.2);
+        let selected_mask = if selected < IDS.len() {
+            1 << selected
+        } else {
+            0
+        };
         let (mut repo, mut workspace) = (0., 0.);
         for (i, width) in self.widths.iter().enumerate() {
             if i < IDS.len() && present & (1 << i) != 0 {
@@ -108,7 +114,7 @@ impl Layout {
                 }
             }
         }
-        // Preserve equal side columns and reserve only the gaps actually drawn.
+        // Budget each side column's minimum and only the gaps actually drawn.
         let required = |repo: f32, workspace: f32, hidden: u16| {
             let visible = present & !hidden;
             let (repo_spacing, workspace_spacing) = spacing(visible, scale);
@@ -132,13 +138,17 @@ impl Layout {
                     }
                     + 28. * scale;
             }
-            let workspace_minimum = if visible & 0x3f00 != 0 {
+            let workspace_minimum = if visible & 0x3f00 & !selected_mask != 0 {
                 100. * scale
             } else {
                 0.
             };
+            let side = (workspace + workspace_spacing + overflow).max(workspace_minimum);
+            // The right group may yield its empty reservation, not the left
+            // Refresh/repository/branch summary's readable minimum.
             repo + repo_spacing
-                + 2. * (workspace + workspace_spacing + overflow).max(workspace_minimum)
+                + side
+                + side.max(ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale)
                 // Frame padding, native lights (unscaled) and trailing +.
                 + 24. * scale
                 + if cfg!(target_os = "macos") { 80. - 12. * scale } else { 0. }
@@ -658,7 +668,7 @@ mod tests {
         for icon_only in [true, false] {
             for language in [i18n::Lang::En, i18n::Lang::Ja] {
                 for scale in [1_f32, 1.67] {
-                    for selected in 8..=11 {
+                    for selected in [8, 9, 10, usize::MAX] {
                         let key = (icon_only, language, scale.to_bits());
                         let mut layout = Layout::default();
                         layout.measure(None, 3000. * scale, key);
@@ -667,8 +677,9 @@ mod tests {
                         }
                         let present = 0x3fff;
                         let mut order = [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
-                        let position = order.iter().position(|i| *i == selected).unwrap();
-                        order[position..].rotate_left(1);
+                        if let Some(position) = order.iter().position(|i| *i == selected) {
+                            order[position..].rotate_left(1);
+                        }
                         let mut stages = 0_u16;
                         for available in (1..=3000).rev() {
                             layout.measure(None, available as f32 * scale, key);
@@ -700,17 +711,17 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_overflow_releases_empty_workspace_reservation_for_git() {
+    fn toolbar_overflow_releases_selected_only_workspace_reservation_for_git() {
         let key = (true, i18n::Lang::En, 1_f32.to_bits());
         let mut layout = Layout::default();
-        layout.measure(None, 560., key);
+        layout.measure(None, 620., key);
         for index in 0..IDS.len() {
             layout.measure(Some(index), 36., key);
         }
         assert_eq!(
-            layout.hidden(0x10ff, usize::MAX, key),
-            1 << 12,
-            "once Settings hides, every Git command fits without an empty 100px side reservation"
+            layout.hidden(0x3fff, 8, key),
+            0x3e00,
+            "once only selected Graph remains, every Git command fits without the 100px side reservation"
         );
     }
 

@@ -1015,10 +1015,15 @@ Graph → Terminal → Redo → Undo → Pop → Stash → Branch → Push → P
 workspace mode. Absent controls and the selected mode are skipped in the early
 mode tier. Widening recomputes the same priority from cached natural widths,
 restoring controls in reverse. This supersedes #1210's repository-first order.
-When no workspace item remains visible, icon-mode fitting drops its 100-reference-
-pixel symmetric-column floor while retaining actual overflow width and gaps;
-the existing truncating repository/branch summary remains visible. Caption-mode
-measured identity/workspace minimums and wide-window centering are unchanged.
+When only the selected workspace mode remains visible (or no workspace item
+remains), icon-mode fitting drops its 100-reference-pixel symmetric-column
+floor while retaining actual selected-mode/overflow width and gaps. This
+releases width for Git commands in production Graph mode, where Graph stays
+selected until after Pull. A left-only 96-reference-pixel minimum budgets
+Refresh, a 40-reference-pixel truncating repository/branch summary and the
+drag spacer, so the right column can yield without making identity unreadable.
+Wide windows retain equal flex columns; narrow windows may use asymmetric
+minimums. Caption-mode measured identity/workspace minimums are unchanged.
 
 Overflow menu order, Button/MenuItem roles, localized names, unavailable reasons,
 action-bound shortcuts, keyboard focus and dispatch remain the #1252/#1217
@@ -1029,8 +1034,12 @@ error or safety lifecycle state is introduced.
 
 Tier A `toolbar_overflow_priority` uses native width reductions and reverse
 expansion with an Update offer, all four modes and Graph selected, across EN/JA,
-100%/167% and Apple Light/Dark. Pure fit tests cover every selected mode and
-both presentation modes, plus the empty-workspace reservation. Existing toolbar
+100%/167% and Apple Light/Dark. Pure fit tests cover production's Graph, PRs
+and Editor selected indices plus the no-selected-mode Takeover sentinel
+(`usize::MAX`); Analyze never supplies selected index 11. Both presentation
+modes run, with a production Graph mask proving selected-only width release.
+The native oracle requires Pull/Push still visible below the old 100px-floor
+fit threshold while Graph is the sole visible workspace item. Existing toolbar
 fit, overflow, accessibility and workspace-mode scenarios retain their contracts.
 Tier B target: inspect the narrow toolbar, readable repository/branch summary
 and » in EN/JA at both zooms and Apple themes; verify hidden-mode shortcuts and
@@ -1048,4 +1057,11 @@ focus and Branch activation: these commands no longer necessarily overflow at
 940px under the new policy. Native resize requests use whole logical pixels,
 matching AppKit's rounding rather than waiting for an impossible fractional
 viewport at 167% zoom.
+
+Review correction: the selected-only release is exercised with production
+`present = 0x3fff`, selected Graph (`8`), not a synthetic no-Graph Git toolbar.
+Removing both side reservations exposed a real identity-readability failure;
+the left-only minimum above preserves the existing native >30px identity oracle.
+The right floor still releases genuine space, and the native matrix requires
+Pull/Push visibility below the old symmetric-100px fit threshold in every cell.
 

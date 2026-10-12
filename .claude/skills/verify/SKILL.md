@@ -71,6 +71,14 @@ footer padding with every chip (including at 700×500/167%). They fail before th
 feedback-first/natural-width/rounding policies. The original fit scenario also
 checks sanitized C1-control branch identity through the label/Tooltip/AX path.
 
+For #1321, `status_bar_busy_height` uses the same matrix and requires Busy
+feedback height not to exceed the actual footer height, with all feedback
+bounds contained inside the footer. The pre-fix spinner/text block stack was
+26.5px high inside a 20px footer at 100%. `status_bar_feedback_min` measures the
+text child's actual bounds, not its spinner-inclusive container; Busy reserves
+the unchanged scaled 10px spinner plus 4px gap in addition to its text budget,
+capped by actual remaining room. Run `KAGI_GUI_E2E_ONLY='status_'` with KEEP_GOING.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:

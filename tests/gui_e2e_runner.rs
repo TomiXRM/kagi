@@ -2510,6 +2510,7 @@ mod macos {
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
+            ("status_bar_busy_height", Box::new(crate::status_bar_fit::scenario_status_bar_busy_height)),
             ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
             ("status_bar_short_branch", Box::new(crate::status_bar_fit::scenario_status_bar_short_branch)),
             (

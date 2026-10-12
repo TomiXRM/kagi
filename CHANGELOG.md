@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Busy status-bar feedback keeps its unchanged spinner beside a single-line truncated label, centered within the fixed-height footer instead of stacking vertically. Branch and feedback minimum-width fitting remain unchanged in EN/JA at 100%/167% zoom. (#1321)
+  - Review: reserve spinner and gap width in addition to Busy's preferred text budget, capped by available room; the text fills its remaining slot and the native minimum-width oracle measures that child directly.
 - Settings provider and saved-model chips expose named selected tabs with one roving Tab stop, arrow navigation and Enter/Space activation; unavailable CLI providers remain inert and explain why. Provider selection does not generate a commit message. (#1298)
 - Analyze ignore Save/Reset report OS write failures in EN/JA with bounded toast feedback and a visible unsaved marker. Failed Reset preserves the editor draft; successful writes quietly confirm and clear the marker. The settings owner uses atomic replacement to retain saved bytes on failure. Shared toast dismissal repairs focus independently in Settings and repository windows, preserving pane arrows and Cmd+W; closing Settings releases its toast focus metadata without dismissing shared feedback. (#1299)
 - Main windows publish the active repository and branch as their native title, returning to `Kagi` on Home. View menus offer localized Show/Hide Sidebar and Enter/Exit Full Screen labels; Window adds previous/next repository-tab navigation and Bring All to Front. About uses the single named dialog slot with a Close button, trapped focus and selectable version/copyright text. (#1312–#1315)

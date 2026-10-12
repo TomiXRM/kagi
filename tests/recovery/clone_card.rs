@@ -215,6 +215,78 @@ pub fn scenario_clone_card_viewport(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+fn ring_pixels(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    button: gpui::Bounds<gpui::Pixels>,
+) -> [[[u8; 4]; 3]; 4] {
+    cx.update_window(window, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native clone focus-ring capture");
+        let scale = window.scale_factor();
+        // The pinned Button paints a 1.5px outside band beyond its 1px border.
+        // Sample all four straight edges, away from corners and label pixels.
+        [0, 1, 2, 3].map(|side| {
+            [1.25, 1.75, 2.25].map(|offset| {
+                let (x, y) = match side {
+                    0 => (
+                        f32::from(button.left()) - offset,
+                        f32::from(button.center().y),
+                    ),
+                    1 => (
+                        f32::from(button.right()) + offset,
+                        f32::from(button.center().y),
+                    ),
+                    2 => (
+                        f32::from(button.center().x),
+                        f32::from(button.top()) - offset,
+                    ),
+                    _ => (
+                        f32::from(button.center().x),
+                        f32::from(button.bottom()) + offset,
+                    ),
+                };
+                image.get_pixel((x * scale) as u32, (y * scale) as u32).0
+            })
+        })
+    })
+    .unwrap()
+}
+
+fn check_focus_ring(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    id: &str,
+    keys: &str,
+) {
+    cx.update_window(window, |_, window, cx| {
+        let focus = app.read(cx).modal_focus.clone().unwrap();
+        window.focus(&focus, cx);
+    })
+    .unwrap();
+    draw(cx, app, window);
+    let button = bounds(window, id);
+    let before = ring_pixels(cx, window, button);
+    crate::keyboard_nav::keys(cx, window, keys);
+    draw(cx, app, window);
+    assert_eq!(
+        bounds(window, id),
+        button,
+        "focus preserves button geometry"
+    );
+    let focused = ring_pixels(cx, window, button);
+    for (side, (before, focused)) in before.into_iter().zip(focused).enumerate() {
+        assert!(
+            before.into_iter().zip(focused).any(|(before, focused)| {
+                (0..3).any(|channel| before[channel].abs_diff(focused[channel]) >= 3)
+            }),
+            "{id} focus ring must paint side {side} (left/right/top/bottom), not be clipped"
+        );
+    }
+}
+
 fn check_destination(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -224,6 +296,10 @@ fn check_destination(
     let dest = chosen.join("widgets").display().to_string();
     app.update(cx, |app, cx| app.replan_clone(chosen, cx));
     draw(cx, app, window);
+    if chosen.file_name().is_some_and(|name| name == "normal") {
+        check_focus_ring(cx, app, window, "clone-change-folder", "tab");
+        check_focus_ring(cx, app, window, "clone-copy-location", "tab tab");
+    }
     let presentation = e2e::clone_destination_presentation().unwrap();
     assert_eq!(
         presentation.displayed.as_deref(),

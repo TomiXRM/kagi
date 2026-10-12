@@ -97,6 +97,10 @@ fn clone_body(
     cx: &gpui::App,
 ) -> gpui::Stateful<gpui::Div> {
     let mut body = super::modal_shell::modal_scroll_body()
+        // The pinned Button's outside focus band is 1.5px beyond its 1px
+        // border, independent of zoom. Keep it inside the scroll clipping box.
+        .px(px(3.))
+        .pb(px(3.))
         .relative()
         .child(super::e2e::measure_inside("clone-body"))
         .child(header(modal))

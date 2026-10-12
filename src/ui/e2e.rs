@@ -17,9 +17,15 @@ use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
+pub mod sidebar_labels;
 
 #[cfg(feature = "gui-e2e")]
+pub mod activity;
+#[cfg(feature = "gui-e2e")]
 pub mod inspector_metadata;
+
+#[cfg(feature = "gui-e2e")]
+pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]
 pub mod worktree_inspection;

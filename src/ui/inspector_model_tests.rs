@@ -138,3 +138,34 @@ fn slots_rederive_only_when_their_key_changes() {
         .sync_message(&SharedString::from("fedc9876"), "other");
     assert_eq!(derivations().1 - before.1, 2);
 }
+
+#[test]
+fn complete_metadata_is_prepared_once_per_sha() {
+    let mut model = super::InspectorModel::default();
+    let message = format!(
+        "Subject\n\n{}\n\nCo-authored-by: Alice <alice@example.test>\nReviewed-by: Bob <bob@example.test>\nSigned-off-by: Carol <carol@example.test>",
+        "日本語😀".repeat(2000)
+    );
+    let sha = SharedString::from("full-message");
+    let before = derivations();
+    model.sync_message(&sha, &message);
+    assert!(model.message_html().contains("Carol"));
+    assert_eq!(
+        model.coauthors(),
+        kagi_domain::trailers::parse_coauthors(&message)
+    );
+    assert_eq!(
+        model.trailers(),
+        kagi_domain::trailers::parse_trailers(&message)
+    );
+    let trailers = model.trailers().as_ptr();
+    for _ in 0..5 {
+        model.sync_message(&sha, &message);
+    }
+    assert_eq!(
+        model.trailers().as_ptr(),
+        trailers,
+        "warm preparation borrows the cached trailers"
+    );
+    assert_eq!(derivations().1, before.1 + 1);
+}

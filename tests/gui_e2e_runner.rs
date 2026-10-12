@@ -117,6 +117,10 @@ mod recovery_hairline_dividers;
 mod recovery_bottom_panel;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/activity_a11y.rs"]
+mod activity_a11y;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
 
@@ -289,6 +293,9 @@ mod palette_polish;
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_identity.rs"]
+mod sidebar_identity;
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_rows.rs"]
 mod sidebar_rows;
 #[cfg(target_os = "macos")]
@@ -301,6 +308,10 @@ mod status_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_overflow.rs"]
 mod toolbar_overflow;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_overflow_priority.rs"]
+mod toolbar_overflow_priority;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
@@ -392,6 +403,9 @@ mod recovery_modal_compact;
 #[path = "recovery/plan_card_994.rs"]
 mod recovery_plan_card_994;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/oplog_keyboard.rs"]
+mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
@@ -553,6 +567,10 @@ mod perf_oplog_detail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_metadata.rs"]
 mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/text_caps.rs"]
+mod text_caps;
 
 #[cfg(target_os = "macos")]
 #[path = "perf/inspector_derived.rs"]
@@ -1146,6 +1164,11 @@ mod macos {
     /// deterministic assertions are the oracle, screenshots are triage only) and
     /// prints a `[gui-e2e] PASS …` line. A failed assertion panics → exit 101.
     pub fn run() -> i32 {
+        use crate::sidebar_identity::{
+            scenario_remote_group_header_fit_cell as group_cell,
+            scenario_tag_unloaded_target_cell as tag_cell,
+        };
+        use kagi_ui_core::i18n::Lang::{En, Ja};
         // Opt-in: real Metal + a main-thread window is an *evidence lane*, not a
         // required gate (ADR-0166 §CI). Unset → skip so `cargo test --workspace`
         // stays fast and non-flaky. Set `KAGI_GUI_E2E=1` to run it.
@@ -1391,6 +1414,18 @@ mod macos {
             (
                 "destructive_modal_return",
                 Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
+            ),
+            (
+                "dirty_guard_focus_trap",
+                Box::new(crate::destructive_modal_return::scenario_dirty_guard_focus_trap),
+            ),
+            (
+                "alert_focus_reload",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_reload),
+            ),
+            (
+                "alert_focus_notice",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_notice),
             ),
             (
                 "sync_to_remote_armed",
@@ -2248,6 +2283,114 @@ mod macos {
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows_keys),
             ),
             (
+                "stash_row_identity",
+                Box::new(crate::sidebar_identity::scenario_stash_row_identity),
+            ),
+            (
+                "tag_unloaded_target",
+                Box::new(crate::sidebar_identity::scenario_tag_unloaded_target),
+            ),
+            (
+                "remote_group_header_fit",
+                Box::new(crate::sidebar_identity::scenario_remote_group_header_fit),
+            ),
+            (
+                "tag_unloaded_target_solo",
+                Box::new(crate::sidebar_identity::scenario_tag_unloaded_target_solo),
+            ),
+            (
+                "sidebar_group_reveal_lifetime",
+                Box::new(crate::sidebar_identity::scenario_sidebar_group_reveal_lifetime),
+            ),
+            (
+                "tag_unloaded_target_en_light_100_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_light_167_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_light_167_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_100_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_100_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_167_940",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_en_dark_167_1392",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_100_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_100_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_167_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_light_167_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_100_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_100_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_167_940",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+            ),
+            (
+                "tag_unloaded_target_ja_dark_167_1392",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1392., 883.))),
+            ),
+            (
+                "remote_group_header_fit_en_light_167",
+                Box::new(|cx| group_cell(cx, En, "apple-light", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_en_dark_100",
+                Box::new(|cx| group_cell(cx, En, "apple-dark", 1.)),
+            ),
+            (
+                "remote_group_header_fit_en_dark_167",
+                Box::new(|cx| group_cell(cx, En, "apple-dark", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_ja_light_100",
+                Box::new(|cx| group_cell(cx, Ja, "apple-light", 1.)),
+            ),
+            (
+                "remote_group_header_fit_ja_light_167",
+                Box::new(|cx| group_cell(cx, Ja, "apple-light", 1.67)),
+            ),
+            (
+                "remote_group_header_fit_ja_dark_100",
+                Box::new(|cx| group_cell(cx, Ja, "apple-dark", 1.)),
+            ),
+            (
+                "remote_group_header_fit_ja_dark_167",
+                Box::new(|cx| group_cell(cx, Ja, "apple-dark", 1.67)),
+            ),
+            (
                 "repo_tab_panels",
                 Box::new(crate::tab_panels::scenario_repo_tab_panels),
             ),
@@ -2319,6 +2462,10 @@ mod macos {
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
+            (
+                "toolbar_overflow_priority",
+                Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
+            ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
                 "pr_threads_via_gh",
@@ -3120,6 +3267,22 @@ mod macos {
             ),
             ("bottom_panel", Box::new(scenario_bottom_panel)),
             (
+                "activity_granularity_keys",
+                Box::new(crate::activity_a11y::scenario_activity_granularity_keys),
+            ),
+            (
+                "activity_bucket_a11y",
+                Box::new(crate::activity_a11y::scenario_activity_bucket_a11y),
+            ),
+            (
+                "activity_equal_series_encoding",
+                Box::new(crate::activity_a11y::scenario_activity_equal_series_encoding),
+            ),
+            (
+                "activity_single_bucket_encoding",
+                Box::new(crate::activity_a11y::scenario_activity_single_bucket_encoding),
+            ),
+            (
                 "bottom_panel_tab_hover",
                 Box::new(crate::recovery_bottom_panel::scenario_bottom_panel_tab_hover),
             ),
@@ -3161,6 +3324,26 @@ mod macos {
                 Box::new(scenario_commit_panel_survives_reload),
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            (
+                "oplog_keyboard_single",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_single),
+            ),
+            (
+                "oplog_keyboard_many",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_many),
+            ),
+            (
+                "oplog_keyboard_refresh_tail",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_tail),
+            ),
+            (
+                "oplog_keyboard_refresh_top",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_top),
+            ),
+            (
+                "oplog_keyboard_copy_focus",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_copy_focus),
+            ),
             (
                 "oplog_detail_select_copy",
                 Box::new(crate::recovery_oplog_select::scenario_oplog_detail_select_copy),
@@ -3233,6 +3416,18 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "graph_subject_identity",
+                Box::new(crate::text_caps::scenario_graph_subject_identity),
+            ),
+            (
+                "inspector_full_message",
+                Box::new(crate::text_caps::scenario_inspector_full_message),
+            ),
+            (
+                "text_caps_warm_render",
+                Box::new(crate::text_caps::scenario_text_caps_warm_render),
             ),
             (
                 "inspector_derived",

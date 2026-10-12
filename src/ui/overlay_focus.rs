@@ -40,6 +40,11 @@ pub(super) struct PendingFocus {
     screen: FocusScreen,
 }
 
+pub(super) struct AlertReturnFocus {
+    opener: Option<PendingFocus>,
+    trap: FocusHandle,
+}
+
 impl KagiApp {
     fn focus_screen(&self) -> FocusScreen {
         if self.home_in_front() {
@@ -129,6 +134,22 @@ impl KagiApp {
     /// Settings yields to a visible modal that arrives while it is open
     /// (#976 review). Its return target is dropped rather than applied.
     pub(super) fn sync_pending_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active_modal_needs_alert_trap()
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.alert_return_focus.is_none()
+        {
+            let trap = self
+                .modal_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            self.alert_return_focus = Some(AlertReturnFocus {
+                opener: window.focused(cx).map(|focus| PendingFocus {
+                    focus,
+                    screen: self.focus_screen(),
+                }),
+                trap,
+            });
+        }
         // A restored control may remain drawn during its close animation and
         // unmount later. Only rescue that exact focus; user-directed focus
         // changes must never be stolen by an old restore target.
@@ -214,6 +235,49 @@ impl KagiApp {
             )
         {
             self.apply_pending_focus(window, cx);
+        }
+        if !menu_visible
+            && self.front_layer(cx) == FrontLayer::Modal
+            && self.active_modal_needs_alert_trap()
+        {
+            let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
+            if let Some(saved) = self.alert_return_focus.as_mut() {
+                if saved.trap != *focus {
+                    saved.trap = focus.clone();
+                }
+            }
+            if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
+                window.focus(focus, cx);
+            }
+        }
+        if !self.active_modal_needs_alert_trap() {
+            if let Some(saved) = self.alert_return_focus.take() {
+                let trapped =
+                    saved.trap.is_focused(window) || saved.trap.contains_focused(window, cx);
+                // A new named frame may intentionally reuse modal_focus.
+                // Its own focus is not a stranded alert focus.
+                let new_owner = self.active_modal_has_named_frame()
+                    || self.active_modal_input_focused(window, cx);
+                if trapped && !new_owner && !menu_visible {
+                    let opener = (!self.has_active_modal())
+                        .then_some(saved.opener)
+                        .flatten()
+                        .filter(|opener| {
+                            opener.screen == self.focus_screen()
+                                && self
+                                    .root_focus
+                                    .as_ref()
+                                    .is_some_and(|root| root.contains(&opener.focus, window))
+                        });
+                    if let Some(focus) = opener
+                        .map(|opener| opener.focus)
+                        .or_else(|| self.root_focus.clone())
+                    {
+                        window.focus(&focus, cx);
+                        self.restored_focus = Some(focus);
+                    }
+                }
+            }
         }
     }
 

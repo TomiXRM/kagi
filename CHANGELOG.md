@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Conflict image previews use the same zoom-scaled geometry for columns, boxes, gaps and captions; equal-width previews shrink to fit the pane while preserving image aspect ratio. Current/Incoming headers and size/dimension captions support EN/JA. (#1269)
 - Editor History snapshots are genuinely immutable, selectable monospace text rather than an editable buffer whose changes disappear. An EN/JA read-only header identifies the historical path and revision; Open current returns to the unchanged editable working-tree buffer. No restore or Git write operation is added. (#1264)
   - In the foreground Editor, historical-pane state blocks Save and repository Undo/Redo even while root or header controls have focus; the unsaved live buffer remains dirty and untouched. A retained Editor behind PRs/Issues/takeovers does not suppress those surfaces' shortcuts. LF snapshots use virtualized 32-line blocks; highlighting is disabled above 128 KiB or 2,048 lines. CRLF snapshots use one block to preserve clipboard line endings, sacrificing large-file warm-layout bounds for this correctness fallback.
   - Known presentation trade-off: the selectable reader currently lacks the former line-number gutter and horizontal no-wrap scrolling. [#1275](https://github.com/TomiXRM/kagi/issues/1275) tracks restoring both with a line-number column sharing the same virtualized scroll owner.

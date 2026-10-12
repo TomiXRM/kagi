@@ -2424,6 +2424,10 @@ mod macos {
                 Box::new(crate::recovery_diff_presentation::scenario_diff_binary_states),
             ),
             (
+                "conflict_image_zoom",
+                Box::new(crate::recovery_diff_presentation::scenario_conflict_image_zoom),
+            ),
+            (
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),

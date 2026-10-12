@@ -3141,6 +3141,7 @@ fn render_center_pane(
                 // (user-reported). `appearance(false)` / `bordered(false)`
                 // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
+                    .aria_label(Msg::A11yEditorFileContents.t())
                     .appearance(false)
                     .bordered(false)
                     .h_full(),

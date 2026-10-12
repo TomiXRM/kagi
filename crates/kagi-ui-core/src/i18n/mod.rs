@@ -60,6 +60,14 @@ pub use op::{
     plan_not_shown_retry, pull_failed_stash_restored, rebase_repository_settings_may_block_start,
     recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
+
+/// Accessibility action for a document tab's localized display name.
+pub fn tab_close_name(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Close {name}"),
+        Lang::Ja => format!("{name} を閉じる"),
+    }
+}
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
 
@@ -200,6 +208,22 @@ pub fn init_lang() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
     AboutTitle,
+    A11yCommandPaletteQuery,
+    A11yCommitSummary,
+    A11yCommitDescription,
+    A11yConflictResult,
+    A11yIssueTitle,
+    A11yIssueBody,
+    A11yCommentBody,
+    A11yHomeFilter,
+    A11yListTitleFilter,
+    A11ySidebarFilter,
+    A11yPrReviewersFilter,
+    A11yPrAssigneesFilter,
+    A11yPrLabelsFilter,
+    A11yStashMessage,
+    A11yAnalyzeIgnorePatterns,
+    A11yEditorFileContents,
     AboutDescription,
     MenuHideSidebar,
     MenuShowSidebar,
@@ -472,6 +496,8 @@ pub enum Msg {
     CommandPalettePlaceholder,
     /// Shown when the query matches no command.
     CommandPaletteNoResults,
+    /// Empty-query palette's command section.
+    CommandPaletteActions,
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
@@ -1011,6 +1037,7 @@ pub enum Msg {
     StatusShowOperationLog,
     StatusHideOperationLog,
     ToolbarOverflow,
+    TabOverflow,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -1828,6 +1855,38 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, A11yCommandPaletteQuery) => "Command search",
+            (Ja, A11yCommandPaletteQuery) => "コマンド検索",
+            (En, A11yCommitSummary) => "Commit summary",
+            (Ja, A11yCommitSummary) => "commit の概要",
+            (En, A11yCommitDescription) => "Commit description",
+            (Ja, A11yCommitDescription) => "commit の説明",
+            (En, A11yConflictResult) => "Conflict resolution",
+            (Ja, A11yConflictResult) => "競合の解決結果",
+            (En, A11yIssueTitle) => "Issue title",
+            (Ja, A11yIssueTitle) => "Issue のタイトル",
+            (En, A11yIssueBody) => "Issue description",
+            (Ja, A11yIssueBody) => "Issue の説明",
+            (En, A11yCommentBody) => "Comment",
+            (Ja, A11yCommentBody) => "コメント",
+            (En, A11yHomeFilter) => "Search repositories",
+            (Ja, A11yHomeFilter) => "リポジトリを検索",
+            (En, A11yListTitleFilter) => "Filter by title",
+            (Ja, A11yListTitleFilter) => "タイトルで絞り込み",
+            (En, A11ySidebarFilter) => "Filter sidebar",
+            (Ja, A11ySidebarFilter) => "サイドバーを絞り込み",
+            (En, A11yPrReviewersFilter) => "Filter pull request reviewers",
+            (Ja, A11yPrReviewersFilter) => "pull request のレビュー担当者を絞り込み",
+            (En, A11yPrAssigneesFilter) => "Filter pull request assignees",
+            (Ja, A11yPrAssigneesFilter) => "pull request の担当者を絞り込み",
+            (En, A11yPrLabelsFilter) => "Filter pull request labels",
+            (Ja, A11yPrLabelsFilter) => "pull request のラベルを絞り込み",
+            (En, A11yStashMessage) => "Stash message",
+            (Ja, A11yStashMessage) => "stash メッセージ",
+            (En, A11yAnalyzeIgnorePatterns) => "Analyze ignore patterns",
+            (Ja, A11yAnalyzeIgnorePatterns) => "Analyze の除外パターン",
+            (En, A11yEditorFileContents) => "File contents",
+            (Ja, A11yEditorFileContents) => "ファイルの内容",
             (En, AboutTitle) => "About Kagi",
             (Ja, AboutTitle) => "Kagiについて",
             (En, AboutDescription) => "A safety-first Git GUI client",
@@ -2671,6 +2730,8 @@ impl Msg {
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
+            (En, CommandPaletteActions) => "Actions",
+            (Ja, CommandPaletteActions) => "操作",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",
@@ -3550,6 +3611,8 @@ impl Msg {
             (Ja, StatusHideOperationLog) => "操作ログを隠す (↵ / Space)",
             (En, ToolbarOverflow) => "More Toolbar Commands",
             (Ja, ToolbarOverflow) => "その他のツールバーコマンド",
+            (En, TabOverflow) => "All Tabs",
+            (Ja, TabOverflow) => "すべてのタブ",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
@@ -4392,6 +4455,15 @@ pub fn issue_comments(count: usize) -> String {
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Palette section and unavailable reason share language-appropriate punctuation.
+pub fn command_palette_description(language: Lang, section: &str, reason: Option<&str>) -> String {
+    match (language, reason) {
+        (Lang::En, Some(reason)) => format!("{section}. {reason}"),
+        (Lang::Ja, Some(reason)) => format!("{section}。{reason}"),
+        (_, None) => section.to_string(),
+    }
+}
+
 /// Help-overlay sections for the Analyze view: `(heading, body)` in the active
 /// language. Kept here so EN/JA stay side by side (ADR-0119).
 pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
@@ -4840,6 +4912,37 @@ pub fn command_label_ja(id: &str) -> Option<&'static str> {
 #[cfg(test)]
 #[path = "i18n_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod input_name_tests {
+    use super::*;
+
+    #[test]
+    fn input_names_are_nonempty_and_localized() {
+        for message in [
+            Msg::A11yCommandPaletteQuery,
+            Msg::A11yCommitSummary,
+            Msg::A11yCommitDescription,
+            Msg::A11yConflictResult,
+            Msg::A11yIssueTitle,
+            Msg::A11yIssueBody,
+            Msg::A11yCommentBody,
+            Msg::A11yHomeFilter,
+            Msg::A11yListTitleFilter,
+            Msg::A11ySidebarFilter,
+            Msg::A11yPrReviewersFilter,
+            Msg::A11yPrAssigneesFilter,
+            Msg::A11yPrLabelsFilter,
+            Msg::A11yStashMessage,
+            Msg::A11yAnalyzeIgnorePatterns,
+            Msg::A11yEditorFileContents,
+        ] {
+            assert!(!message.t_for(Lang::En).trim().is_empty());
+            assert!(!message.t_for(Lang::Ja).trim().is_empty());
+            assert_ne!(message.t_for(Lang::En), message.t_for(Lang::Ja));
+        }
+    }
+}
 
 #[cfg(test)]
 mod standard_app_menu_tests {

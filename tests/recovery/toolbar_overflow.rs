@@ -258,7 +258,7 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
             settings::set_toolbar_display(display);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
-                for (width, height) in [(940., 660.), (1000., 660.), (1392., 883.)] {
+                for (width, height) in [(700., 500.), (940., 660.), (1000., 660.), (1392., 883.)] {
                     let state = e2e::app_state(fixture.path()).unwrap();
                     let captured = Rc::new(RefCell::new(None));
                     let output = captured.clone();
@@ -269,6 +269,13 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                     )
                     .into();
                     let app = captured.borrow().clone().unwrap();
+                    if width == 700. {
+                        app.update(cx, |app, cx| {
+                            app.view_mut().status_summary.repo_name = "stress-pr-repo".repeat(8);
+                            app.view_mut().status_summary.branch = "hig-stress-pr-001".repeat(8);
+                            cx.notify();
+                        });
+                    }
                     for _ in 0..8 {
                         frame(cx, win);
                     }
@@ -296,10 +303,21 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                         e2e::clear_control_bounds(win.window_id(), id);
                     }
                     frame(cx, win);
+                    let outer_bounds = |id: &str| {
+                        e2e::control_bounds(win.window_id(), id)
+                            .filter(|bounds| bounds.size.width > px(0.))
+                            .map(|bounds| {
+                                // Inside probes exclude the fixed focus border;
+                                // the overflow wrapper already measures its outside.
+                                if id.starts_with("tb-") && id != "tb-overflow" {
+                                    bounds.dilate(px(kagi_ui_core::keyboard_nav::RING))
+                                } else {
+                                    bounds
+                                }
+                            })
+                    };
                     for (i, left) in ids.iter().enumerate() {
-                        let Some(a) = e2e::control_bounds(win.window_id(), left)
-                            .filter(|b| b.size.width > px(0.))
-                        else {
+                        let Some(a) = outer_bounds(left) else {
                             continue;
                         };
                         contained(
@@ -308,9 +326,7 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                             left,
                         );
                         for right in &ids[i + 1..] {
-                            let Some(b) = e2e::control_bounds(win.window_id(), right)
-                                .filter(|b| b.size.width > px(0.))
-                            else {
+                            let Some(b) = outer_bounds(right) else {
                                 continue;
                             };
                             assert!(
@@ -318,6 +334,13 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                                     || a.bottom() <= b.top() || b.bottom() <= a.top(),
                                 "{language}/{display:?}/{width}x{height}/{zoom}: {left} intersects {right}: {a:?} / {b:?}"
                             );
+                        }
+                    }
+                    let actions = e2e::control_bounds(win.window_id(), "tb-repo-actions").unwrap();
+                    for id in &ids[8..15] {
+                        if let Some(workspace) = outer_bounds(id) {
+                            assert!(actions.right() <= workspace.left(),
+                                "{language}/{display:?}/{width}x{height}/{zoom}: actual Git group intersects {id}: {actions:?} / {workspace:?}");
                         }
                     }
                     assert_eq!(settings::toolbar_display("apple-light"), display);
@@ -334,7 +357,9 @@ pub fn scenario_toolbar_no_overlap(cx: &mut VisualTestAppContext) {
                             width / 2.
                         );
                     }
-                    exercise_overflow_actions(cx, &app, win, &ids[..13]);
+                    if height >= 660. {
+                        exercise_overflow_actions(cx, &app, win, &ids[..13]);
+                    }
                     if width == 940.
                         && zoom == 1.67
                         && display == settings::ToolbarDisplay::IconAndText

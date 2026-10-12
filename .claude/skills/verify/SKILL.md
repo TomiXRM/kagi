@@ -69,6 +69,24 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
+with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
+across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and
+requires Pull/Push below the old selected-only 100px-floor fit threshold.
+`toolbar_no_overlap` includes 700×500 with long repository/branch names in both
+toolbar presentations, alongside the existing 940/1000/1392 widths. It checks
+every visible control's outer focus-border bounds and the real Git-group bounds
+against workspace controls. Repository-group recording uses `measure_inside`,
+not a feature-only wrapper that changes flex sizing. Absolute natural-width
+canvases exclude the fixed 2px border on each side: icon-only fitting must add
+those 4px just as caption fitting does, and hidden natural probes carry the same
+border. The 500px-tall leg is geometry-only; existing 660px legs retain overflow
+activation, shortcut, unavailable-reason and PTY-focus coverage.
+Before the tiny-window correction, the native 700×500 / EN / Icon Only / 100%
+leg recorded Terminal x=483.5..512 intersecting Graph x=495.5..524. Tier B should
+compare the real 700×500 JA toolbar with a long repository/branch identity at
+100% and 167%, then open »; bounds probes are not screenshots or VoiceOver.
+
 For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
 `conflict_file_selection` finds the actual dashboard Next button through real
 Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard

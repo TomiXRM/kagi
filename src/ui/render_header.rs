@@ -809,7 +809,9 @@ impl KagiApp {
                             .flex_col()
                             .w(theme::scaled_px(180.))
                             .min_w_0()
-                            .when(icon_only, |el| el.min_w(theme::scaled_px(40.)))
+                            .when(icon_only, |el| {
+                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
+                            })
                             .relative()
                             .when(!icon_only, |el| {
                                 el.flex_shrink_0().child(toolbar_overflow::probe(
@@ -856,12 +858,13 @@ impl KagiApp {
                     // the other modes get this slot for their own actions, added
                     // when each mode needs them (user request).
                     .when(mode == WorkspaceMode::Graph, |el| {
-                        el.child(super::e2e::measure_control(
-                            "tb-repo-actions",
+                        el.child(
                             div()
+                                .relative()
                                 .flex()
                                 .flex_row()
                                 .items_center()
+                                .child(super::e2e::measure_inside("tb-repo-actions"))
                                 // Pull (↓N chip when behind>0)
                                 .child(
                                     make_btn(
@@ -985,7 +988,7 @@ impl KagiApp {
                                     )
                                     .on_click(terminal_click),
                                 ),
-                        ))
+                        )
                     }),
             ) // ── end CENTRE cluster ──
             // ── RIGHT column (flex_1; natural workspace/overflow minimum) ──
@@ -999,7 +1002,7 @@ impl KagiApp {
                     .items_center()
                     .justify_end()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(workspace_width))
                     .when(!icon_only, |el| {
                         // Balance the unscaled native-light exclusion against
                         // trailing padding/+ when both side columns have room.
@@ -1008,7 +1011,7 @@ impl KagiApp {
                         } else {
                             0.
                         };
-                        el.min_w(px(workspace_width)).flex_basis(px(balance))
+                        el.flex_basis(px(balance))
                     })
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
@@ -1029,6 +1032,8 @@ impl KagiApp {
                                             .absolute()
                                             .invisible()
                                             .flex()
+                                            .border_2()
+                                            .border_color(gpui::transparent_black())
                                             .px(keyboard_nav::inset(8.0))
                                             .child(
                                                 div()

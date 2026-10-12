@@ -251,9 +251,8 @@ pub(super) fn measure_hidden(
         .flex()
         .flex_col()
         .items_center()
-        .when(!icon_only, |el| {
-            el.border_2().border_color(gpui::transparent_black())
-        })
+        .border_2()
+        .border_color(gpui::transparent_black())
         .min_w(theme::scaled_px(minimum_width(icon_only)))
         .px(keyboard_nav::inset(4.))
         .child(div().w(theme::scaled_px(22.)))
@@ -273,8 +272,10 @@ pub(super) fn probe(
             if width <= 0. {
                 return;
             }
+            // Absolute canvases measure inside the fixed 2px focus border.
+            // Both toolbar presentations carry that border; identity does not.
             let normalized = if index.is_some() {
-                (width + if !key.0 && index != Some(15) { 4. } else { 0. }) / f32::from_bits(key.2)
+                (width + if index != Some(15) { 4. } else { 0. }) / f32::from_bits(key.2)
             } else {
                 width
             };

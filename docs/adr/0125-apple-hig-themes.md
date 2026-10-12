@@ -1065,3 +1065,24 @@ the left-only minimum above preserves the existing native >30px identity oracle.
 The right floor still releases genuine space, and the native matrix requires
 Pull/Push visibility below the old symmetric-100px fit threshold in every cell.
 
+
+Tiny-window production review: native 700×500 / EN / Icon Only / 100% recorded
+Terminal x=483.5..512 intersecting selected Graph x=495.5..524, matching the
+reported Tier B overlap. Two coverage gaps had concealed it: the old matrix
+began at 940px, and a feature-only `measure_control` wrapper around the Git group
+changed its flex sizing. The group now records its own bounds with an absolute
+inside probe and no test-only wrapper.
+
+Natural-width canvases measure inside the fixed 2px focus border on each side.
+Caption fitting already added those 4px; icon-only fitting must include them too.
+Hidden command and Update probes carry the same border as visible controls so
+style changes preserve one natural-width convention. The right column retains
+its actual measured workspace/overflow minimum in both presentations; icon-only
+repository identity explicitly shrinks to its existing readable minimum.
+
+The 700×500 long-name matrix checks all visible outer control bounds (including
+the fixed ring) and the actual Git group against every workspace control in both
+presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
+the existing 660px legs retain every operation/menu activation assertion.
+The verification skill is updated. Real-window comparison remains Tier B.
+

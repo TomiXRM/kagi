@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inline Editor blame maps the live buffer back to HEAD using the existing domain diff: inserted and modified rows show a muted EN/JA Uncommitted label, while unchanged rows retain their original attribution after insertions or deletions. Blame and HEAD text still come through the backend read path. (#1374)
+- Inline blame retains complete sanitized author, relative date and commit subject in its tooltip and accessibility name; middle ellipsis affects layout only. (#1378)
 - Escape dismisses actionable operation notices instead of immediately re-presenting them on every render, and restores focus to the opener. Dismissal discards any armed release approval but keeps the reconcile requirement, write restrictions and durable Operation Log detail; a new explicit write refusal can offer Inspect again. Unread queued notices and notices displaced by another dialog remain available. (#1366)
   - Review: queued Checkout/Commit/Merge requests restore the blocking Inspect notice when their session is already waiting for reconciliation, without duplicating an active or queued notice for the same requirement or recreating it during queue ticks.
 - Empty-query command palettes separate Actions, Appearance and Language with localized headings and named accessibility groups. Headings are not keyboard or activation targets; fuzzy-search ranking, disabled reasons, single-row highlighting and the native shortcut column are unchanged. (#1370)

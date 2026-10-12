@@ -435,6 +435,10 @@ mod file_history_open;
 mod editor_snapshot_readonly;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/blame_identity.rs"]
+mod blame_identity;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/header_fit.rs"]
 mod recovery_header_fit;
 
@@ -2827,6 +2831,14 @@ mod macos {
             (
                 "editor_snapshot_readonly",
                 Box::new(crate::editor_snapshot_readonly::scenario),
+            ),
+            (
+                "blame_dirty_mapping",
+                Box::new(crate::blame_identity::dirty_mapping),
+            ),
+            (
+                "blame_full_identity",
+                Box::new(crate::blame_identity::full_identity),
             ),
             (
                 "file_history_virtualized",

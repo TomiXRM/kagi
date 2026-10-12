@@ -93,9 +93,48 @@ pub fn parse_blame_ignore_revs(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Current buffer row → zero-based HEAD row, or `None` for uncommitted text.
+/// Reuses the existing domain diff algorithm; never attributes replaced lines.
+pub fn buffer_line_map(head: &str, buffer: &str) -> Vec<Option<usize>> {
+    crate::word_diff::unchanged_line_map(head, buffer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffer_map_tracks_insert_replace_delete_and_restore() {
+        let head = "one\ntwo\nthree\n";
+        assert_eq!(
+            buffer_line_map(head, "new\nmore\none\ntwo\nthree\n"),
+            vec![None, None, Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(
+            buffer_line_map(head, "one\nchanged\nthree\n"),
+            vec![Some(0), None, Some(2), None]
+        );
+        assert_eq!(buffer_line_map(head, "three\n"), vec![Some(2), None]);
+        assert_eq!(
+            buffer_line_map(head, head),
+            vec![Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(buffer_line_map(head, ""), vec![None]);
+        assert_eq!(buffer_line_map("", "new"), vec![None]);
+    }
+
+    #[test]
+    fn buffer_map_matches_internal_context_and_duplicate_lines_in_order() {
+        assert_eq!(
+            buffer_line_map("a\nsame\nb\nsame\nc", "new\nsame\nb\nsame\nchanged"),
+            vec![None, Some(1), Some(2), Some(3), None]
+        );
+        assert_eq!(buffer_line_map("a\nb", "a\nb\n"), vec![Some(0), None, None]);
+        assert_eq!(
+            buffer_line_map("a\r\nb\r\n", "a\r\nnew\r\nb\r\n"),
+            vec![Some(0), None, Some(1), None]
+        );
+    }
 
     #[test]
     fn parses_one_sha_per_line() {

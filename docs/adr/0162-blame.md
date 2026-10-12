@@ -89,3 +89,35 @@ ownership (ADR-0119).
 1. Full re-attribution past ignored commits.
 2. `--diff-algorithm=histogram` equivalent.
 3. Unify ADR-0119 ownership + #345 absorb onto this attribution foundation.
+
+## Amendment — 2026-10-13: live-buffer attribution and full identity (#1374, #1378)
+
+The host reads HEAD text alongside `Backend::blame_file`; the editor never opens
+Git directly. The pure domain line map reuses the existing linear-space diff,
+trimming unchanged prefixes/suffixes before matching the edited region. An
+accepted load, buffer Change or actual silent `set_value` file push updates
+the map; cursor, scroll and blink renders only index it. Mapping the silent
+push also covers a HEAD reply arriving before editor creation. The map compares
+HEAD with the live text even when
+the editor's saved snapshot already contains worktree changes. Inserted or
+modified rows show muted `Uncommitted` / `未 commit`, not another line's author.
+Deletion and restoring the original text preserve the surviving attribution.
+The map and HEAD snapshot clear with the existing per-file blame lifetime.
+
+The annotation remains a dense, noninteractive muted Label. Its complete
+sanitized `author · relative-date · subject` string supplies both `aria_label`
+and the pinned Tooltip; middle ellipsis is layout-only. Ignored/unblamable
+markers retain their existing explanatory text. Rest and hover reveal are
+required; pressed, selected, disabled and keyboard-focus states are not
+applicable to this annotation. Loading/empty/error keep the existing no-label
+behavior. No Tab stop, modal, write admission or save behavior changes.
+
+Tier A `blame_dirty_mapping` and `blame_full_identity` exercise production
+backend reads and cursor-row rendering in EN/JA, Apple Light/Dark, 100/167%,
+940×660/1392×883, with distinct authors per HEAD row, replacements/deletion,
+restoration, real Save/tab reload and replay of a pre-edit backend result
+through the production seed boundary. Full identity coverage uses a 200+
+character author and 500+ character subject, verifies bounded geometry and
+invokes the real Tooltip builder on hover. Pure domain tests additionally
+cover duplicate context and newline boundaries. Renderer metadata is not
+native VoiceOver evidence; real-window hover and AX inspection remain Tier B.

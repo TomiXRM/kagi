@@ -34,3 +34,14 @@ Identity is a read-only label, not an additional Tab stop. Hover exposes its ful
 name; selected/pressed/disabled/loading/error input states are not applicable to
 that label. Existing panel-button hover, toggled state, focus-visible rings,
 keyboard activation and localized names remain owned by `panel_button`.
+
+## Amendment — 2026-10-12: Busy feedback height (#1321)
+
+The feedback slot is a horizontal flex row centered inside the fixed-height
+footer. Busy retains the existing nonshrinking 10-reference-pixel animated
+spinner, separated from its label by a scaled 4-reference-pixel gap. The label
+alone has zero minimum width and end ellipsis; the feedback slot still retains
+the #1310 minimum-width reservation above. Idle, Success and Failed use the same
+single-line text slot without a spinner. Tooltip, full operation detail, colours
+and reduced-motion behavior are unchanged. Native `status_bar_busy_height`
+checks both height and complete containment at EN/JA and 100%/167% zoom.

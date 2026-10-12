@@ -340,16 +340,25 @@ impl KagiApp {
         };
         let mut message = div()
             .id("status-footer-msg")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(theme::scaled_px(4.))
             .flex_1()
             .min_w(feedback_min_width)
             .ml(theme::scaled_px(6.))
-            .truncate()
+            .overflow_hidden()
             .text_color(rgb(footer_color))
             .children(
                 matches!(status_footer, FooterStatus::Busy(_))
                     .then(|| super::render_overlay::sync_spinner(10., footer_color, "footer-busy")),
             )
-            .child(SharedString::from(view_models::footer_line(&footer_text)));
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(SharedString::from(view_models::footer_line(&footer_text))),
+            );
         #[cfg(feature = "gui-e2e")]
         {
             message = message.track_scroll(&FOOTER_MSG_BOUNDS.with(gpui::ScrollHandle::clone));

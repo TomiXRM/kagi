@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Busy status-bar feedback keeps its unchanged spinner beside a single-line truncated label, centered within the fixed-height footer instead of stacking vertically. Branch and feedback minimum-width fitting remain unchanged in EN/JA at 100%/167% zoom. (#1321)
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)
 - Long status-bar branch names shrink to a zoom-scaled readable minimum and end ellipsis, with the complete name retained in the tooltip and accessibility label. Status chips and refresh time keep their natural widths; feedback truncates before the nonshrinking Terminal / Operation Log cluster in both toolbar presentations. (#1310)
   - Review: short branch names keep their measured natural widths, nonempty feedback reserves up to 80 reference pixels before branch identity within the actual remaining footer budget, and labels/tooltips/AX share the existing control-byte sanitizer without changing raw refs or klog.

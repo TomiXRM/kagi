@@ -1289,22 +1289,38 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static FOLDER_ANSWER: RefCell<Option<futures_channel::oneshot::Receiver<Option<std::path::PathBuf>>>> =
+        const { RefCell::new(None) };
 }
 
-/// #1043: the system folder dialog cannot be driven from the GUI runner. A
-/// request is recorded under its prompt and answered with the folder set by
-/// [`answer_folder_prompt`]; with none set it is cancelled.
+/// #1043 / #1383: record the native folder request and await its answer through
+/// the same completion task as production. An unqueued request is cancelled.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn take_folder_prompt(
+    prompt: &str,
+) -> futures_channel::oneshot::Receiver<Option<std::path::PathBuf>> {
     FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
-    FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
+    FOLDER_ANSWER
+        .with(|answer| answer.borrow_mut().take())
+        .unwrap_or_else(|| {
+            let (sender, receiver) = futures_channel::oneshot::channel();
+            let _ = sender.send(None);
+            receiver
+        })
+}
+
+/// Hold the next dialog open until the returned sender supplies its answer.
+#[cfg(feature = "gui-e2e")]
+pub fn defer_folder_prompt() -> futures_channel::oneshot::Sender<Option<std::path::PathBuf>> {
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(receiver).is_none()));
+    sender
 }
 
 /// The folder the next dialog request chooses (`None`: it is cancelled).
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
-    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+    let _ = defer_folder_prompt().send(folder);
 }
 
 /// The prompts of the folder dialogs requested since the last call.

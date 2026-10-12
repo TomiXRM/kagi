@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Create Worktree ignores late folder-picker answers after its requesting form is replaced or its repository tab is left, including departure and return. The surviving form still plans `<chosen parent>/<branch>` exactly once; cancelling or choosing a folder creates no directory or branch. (#1383)
 - Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
   - Review: opening/closing Generated splices only its children, retaining the disclosure's scroll position and focus. Reaching the final row also reveals the unfocusable overflow notice, including after its rows have been measured.
 - File History remembers its focused entry when visiting header actions. Shift+Tab from Back and Tab from Follow Renames reveal and return to that row; list arrows/Home/End update the existing entry and diff without a pointer. (#1376)

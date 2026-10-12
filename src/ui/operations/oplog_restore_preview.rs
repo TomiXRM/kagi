@@ -378,7 +378,7 @@ pub(crate) fn render(
                 .relative()
                 .h(height)
                 .min_h(px(0.))
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(inspection.wheel_handler())
                 .child(crate::ui::e2e::measure_inside("restore-preview-rows")),
             Msg::OplogPanel(OplogPanelMsg::RestoreAfter).t(),
         ))

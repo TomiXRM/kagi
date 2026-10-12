@@ -16,7 +16,7 @@ use git_fixture::git_output;
 pub fn scenario_oplog_restore_keyboard(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
-    let (fixture, point) = keyboard_fixture();
+    let (fixture, point) = keyboard_fixture(19);
     let repo = fixture.path().canonicalize().unwrap();
     let before = git_output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
@@ -264,7 +264,7 @@ fn restore_scrollbar_drag(
     );
 }
 
-fn keyboard_fixture() -> (tempfile::TempDir, u64) {
+fn keyboard_fixture(targets: usize) -> (tempfile::TempDir, u64) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let mut backend = Backend::open(&repo).unwrap();
@@ -277,7 +277,7 @@ fn keyboard_fixture() -> (tempfile::TempDir, u64) {
         },
     );
     let point = read_oplog_tail(1).pop().unwrap().id;
-    for n in 0..19 {
+    for n in 0..targets {
         run(
             &mut backend,
             Actor::Human,
@@ -302,22 +302,24 @@ fn keyboard_fixture() -> (tempfile::TempDir, u64) {
 }
 
 pub fn scenario_oplog_restore_body_keys(cx: &mut VisualTestAppContext) {
-    review_card(cx, body_keys);
+    review_card(cx, 19, body_keys);
 }
 pub fn scenario_oplog_restore_body_wheel(cx: &mut VisualTestAppContext) {
-    review_card(cx, body_wheel);
+    review_card(cx, 19, body_wheel);
 }
 pub fn scenario_oplog_restore_pane_wheel(cx: &mut VisualTestAppContext) {
-    review_card(cx, pane_wheel);
+    review_card(cx, 2, short_pane_wheel);
+    review_card(cx, 19, pane_wheel);
 }
 
 fn review_card(
     cx: &mut VisualTestAppContext,
+    targets: usize,
     check: fn(&mut VisualTestAppContext, &Entity<KagiApp>, AnyWindowHandle),
 ) {
     use kagi_domain::plan_note::{OplogRestoreNote, PlanNote};
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
-    let (fixture, point) = keyboard_fixture();
+    let (fixture, point) = keyboard_fixture(targets);
     let repo = fixture.path().canonicalize().unwrap();
     let refs = git_output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
@@ -492,5 +494,105 @@ fn pane_wheel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyW
             "{target} wheel must not move body: before={before:?}, after={:?}",
             body.offset()
         );
+        pane_edge_wheel(cx, app, window, target);
     }
+}
+
+fn short_pane_wheel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    assert_eq!(restore_card(cx, app).restores.len(), 3);
+    tab_to(cx, app, window, "restore-refs");
+    paint(cx, window);
+    let body = cx
+        .read(|cx| app.read(cx).oplog_restore_body_scroll_for_e2e())
+        .unwrap();
+    let list = cx
+        .read(|cx| app.read(cx).oplog_restore_scroll_for_e2e("restore-refs"))
+        .unwrap();
+    assert!(
+        list.content_size().height <= list.viewport_bounds().size.height + px(1.),
+        "three refs fit within their pane"
+    );
+    assert!(
+        body.max_offset().y > px(200.),
+        "safety prose still overflows"
+    );
+    let viewport = e2e::control_bounds(window.window_id(), "restore-refs").unwrap();
+    let before = body.offset();
+    wheel(cx, window, viewport.center(), -120.);
+    assert!(
+        body.offset().y < before.y - px(20.),
+        "wheel over three fitting refs must scroll body: before={before:?}, after={:?}",
+        body.offset()
+    );
+    assert!(
+        list.offset().y.abs() < px(1.),
+        "the fitting ref pane remains at zero"
+    );
+    let moved = body.offset();
+    for _ in 0..3 {
+        paint(cx, window);
+    }
+    assert!(
+        (body.offset().y - moved.y).abs() < px(1.),
+        "chained body scrolling persists"
+    );
+}
+
+fn pane_edge_wheel(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    target: &str,
+) {
+    let body = cx
+        .read(|cx| app.read(cx).oplog_restore_body_scroll_for_e2e())
+        .unwrap();
+    let list = cx
+        .read(|cx| app.read(cx).oplog_restore_scroll_for_e2e(target))
+        .unwrap();
+    let max = list.max_offset_for_scrollbar().y;
+    list.set_offset(gpui::point(px(0.), -max + px(40.)));
+    paint(cx, window);
+    let position = || {
+        let pane = e2e::control_bounds(window.window_id(), target).unwrap();
+        gpui::point(
+            pane.left() + px(50.),
+            pane.bottom().min(body.bounds().bottom()) - px(10.),
+        )
+    };
+    let before = body.offset();
+    wheel(cx, window, position(), -120.);
+    assert!(
+        (body.offset().y - before.y).abs() < px(1.),
+        "event reaching {target}'s edge stays in the pane"
+    );
+    paint(cx, window);
+    let before = body.offset();
+    wheel(cx, window, position(), -120.);
+    assert!(
+        body.offset().y < before.y - px(20.),
+        "outward wheel at {target}'s bottom chains to body"
+    );
+    paint(cx, window);
+    list.scroll_to(gpui::ListOffset {
+        item_ix: 0,
+        offset_in_item: px(0.),
+    });
+    paint(cx, window);
+    let before = body.offset();
+    assert!(
+        before.y < -px(20.),
+        "body can move upward at {target}: {before:?}"
+    );
+    assert!(
+        list.offset().y.abs() < px(1.),
+        "{target} is at its top: {:?}",
+        list.offset()
+    );
+    wheel(cx, window, position(), 120.);
+    assert!(
+        body.offset().y > before.y + px(20.),
+        "outward wheel at {target}'s top chains to body: before={before:?}, after={:?}, list={:?}, position={:?}",
+        body.offset(), list.offset(), position()
+    );
 }

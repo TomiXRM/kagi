@@ -428,7 +428,7 @@ pub(crate) fn render(
                 .relative()
                 .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
                 .flex_shrink_0()
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(inspection.refs.wheel_handler())
                 .child(crate::ui::e2e::measure_inside("restore-refs")),
             text(OplogPanelMsg::RestoreRefs),
         ))

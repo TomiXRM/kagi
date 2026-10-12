@@ -82,6 +82,28 @@ impl InspectionList {
             .with_uniform_item_height(crate::ui::theme::scaled_px(self.row_height));
         self.keyboard.rows(keys, &self.scroll, fallback, window, cx)
     }
+    pub(crate) fn wheel_handler(
+        &self,
+    ) -> impl Fn(&gpui::ScrollWheelEvent, &mut Window, &mut App) + 'static {
+        let scroll = self.scroll.clone();
+        let previous = Cell::new(scroll.scroll_px_offset_for_scrollbar().y);
+        move |event, _, cx| {
+            let max = scroll.max_offset_for_scrollbar().y;
+            let offset = scroll
+                .scroll_px_offset_for_scrollbar()
+                .y
+                .clamp(-max, gpui::px(0.));
+            // The inner List already handled Bubble. Use its prior offset so
+            // the event reaching an edge does not also move the parent.
+            // Pixels uses total ordering (-0 < 0); numerically, both mean top.
+            let before = previous.replace(offset).clamp(-max, gpui::px(0.)).as_f32();
+            let delta = event.delta.pixel_delta(gpui::px(20.)).y.as_f32();
+            let max = max.as_f32();
+            if max > 0. && ((delta < 0. && before > -max) || (delta > 0. && before < 0.)) {
+                cx.stop_propagation();
+            }
+        }
+    }
     pub(crate) fn reveal_parent(&self, parent: &ScrollHandle, window: &Window) {
         let Some(index) = self.keyboard.focused_entry(window) else {
             self.revealed_entry.set(None);

@@ -69,6 +69,20 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1283 use `KAGI_GUI_E2E_ONLY='conflict_,stash_'` with KEEP_GOING.
+`conflict_file_selection` finds the actual dashboard Next button through real
+Shift-Tab and its GUI-only F19 focus probe, rather than assuming the dashboard
+owns the window's last Tab stop (#1222 added status-bar stops). Space and Enter
+must paint the same inactive `#d3d3d3` selection and selected AX option; pointer,
+hover, editor navigation, binary cleanup and draft-resolution assertions remain.
+The stash scenarios Tab to the rendered plan Confirm and send Enter down/up
+for Pop/Drop; root Return remains Cancel after #1277 / #1270. Follow-up coverage
+checks that the retained stash has no write lease before explicit approval,
+confirmed Drop records exactly one successful receipt, and root Return leaves
+the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
+and close/reopen owner lifetime remain covered. These are native Tier A oracles,
+not a change to product safety or Tier B evidence.
+
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
 cleanup. Owner-release coverage starts a real fetch ticker, closes its repository

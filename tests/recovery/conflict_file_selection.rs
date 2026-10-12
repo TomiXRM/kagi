@@ -121,14 +121,28 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
     assert_eq!(&paint(cx, window, 2)[..3], &[211, 211, 211]);
     selected_row("conflict-files", "zeta.txt");
     // Enter/Space on the same navigation control must use the same selection.
-    // gpui-kit intentionally does not focus buttons on pointer down. Reverse
-    // Tab from a blurred window reaches the dashboard's final enabled button.
+    // gpui-kit intentionally does not focus buttons on pointer down. Find the
+    // actual Next control: status-bar and toast buttons follow the dashboard.
     cx.update_window(window, |_, window, cx| {
-        window.blur();
-        window.focus_prev(cx);
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
         window.draw(cx).clear();
     })
     .unwrap();
+    let mut reached_next = false;
+    for _ in 0..80 {
+        kagi::ui::conflict_view::take_next_conflict_focus_probe();
+        cx.simulate_keystrokes(window, "shift-tab");
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+            .unwrap();
+        cx.simulate_keystrokes(window, "f19");
+        cx.run_until_parked();
+        if kagi::ui::conflict_view::take_next_conflict_focus_probe() {
+            reached_next = true;
+            break;
+        }
+    }
+    assert!(reached_next, "Next conflict must be keyboard reachable");
     crate::keyboard_nav::keys(cx, window, "space");
     assert_eq!(&paint(cx, window, 0)[..3], &[211, 211, 211]);
     selected_row("conflict-files", "blob.bin");
@@ -138,6 +152,9 @@ pub fn scenario_conflict_file_selection(cx: &mut VisualTestAppContext) {
             "binary preview leaves no stale content editor"
         );
     });
+    crate::keyboard_nav::keys(cx, window, "enter");
+    assert_eq!(&paint(cx, window, 1)[..3], &[211, 211, 211]);
+    selected_row("conflict-files", "notes.txt");
     click_control(cx, window, "conflict-row-1");
     conflict.update(cx, |view, cx| {
         view.conflict_editor_set_file_side(

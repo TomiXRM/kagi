@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Restore native conflict/stash regression coverage after keyboard-policy changes: conflict selection targets the actual Next button instead of the window's last Tab stop (#1222), while stash Pop/Drop uses explicitly focused confirmation and verifies Return cancellation (#1277 / #1270). Selection pixels, stash OID ownership, duplicate suppression and close/reopen lifetime checks remain intact. (#1283)
 - PR detail Overview, Review, Files and Commits use one named keyboard TabList, including Conflicts when available. Arrow/Home/End move focus; Enter/Space activate the existing view path without replacing the composer or its draft. (#1255)
 - PR description, Merge and GitHub header actions expose localized names and keyboard activation. Description exposes its toggle state; conflicting PRs retain access to the guarded merge approval rather than looking disabled. Accepted plans take modal-root focus; Escape closes without reactivating the opener. Draft and held merges remain unavailable. (#1256)
 - Review Copy hunk and Apply suggestion use named keyboard-reachable Buttons with larger hit targets. Full-hunk copying and mouse-down selection suppression remain; Apply still opens the existing destructive plan and never writes before confirmation. Plans take modal-root focus so Return cancels without the opener's key-up reopening them. (#1257)

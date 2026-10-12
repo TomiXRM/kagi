@@ -212,6 +212,7 @@ actions!(
     kagi,
     [
         ToggleBottomPanel,
+        FocusSidebarFilter,
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
@@ -3246,23 +3247,6 @@ impl KagiApp {
             self.commit_list_index(index),
             row_height(self.graph_compact),
         )
-    }
-
-    /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
-    ///
-    /// Called from the on_click handler on the filter placeholder area.
-    /// No-op if already created.
-    pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar.filter.is_none() {
-            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
-            self.sidebar.filter = Some(input_entity);
-        }
-        // Focus the input after creation (or if already exists).
-        if let Some(ref ent) = self.sidebar.filter {
-            ent.update(cx, |state, cx| {
-                state.focus(window, cx);
-            });
-        }
     }
 }
 

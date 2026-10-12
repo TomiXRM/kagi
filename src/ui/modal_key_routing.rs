@@ -229,6 +229,16 @@ impl KagiApp {
             if this.cancel_active_modal(cx) {
                 return;
             }
+            use gpui::Focusable as _;
+            if this
+                .sidebar
+                .filter
+                .as_ref()
+                .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            {
+                this.clear_sidebar_filter(window, cx);
+                return;
+            }
             if workspace_fallbacks && this.cancel_workspace_overlay(window, cx) {
                 return;
             }

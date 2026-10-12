@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Sidebar filtering is a real localized Input from the first frame, reachable by Tab or Cmd+F without a preliminary click. Escape clears the filter and returns focus to the local list; the clear affordance and existing window-owned state remain intact. (#1309)
+  - Review: retain one TextInput role on the actual input with a named Group ancestor, rather than a second unfocused TextInput; language changes update the retained field's placeholder before drawing. Direct input naming needs a gpui-kit API not exposed by the pinned revision.
 - Busy status-bar feedback keeps its unchanged spinner beside a single-line truncated label, centered within the fixed-height footer instead of stacking vertically. Branch and feedback minimum-width fitting remain unchanged in EN/JA at 100%/167% zoom. (#1321)
   - Review: reserve spinner and gap width in addition to Busy's preferred text budget, capped by available room; the text fills its remaining slot and the native minimum-width oracle measures that child directly.
 - Settings provider and saved-model chips expose named selected tabs with one roving Tab stop, arrow navigation and Enter/Space activation; unavailable CLI providers remain inert and explain why. Provider selection does not generate a commit message. (#1298)

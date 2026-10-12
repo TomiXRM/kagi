@@ -113,6 +113,10 @@ mod smart_picker;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_filter.rs"]
+mod sidebar_filter;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
 mod recovery_hairline_dividers;
 
@@ -1312,6 +1316,10 @@ mod macos {
             (
                 "sidebar_panes",
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
+            ),
+            (
+                "sidebar_filter_tab_entry",
+                Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
             (
                 "hairline_dividers",

@@ -124,3 +124,26 @@ an unreadable existing file is never overwritten by defaults.
 Replacement uses the existing same-directory atomic-file helper: temp write,
 content sync, then rename. A failed write leaves the saved file intact and
 returns its OS cause through this same owner; no UI persistence path is added.
+
+## Amendment — 2026-10-13: main repository-window frame (#1367)
+
+`window_frame` is one flat string value: `x,y,width,height,display-uuid`,
+in logical desktop coordinates. Bounds events from the main repository window
+replace a 200ms trailing task, so moving/resizing commits only the settled
+frame through the existing store. Graceful quit and root release save the
+last pending frame; maximized/fullscreen bounds are not persisted.
+
+A saved rectangle with a positive-area intersection on any connected display
+restores exactly. UUID matches select the original display where possible,
+but a changed/missing UUID does not invalidate an otherwise visible rectangle.
+An entirely off-screen frame centres on the main display with its size capped
+to that display. Legacy `window_size` is read only when no frame exists and is
+removed on the first frame save. `KAGI_NO_RESTORE=1` skips both reading and
+writing geometry; explicit `KAGI_WINDOW` retains its dev/test override.
+Secondary windows keep their separate geometry owners.
+
+The pinned GPUI macOS host takes and reports display-local window origins:
+normalize to desktop coordinates before saving and subtract the selected
+display's desktop origin when constructing native options. Other platforms
+retain GPUI's desktop-space bounds. Display-local and desktop-space values
+must not be mixed when checking visibility across multiple monitors.

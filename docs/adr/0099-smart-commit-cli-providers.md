@@ -135,3 +135,10 @@ the selected model; Claude Code and Codex never display Ollama's saved model.
 Generation wording names the actual provider (for example, “Generating with
 Codex…”), without implying that external CLI generation is local. Empty staging
 and rule-based suggestion keep their existing explanations and behavior.
+
+Review (2026-10-13): in-flight provider/model identity is frozen at dispatch in
+the initiating session beside its generating flag, forwarded to its composer
+and cleared on settlement. Settings changes must not rename an outstanding
+generation. Provider display names and localized loading wording each have one
+source. Rule-based help keeps its tooltip but omits a description identical to
+the action name; unavailable staging retains its accessibility explanation.

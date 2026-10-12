@@ -4187,7 +4187,7 @@ impl Msg {
             (En, SmartGeneratingLocal) => "Generating with local LLM…",
             (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
             (En, SmartGeneratingProvider) => "Generating with {}…",
-            (Ja, SmartGeneratingProvider) => "{}で生成中…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
             (En, SmartGeneratedLocal) => "Generated with local LLM",
             (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
             (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
@@ -4613,11 +4613,13 @@ pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bo
         ),
         None => provider,
     };
-    match (lang(), generating) {
-        (Lang::En, false) => format!("Generate commit message with {name}"),
-        (Lang::Ja, false) => format!("{name} で commit メッセージを生成"),
-        (Lang::En, true) => format!("Generating with {name}…"),
-        (Lang::Ja, true) => format!("{name} で生成中…"),
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
     }
 }
 

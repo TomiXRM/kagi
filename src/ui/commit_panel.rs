@@ -473,6 +473,7 @@ pub struct CommitPanelView {
     pub smart_snapshot: SmartCommitState,
     /// Session-owned generation presentation, pushed alongside capabilities.
     pub smart_generating: bool,
+    pub smart_generation: Option<super::smart_commit::SmartGeneration>,
     pub smart_status: Option<String>,
     /// Weak back-reference to the parent. Used ONLY from deferred listener
     /// closures — NEVER read in a `Render` path.
@@ -534,6 +535,7 @@ impl CommitPanelView {
             panel_render_width: 0.0,
             smart_snapshot: SmartCommitState::default(),
             smart_generating: false,
+            smart_generation: None,
             smart_status: None,
             app,
             owner,

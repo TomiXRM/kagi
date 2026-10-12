@@ -17,6 +17,13 @@ pub fn scenario_smart_commit_footer_provider(cx: &mut VisualTestAppContext) {
             zoom: 1.,
         };
         let (app, window) = open(cx, fixture.path(), case);
+        app.update(cx, |app, cx| {
+            app.smart_commit.llm_enabled = false;
+            cx.notify();
+        });
+        labels::clear();
+        paint(cx, window);
+        assert_eq!(labels::accessible_description("cp-smart-suggest"), None);
         for (provider, name) in [
             (SmartProvider::Ollama, "Ollama (fixture-model)"),
             (SmartProvider::Cli(CliProvider::ClaudeCode), "Claude Code"),
@@ -41,11 +48,7 @@ pub fn scenario_smart_commit_footer_provider(cx: &mut VisualTestAppContext) {
                 labels::accessible_description("cp-smart-suggest").as_deref(),
                 Some(expected.as_str())
             );
-            app.update(cx, |app, cx| {
-                app.ui_mut().unwrap().smart_commit_generating = true;
-                cx.notify();
-            });
-            paint(cx, window);
+            freeze_then_change_provider(cx, window, &app, provider);
             let expected = if locale == "en" {
                 format!("Generating with {name}…")
             } else {
@@ -63,4 +66,32 @@ pub fn scenario_smart_commit_footer_provider(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     eprintln!("[gui-e2e] PASS smart_commit_footer_provider");
+}
+
+fn freeze_then_change_provider(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+    provider: SmartProvider,
+) {
+    app.update(cx, |app, cx| {
+        let ui = app.ui_mut().unwrap();
+        ui.smart_commit_generating = true;
+        ui.smart_commit_generation = Some(kagi::ui::smart_commit::SmartGeneration {
+            provider,
+            model: (provider == SmartProvider::Ollama).then(|| "fixture-model".into()),
+        });
+        cx.notify();
+    });
+    paint(cx, window);
+    app.update(cx, |app, cx| {
+        app.smart_commit.provider = if provider == SmartProvider::Ollama {
+            SmartProvider::Cli(CliProvider::Codex)
+        } else {
+            SmartProvider::Ollama
+        };
+        app.smart_commit.model = Some("changed-model".into());
+        cx.notify();
+    });
+    paint(cx, window);
 }

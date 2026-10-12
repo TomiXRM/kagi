@@ -44,19 +44,23 @@ pub(super) fn provider_chips(
     pointer_focus: Option<gpui::FocusHandle>,
     cx: &App,
 ) -> impl IntoElement {
-    let entries: Vec<_> = std::iter::once(("Ollama".to_string(), SmartProvider::Ollama, true))
-        .chain(
-            kagi_git::message_gen::CliProvider::ALL
-                .into_iter()
-                .map(|p| {
-                    (
-                        p.display_name().to_string(),
-                        SmartProvider::Cli(p),
-                        smart.cli_available_for(p),
-                    )
-                }),
-        )
-        .collect();
+    let entries: Vec<_> = std::iter::once((
+        SmartProvider::Ollama.display_name().to_string(),
+        SmartProvider::Ollama,
+        true,
+    ))
+    .chain(
+        kagi_git::message_gen::CliProvider::ALL
+            .into_iter()
+            .map(|p| {
+                (
+                    SmartProvider::Cli(p).display_name().to_string(),
+                    SmartProvider::Cli(p),
+                    smart.cli_available_for(p),
+                )
+            }),
+    )
+    .collect();
     let selected = entries.iter().position(|(_, p, _)| *p == smart.provider);
     let owner = app.downgrade();
     let choices = entries.clone();

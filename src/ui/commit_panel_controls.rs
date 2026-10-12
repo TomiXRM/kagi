@@ -94,6 +94,7 @@ pub(super) fn footer_button(
     icon: Option<&'static str>,
     label: &'static str,
     tip: impl Into<gpui::SharedString>,
+    description: Option<gpui::SharedString>,
     enabled: bool,
     pressed: Option<bool>,
     accent: u32,
@@ -152,11 +153,7 @@ pub(super) fn footer_button(
         true,
         !enabled,
         pressed,
-        if enabled && slot != 4 {
-            None
-        } else {
-            Some(tip)
-        },
+        description,
         button_paint(button),
         cx.listener(move |view, event, window, cx| keyboard(view, event, window, cx)),
     )
@@ -300,15 +297,25 @@ fn generation_glyph(accent: u32) -> gpui::AnyElement {
 pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>) -> gpui::Div {
     let llm_on = view.smart_snapshot.llm_offered();
     let enabled = !view.state.staged.is_empty() && !view.smart_generating;
-    let tip: gpui::SharedString = if view.smart_generating || (llm_on && enabled) {
+    let generation = view
+        .smart_generation
+        .as_ref()
+        .filter(|_| view.smart_generating);
+    let provider_help = generation.is_some() || (llm_on && enabled);
+    let tip: gpui::SharedString = if let Some(generation) = generation {
+        kagi_ui_core::i18n::smart_footer_provider(
+            generation.provider.display_name(),
+            generation.model.as_deref(),
+            true,
+        )
+        .into()
+    } else if llm_on && enabled {
         let state = &view.smart_snapshot;
-        let (provider, model) = match state.provider {
-            crate::ui::smart_commit::SmartProvider::Ollama => ("Ollama", state.model.as_deref()),
-            crate::ui::smart_commit::SmartProvider::Cli(provider) => {
-                (provider.display_name(), None)
-            }
-        };
-        kagi_ui_core::i18n::smart_footer_provider(provider, model, view.smart_generating).into()
+        let model = (state.provider == crate::ui::smart_commit::SmartProvider::Ollama)
+            .then_some(state.model.as_deref())
+            .flatten();
+        kagi_ui_core::i18n::smart_footer_provider(state.provider.display_name(), model, false)
+            .into()
     } else if view.state.staged.is_empty() {
         Msg::AdviceCommitNothingStaged.t().into()
     } else {
@@ -325,7 +332,8 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         4,
         Some("icons/sparkles.svg"),
         Msg::GenerateMessage.t(),
-        tip,
+        tip.clone(),
+        (provider_help || !enabled).then_some(tip),
         enabled,
         None,
         accent,
@@ -345,6 +353,7 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         Some("icons/user-plus.svg"),
         Msg::AddCoAuthor.t(),
         Msg::AddCoAuthor.t(),
+        None,
         true,
         None,
         theme().text_main,
@@ -358,6 +367,7 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
         Some("icons/undo-2.svg"),
         Msg::AmendLastCommit.t(),
         Msg::AmendLastCommit.t(),
+        None,
         true,
         None,
         theme().color_warning,
@@ -389,6 +399,7 @@ pub(super) fn template_toggle(
         None,
         Msg::ToggleCommitTemplate.t(),
         Msg::ToggleCommitTemplate.t(),
+        None,
         true,
         Some(on),
         if on {

@@ -92,6 +92,7 @@ impl TabUiState {
             pr_menu,
             filter_controls,
             smart_commit_generating,
+            smart_commit_generation,
             smart_commit_status,
             view_publish_gen: _,
             cache_epoch: _,
@@ -187,6 +188,7 @@ impl TabUiState {
             (pr_menu.is_some(), "pr_menu"),
             (filter_controls.menu.is_some(), "filter_controls"),
             (*smart_commit_generating, "smart_commit_generating"),
+            (smart_commit_generation.is_some(), "smart_commit_generation"),
             (smart_commit_status.is_some(), "smart_commit_status"),
             (
                 *github_issues_loaded

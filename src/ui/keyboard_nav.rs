@@ -75,6 +75,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("up", TabListPrev, Some("KagiCommitPanelView")),
         KeyBinding::new("down", TabListNext, Some("KagiCommitPanelView")),
+        KeyBinding::new("up", TabListPrev, Some("KagiActivityBuckets")),
+        KeyBinding::new("down", TabListNext, Some("KagiActivityBuckets")),
     ]);
     // The row list's ↑/↓ outrank the app-wide `!Terminal && !Input` up/down
     // (stepping through a diff's files) the same way, and only inside a list.

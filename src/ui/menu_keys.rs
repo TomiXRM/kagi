@@ -396,12 +396,9 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// The context-menu key on a focused sidebar row: that row's menu (as
-    /// its right-click opens), below it. A row without a menu (a group
-    /// heading) does nothing, as does a key pressed while anything is drawn
-    /// over the workspace: a modal, another menu, or an Info panel / the
-    /// branch picker, which leave the row focused — opening a branch menu
-    /// jumps the Graph to its commit, behind them (#1000).
+    /// The context key opens the focused row's menu below it. Dynamic group
+    /// headers reveal their complete identity in the existing keyboard-card
+    /// layer instead. Neither path acts through a modal or another front layer.
     pub(super) fn open_sidebar_row_menu(
         &mut self,
         row: &super::sidebar::SidebarRow,
@@ -432,10 +429,17 @@ impl KagiApp {
             SidebarRow::Worktree {
                 name, locked, path, ..
             } => self.open_worktree_menu(name.clone(), *locked, false, Some(path.clone()), at),
-            SidebarRow::SectionHeader { .. }
-            | SidebarRow::LocalGroupHeader { .. }
-            | SidebarRow::RemoteHeader { .. }
-            | SidebarRow::RemoteSubGroup { .. } => return,
+            SidebarRow::LocalGroupHeader { key, .. }
+            | SidebarRow::RemoteHeader { key, .. }
+            | SidebarRow::RemoteSubGroup { key, .. } => {
+                let reveal = &mut self.sidebar.focus.group_reveal;
+                *reveal = if reveal.as_ref() == Some(key) {
+                    None
+                } else {
+                    Some(key.clone())
+                };
+            }
+            SidebarRow::SectionHeader { .. } => return,
         }
         cx.notify();
     }

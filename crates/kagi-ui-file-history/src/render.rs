@@ -135,13 +135,13 @@ pub fn render_file_history_view(
             this.reload(true, cx);
         }));
 
-    let path_for_open = rel_path.clone();
+    let path_for_open = state
+        .selected_entry()
+        .map(|entry| entry.change.path_after.clone())
+        .unwrap_or_else(|| rel_path.clone());
     let open_file = header_button("fh-open-file", open_label, "icons/file-text.svg", compact)
         .on_click(cx.listener(move |_this, _e, _w, cx| {
-            // v1: return to the normal body; the file's diff is reachable via
-            // the commit panel / inspector.  Keep it simple per the spec.
-            let _ = &path_for_open;
-            cx.emit(FileHistoryEvent::CloseRequested);
+            cx.emit(FileHistoryEvent::OpenFileRequested(path_for_open.clone()));
         }));
 
     // Icon-only, the On state is the button's selected look.

@@ -3497,13 +3497,13 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 
             // The bottom panel now opens on the Terminal tab by default
             // (user request) — start the shell as soon as a Window
-            // context exists. ensure_terminal is a no-op without a repo
+            // context exists. activate_terminal is a no-op without a repo
             // (welcome screen) and KAGI_TERMINAL=1 stays as an explicit
             // headless trigger.
             if std::env::var("KAGI_TERMINAL").as_deref() == Ok("1")
                 || kagi.read(cx).bottom_panel_open
             {
-                kagi.update(cx, |app, cx| app.ensure_terminal(window, cx));
+                kagi.update(cx, |app, cx| app.activate_terminal(window, cx));
             }
 
             // W4-TABS / ADR-0027: arm the .git watcher for the initial tab

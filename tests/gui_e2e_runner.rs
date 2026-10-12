@@ -113,6 +113,10 @@ mod recovery_hairline_dividers;
 mod recovery_bottom_panel;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/terminal_states.rs"]
+mod recovery_terminal_states;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/bottom_panel_motion.rs"]
 mod bottom_panel_motion;
 
@@ -1168,6 +1172,10 @@ mod macos {
             (
                 "worktree_lock_reason",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_worktree_lock_reason),
+            ),
+            (
+                "terminal_states",
+                Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
             (
                 "terminal_auto_lock",

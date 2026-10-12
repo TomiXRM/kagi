@@ -108,7 +108,7 @@ impl StandInShell {
         let script = dir.path().join("shell.sh");
         std::fs::write(
             &script,
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  [ \"$line\" = exit ] && exit 0\ndone\n",
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    exit) exit 0 ;;\n    'exit '*) exit \"${line#exit }\" ;;\n  esac\ndone\n",
         )
         .expect("write the stand-in shell");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))

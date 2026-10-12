@@ -44,6 +44,20 @@ pub use op::{
 };
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
+
+pub fn terminal_exited_title(code: u32) -> String {
+    match lang() {
+        Lang::En => format!("{} (code {code})", Msg::TerminalExitedTitle.t_for(Lang::En)),
+        Lang::Ja => format!(
+            "{}（終了コード {code}）",
+            Msg::TerminalExitedTitle.t_for(Lang::Ja)
+        ),
+    }
+}
+
+pub fn terminal_failed_hint(reason: &str) -> String {
+    format!("{}\n{reason}", Msg::TerminalRestartHint.t())
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     En,
@@ -320,6 +334,12 @@ pub enum Msg {
     TerminalAutoLockPendingRelease,
     /// An auto lock/unlock offer can no longer be attributed to its owner.
     TerminalAutoLockStaleOwner,
+    TerminalNotStartedTitle,
+    TerminalExitedTitle,
+    TerminalFailedTitle,
+    TerminalNotStartedHint,
+    TerminalRestartHint,
+    TerminalRestart,
     BusyMerge,
     MergeDestinationChanged,
 
@@ -2394,6 +2414,18 @@ impl Msg {
             (Ja, TerminalAutoLockPendingRelease) => "terminal の worktree ロック解除を確認するか、手動で解除してから shell を再起動してください",
             (En, TerminalAutoLockStaleOwner) => "Terminal lock owner, shell, or repository changed; recover the lock manually",
             (Ja, TerminalAutoLockStaleOwner) => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
+            (En, TerminalNotStartedTitle) => "Shell not started",
+            (Ja, TerminalNotStartedTitle) => "shell は未起動です",
+            (En, TerminalExitedTitle) => "Shell exited",
+            (Ja, TerminalExitedTitle) => "shell が終了しました",
+            (En, TerminalFailedTitle) => "Shell failed",
+            (Ja, TerminalFailedTitle) => "shell でエラーが発生しました",
+            (En, TerminalNotStartedHint) => "Start a shell in this repository.",
+            (Ja, TerminalNotStartedHint) => "このリポジトリで shell を起動します。",
+            (En, TerminalRestartHint) => "Restart to open a new shell in this repository.",
+            (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
+            (En, TerminalRestart) => "Restart",
+            (Ja, TerminalRestart) => "Restart",
             (En, BusyMerge) => "merge in progress…",
             (Ja, BusyMerge) => "merge 実行中…",
             (En, MergeDestinationChanged) => "The destination worktree or branch changed. Refresh and try the merge again.",

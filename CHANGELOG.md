@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Terminal not-started, exited and failed states now show an icon, localized EN/JA title and concise hint with a keyboard-reachable Primary Restart button. Exit status comes from the owned shell's wait result; failed starts retain the OS reason and the existing Operation Log receipt. (#1273)
+  - Reopening Terminal through its tab, menu, toolbar, status bar or conflict action preserves an exited/failed explanation instead of silently respawning. Failed starts still auto-open Operation Log; returning to Terminal shows Failed without another attempt, and Restart alone retries.
+  - Review: wait errors also show Failed with the complete reason and Restart, while retaining Unknown process provenance and never offering automatic unlock or claiming a proven exit. JA uses the existing `shell` spelling and localized `（終了コード N）`.
 - Review hunks retain their last twelve lines with an EN/JA Show previous lines / Collapse button, preserve full-hunk copying, and expose long lines through a horizontal system scrollbar without replacing the virtualized PR feed. Copy is outside the code, and vertical wheels only move the feed. (#1258)
   - Integrates PR detail accessibility: the header Copy icon retains its localized name, explicit Tab stop, 24-reference-pixel target and selection-safe mouse-down handling.
 - Issue composer body heights scale with the text line height, preserving the ordinary visible-line budget at 100% and 167% zoom. Focused composition fits the remaining pane around nonshrinking fields/footer with a two-line minimum and an internally scrolling Input. (#1261)

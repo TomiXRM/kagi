@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Sidebar and Inspector / Compare widths fit the window and zoom without replacing preferred divider widths: the Inspector shrinks first, then the sidebar, reserving a scaled 320px centre whenever their presentation minima fit. Capped drags preserve preferences and widening restores the original geometry; diff-header controls remain inside the narrow/high-zoom centre. (#1355)
+  - Review: worktree keyboard cards, group identity reveals and Branch Cleanup column drag origins follow the fitted sidebar edge rather than its larger preferred width.
 - Draft PR dashboard rows retain full-contrast titles and readable number/author/age metadata in Apple Light and Dark. The existing localized Draft state uses `text_muted` rather than fading the whole interactive row; hover and open behavior remain unchanged. (#1352)
   - Review: mute STATE only when its attention reason is Draft; conflicting, changes-requested and other actionable draft states retain their attention colour rather than losing the Needs You signal.
 - Smart Commit footer tooltips and accessibility descriptions name the selected Ollama model, Claude Code or Codex in EN/JA, including provider-specific generation wording; CLI generation no longer claims to use a local LLM. (#1342)

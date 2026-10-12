@@ -519,7 +519,9 @@ fn with_worktree_card(
 ) -> Stateful<Div> {
     match card {
         Some((path, card)) => {
-            let width = super::theme::scaled_px(app.sidebar.width);
+            // Local anchoring starts inside RowList's fixed focus border.
+            let width =
+                super::theme::scaled_px(app.pane_fit.sidebar) - px(super::keyboard_nav::RING);
             // Escape is bound to an action (`CloseMainDiff`), which runs
             // before key listeners: the row takes it while its card is open.
             el.key_context("KagiRowList WorktreeInspection")

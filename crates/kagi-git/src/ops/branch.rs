@@ -45,6 +45,10 @@ pub(super) fn ref_namespace_collision(
     repo: &Repository,
     requested: &str,
 ) -> Result<Option<String>, GitError> {
+    let ignore_case = repo
+        .config()
+        .and_then(|config| config.get_bool("core.ignorecase"))
+        .unwrap_or(false);
     let refs = repo
         .references()
         .map_err(|e| GitError::Other(e.message().to_string()))?;
@@ -52,13 +56,17 @@ pub(super) fn ref_namespace_collision(
         let reference = reference.map_err(|e| GitError::Other(e.message().to_string()))?;
         let existing = reference.name_bytes();
         let requested = requested.as_bytes();
-        if existing
-            .strip_prefix(requested)
-            .is_some_and(|suffix| suffix.starts_with(b"/"))
-            || requested
-                .strip_prefix(existing)
-                .is_some_and(|suffix| suffix.starts_with(b"/"))
-        {
+        let descendant = |longer: &[u8], shorter: &[u8]| {
+            longer.get(shorter.len()) == Some(&b'/')
+                && longer.get(..shorter.len()).is_some_and(|prefix| {
+                    if ignore_case {
+                        prefix.eq_ignore_ascii_case(shorter)
+                    } else {
+                        prefix == shorter
+                    }
+                })
+        };
+        if descendant(existing, requested) || descendant(requested, existing) {
             return Ok(Some(String::from_utf8_lossy(existing).into_owned()));
         }
     }

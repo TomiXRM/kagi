@@ -60,7 +60,65 @@ fn create_ref_collision_blockers() {
                     "{namespace}/{requested}, existing {existing}, packed {packed}"
                 );
                 assert!(!plan.blockers.is_empty());
+                if existing != requested {
+                    assert!(plan.blockers.iter().any(|note| note
+                        .message_en()
+                        .contains(&format!("refs/{namespace}/{existing}"))));
+                }
                 assert_eq!(git_fixture::git_output(tmp.path(), &["show-ref"]), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn create_ref_case_insensitive_namespace_collisions() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    for namespace in ["heads", "tags"] {
+        for (existing, requested) in [("feature/x", "Feature"), ("Feature", "feature/x")] {
+            for packed in [false, true] {
+                let (tmp, repo, head) = fixture();
+                repo.config()
+                    .unwrap()
+                    .set_bool("core.ignorecase", true)
+                    .unwrap();
+                repo.reference(
+                    &format!("refs/{namespace}/{existing}"),
+                    git2::Oid::from_str(&head.0).unwrap(),
+                    false,
+                    "fixture",
+                )
+                .unwrap();
+                if packed {
+                    git_fixture::git(tmp.path(), &["pack-refs", "--all"]);
+                }
+                let plan = if namespace == "heads" {
+                    plan_create_branch(&repo, requested, &head)
+                } else {
+                    plan_create_tag(&repo, requested, &head)
+                }
+                .unwrap();
+                assert_eq!(plan.disposition, PlanDisposition::Blocked);
+                assert!(plan.blockers.iter().any(|note| note
+                    .message_en()
+                    .contains(&format!("refs/{namespace}/{existing}"))));
+                repo.config()
+                    .unwrap()
+                    .set_bool("core.ignorecase", false)
+                    .unwrap();
+                let plan = if namespace == "heads" {
+                    plan_create_branch(&repo, requested, &head)
+                } else {
+                    plan_create_tag(&repo, requested, &head)
+                }
+                .unwrap();
+                assert_eq!(
+                    plan.disposition,
+                    PlanDisposition::Ready,
+                    "case-sensitive namespace remains distinct"
+                );
             }
         }
     }

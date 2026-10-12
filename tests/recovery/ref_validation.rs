@@ -129,7 +129,11 @@ fn create_ref_case(
         if blocked {
             let reason = i18n::plan_note_text(&plan.blockers[0]);
             assert!(
-                reason.contains(existing),
+                reason.contains(&if existing == requested {
+                    existing.to_string()
+                } else {
+                    format!("refs/{}/{existing}", if tag { "tags" } else { "heads" })
+                }),
                 "blocking ref must be named: {reason}"
             );
         }

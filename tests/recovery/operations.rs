@@ -2790,6 +2790,9 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             );
         }
         if case == "rename" || case == "upstream" {
+            if case == "upstream" {
+                git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+            }
             let input = cx
                 .read(|cx| {
                     let app = app.read(cx);

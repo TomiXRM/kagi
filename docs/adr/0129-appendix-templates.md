@@ -150,7 +150,7 @@ PR で checklist も構造化するか判断。)
 | `Branch '{}' is already up to date with its upstream; nothing to push.` | branch | blocker | 〃 `tail: NothingToPushSemicolon`(**ゆれ**) |
 | `{}`(oid/remote 解決エラー透過 ×2) | e | blocker | §G-4 |
 | `Upstream must be a remote branch name like origin/main.` | — | blocker | `UpstreamFormatInvalid` |
-| `Remote-tracking branch '{}' is not present locally; config can still be set.` | upstream | warning | `UpstreamNotPresentLocally { upstream }` |
+| `Remote-tracking branch '{}' is not present locally; fetch it before setting upstream.` | upstream | blocker | `UpstreamNotPresentLocally { upstream }` — existing local upstreams remain valid (#1380) |
 
 ### B-6. Merge(`MergeNote`)
 
@@ -316,7 +316,8 @@ recovery テンプレート(kind 別、コマンドは `commands` へ分離):
 Phase 1 で `PlanNote::Branch(...)` / `PlanNote::Worktree(...)` に取り込み、
 `localize_plan_blockers` シム(§F-7)を不要化する。
 
-- `BranchNameError` 9 変種: `Branch name must not be empty.` / `Branch name is required.` / `Branch name must not start or end with whitespace.` / `Branch already has that name.` / `Branch '{}' already exists.` / `'{}' is not a valid branch name.` / `Branch name '{}' is not a valid git ref name (no spaces, '..', or other invalid characters).` / `Branch name '{}' must not start with '-'.` / `A branch named '{}' already exists in this repository.`
+- `BranchNameError` 10 変種: `Branch name must not be empty.` / `Branch name is required.` / `Branch name must not start or end with whitespace.` / `Branch already has that name.` / `Branch '{}' already exists.` / `'{}' is not a valid branch name.` / `Branch name '{}' is not a valid git ref name (no spaces, '..', or other invalid characters).` / `Branch name '{}' must not start with '-'.` / `A branch named '{}' already exists in this repository.` / `CreateNamespaceCollision { name, existing }`: `Branch '{}' conflicts with existing ref '{}'.`
+- `TagNameError` 5 変種: `Empty` / `InvalidRef(name)` / `LeadingDash(name)` / `Exists(name)` / `NamespaceCollision { name, existing }`: `Tag '{}' conflicts with existing ref '{}'.` Parent/descendant checks use ASCII case-insensitive comparison when `core.ignorecase=true` (#1379).
 - `WorktreePathError`: `Worktree path must not be empty.` / `Worktree path '{}' already exists.`
 - `WorktreeValidationError::Other(s)` の English-only 透過(**未キー化**、worktree.rs 内で構築): `Repository root is not accessible: {}` / `Worktree path must have a parent directory.` / `Parent directory '{}' does not exist.` / `Parent directory is not accessible: {}` / `Worktree path must name a directory.` / `Worktree path '{}' must be outside the repository.` → Phase 2 worktree PR でキー化。
 

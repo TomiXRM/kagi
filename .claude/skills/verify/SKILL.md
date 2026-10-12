@@ -78,9 +78,10 @@ pixels on hover in active/inactive windows. `activity_bucket_a11y` checks
 one roving stop, arrow/Home/End boundary inspection and identical immediate
 hover/keyboard readouts. The actual chart/legend painter records successful
 solid/dash/gap/knockout segment counts and the single-point fallback branch.
-`activity_equal_series_encoding` compares native panel-fill pixels in merge
-gaps over equal commit/merge values and 0/0 baseline segments, including the
-legend. `activity_single_bucket_encoding` requires a genuine two-dash merge
+`activity_equal_series_encoding` compares native merge-gap pixels with nearby
+unpainted pixels over equal commit/merge values and 0/0 baseline segments,
+including the legend; do not derive the expected background from the painter's
+theme token. `activity_single_bucket_encoding` requires a genuine two-dash merge
 mark and knockout gap, not the former solid fallback or a clamped counter.
 All four scenarios cover 940×660 / 1392×883, 100%/167%, EN/JA and
 Apple Light/Dark; axes and legend must fit.

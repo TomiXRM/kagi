@@ -370,11 +370,19 @@ fn gap_pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str, z
         let image = window.render_to_image().expect("native dash-gap capture");
         let scale = window.scale_factor();
         let pixel = image.get_pixel((f32::from(x) * scale) as u32, (f32::from(y) * scale) as u32).0;
-        let panel = theme::theme().panel;
-        let expected = [((panel >> 16) & 255) as u8, ((panel >> 8) & 255) as u8, (panel & 255) as u8];
+        // Compare nearby unpainted pixels, not the painter's chosen theme token.
+        let background_y = if id == "activity-chart" && zero {
+            y - theme::scaled_px(4.)
+        } else {
+            y + theme::scaled_px(4.)
+        };
+        let expected = image.get_pixel(
+            (f32::from(x) * scale) as u32,
+            (f32::from(background_y) * scale) as u32,
+        ).0;
         for channel in 0..3 {
             assert!(pixel[channel].abs_diff(expected[channel]) <= 2,
-                "dash gap clears coincident commit/baseline pixels: {id} {pixel:?}, expected {expected:?}");
+                "dash gap matches nearby unpainted background: {id} {pixel:?}, expected {expected:?}");
         }
     }).unwrap();
 }

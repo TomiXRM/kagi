@@ -160,6 +160,7 @@ impl KagiApp {
         };
         div()
             .relative()
+            .bg(rgb(theme().panel))
             .flex_1()
             .min_w(px(0.))
             .min_h(px(0.))

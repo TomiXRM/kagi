@@ -11,12 +11,15 @@ pub(super) struct Layout {
     available: f32,
     scroll: ScrollHandle,
     reveal: Option<(usize, usize, u32, u32)>,
+    selected: Option<usize>,
+    focused: Option<usize>,
 }
 
 pub(super) fn viewport(
     tabs: &super::super::keyboard_nav::TabList,
     slots: usize,
-    target: usize,
+    selected: Option<usize>,
+    focused: Option<usize>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> (gpui::Stateful<gpui::Div>, gpui::Pixels) {
@@ -33,8 +36,19 @@ pub(super) fn viewport(
             f32::from(theme::scaled_px(TAB_MAX_W)).floor(),
         )
         .floor();
-    let reveal = (target, slots, available.to_bits(), theme::zoom().to_bits());
     layout.update(cx, |state, _| {
+        // Selection changes outrank a still-focused old cell. Keep that reveal
+        // until focus actually moves again, rather than undoing it next frame.
+        let target = if state.selected != selected {
+            selected.unwrap_or(0)
+        } else if state.focused != focused {
+            focused.or(selected).unwrap_or(0)
+        } else {
+            state.reveal.map(|reveal| reveal.0).unwrap_or(0)
+        };
+        state.selected = selected;
+        state.focused = focused;
+        let reveal = (target, slots, available.to_bits(), theme::zoom().to_bits());
         if state.reveal != Some(reveal) {
             state.scroll.scroll_to_item(target);
             state.reveal = Some(reveal);
@@ -109,11 +123,32 @@ impl MenuState {
     }
 }
 
-pub(super) fn dismiss(window: &mut Window, cx: &mut Context<KagiApp>) {
+pub(super) fn dismiss(
+    root: Option<gpui::FocusHandle>,
+    window: &mut Window,
+    cx: &mut Context<KagiApp>,
+) {
     let state = menu_state(window, cx);
     let popover = state.read(cx).popover.clone();
     if let Some(popover) = popover {
-        popover.update(cx, |state, cx| state.dismiss(window, cx));
+        // Root render still borrows KagiApp. Keep both owners alive until its
+        // borrow is released, then dismiss without losing the kit registration.
+        window.defer(cx, move |window, cx| {
+            let restore = state.read(cx).owns_focus(window, cx);
+            popover.update(cx, |state, cx| state.dismiss(window, cx));
+            if restore {
+                if let Some(root) = root {
+                    root.focus(window, cx);
+                }
+            }
+            state.update(cx, |state, _| {
+                state.open = false;
+                state.menu = None;
+                state.popover = None;
+                state.previous = None;
+            });
+        });
+        return;
     }
     state.update(cx, |state, _| {
         state.open = false;
@@ -142,7 +177,7 @@ impl gpui_component::Selectable for Trigger {
 impl gpui::RenderOnce for Trigger {
     fn render(self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
         let pointer = self.state.clone();
-        let trigger = super::super::render_header::toolbar_overflow::trigger(
+        let trigger = super::super::render_header::overflow_trigger::trigger(
             "tab-overflow",
             Msg::TabOverflow.t(),
             self.selected,
@@ -192,7 +227,7 @@ pub(super) fn menu(
     }
 }
 impl gpui::RenderOnce for Menu {
-    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
         let state = self.state.clone();
         let changed = state.downgrade();
         let changed_app = self.app.clone();

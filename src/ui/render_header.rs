@@ -5,6 +5,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+pub(super) mod overflow_trigger;
 #[cfg_attr(not(feature = "gui-e2e"), allow(dead_code))]
 pub(super) mod toolbar_a11y;
 pub(super) mod toolbar_overflow;

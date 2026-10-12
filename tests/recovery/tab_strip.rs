@@ -68,6 +68,11 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
             bounds.left() >= px(0.) && bounds.right() <= px(940.),
             "tab {index} runs outside window: {bounds:?}"
         );
+        assert!(
+            e2e::control_paint(window.window_id(), &format!("repo-tab-label-{index}"))
+                .unwrap()
+                .middle_ellipsis
+        );
     }
     app.update(cx, |app, cx| app.switch_repo(11, cx));
     cx.run_until_parked();
@@ -87,8 +92,34 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     }
     cx.simulate_keystrokes(window, "escape");
     cx.run_until_parked();
-    // End must reveal the focused cell before manual activation, even above
-    // the strip's minimum-width threshold.
+    keyboard_tail(cx, window, &app);
+    selection_reveal(cx, window, &app);
+    // Retiring the strip while its popover owns focus must dismiss the real
+    // kit menu without retaining a deferred popover registration.
+    click(cx, window, "tab-overflow");
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        while app.tabs.len() > 1 {
+            app.close_tab(app.tabs.len() - 1, cx);
+        }
+    });
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).root_focus.as_ref().unwrap().is_focused(window)
+        })
+        .unwrap(),
+        "hidden overflow returns focus to the root"
+    );
+    unmount(cx, app, window);
+}
+
+fn keyboard_tail(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
+    // End reveals the focused cell before manual activation above the floor.
     theme::set_zoom(1.67);
     app.update(cx, |app, cx| app.switch_repo(0, cx));
     draw(cx, window);
@@ -96,22 +127,40 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
     })
     .unwrap();
-    cx.simulate_keystrokes(window, "end");
+    crate::keyboard_nav::keys(cx, window, "end");
     draw(cx, window);
     let last = e2e::control_bounds(window.window_id(), "repo-tab-11").unwrap();
     let viewport = e2e::tab_strip::scroll().unwrap().bounds();
     assert!(
         last.left() >= viewport.left() && last.right() <= viewport.right(),
-        "keyboard tail not revealed: {last:?} viewport {viewport:?}; focused={:?}",
-        cx.update_window(window, |_, window, cx| app
-            .read(cx)
-            .tab_strip_focused_for_e2e(window))
-            .unwrap()
+        "keyboard tail not revealed: {last:?} viewport {viewport:?}"
     );
-    cx.simulate_keystrokes(window, "enter");
-    cx.run_until_parked();
+    let close = e2e::control_bounds(window.window_id(), "tab-close-11").unwrap();
+    assert!(close.size.width >= px(20.) && close.size.height >= px(20.));
+    crate::keyboard_nav::keys(cx, window, "enter");
     assert_eq!(app.read_with(cx, |app, _| app.active_tab), 11);
-    unmount(cx, app, window);
+}
+
+fn selection_reveal(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+) {
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.focus_tab_strip_for_e2e(0, window, cx))
+    })
+    .unwrap();
+    draw(cx, window);
+    app.update(cx, |app, cx| app.switch_repo(11, cx));
+    cx.run_until_parked();
+    draw(cx, window);
+    let last = e2e::control_bounds(window.window_id(), "repo-tab-11").unwrap();
+    let viewport = e2e::tab_strip::scroll().unwrap().bounds();
+    assert!(
+        last.left() >= viewport.left() && last.right() <= viewport.right(),
+        "a newly active tab outranks old keyboard focus and stays revealed"
+    );
 }
 
 pub fn scenario_tab_close_names(cx: &mut VisualTestAppContext) {

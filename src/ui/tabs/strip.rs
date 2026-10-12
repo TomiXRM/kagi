@@ -14,7 +14,7 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         if !self.tab_strip_visible() {
-            overflow::dismiss(window, cx);
+            overflow::dismiss(self.root_focus.clone(), window, cx);
             self.tab_strip_focus.sync(&[], cx);
             self.tab_strip_focus
                 .release_closed(self.root_focus.as_ref(), window, cx);
@@ -38,7 +38,8 @@ impl KagiApp {
         let (mut viewport, width) = overflow::viewport(
             &list,
             repos + usize::from(home_slot.is_some()),
-            focused.or(selected).unwrap_or(0),
+            selected,
+            focused,
             window,
             cx,
         );

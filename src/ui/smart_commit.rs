@@ -53,6 +53,13 @@ pub enum SmartProvider {
 }
 
 impl SmartProvider {
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Ollama => "Ollama",
+            Self::Cli(provider) => provider.display_name(),
+        }
+    }
+
     /// Stable slug for `settings.json` (`"ollama"` / `"claude-code"` / `"codex"`).
     pub fn slug(self) -> &'static str {
         match self {
@@ -68,6 +75,13 @@ impl SmartProvider {
             None => SmartProvider::Ollama,
         }
     }
+}
+
+/// Identity frozen when generation dispatches; model storage is shared with the renderer.
+#[derive(Clone, Debug)]
+pub struct SmartGeneration {
+    pub provider: SmartProvider,
+    pub model: Option<gpui::SharedString>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

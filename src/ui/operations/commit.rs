@@ -417,6 +417,7 @@ impl KagiApp {
         self.smart_commit_set_msg(&msg, window, cx);
         self.with_ui(|ui| {
             ui.smart_commit_generating = false;
+            ui.smart_commit_generation = None;
             ui.set_smart_commit_status(Msg::SmartRuleBasedInserted.t());
         });
         cx.notify();

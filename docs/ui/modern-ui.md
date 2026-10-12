@@ -211,7 +211,7 @@ click. This corrects the unrestricted titlebar-click assumption in #976.
 
 ## Known gaps (do not claim these are met)
 
-- The PR / Issue navigators still lack a row keyboard path.
+- The PR navigator still lacks a row keyboard path. Issues and Home Recent use stable-keyed `RowFocus` / `RowList` with one list Tab stop, keyboard reveal and Enter/Space activation (#1346/#1347); BranchPicker uses the same rows in a bounded scrolling chooser (#1351).
 - The Graph sidebar's secondary controls remain pointer-only: a pane cannot
   be collapsed from the keyboard, the worktree card's Refresh and port link
   are pointer-only, and branch-row deletion has no keyboard path (its

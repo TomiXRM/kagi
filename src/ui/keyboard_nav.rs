@@ -71,6 +71,7 @@ const ROW_CONTEXT: &str = "KagiRowList";
 /// runs, and every list forgets its arrowed-to cell.
 pub(crate) fn bind_keys(cx: &mut App) {
     super::diff_selection::keyboard::bind_keys(cx);
+    super::sidebar_focus::bind_keys(cx);
     super::conflict_editor_keys::bind_keys(cx);
     kagi_ui_core::keyboard_nav::bind_keys(cx);
     cx.bind_keys([
@@ -424,9 +425,7 @@ impl RowFocus {
         true
     }
 
-    /// Focus the row `key` (GUI E2E: Tier A cannot press Tab into a list
-    /// without walking the whole window).
-    #[cfg(feature = "gui-e2e")]
+    /// Restore focus to the row `key`, including after an owned popup closes.
     pub(crate) fn focus(&self, key: &str, window: &mut Window, cx: &mut App) {
         if let Some(at) = self.keys.iter().position(|(k, _)| k == key) {
             self.handles[at].focus(window, cx);
@@ -444,6 +443,21 @@ pub(crate) struct RowList {
 }
 
 impl RowList {
+    #[cfg(feature = "gui-e2e")]
+    pub(crate) fn focus_handle(&self, at: usize) -> &FocusHandle {
+        &self.handles[at]
+    }
+
+    pub(crate) fn is_tab_stop(&self, at: usize) -> bool {
+        self.stop == Some(at)
+    }
+
+    /// The remembered row containing focus, including its inline controls.
+    pub(crate) fn focused_stop(&self, window: &Window, cx: &App) -> Option<usize> {
+        self.stop
+            .filter(|&at| self.handles[at].contains_focused(window, cx))
+    }
+
     /// The list's container.
     pub(crate) fn list(&self, el: Stateful<Div>) -> Stateful<Div> {
         el.key_context(ROW_CONTEXT)
@@ -511,7 +525,7 @@ impl RowList {
         let handle = self.handles[at]
             .clone()
             .tab_index(0)
-            .tab_stop(self.stop == Some(at));
+            .tab_stop(self.is_tab_stop(at));
         self.navigation(at, with_ring(el.track_focus(&handle)))
     }
 

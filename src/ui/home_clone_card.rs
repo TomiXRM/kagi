@@ -19,6 +19,10 @@ use super::KagiApp;
 
 const CARD_W: f32 = 480.;
 
+#[cfg(feature = "gui-e2e")]
+#[path = "e2e/clone_progress.rs"]
+pub mod clone_progress;
+
 /// The clone card: the repository at the top, the location it goes to (empty
 /// until chosen), what will be created there and any reason it cannot, then
 /// Cancel and Clone.
@@ -380,6 +384,12 @@ fn destination_path(id: &'static str, full: SharedString) -> gpui::Stateful<gpui
 fn progress(started: std::time::Instant) -> impl IntoElement {
     let secs = started.elapsed().as_secs();
     let elapsed = format!("{}:{:02}", secs / 60, secs % 60);
+    // Keep the probe tied to the same values applied to the rendered label.
+    let role = gpui::Role::Status;
+    let name = SharedString::from(Msg::clone_running_status(secs));
+    let visible = SharedString::from(Msg::CloneRunning.t().replace("{}", &elapsed));
+    #[cfg(feature = "gui-e2e")]
+    clone_progress::record(Some(role), Some(&name), &visible, secs);
     div()
         .flex()
         .flex_col()
@@ -399,9 +409,17 @@ fn progress(started: std::time::Instant) -> impl IntoElement {
                     theme().ui_accent(),
                     "clone-progress-spinner",
                 ))
-                .child(div().text_sm().text_color(rgb(theme().text_main)).child(
-                    SharedString::from(Msg::CloneRunning.t().replace("{}", &elapsed)),
-                )),
+                .child(
+                    div()
+                        .id("clone-progress-status")
+                        .role(role)
+                        .aria_label(name)
+                        .text_sm()
+                        .text_color(rgb(theme().text_main))
+                        .relative()
+                        .child(super::e2e::measure_inside("clone-progress-status"))
+                        .child(visible),
+                ),
         )
 }
 

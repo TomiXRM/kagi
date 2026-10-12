@@ -24,7 +24,7 @@ pub fn scenario_status_chips_semantics(cx: &mut VisualTestAppContext) {
         for (age, counts, no_upstream) in [
             (720, Some((2, 1)), false),
             (10800, Some((2, 1)), false),
-            (899, Some((0, 0)), false),
+            (870, Some((0, 0)), false),
             (900, Some((2, 3)), false),
             (0, None, true),
             (0, None, false),
@@ -91,7 +91,7 @@ fn assert_descriptions(
         if age == 720 {
             assert!(labels.contains(&"Fetched 12 minutes ago"));
         }
-        if age == 899 {
+        if age == 870 {
             assert!(labels.contains(&"Fetched 14 minutes ago"));
         }
         if age == 900 {
@@ -118,7 +118,7 @@ fn assert_descriptions(
         } else {
             assert!(labels.contains(&"origin/main との先行・遅れの commit 数は未取得です"));
         }
-        if age == 899 {
+        if age == 870 {
             assert!(labels.contains(&"14分前に fetch 済み"));
         }
         if age == 900 {

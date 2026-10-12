@@ -107,6 +107,7 @@ fn chip_description(
     role: view_models::StatusChipRole,
     summary: &StatusBarSummary,
     now: i64,
+    upstream: &str,
 ) -> String {
     use kagi_ui_core::i18n::status_chips::{description, Chip};
     use view_models::StatusChipRole::*;
@@ -124,10 +125,7 @@ fn chip_description(
             stale: role == FetchStale,
         },
     };
-    description(
-        chip,
-        &kagi_domain::text_safety::sanitize_control_bytes(&summary.upstream_name),
-    )
+    description(chip, upstream)
 }
 
 impl KagiApp {
@@ -173,6 +171,7 @@ impl KagiApp {
         if let Some(chip) = view_models::fetch_age_chip(&summary, now) {
             status_vm.chips.push(chip);
         }
+        let upstream = kagi_domain::text_safety::sanitize_control_bytes(&summary.upstream_name);
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_status_chips(Vec::new());
         let branch_text = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
@@ -324,7 +323,8 @@ impl KagiApp {
                 FetchStale => (theme().color_warning, 6.),
             };
             let text = SharedString::from(chip.text.clone());
-            let description = SharedString::from(chip_description(chip.role, &summary, now));
+            let description =
+                SharedString::from(chip_description(chip.role, &summary, now, &upstream));
             let tip = description.clone();
             #[cfg(feature = "gui-e2e")]
             super::e2e::record_status_chip(

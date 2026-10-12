@@ -273,6 +273,12 @@ impl Render for KagiApp {
             // The same for the Graph sidebar's rows and headers (#981).
             self.yield_sidebar_focus(window, cx);
         }
+        if !self.pr_mode_visible() || self.home_in_front() {
+            if let Some(mode) = self.pr_mode() {
+                mode.detail_focus
+                    .yield_focus(self.root_focus.as_ref(), window, cx);
+            }
+        }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
 

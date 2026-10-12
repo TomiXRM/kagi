@@ -72,7 +72,12 @@ impl KagiApp {
             self.sidebar.swipe.cancel();
             self.modal_list_scroll = gpui::UniformListScrollHandle::new();
             self.reset_modal_sections();
+            let pr_merge = matches!(&offer.modal, ActiveModal::PrMerge(_));
             self.active_modal = Some(offer.modal);
+            if pr_merge {
+                // #817: a keyboard opener must not retain Return behind the plan.
+                self.focus_root_for_modal();
+            }
             return true;
         }
         self.discard_contended_plan_from_async(offer.operation, offer.token);

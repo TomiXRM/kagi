@@ -2387,6 +2387,10 @@ mod macos {
                 Box::new(crate::palette_polish::scenario_palette_shortcut_glyphs),
             ),
             (
+                "palette_sections",
+                Box::new(crate::palette_polish::scenario_palette_sections),
+            ),
+            (
                 "settings_close_returns_focus",
                 Box::new(crate::overlay_focus::scenario_settings_close_returns_focus),
             ),

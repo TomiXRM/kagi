@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Empty-query command palettes separate Actions, Appearance and Language with localized headings and named accessibility groups. Headings are not keyboard or activation targets; fuzzy-search ranking, disabled reasons, single-row highlighting and the native shortcut column are unchanged. (#1370)
+  - Review: returning to the first result restores Actions fully; upward reveal of a section's first row includes its heading. Japanese section/availability descriptions use localized sentence punctuation.
 - Repository document tabs shrink to a zoom-scaled minimum with middle ellipsis, then scroll horizontally; active and keyboard-focused tabs are revealed. A named trailing » menu lists every open repository and Home using the existing popup-menu keyboard/focus contract. Close × buttons expose localized target-specific accessibility names without changing Cmd+W or dirty-close guards. (#1339, #1340)
   - Review: distinguish same-name repositories with full-path descriptions on close controls and chooser items, retain cloud/worktree markers with duplicate-name parent qualifiers, localize Home’s close target, and leave vertical wheel input outside horizontal tab scrolling.
   - Visual review: retain natural tab widths and the previous two-tab appearance when there is room; only a constrained strip shrinks labels and exposes ». Native Apple Light / Japanese / 167% pixel pins protect the baseline repository/Home positions.

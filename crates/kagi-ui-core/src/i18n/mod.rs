@@ -494,6 +494,8 @@ pub enum Msg {
     CommandPalettePlaceholder,
     /// Shown when the query matches no command.
     CommandPaletteNoResults,
+    /// Empty-query palette's command section.
+    CommandPaletteActions,
 
     // ── Misc footers ────────────────────────────────────────────────
     Refreshed,
@@ -2722,6 +2724,8 @@ impl Msg {
             (Ja, CommandPalettePlaceholder) => "コマンドを検索…",
             (En, CommandPaletteNoResults) => "No matching commands",
             (Ja, CommandPaletteNoResults) => "一致するコマンドがありません",
+            (En, CommandPaletteActions) => "Actions",
+            (Ja, CommandPaletteActions) => "操作",
             (En, NoOperationsYet) => "No operations yet",
             (Ja, NoOperationsYet) => "操作履歴はまだありません",
             (En, OpLogCopyEntry) => "Copy entry",
@@ -4444,6 +4448,15 @@ pub fn issue_comments(count: usize) -> String {
 // ──────────────────────────────────────────────────────────────────────────
 // Parameterized helpers (format! lives here, not at the call sites)
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Palette section and unavailable reason share language-appropriate punctuation.
+pub fn command_palette_description(language: Lang, section: &str, reason: Option<&str>) -> String {
+    match (language, reason) {
+        (Lang::En, Some(reason)) => format!("{section}. {reason}"),
+        (Lang::Ja, Some(reason)) => format!("{section}。{reason}"),
+        (_, None) => section.to_string(),
+    }
+}
 
 /// Help-overlay sections for the Analyze view: `(heading, body)` in the active
 /// language. Kept here so EN/JA stay side by side (ADR-0119).

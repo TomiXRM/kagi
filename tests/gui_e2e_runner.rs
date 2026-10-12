@@ -3166,6 +3166,10 @@ mod macos {
                 Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_tail),
             ),
             (
+                "oplog_keyboard_refresh_top",
+                Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_refresh_top),
+            ),
+            (
                 "oplog_keyboard_copy_focus",
                 Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_copy_focus),
             ),

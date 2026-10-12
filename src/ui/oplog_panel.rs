@@ -178,6 +178,8 @@ impl OpLogPanel {
 
     /// Push a new entry to the front; drop the oldest if over the cap.
     pub fn push(&mut self, entry: OpLogEntry) {
+        let top = self.scroll_handle.logical_scroll_top();
+        let at_top = top.item_ix == 0 && top.offset_in_item == gpui::px(0.);
         self.entries.push_front(entry);
         // Preserve measured rows and the reading anchor as receipt positions shift.
         self.scroll_handle.splice(0..0, 1);
@@ -185,6 +187,14 @@ impl OpLogPanel {
             let last = self.entries.len() - 1;
             self.scroll_handle.splice(last..last + 1, 0);
             self.entries.pop_back();
+        }
+        // At the top, follow new receipts (including failure auto-open);
+        // elsewhere, keep the reader's entry anchored by the splice.
+        if at_top {
+            self.scroll_handle.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: gpui::px(0.),
+            });
         }
         self.keyboard.invalidate();
         // A new receipt changes positions, not the identity of the open detail.

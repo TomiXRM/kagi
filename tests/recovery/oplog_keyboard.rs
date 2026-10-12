@@ -413,6 +413,66 @@ pub fn scenario_oplog_keyboard_refresh_tail(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+pub fn scenario_oplog_keyboard_refresh_top(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.bottom_panel_open = true;
+        app.bottom_tab = BottomTab::OperationLog;
+        app.bottom_panel_height = 360.;
+        cx.notify();
+    });
+    let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+    for variant in [1, 0] {
+        panel.update(cx, |panel, cx| {
+            *panel = OpLogPanel::from_entries(
+                (0..50)
+                    .map(|i| entry(fixture.path(), i, 0, false))
+                    .collect(),
+            );
+            cx.notify();
+        });
+        paint(cx, window);
+        let scroll = cx.read(|cx| panel.read(cx).scroll_handle());
+        let first = scroll.bounds_for_item(0).unwrap();
+        for delta in [-200., 10000.] {
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: first.center(),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(delta))),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            paint(cx, window);
+            if delta < 0. {
+                assert!(
+                    scroll.logical_scroll_top().item_ix > 0,
+                    "wheel scrolled the receipts"
+                );
+            }
+        }
+        let top = scroll.logical_scroll_top();
+        assert_eq!(top.item_ix, 0);
+        assert_eq!(top.offset_in_item, gpui::px(0.));
+        panel.update(cx, |panel, cx| {
+            panel.push(entry(fixture.path(), 999, variant, false));
+            cx.notify();
+        });
+        paint(cx, window);
+        paint(cx, window);
+        let latest = scroll.bounds_for_item(0).expect("latest receipt is drawn");
+        assert!(
+            latest.top() >= first.top() - gpui::px(1.),
+            "at the top, a new receipt is inside the viewport: {latest:?} vs {first:?}"
+        );
+        assert_eq!(scroll.logical_scroll_top().item_ix, 0);
+    }
+    drop(panel);
+    unmount(cx, app, window);
+}
+
 fn copy_pixels(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,

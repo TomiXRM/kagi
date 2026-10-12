@@ -324,7 +324,12 @@ delivery remains a separate Tier B observation.
 
 Review: the constructor seeds `ListState` with its actual count; receipt insertion
 and retention trimming splice those measured items, preserving a scrolled reading
-anchor instead of resetting it when the count changes. Copy reuses the existing
+anchor instead of resetting it when the count changes. At `{0, 0}`, insertion
+explicitly follows the newest receipt: prior wheel/keyboard navigation must not
+hide a failure receipt above the viewport when T-BP-004 auto-opens the panel.
+Away from that exact top, the entry anchor and summary/Copy focus remain stable.
+Native wheel-away/return-to-top and scrolled-tail legs cover both policies.
+Copy reuses the existing
 `keyboard_nav::focusable` quiet-copy pattern: transparent inset border at rest,
 fully opaque accent border/glyph on keyboard focus, and full glyph opacity on
 hover. The pinned kit Button's low-alpha outer ring and built-in hover style do

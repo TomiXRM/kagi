@@ -132,6 +132,7 @@ impl HeaderFit {
                     .label(label.clone())
                     .outline()
                     .small()
+                    .tab_stop(false)
             }))
             .children(
                 texts

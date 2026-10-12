@@ -74,6 +74,7 @@ impl super::KagiApp {
     pub fn list_row_focused_for_e2e(&self, list: &str, window: &Window) -> Option<String> {
         match list {
             "issue-keyboard-list" => self.ui().issue_rows.focused(window),
+            "inspector-files-scroll" => self.ui().inspector_model.keyboard.focused(window),
             "home-recent-list" => self.home_github.recent.keyboard.focused(window),
             "branch-picker-list" => match &self.menu_overlay {
                 Some(super::commands::MenuOverlay::BranchPicker { rows, .. }) => {

@@ -93,9 +93,78 @@ pub fn parse_blame_ignore_revs(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Current buffer row → zero-based HEAD row, or `None` for uncommitted text.
+/// Reuses the existing domain diff algorithm; never attributes replaced lines.
+pub fn buffer_line_map(head: &str, buffer: &str) -> Vec<Option<usize>> {
+    crate::word_diff::unchanged_line_map(head, buffer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffer_map_caps_large_edited_regions_but_retains_trimmed_edges() {
+        let middle = (0..1001).map(|i| format!("line {i}\n")).collect::<String>();
+        let head = format!("prefix\nold start\n{middle}old end\nsuffix\n");
+        let buffer = format!("prefix\nnew start\n{middle}new end\nsuffix\n");
+        let map = buffer_line_map(&head, &buffer);
+        assert_eq!(map[0], Some(0));
+        assert!(
+            map[1..1004].iter().all(Option::is_none),
+            "oversized region conservatively remains Uncommitted"
+        );
+        assert_eq!(map[1004], Some(1004));
+        assert_eq!(map[1005], None);
+    }
+
+    #[test]
+    fn buffer_map_normalizes_lf_and_crlf_without_stripping_content_cr() {
+        assert_eq!(
+            buffer_line_map("a\nb\nc\n", "a\r\nchanged\r\nc\r\n"),
+            vec![Some(0), None, Some(2), None]
+        );
+        assert_eq!(
+            buffer_line_map("a\r\nb\r\n", "a\nb\n"),
+            vec![Some(0), Some(1), None]
+        );
+        assert_eq!(buffer_line_map("a\r\r\n", "a\r\n"), vec![None, None]);
+    }
+    #[test]
+    fn buffer_map_tracks_insert_replace_delete_and_restore() {
+        let head = "one\ntwo\nthree\n";
+        assert_eq!(
+            buffer_line_map(head, "new\nmore\none\ntwo\nthree\n"),
+            vec![None, None, Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(
+            buffer_line_map(head, "one\nchanged\nthree\n"),
+            vec![Some(0), None, Some(2), None]
+        );
+        assert_eq!(buffer_line_map(head, "three\n"), vec![Some(2), None]);
+        assert_eq!(
+            buffer_line_map(head, head),
+            vec![Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(buffer_line_map(head, ""), vec![None]);
+        assert_eq!(buffer_line_map("", "new"), vec![None]);
+    }
+
+    #[test]
+    fn buffer_map_matches_internal_context_and_duplicate_lines_in_order() {
+        assert_eq!(
+            buffer_line_map("a\nsame\nb\nsame\nc", "new\nsame\nb\nsame\nchanged"),
+            vec![None, Some(1), Some(2), Some(3), None]
+        );
+        assert_eq!(
+            buffer_line_map("a\nb", "a\nb\n"),
+            vec![Some(0), Some(1), None]
+        );
+        assert_eq!(
+            buffer_line_map("a\r\nb\r\n", "a\r\nnew\r\nb\r\n"),
+            vec![Some(0), None, Some(1), None]
+        );
+    }
 
     #[test]
     fn parses_one_sha_per_line() {

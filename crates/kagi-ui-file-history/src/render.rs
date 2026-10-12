@@ -27,7 +27,7 @@ use kagi_domain::file_history::{FileChangeType, FileHistoryEntry};
 
 impl Render for FileHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        render_file_history_view(self, window.viewport_size(), cx)
+        render_file_history_view(self, window, cx)
     }
 }
 
@@ -61,9 +61,22 @@ pub(crate) fn fh_header_button(
 /// in place of the normal center+right area.
 pub fn render_file_history_view(
     view: &FileHistoryView,
-    viewport: gpui::Size<gpui::Pixels>,
+    window: &mut Window,
     cx: &mut Context<FileHistoryView>,
 ) -> gpui::AnyElement {
+    let viewport = window.viewport_size();
+    view.keyboard.prepare(
+        view.data
+            .history
+            .as_ref()
+            .is_some_and(|history| !history.entries.is_empty()),
+        kagi_ui_core::keyboard_nav::RowScroll::Uniform(
+            view.list_scroll.clone(),
+            view.last_built_range.clone(),
+        ),
+        window,
+        cx,
+    );
     // ADR-0117: the entity renders itself. Read only `self`'s data here; every
     // parent interaction is an event emission (ADR-0121 C3). The owned bindings
     // below come straight from `view.data`.
@@ -173,7 +186,10 @@ pub fn render_file_history_view(
         // Darker than the `surface` this used to be, matching the main diff
         // header, so the outlined buttons read as raised controls.
         .bg(rgb(theme().bg_base))
-        .child(fit.control("fh-back", back))
+        .child(fit.control(
+            "fh-back",
+            crate::keyboard::header_boundary(0, back, view, cx),
+        ))
         .child(
             div()
                 .id("fh-title")
@@ -204,10 +220,22 @@ pub fn render_file_history_view(
                     .child(count_text),
             )
         })
-        .child(fit.control("fh-refresh", refresh))
-        .child(fit.control("fh-copy-path", copy_path))
-        .child(fit.control("fh-open-file", open_file))
-        .child(fit.control("fh-follow", follow_btn))
+        .child(fit.control(
+            "fh-refresh",
+            crate::keyboard::header_boundary(1, refresh, view, cx),
+        ))
+        .child(fit.control(
+            "fh-copy-path",
+            crate::keyboard::header_boundary(2, copy_path, view, cx),
+        ))
+        .child(fit.control(
+            "fh-open-file",
+            crate::keyboard::header_boundary(3, open_file, view, cx),
+        ))
+        .child(fit.control(
+            "fh-follow",
+            crate::keyboard::header_boundary(4, follow_btn, view, cx),
+        ))
         .children(probes);
 
     // ── Center column (list + diff) selection of the body content ──
@@ -535,7 +563,7 @@ pub(crate) fn render_fh_commit_list(
     let now = now_unix_secs();
     let scroll_handle = list_scroll.clone();
 
-    uniform_list(
+    let list = uniform_list(
         "fh-commit-list",
         row_count,
         cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
@@ -543,17 +571,37 @@ pub(crate) fn render_fh_commit_list(
             let Some(history) = this.data.history.as_ref() else {
                 return Vec::new();
             };
+            let Some(rows) = this
+                .keyboard
+                .rows
+                .borrow()
+                .as_ref()
+                .map(|rows| rows.as_drawn(&range))
+            else {
+                return Vec::new();
+            };
             range
                 .filter_map(|ix| history.entries.get(ix).map(|e| (ix, e)))
-                .map(|(ix, entry)| render_fh_row(ix, entry, ix == selected, now, cx))
+                .map(|(ix, entry)| render_fh_row(ix, entry, ix == selected, now, &rows, cx))
                 .collect()
         }),
     )
     .track_scroll(&scroll_handle)
     .flex_1()
     .h_full()
-    .min_h(px(0.))
-    .into_any_element()
+    .min_h(px(0.));
+    div()
+        .id("fh-list-keyboard")
+        .key_context("KagiRowList")
+        .role(gpui::Role::ListBox)
+        .aria_label(SharedString::from(
+            kagi_ui_core::i18n::Msg::A11yFileHistory.t(),
+        ))
+        .flex_1()
+        .h_full()
+        .min_h(px(0.))
+        .child(list)
+        .into_any_element()
 }
 
 /// One row in the File History commit list.
@@ -562,14 +610,18 @@ pub(crate) fn render_fh_row(
     entry: &FileHistoryEntry,
     is_selected: bool,
     now: i64,
+    rows: &kagi_ui_core::keyboard_nav::RowList,
     cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
     // Row shape + display data are shared with the Editor Workspace's
     // History tab (`kagi_ui_core::commit_row`); only the interactions below
     // are File-History-specific.
     let model = commit_row_model(entry, now);
+    let entity = cx.entity().downgrade();
+    let label = crate::keyboard::row_name(entry, &model);
+    let row_focus = rows.focus_handle(ix).clone();
 
-    let click = cx.listener(move |this, e: &gpui::ClickEvent, _w, cx| {
+    let click = cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
         this.menu = None;
         if e.click_count() >= 2 {
             // Double-click: jump to the commit in the graph (commits only).
@@ -585,6 +637,7 @@ pub(crate) fn render_fh_row(
                 return;
             }
         }
+        row_focus.focus(window, cx);
         this.select(ix, cx);
     });
     let ctx = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -593,15 +646,28 @@ pub(crate) fn render_fh_row(
         cx.notify();
     });
 
-    render_commit_row(
-        "fh-row",
+    rows.selecting_row(
         ix,
-        &model,
-        CommitRowLayout::Table {
-            row_height: fh_row_height(),
+        render_commit_row(
+            "fh-row",
+            ix,
+            &model,
+            CommitRowLayout::Table {
+                row_height: fh_row_height(),
+            },
+            is_selected,
+        ),
+        move |index, _, cx| {
+            if let Some(entity) = entity.upgrade() {
+                entity.update(cx, |view, cx| view.select(index, cx));
+            }
         },
-        is_selected,
     )
+    .role(gpui::Role::ListBoxOption)
+    .aria_label(label)
+    .aria_selected(is_selected)
+    .aria_position_in_set(ix + 1)
+    .aria_size_of_set(rows.len())
     .on_click(click)
     .on_mouse_down(MouseButton::Right, ctx)
 }

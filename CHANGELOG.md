@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Conflict image previews use the same zoom-scaled geometry for columns, boxes, gaps and captions; equal-width previews shrink to fit the pane while preserving image aspect ratio. Current/Incoming headers and size/dimension captions support EN/JA. (#1269)
+  - Review: image boxes prefer a square aspect and only shrink; binary previews retain an external comparison button immediately below their captions. A view-owned scroll handle preserves scrolling across redraws, and native image coverage requires positive bounded height and zero horizontal/vertical extent.
 - Terminal not-started, exited and failed states now show an icon, localized EN/JA title and concise hint with a keyboard-reachable Primary Restart button. Exit status comes from the owned shell's wait result; failed starts retain the OS reason and the existing Operation Log receipt. (#1273)
   - Reopening Terminal through its tab, menu, toolbar, status bar or conflict action preserves an exited/failed explanation instead of silently respawning. Failed starts still auto-open Operation Log; returning to Terminal shows Failed without another attempt, and Restart alone retries.
   - Review: wait errors also show Failed with the complete reason and Restart, while retaining Unknown process provenance and never offering automatic unlock or claiming a proven exit. JA uses the existing `shell` spelling and localized `（終了コード N）`.

@@ -37,7 +37,10 @@ fn wait_loaded(
         paint(cx, window);
         if cx.read(|cx| {
             let v = view.read(cx);
-            v.editor.is_some() && v.blame.is_some() && !v.file_loading
+            v.editor.is_some()
+                && v.blame.is_some()
+                && !v.file_loading
+                && !v.blame_map_pending_for_e2e()
         }) {
             return;
         }
@@ -69,6 +72,26 @@ fn save(
     }
 }
 
+fn wait_map(
+    cx: &mut VisualTestAppContext,
+    view: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        paint(cx, window);
+        if cx.read(|cx| !view.read(cx).blame_map_pending_for_e2e()) {
+            paint(cx, window);
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "background blame line map did not settle"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
 fn cursor(
     cx: &mut VisualTestAppContext,
     view: &Entity<EditorWorkspaceView>,
@@ -93,8 +116,7 @@ fn cursor(
         });
     })
     .unwrap();
-    paint(cx, window);
-    paint(cx, window);
+    wait_map(cx, view, window);
     cx.read(|cx| view.read(cx).blame_probe.borrow().clone())
         .expect("actual cursor-line blame rendered")
 }
@@ -151,7 +173,8 @@ fn matrix(
     cx: &mut VisualTestAppContext,
     check: impl Fn(&mut VisualTestAppContext, &Entity<EditorWorkspaceView>, AnyWindowHandle, Lang),
 ) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom", "lang"]);
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["theme", "ui_zoom", "lang", "blame_inline"]);
     let _globals = crate::recovery_layout::GlobalSettings::capture();
     let old_theme = theme::theme().slug.to_owned();
     let fixture = blame_fixture();
@@ -360,5 +383,77 @@ pub fn full_identity(cx: &mut VisualTestAppContext) {
             !next.label.contains(AUTHOR),
             "cursor movement updates full identity"
         );
+    });
+}
+
+pub fn crlf_identity(cx: &mut VisualTestAppContext) {
+    matrix(cx, |cx, view, window, _| {
+        let repo = cx.read(|cx| view.read(cx).repo_path.clone());
+        std::fs::write(repo.join(".gitattributes"), "blame.rs text eol=crlf\n").unwrap();
+        std::fs::write(repo.join("blame.rs"), CONTENT.replace('\n', "\r\n")).unwrap();
+        view.update(cx, |v, cx| {
+            v.activate_tab("README.md".into(), cx);
+        });
+        wait_loaded(cx, view, window);
+        view.update(cx, |v, cx| v.activate_tab("blame.rs".into(), cx));
+        wait_loaded(cx, view, window);
+        assert!(
+            cursor(cx, view, window, 0, None).label.contains(AUTHOR),
+            "clean CRLF checkout keeps HEAD line 1 identity"
+        );
+        assert!(
+            cursor(cx, view, window, 1, None).label.contains("Bob"),
+            "clean CRLF checkout keeps HEAD line 2 identity"
+        );
+        let changed = CONTENT
+            .replace("original_two", "changed_two")
+            .replace('\n', "\r\n");
+        let probe = cursor(cx, view, window, 1, Some(&changed));
+        assert!(
+            !probe.label.contains("Bob"),
+            "changed CRLF row has no old author"
+        );
+        std::fs::write(repo.join("blame.rs"), CONTENT).unwrap();
+    });
+}
+
+pub fn hidden_mapping(cx: &mut VisualTestAppContext) {
+    matrix(cx, |cx, view, window, lang| {
+        let count = cx.read(|cx| view.read(cx).blame_map_computations_for_e2e());
+        view.update(cx, |view, cx| view.toggle_blame(cx));
+        let dirty = format!("// inserted\n{CONTENT}");
+        cx.update_window(window, |_, window, cx| {
+            let input = view.read(cx).editor.clone().unwrap();
+            input.update(cx, |input, cx| {
+                input.replace_all("// preliminary edit\n", window, cx);
+                input.replace_all(dirty.clone(), window, cx);
+            });
+        })
+        .unwrap();
+        paint(cx, window);
+        cx.read(|cx| {
+            let view = view.read(cx);
+            assert!(!view.show_blame);
+            assert!(
+                !view.blame_map_pending_for_e2e(),
+                "hidden blame schedules no map task"
+            );
+            assert_eq!(
+                view.blame_map_computations_for_e2e(),
+                count,
+                "hidden changes do not recompute mapping"
+            );
+        });
+        view.update(cx, |view, cx| view.toggle_blame(cx));
+        let expected = match lang {
+            Lang::En => "Uncommitted",
+            Lang::Ja => "未 commit",
+        };
+        assert_eq!(cursor(cx, view, window, 0, None).label, expected);
+        assert!(
+            cursor(cx, view, window, 1, None).label.contains(AUTHOR),
+            "toggle on maps latest hidden edits"
+        );
+        cx.read(|cx| assert_eq!(view.read(cx).blame_map_computations_for_e2e(), count + 1));
     });
 }

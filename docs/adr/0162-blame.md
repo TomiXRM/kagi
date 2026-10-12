@@ -94,15 +94,23 @@ ownership (ADR-0119).
 
 The host reads HEAD text alongside `Backend::blame_file`; the editor never opens
 Git directly. The pure domain line map reuses the existing linear-space diff,
-trimming unchanged prefixes/suffixes before matching the edited region. An
-accepted load, buffer Change or actual silent `set_value` file push updates
-the map; cursor, scroll and blink renders only index it. Mapping the silent
-push also covers a HEAD reply arriving before editor creation. The map compares
-HEAD with the live text even when
-the editor's saved snapshot already contains worktree changes. Inserted or
-modified rows show muted `Uncommitted` / `未 commit`, not another line's author.
-Deletion and restoring the original text preserve the surviving attribution.
-The map and HEAD snapshot clear with the existing per-file blame lifetime.
+trimming unchanged prefixes/suffixes before matching the edited region. The
+remaining region's LCS is capped at 1,000,000 cells; larger regions remain
+conservatively Uncommitted, while the exact trimmed edges retain attribution.
+LF and CRLF terminators compare equally, including Git's checkout EOL conversion;
+embedded/content CR bytes are not stripped.
+
+Accepted loads, buffer Changes and actual silent `set_value` file pushes launch
+mapping off-thread only while Blame is visible. The immutable HEAD snapshot is
+shared, not copied on each key. Each invalidation increments a mapping revision,
+cancels the previous task and clears the old map; only a matching visible
+revision publishes its result. Thus a pending map never displays a previous
+buffer's author. Hidden edits do not launch work; toggle on maps the latest
+buffer. Cursor, scroll and blink renders only index the published map. Mapping
+the silent push covers a HEAD reply arriving before editor creation, and saved
+worktree changes still compare against HEAD. Inserted or modified rows show
+muted `Uncommitted` / `未 commit`. Deletion/restoration preserve attributable
+rows; map tasks and HEAD snapshots clear with the per-file blame lifetime.
 
 The annotation remains a dense, noninteractive muted Label. Its complete
 sanitized `author · relative-date · subject` string supplies both `aria_label`
@@ -118,6 +126,9 @@ backend reads and cursor-row rendering in EN/JA, Apple Light/Dark, 100/167%,
 restoration, real Save/tab reload and replay of a pre-edit backend result
 through the production seed boundary. Full identity coverage uses a 200+
 character author and 500+ character subject, verifies bounded geometry and
-invokes the real Tooltip builder on hover. Pure domain tests additionally
-cover duplicate context and newline boundaries. Renderer metadata is not
-native VoiceOver evidence; real-window hover and AX inspection remain Tier B.
+invokes the real Tooltip builder on hover. `blame_crlf_identity` reproduces the
+clean CRLF attribution regression before correction; `blame_hidden_mapping`
+checks that hidden edits launch no map computation and toggle on maps their
+latest text. Pure domain tests additionally cover duplicate context, EOL
+normalization and oversized-region fallback. Renderer metadata is not native
+VoiceOver evidence; real-window hover and AX inspection remain Tier B.

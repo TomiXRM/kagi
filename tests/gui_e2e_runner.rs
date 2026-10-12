@@ -2841,6 +2841,14 @@ mod macos {
                 Box::new(crate::blame_identity::full_identity),
             ),
             (
+                "blame_crlf_identity",
+                Box::new(crate::blame_identity::crlf_identity),
+            ),
+            (
+                "blame_hidden_mapping",
+                Box::new(crate::blame_identity::hidden_mapping),
+            ),
+            (
                 "file_history_virtualized",
                 Box::new(|cx| {
                     let fixture = build_fixture();

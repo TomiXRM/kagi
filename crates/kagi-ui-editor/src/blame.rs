@@ -28,10 +28,57 @@ impl EditorWorkspaceView {
     pub fn blame_request_for_e2e(&self) -> u64 {
         self.file_req
     }
-    pub(crate) fn update_blame_map(&mut self, buffer: &str) {
-        if let Some(head) = &self.blame_head {
-            self.blame_line_map = kagi_domain::blame::buffer_line_map(head, buffer);
+    #[cfg(feature = "gui-e2e")]
+    pub fn blame_map_pending_for_e2e(&self) -> bool {
+        self.blame_map_task.is_some()
+    }
+    #[cfg(feature = "gui-e2e")]
+    pub fn blame_map_computations_for_e2e(&self) -> u64 {
+        self.blame_map_computations
+    }
+    pub(crate) fn invalidate_blame_map(&mut self) {
+        self.blame_map_revision = self.blame_map_revision.wrapping_add(1);
+        self.blame_map_task = None;
+        self.blame_line_map.clear();
+    }
+    pub(crate) fn refresh_blame_map(&mut self, cx: &mut Context<Self>) {
+        if !self.show_blame || self.blame_head.is_none() {
+            self.invalidate_blame_map();
+            return;
         }
+        let buffer = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.read(cx).value())
+            .unwrap_or_else(|| self.content.clone().unwrap_or_default().into());
+        self.update_blame_map(buffer, cx);
+    }
+    pub(crate) fn update_blame_map(&mut self, buffer: SharedString, cx: &mut Context<Self>) {
+        self.invalidate_blame_map();
+        if !self.show_blame {
+            return;
+        }
+        let Some(head) = self.blame_head.clone() else {
+            return;
+        };
+        let revision = self.blame_map_revision;
+        #[cfg(feature = "gui-e2e")]
+        {
+            self.blame_map_computations += 1;
+        }
+        let task =
+            cx.background_spawn(async move { kagi_domain::blame::buffer_line_map(&head, &buffer) });
+        self.blame_map_task = Some(cx.spawn(async move |view, cx| {
+            let map = task.await;
+            let _ = view.update(cx, |view, cx| {
+                if revision != view.blame_map_revision || !view.show_blame {
+                    return;
+                }
+                view.blame_line_map = map;
+                view.blame_map_task = None;
+                cx.notify();
+            });
+        }));
     }
 }
 /// The inline-blame label — positioned via the editor's own line layout.

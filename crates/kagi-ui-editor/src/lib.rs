@@ -549,8 +549,12 @@ pub struct EditorWorkspaceView {
     pub blame: Option<kagi_domain::blame::BlameResult>,
     /// HEAD text and its cached mapping to the live buffer, never the saved
     /// worktree snapshot (which may itself contain uncommitted edits).
-    blame_head: Option<String>,
+    blame_head: Option<std::sync::Arc<str>>,
     blame_line_map: Vec<Option<usize>>,
+    blame_map_revision: u64,
+    blame_map_task: Option<gpui::Task<()>>,
+    #[cfg(feature = "gui-e2e")]
+    blame_map_computations: u64,
     #[cfg(feature = "gui-e2e")]
     pub blame_probe: std::rc::Rc<std::cell::RefCell<Option<BlameProbe>>>,
     /// `true` while the blame load is in flight.
@@ -641,6 +645,10 @@ impl EditorWorkspaceView {
             blame: None,
             blame_head: None,
             blame_line_map: Vec::new(),
+            blame_map_revision: 0,
+            blame_map_task: None,
+            #[cfg(feature = "gui-e2e")]
+            blame_map_computations: 0,
             blame_loading: false,
             #[cfg(feature = "gui-e2e")]
             blame_probe: Default::default(),
@@ -912,7 +920,7 @@ impl EditorWorkspaceView {
         self.diff = None;
         self.blame = None;
         self.blame_head = None;
-        self.blame_line_map.clear();
+        self.invalidate_blame_map();
         self.blame_loading = false;
     }
 
@@ -995,7 +1003,7 @@ impl EditorWorkspaceView {
         // toggle is on) once the fresh content lands below.
         self.blame = None;
         self.blame_head = None;
-        self.blame_line_map.clear();
+        self.invalidate_blame_map();
         self.blame_loading = false;
         let file_req = self.file_req;
         let repo_path = self.repo_path.clone();
@@ -1239,6 +1247,7 @@ impl EditorWorkspaceView {
             Some(if self.show_blame { "true" } else { "false" }),
         );
         self.maybe_load_blame(cx);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1281,14 +1290,8 @@ impl EditorWorkspaceView {
             );
         }
         self.blame = result;
-        self.blame_head = head;
-        let buffer = self.editor.as_ref().map(|editor| editor.read(cx).value());
-        if let Some(head) = &self.blame_head {
-            self.blame_line_map = kagi_domain::blame::buffer_line_map(
-                head,
-                buffer.as_deref().or(self.content.as_deref()).unwrap_or(""),
-            );
-        }
+        self.blame_head = head.map(std::sync::Arc::from);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1495,7 +1498,7 @@ impl EditorWorkspaceView {
                 let current = state.read(cx).value();
                 if this.editor.as_ref() == Some(&state) {
                     let dirty = this.content.as_deref() != Some(current.as_ref());
-                    this.update_blame_map(current.as_ref());
+                    this.update_blame_map(current, cx);
                     if this.dirty != dirty {
                         this.dirty = dirty;
                         cx.notify();
@@ -1550,7 +1553,7 @@ impl EditorWorkspaceView {
             });
             // A HEAD reply can precede this silent programmatic file push.
             let buffer = editor.read(cx).value();
-            self.update_blame_map(buffer.as_ref());
+            self.update_blame_map(buffer, cx);
         }
     }
 

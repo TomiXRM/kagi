@@ -322,11 +322,9 @@ impl KagiApp {
         }
     }
 
-    /// Another menu overlay replaces Settings (About / Keyboard Shortcuts /
-    /// the branch picker from the native menu, #976 review): the trap is
-    /// unmounted with it, so the focus must not stay there. Those overlays
-    /// own Escape through the root, so the focus goes to the root on the
-    /// next render pass ([`Self::sync_pending_focus`]).
+    /// A menu overlay or named task replaces Settings (Keyboard Shortcuts,
+    /// About, or the native-menu branch picker). Release the unmounted trap;
+    /// named dialogs take their own focus, and ordinary overlays use the root.
     pub(super) fn leave_settings_for_overlay(&mut self) {
         self.with_ui(|ui| ui.retire_issue_conversation_scope());
         if matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {

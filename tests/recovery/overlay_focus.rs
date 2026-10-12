@@ -983,10 +983,8 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.close_home_tab(cx));
     draw(cx, window);
 
-    // About (or Keyboard Shortcuts) from the native menu replaces Settings:
-    // the focus leaves the unmounted trap for the root — not for Settings'
-    // return target, the terminal, where Escape (bound `!Terminal`) would
-    // not reach the overlay — so Escape closes it.
+    // About owns the named modal slot; Shortcuts replaces Settings' Info slot.
+    // Both must release the old Settings trap and close through Escape.
     for (command, what) in [
         ("app.about", "About"),
         ("help.shortcuts", "Keyboard Shortcuts"),
@@ -1004,12 +1002,16 @@ pub fn scenario_settings_focus_trap(cx: &mut VisualTestAppContext) {
         .unwrap();
         draw(cx, window);
         assert!(
-            cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+            cx.read(
+                |cx| app.read(cx).menu_overlay.is_some() || app.read(cx).about_modal().is_some()
+            ),
             "{what} replaces Settings"
         );
         keys(cx, window, "escape");
         assert!(
-            cx.read(|cx| app.read(cx).menu_overlay.is_none()),
+            cx.read(
+                |cx| app.read(cx).menu_overlay.is_none() && app.read(cx).about_modal().is_none()
+            ),
             "settings-replaced-overlay-escape: Escape must close {what} opened over Settings"
         );
     }

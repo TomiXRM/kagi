@@ -123,6 +123,7 @@ impl KagiApp {
                 | M::Update(_)
                 | M::SmartCommit(_)
                 | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::PrFields(_)
                 | M::SetUpstream(_)
                 | M::RenameBranch(_)
@@ -166,7 +167,8 @@ impl KagiApp {
                 | M::RemoteBrowse(_)
                 | M::PrFields(_)
                 | M::Clone(_)
-                | M::AnalyzeHelp(_),
+                | M::AnalyzeHelp(_)
+                | M::About(_),
             ) => true,
             None
             | Some(

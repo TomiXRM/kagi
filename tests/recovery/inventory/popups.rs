@@ -51,14 +51,14 @@ pub(super) fn branch_picker_delete(
         })
     )));
 }
-pub(super) fn info_about(
+pub(super) fn about_dialog(
     _: &Fixture,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
     cx: &mut VisualTestAppContext,
 ) {
     command(app, window, cx, "app.about");
-    assert!(cx.read(|cx| matches!(&app.read(cx).menu_overlay, Some(MenuOverlay::Info { .. }))));
+    assert!(cx.read(|cx| app.read(cx).about_modal().is_some()));
 }
 pub(super) fn info_shortcuts(
     _: &Fixture,

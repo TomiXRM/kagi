@@ -1006,6 +1006,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreSave,
     /// Analyze-ignore → Reset-to-defaults button.
     SettingsAnalyzeIgnoreReset,
+    SettingsAnalyzeIgnoreUnsaved,
+    SettingsAnalyzeIgnoreSaved,
+    SettingsAnalyzeIgnoreFailed,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -3520,6 +3523,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
             (En, SettingsAnalyzeIgnoreReset) => "Reset to defaults",
             (Ja, SettingsAnalyzeIgnoreReset) => "デフォルトに戻す",
+            (En, SettingsAnalyzeIgnoreUnsaved) => "Unsaved changes",
+            (Ja, SettingsAnalyzeIgnoreUnsaved) => "未保存の変更",
+            (En, SettingsAnalyzeIgnoreSaved) => "Analyze ignore saved",
+            (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
+            (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
+            (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -4429,6 +4438,11 @@ pub fn commit_button() -> &'static str {
         Lang::En => "Commit",
         Lang::Ja => "commit",
     }
+}
+
+/// Analyze settings failure; the filesystem path and OS cause stay verbatim.
+pub fn analyze_ignore_failed_fmt(detail: &str) -> String {
+    format!("{}: {detail}", Msg::SettingsAnalyzeIgnoreFailed.t())
 }
 
 /// A missing pre-rename history path, with the current filename left verbatim.

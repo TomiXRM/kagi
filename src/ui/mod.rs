@@ -140,6 +140,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod settings_controls;
 mod settings_theme_folder;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
@@ -1164,6 +1165,7 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    pub(crate) settings_controls: settings_controls::SettingsControls,
     /// Settings' single scroll owner survives control updates and redraws.
     pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
@@ -1510,6 +1512,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_controls: Default::default(),
             settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,

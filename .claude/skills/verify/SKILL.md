@@ -139,6 +139,26 @@ the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
 and close/reopen owner lifetime remain covered. These are native Tier A oracles,
 not a change to product safety or Tier B evidence.
 
+For #1298 / #1299 use
+`KAGI_GUI_E2E_ONLY='settings_provider_keys,settings_analyze_ignore_feedback'`
+with KEEP_GOING; run `settings_` for the neighboring baseline. These two
+scenarios explicitly select the production 715px macOS Settings host in
+EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
+renderer's named selected Tab recorder and real Enter/Space down/up after
+focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+values and no generation modal. Analyze clicks actual visible/scroll-reachable
+Save/Reset controls against a directory at the target path and a mode-000
+settings directory: errors retain the draft/dirty marker and original bytes;
+removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
+selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
+
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation
 cleanup. Owner-release coverage starts a real fetch ticker, closes its repository

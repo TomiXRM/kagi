@@ -602,10 +602,7 @@ pub fn build_kagi_entity(
                 window,
                 |app: &mut KagiApp, _, removed: &toast_stack::ToastRemoved, window, cx| {
                     if let Some(root) = app.root_focus.as_ref() {
-                        let closed_focused = removed
-                            .0
-                            .as_ref()
-                            .is_some_and(|focus| focus.is_focused(window));
+                        let closed_focused = removed.was_focused(window);
                         if closed_focused
                             || window.focused(cx).is_none()
                             || !root.contains_focused(window, cx)

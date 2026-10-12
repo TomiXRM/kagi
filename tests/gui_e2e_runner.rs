@@ -294,6 +294,9 @@ mod overlay_focus;
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_controls.rs"]
+mod settings_controls;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
@@ -2268,6 +2271,14 @@ mod macos {
             (
                 "settings_hidden_return_target",
                 Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
+            ),
+            (
+                "settings_provider_keys",
+                Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_analyze_ignore_feedback",
+                Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
             (
                 "settings_switches",

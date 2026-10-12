@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Escape dismisses actionable operation notices instead of immediately re-presenting them on every render, and restores focus to the opener. Dismissal discards any armed release approval but keeps the reconcile requirement, write restrictions and durable Operation Log detail; a new explicit write refusal can offer Inspect again. Unread queued notices and notices displaced by another dialog remain available. (#1366)
+  - Review: queued Checkout/Commit/Merge requests restore the blocking Inspect notice when their session is already waiting for reconciliation, without duplicating an active or queued notice for the same requirement or recreating it during queue ticks.
 - Empty-query command palettes separate Actions, Appearance and Language with localized headings and named accessibility groups. Headings are not keyboard or activation targets; fuzzy-search ranking, disabled reasons, single-row highlighting and the native shortcut column are unchanged. (#1370)
   - Review: returning to the first result restores Actions fully; upward reveal of a section's first row includes its heading. Japanese section/availability descriptions use localized sentence punctuation.
 - Repository document tabs shrink to a zoom-scaled minimum with middle ellipsis, then scroll horizontally; active and keyboard-focused tabs are revealed. A named trailing » menu lists every open repository and Home using the existing popup-menu keyboard/focus contract. Close × buttons expose localized target-specific accessibility names without changing Cmd+W or dirty-close guards. (#1339, #1340)

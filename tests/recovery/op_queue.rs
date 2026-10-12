@@ -588,6 +588,80 @@ pub fn scenario_queue_resumes_after_reconcile(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS queue_resumes_after_reconcile");
 }
 
+pub fn scenario_app_notice_queue_recurrence(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        let fixture = branches_fixture();
+        let repo = fixture.path().canonicalize().unwrap();
+        let before = crate::macos::repo_fingerprint(&repo);
+        let (app, window) = mount(cx, &repo);
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        let (hold, release) = deferred::<()>(cx);
+        KagiApp::hold_next_run_for_e2e(hold);
+        KagiApp::panic_next_run_for_e2e();
+        app.update(cx, |app, cx| app.dblclick_checkout_branch("a", cx));
+        cx.run_until_parked();
+        app.update(cx, |app, cx| app.dblclick_checkout_branch("b", cx));
+        release.send(());
+        tick_until(cx, &app, "Unknown chain settlement", |app| {
+            app.queue_strip_for_e2e(std::time::Instant::now())
+                .is_some_and(|(_, rows, cancelled)| rows.is_empty() && cancelled.len() == 1)
+        });
+        app.update(cx, |app, cx| e2e::poll_app_jobs(app, cx));
+        crate::recovery_operations::paint(cx, window);
+        let id = cx.read(|cx| app.read(cx).app_sessions.reconcile_ids()[0]);
+        cx.simulate_keystrokes(window, "escape");
+        for _ in 0..5 {
+            app.update(cx, |_, cx| cx.notify());
+            crate::recovery_operations::paint(cx, window);
+            assert!(cx.read(|cx| !e2e::active_modal_present(app.read(cx))));
+        }
+        app.update(cx, |app, cx| assert!(e2e::enqueue_checkout(app, "c", cx)));
+        crate::recovery_operations::paint(cx, window);
+        cx.read(|cx| {
+            let state = app.read(cx);
+            assert_eq!(
+                state.app_notice().and_then(|notice| notice.inspect),
+                Some(id),
+                "explicit queued Checkout must reopen the blocking Inspect notice"
+            );
+            assert!(state.app_sessions.needs_reconcile(id));
+            assert_eq!(state.queue_ids_for_e2e().len(), 1);
+        });
+        // Further requests while the same notice is visible must not duplicate it.
+        app.update(cx, |app, cx| assert!(e2e::enqueue_checkout(app, "a", cx)));
+        crate::recovery_operations::paint(cx, window);
+        cx.simulate_keystrokes(window, "enter");
+        crate::recovery_operations::paint(cx, window);
+        assert!(cx.read(|cx| e2e::app_notice_is_acknowledgeable(app.read(cx))));
+        app.update(cx, |app, cx| {
+            assert!(e2e::enqueue_checkout(app, "b", cx));
+            app.open_remote_browse(cx);
+            assert!(e2e::enqueue_checkout(app, "a", cx));
+        });
+        crate::recovery_operations::paint(cx, window);
+        cx.simulate_keystrokes(window, "escape"); // Restore the displaced read.
+        crate::recovery_operations::paint(cx, window);
+        cx.simulate_keystrokes(window, "escape");
+        for _ in 0..5 {
+            advance(cx, 1);
+            app.update(cx, |_, cx| cx.notify());
+            crate::recovery_operations::paint(cx, window);
+            assert!(
+                cx.read(|cx| !e2e::active_modal_present(app.read(cx))),
+                "same-requirement queue requests duplicated the Inspect notice"
+            );
+        }
+        assert_eq!(crate::macos::repo_fingerprint(&repo), before);
+        app.update(cx, |app, _| {
+            assert!(app.app_sessions.needs_reconcile(id));
+            assert!(app.app_sessions.write_lease(&repo).is_err());
+        });
+        unmount(cx, app, window);
+    }
+    eprintln!("[gui-e2e] PASS app_notice_queue_recurrence");
+}
+
 /// A fetch that ended while the queue was idle does not make the next write
 /// look like the tab's own untrackable predecessor (#1018 review).
 pub fn scenario_queue_accepts_after_idle_fetch(cx: &mut VisualTestAppContext) {

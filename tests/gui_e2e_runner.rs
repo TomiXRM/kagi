@@ -1572,6 +1572,18 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_app_notice_modal_replacement),
             ),
             (
+                "app_notice_escape_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_escape_dismiss),
+            ),
+            (
+                "app_notice_acknowledge_dismiss",
+                Box::new(crate::reconcile_unobservable::scenario_app_notice_acknowledge_dismiss),
+            ),
+            (
+                "app_notice_queue_recurrence",
+                Box::new(crate::op_queue::scenario_app_notice_queue_recurrence),
+            ),
+            (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
             ),

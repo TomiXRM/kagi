@@ -57,3 +57,13 @@ text is updated to point at stash as the cleanest rollback point.
 
 One commit in `src/git/ops/merge.rs`. New test: dirty WT + merge plan →
 blocker present, Execute hidden.
+
+## Amendment — 2026-10-13: computed file previews (#1381)
+
+Merge, Cherry-pick and Revert confirmations expose the existing plan's
+`preview_files` as “Files to change (N)” (EN/JA). This is presentation only:
+no `plan_*` computation, blocker, preflight or write behavior changes.
+The dense preview shows status glyphs and at most 25 paths, followed by the
+exact omitted count. Paths use middle ellipsis with their sanitized full value
+in Tooltip/AX. The list belongs to the shared modal scroll body rather than a
+nested scroller, so Cancel/Confirm remain pinned at 940×660 and 167% zoom.

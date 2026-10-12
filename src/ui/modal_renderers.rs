@@ -724,11 +724,9 @@ fn render_plan_modal_card_styled(
     // caps the height and the body takes the overflow, so the buttons stay on
     // screen no matter how long the plan is.
     //
-    // The body does not scroll: each list/prose panel inside carries its own
-    // capped scroll region instead (`modal_shell`'s rule — one scroller per
-    // panel, never one inside another). A user asked for the commit list to be
-    // "boxed and scrollable in the box" like the discard target list
-    // (2026-09-06), which is the same shape the destructive cards use.
+    // Merge/revert file previews use the body scroller without an independent
+    // list scroller (#1381). Other plan cards retain their existing boxed,
+    // individually capped panels: never nest a preview list scroller.
     // The whole dialog as text (title, current→predicted, notes, commits,
     // recovery): popup content had no way to be copied at all.
     let title_text = plan_title_text(&plan.title);
@@ -775,7 +773,20 @@ fn render_plan_modal_card_styled(
     // Fixed blocks stay flex_shrink_0-wrapped: only the panels give up height,
     // and without the guard flex would compress rows instead of scrolling
     // (same T027 bug class as the discard list).
-    let mut body = modal_body().child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    let show_files = matches!(
+        &plan.title,
+        kagi_domain::plan_note::PlanTitle::Merge(_)
+            | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+    );
+    let mut body = if show_files {
+        super::modal_shell::modal_scroll_body()
+    } else {
+        modal_body().id("plan-body")
+    }
+    .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    if show_files {
+        body = body.child(super::modal_preview_files::render(&plan.preview_files));
+    }
 
     // ── Warnings ─────────────────────────────────────────
     // #625: a warning carrying a path list renders as sentence + list, the

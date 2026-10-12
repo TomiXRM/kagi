@@ -122,7 +122,10 @@ fn run_card(
     );
     let footer = e2e::control_bounds(window.window_id(), "modal-footer").expect("footer probe");
     assert!(
-        footer.top() >= viewport.top() && footer.bottom() <= viewport.bottom(),
+        footer.top() >= viewport.top()
+            && footer.bottom() <= viewport.bottom()
+            && footer.left() >= viewport.left()
+            && footer.right() <= viewport.right(),
         "{operation}/{count}: footer outside window: {footer:?} / {viewport:?}"
     );
     assert_preview(window, count);

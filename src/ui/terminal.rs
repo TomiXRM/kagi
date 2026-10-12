@@ -285,10 +285,18 @@ impl ShellWait {
     fn spawn(mut child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
         let slot = Arc::new(Mutex::new(ShellWaitSlot::default()));
         let writer = slot.clone();
+        #[cfg(feature = "gui-e2e")]
+        let wait_error = E2E_WAIT_ERROR.with(|slot| slot.borrow_mut().take());
         std::thread::Builder::new()
             .name("kagi-shell-wait".into())
             .spawn(move || {
-                let exit = match child.wait() {
+                let waited = child.wait();
+                #[cfg(feature = "gui-e2e")]
+                let waited = match wait_error {
+                    Some(reason) => Err(std::io::Error::other(reason)),
+                    None => waited,
+                };
+                let exit = match waited {
                     Ok(status) => ShellExit::Exited {
                         code: status.exit_code(),
                     },
@@ -646,6 +654,7 @@ pub fn resolve_shell() -> String {
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static E2E_SHELL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static E2E_WAIT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -656,6 +665,12 @@ impl crate::ui::KagiApp {
     /// real PTY spawn hands its shell, which a payload unit test cannot.
     pub fn set_terminal_shell_for_e2e(shell: Option<String>) {
         E2E_SHELL.with(|slot| *slot.borrow_mut() = shell);
+    }
+
+    /// Replace the next spawned child's wait result with an error only after
+    /// its real wait finishes; never leave a test shell running or unreaped.
+    pub fn set_next_terminal_wait_error_for_e2e(reason: Option<String>) {
+        E2E_WAIT_ERROR.with(|slot| *slot.borrow_mut() = reason);
     }
 }
 

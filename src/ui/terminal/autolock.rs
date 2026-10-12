@@ -209,11 +209,16 @@ impl KagiApp {
         }
         klog!("terminal: shell wait: gen={} status={}", generation, status);
         shell.exit = Some(exit.clone());
-        if let ShellExit::Exited { code } = &exit {
-            session.state = TerminalState::Exited { code: *code };
-            session.view = None;
-            session.paste_writer = None;
-        }
+        session.state = match &exit {
+            ShellExit::Exited { code } => TerminalState::Exited { code: *code },
+            ShellExit::Unknown(reason) => TerminalState::Failed {
+                reason: reason.clone(),
+            },
+        };
+        // Even a failed wait retires the unusable transport. Unknown process
+        // provenance stays retained and never authorizes releasing its lock.
+        session.view = None;
+        session.paste_writer = None;
         if matches!(exit, ShellExit::Exited { .. })
             && session
                 .auto_lock

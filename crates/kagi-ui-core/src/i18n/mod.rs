@@ -45,7 +45,13 @@ pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
 
 pub fn terminal_exited_title(code: u32) -> String {
-    format!("{} (code {code})", Msg::TerminalExitedTitle.t())
+    match lang() {
+        Lang::En => format!("{} (code {code})", Msg::TerminalExitedTitle.t_for(Lang::En)),
+        Lang::Ja => format!(
+            "{}（終了コード {code}）",
+            Msg::TerminalExitedTitle.t_for(Lang::Ja)
+        ),
+    }
 }
 
 pub fn terminal_failed_hint(reason: &str) -> String {
@@ -2404,15 +2410,15 @@ impl Msg {
             (En, TerminalAutoLockStaleOwner) => "Terminal lock owner, shell, or repository changed; recover the lock manually",
             (Ja, TerminalAutoLockStaleOwner) => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
             (En, TerminalNotStartedTitle) => "Shell not started",
-            (Ja, TerminalNotStartedTitle) => "シェルは未起動です",
+            (Ja, TerminalNotStartedTitle) => "shell は未起動です",
             (En, TerminalExitedTitle) => "Shell exited",
-            (Ja, TerminalExitedTitle) => "シェルが終了しました",
-            (En, TerminalFailedTitle) => "Shell could not start",
-            (Ja, TerminalFailedTitle) => "シェルを起動できませんでした",
+            (Ja, TerminalExitedTitle) => "shell が終了しました",
+            (En, TerminalFailedTitle) => "Shell failed",
+            (Ja, TerminalFailedTitle) => "shell でエラーが発生しました",
             (En, TerminalNotStartedHint) => "Start a shell in this repository.",
-            (Ja, TerminalNotStartedHint) => "このリポジトリでシェルを起動します。",
+            (Ja, TerminalNotStartedHint) => "このリポジトリで shell を起動します。",
             (En, TerminalRestartHint) => "Restart to open a new shell in this repository.",
-            (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しいシェルが開きます。",
+            (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
             (En, BusyMerge) => "merge in progress…",

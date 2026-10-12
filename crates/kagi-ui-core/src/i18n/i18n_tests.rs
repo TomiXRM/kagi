@@ -11,34 +11,43 @@ fn terminal_empty_states_are_localized_and_keep_os_detail() {
         (
             Msg::TerminalNotStartedTitle,
             "Shell not started",
-            "シェルは未起動です",
+            "shell は未起動です",
         ),
         (
             Msg::TerminalExitedTitle,
             "Shell exited",
-            "シェルが終了しました",
+            "shell が終了しました",
         ),
         (
             Msg::TerminalFailedTitle,
-            "Shell could not start",
-            "シェルを起動できませんでした",
+            "Shell failed",
+            "shell でエラーが発生しました",
         ),
         (
             Msg::TerminalNotStartedHint,
             "Start a shell in this repository.",
-            "このリポジトリでシェルを起動します。",
+            "このリポジトリで shell を起動します。",
         ),
         (
             Msg::TerminalRestartHint,
             "Restart to open a new shell in this repository.",
-            "再起動すると、このリポジトリで新しいシェルが開きます。",
+            "再起動すると、このリポジトリで新しい shell が開きます。",
         ),
         (Msg::TerminalRestart, "Restart", "Restart"),
     ] {
         assert_eq!(message.t_for(Lang::En), english);
         assert_eq!(message.t_for(Lang::Ja), japanese);
     }
-    assert!(terminal_exited_title(3).ends_with(" (code 3)"));
+    let _lock = LOCK.lock();
+    let old = ACTIVE.load(Ordering::Relaxed);
+    for (language, expected) in [
+        (Lang::En, "Shell exited (code 3)"),
+        (Lang::Ja, "shell が終了しました（終了コード 3）"),
+    ] {
+        ACTIVE.store(language.index(), Ordering::Relaxed);
+        assert_eq!(terminal_exited_title(3), expected);
+    }
+    ACTIVE.store(old, Ordering::Relaxed);
     let reason = "spawn '/missing/{shell}': No such file or directory (os error 2)";
     assert!(terminal_failed_hint(reason).ends_with(reason));
 }

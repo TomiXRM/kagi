@@ -278,6 +278,12 @@ Operation Log path are retained. Real tab round-trips preserve Exited/Failed
 without another spawn; Restart alone retries. Native log-tail assertions require the
 unchanged shell-exited line once, before the shell-wait status line. The
 recorder proves renderer state, not real VoiceOver or Tier B focus delivery.
+The wait-error leg uses `KagiApp::set_next_terminal_wait_error_for_e2e`:
+the next spawned StandInShell is really waited/reaped before its result is
+replaced by an I/O error. The presentation must become Failed with its reason
+and recover through Restart; provenance stays Unknown, with no unlock offer
+and no shell-exited log line. JA asserts localized `（終了コード N）` and
+the existing `shell` spelling. The one-shot seam compiles only with gui-e2e.
 
 For history bisection, strip repository-location variables exported by
 `git bisect run` before launching a Git fixture. Otherwise a fixture's `git init`

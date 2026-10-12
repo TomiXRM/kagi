@@ -47,7 +47,7 @@ fn assert_block(
             rendered.hint.contains(&reason),
             "failed hint must retain the OS reason"
         );
-        assert!(reason.contains("nonexistent-shell"));
+        assert!(!reason.is_empty());
     }
     let panel = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
     for name in [
@@ -92,29 +92,7 @@ fn exit_three(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
             .unwrap()
             .paste_text("exit 3\n");
     });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        cx.run_until_parked();
-        if cx.read(|cx| {
-            app.read(cx)
-                .ui()
-                .terminal_session
-                .as_ref()
-                .unwrap()
-                .shell
-                .as_ref()
-                .unwrap()
-                .exit
-                == Some(ShellExit::Exited { code: 3 })
-        }) {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "stand-in shell never exited with code 3"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    wait_for_report(cx, app, ShellExit::Exited { code: 3 });
     let lines = kagi_ui_core::klog::tail();
     let started = lines
         .iter()
@@ -176,7 +154,7 @@ fn exited_restarts(
 ) {
     let title = match lang {
         Lang::En => "Shell exited (code 3)",
-        Lang::Ja => "シェルが終了しました (code 3)",
+        Lang::Ja => "shell が終了しました（終了コード 3）",
     };
     for key in ["enter", "space"] {
         exit_three(cx, app);
@@ -231,17 +209,113 @@ fn failed_recovers(
             .state
             .clone()
     });
-    assert!(matches!(failed, TerminalState::Failed { .. }));
+    assert!(
+        matches!(&failed, TerminalState::Failed { reason } if reason.contains("nonexistent-shell"))
+    );
     assert_block(
         cx,
         window,
         failed,
         match lang {
-            Lang::En => "Shell could not start",
-            Lang::Ja => "シェルを起動できませんでした",
+            Lang::En => "Shell failed",
+            Lang::Ja => "shell でエラーが発生しました",
         },
     );
     let _retry_shell = crate::gui_isolation::StandInShell::install();
+    press_restart(cx, window, "space");
+    assert_running(cx, app, window);
+}
+
+fn wait_for_report(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, expected: ShellExit) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .unwrap()
+                .shell
+                .as_ref()
+                .unwrap()
+                .exit
+                .as_ref()
+                == Some(&expected)
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "shell wait did not report {expected:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn unknown_wait_recovers(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    lang: Lang,
+) {
+    let _shell = crate::gui_isolation::StandInShell::install();
+    exit_three(cx, app);
+    draw(cx, window);
+    let reason = "wait: Interrupted system call (os error 4)";
+    KagiApp::set_next_terminal_wait_error_for_e2e(Some(reason.into()));
+    press_restart(cx, window, "enter");
+    assert_running(cx, app, window);
+    cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .paste_text("exit 3\n")
+    });
+    wait_for_report(cx, app, ShellExit::Unknown(reason.into()));
+    assert_block(
+        cx,
+        window,
+        TerminalState::Failed {
+            reason: reason.into(),
+        },
+        match lang {
+            Lang::En => "Shell failed",
+            Lang::Ja => "shell でエラーが発生しました",
+        },
+    );
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let session = state.ui().terminal_session.as_ref().unwrap();
+        assert!(session.view.is_none() && session.paste_writer.is_none());
+        assert!(!session.release_offer_pending);
+        assert!(state.unlock_worktree_modal().is_none());
+    });
+    let lines = kagi_ui_core::klog::tail();
+    let started = lines
+        .iter()
+        .rposition(|line| line.starts_with("[kagi] terminal: started shell="))
+        .unwrap();
+    let lifetime = &lines[started + 1..];
+    assert!(
+        !lifetime
+            .iter()
+            .any(|line| line == "[kagi] terminal: shell exited"),
+        "Unknown must not claim a proven shell exit"
+    );
+    assert_eq!(
+        lifetime
+            .iter()
+            .filter(|line| line.starts_with("[kagi] terminal: shell wait:")
+                && line.ends_with("status=unknown"))
+            .count(),
+        1
+    );
     press_restart(cx, window, "space");
     assert_running(cx, app, window);
 }
@@ -268,6 +342,7 @@ pub fn scenario_terminal_states(cx: &mut VisualTestAppContext) {
             .unwrap();
             assert_running(cx, &app, window);
             exited_restarts(cx, &app, window, lang);
+            unknown_wait_recovers(cx, &app, window, lang);
             failed_recovers(cx, &app, window, lang, fixture.path());
             unmount(cx, app, window);
 
@@ -281,7 +356,7 @@ pub fn scenario_terminal_states(cx: &mut VisualTestAppContext) {
                 TerminalState::NotStarted,
                 match lang {
                     Lang::En => "Shell not started",
-                    Lang::Ja => "シェルは未起動です",
+                    Lang::Ja => "shell は未起動です",
                 },
             );
             crate::app_conflict::click_control(cx, window, "terminal-restart");

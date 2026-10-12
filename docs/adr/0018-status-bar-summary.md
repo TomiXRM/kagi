@@ -11,13 +11,20 @@
 
 ## Amendment — 2026-10-12: bounded branch identity (#1310)
 
-The dense footer keeps its existing summary ordering and panel controls. Long
-branch identity shrinks to a zoom-scaled 60-reference-pixel minimum and end
-ellipsis; Tooltip and the AX label retain the complete branch name. Status chips
-(including ahead/behind and upstream) and the refresh timer retain natural widths.
-Feedback shares compression using its natural flex basis, remains a single-line
-truncated first-line preview, and precedes a nonshrinking Terminal / Operation Log
-cluster. The original footer body and durable Operation Log detail are unchanged.
+The dense footer keeps its existing summary ordering and panel controls. Branch
+identity has a minimum of the lesser of its measured natural width and a
+zoom-scaled 60-reference-pixel width, with end ellipsis when compressed. Short
+names keep their natural size. Visible text, Tooltip and AX share the complete
+control-byte-sanitized branch name; raw repository identity and klog are unchanged.
+Status chips (including ahead/behind and upstream) and the refresh timer retain
+natural widths. Nonempty feedback reserves up to a zoom-scaled 80-reference-pixel
+minimum with a zero flex basis, so branch identity absorbs excess width first.
+The reservation is capped by the measured space remaining after fixed chips,
+timer, controls, padding and the branch minimum (with 1px for layout snapping);
+at 700px/167%, blindly adding both preferred text minima would clip the controls.
+Feedback remains a single-line truncated first-line preview before the
+nonshrinking Terminal / Operation Log cluster. The original footer body and
+durable Operation Log detail are unchanged.
 
 This policy applies to both toolbar presentations, EN/JA and 100%/167% zoom.
 Identity is a read-only label, not an additional Tab stop. Hover exposes its full

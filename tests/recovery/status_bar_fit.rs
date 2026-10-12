@@ -51,14 +51,11 @@ fn assert_fit(win: AnyWindowHandle, dimensions: (f32, f32), branch: &str) -> [gp
         "feedback overlaps Terminal border"
     );
     let (ax, tooltip) = e2e::status_branch_identity().expect("branch metadata");
-    assert_eq!(ax.as_ref(), branch, "full branch AX name");
-    assert_eq!(tooltip.as_ref(), branch, "full branch tooltip");
-    if branch.len() > 1 {
+    let sanitized = kagi_domain::text_safety::sanitize_control_bytes(branch);
+    assert_eq!(ax.as_ref(), sanitized, "full sanitized branch AX name");
+    assert_eq!(tooltip.as_ref(), sanitized, "full sanitized branch tooltip");
+    if branch.len() >= 120 {
         assert!(identity.size.width >= theme::scaled_px(60.) - px(0.5));
-        assert!(
-            identity.size.width < theme::scaled_px(600.),
-            "long branch must truncate"
-        );
     }
     let ahead_behind = bounds("status-ahead-behind");
     let upstream = bounds("status-upstream");
@@ -98,7 +95,7 @@ fn check_window(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimension
     let long = format!("feature/{}", "x".repeat(112));
     assert_eq!(long.len(), 120);
     let mut fixed_widths = None;
-    for branch in ["a", long.as_str()] {
+    for branch in ["a", long.as_str(), "feature/\u{009b}escaped"] {
         for busy in [false, true] {
             app.update(cx, |app, cx| {
                 let summary = &mut app.view_mut().status_summary;
@@ -126,6 +123,13 @@ fn check_window(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimension
             });
             for _ in 0..3 {
                 draw(cx, win, dimensions);
+            }
+            if branch.len() >= 120 {
+                let identity = e2e::control_bounds(win.window_id(), "status-branch").unwrap();
+                assert!(
+                    identity.size.width < natural_width(cx, win, branch) - px(0.5),
+                    "long branch must truncate below its actual natural width"
+                );
             }
             let widths = assert_fit(win, dimensions, branch);
             assert_eq!(
@@ -161,4 +165,129 @@ pub fn scenario_status_bar_fit(cx: &mut VisualTestAppContext) {
         }
     }
     eprintln!("[gui-e2e] PASS status_bar_fit: 120-char branch, fixed chips/timer, Busy/Failed feedback and panel controls fit 700x500/940x660; full tooltip/AX retained in EN/JA, 100%/167%, both toolbar presentations and Apple themes");
+}
+
+fn natural_width(cx: &mut VisualTestAppContext, win: AnyWindowHandle, text: &str) -> gpui::Pixels {
+    cx.update_window(win, |_, window, _| {
+        window
+            .text_system()
+            .shape_line(
+                text.to_owned().into(),
+                px(theme::rem_size_px() * 0.75),
+                &[gpui::TextRun {
+                    len: text.len(),
+                    font: gpui::Font {
+                        family: theme::UI_FONT.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }],
+                None,
+            )
+            .width
+    })
+    .unwrap()
+}
+
+fn review_leg(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+    dimensions: (f32, f32),
+    feedback: bool,
+) {
+    let state = e2e::app_state(repo).unwrap();
+    let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
+    let output = captured.clone();
+    let win: AnyWindowHandle = crate::macos::open_offscreen(
+        cx,
+        size(px(dimensions.0), px(dimensions.1)),
+        move |window, cx| e2e::mount_root(state, window, cx, &output),
+    )
+    .into();
+    let app = captured.borrow().clone().unwrap();
+    cx.run_until_parked();
+    let branch = if feedback {
+        "feature/12345678901234567"
+    } else {
+        "main"
+    };
+    let text = if feedback {
+        "failed"
+    } else {
+        "failed: no current branch"
+    };
+    for busy in [false, true] {
+        app.update(cx, |app, cx| {
+            let summary = &mut app.view_mut().status_summary;
+            summary.branch = branch.into();
+            summary.is_dirty = true;
+            summary.staged = 2;
+            summary.unstaged = 3;
+            summary.conflict_count = 1;
+            summary.stash_count = 1;
+            summary.ahead = Some(12);
+            summary.behind = Some(3);
+            summary.no_upstream = false;
+            summary.upstream_name = "origin/main".into();
+            summary.last_refresh_secs = 1_700_000_000;
+            app.status_footer = if busy {
+                FooterStatus::Busy(text.into())
+            } else {
+                FooterStatus::Failed(text.into())
+            };
+            cx.notify();
+        });
+        for _ in 0..3 {
+            draw(cx, win, dimensions);
+        }
+        if feedback {
+            let width = e2e::footer_message_bounds().size.width;
+            let minimum = natural_width(cx, win, text).min(theme::scaled_px(80.));
+            assert!(
+                width + px(0.5) >= minimum,
+                "short feedback sacrificed to branch: {width:?} < {minimum:?}"
+            );
+        } else {
+            let identity = e2e::control_bounds(win.window_id(), "status-branch").unwrap();
+            let dirty = e2e::control_bounds(win.window_id(), "status-dirty").unwrap();
+            let gap = dirty.left() - identity.left() - natural_width(cx, win, branch);
+            assert!(
+                (gap - theme::scaled_px(4.)).abs() <= px(1.),
+                "short branch adds blank space before chip: gap={gap:?}"
+            );
+        }
+    }
+    unmount(cx, app, win);
+}
+
+fn review_matrix(cx: &mut VisualTestAppContext, feedback: bool) {
+    let _restore = ToolbarRestore::capture(cx);
+    let fixture = build_fixture();
+    for appearance in ["apple-light", "apple-dark"] {
+        assert!(theme::set_active(appearance));
+        for language in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", language);
+            i18n::init_lang();
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                for display in [
+                    settings::ToolbarDisplay::IconOnly,
+                    settings::ToolbarDisplay::IconAndText,
+                ] {
+                    settings::set_toolbar_display(display);
+                    for dimensions in [(700., 500.), (940., 660.)] {
+                        review_leg(cx, fixture.path(), dimensions, feedback);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn scenario_status_bar_feedback_min(cx: &mut VisualTestAppContext) {
+    review_matrix(cx, true);
+}
+
+pub fn scenario_status_bar_short_branch(cx: &mut VisualTestAppContext) {
+    review_matrix(cx, false);
 }

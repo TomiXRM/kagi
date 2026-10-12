@@ -64,6 +64,11 @@ and nonoverlapping in-window panel controls across EN/JA, 100%/167%, both
 toolbar presentations and Apple themes. Probes are flow-neutral; renderer-fed
 metadata is not native VoiceOver delivery. Real hover/Tab and before/after
 screenshots remain Tier B.
+Review legs `status_bar_feedback_min` and `status_bar_short_branch` use the same
+matrix to preserve short Failed/Busy feedback beside a 25-character branch and
+the natural `main`-to-dirty-chip gap. They fail before the feedback-first and
+natural-width minimum policies respectively. The original fit scenario also
+checks sanitized C1-control branch identity through the label/Tooltip/AX path.
 
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.

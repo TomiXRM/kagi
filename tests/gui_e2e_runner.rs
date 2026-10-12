@@ -2333,6 +2333,8 @@ mod macos {
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
+            ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
+            ("status_bar_short_branch", Box::new(crate::status_bar_fit::scenario_status_bar_short_branch)),
             (
                 "pr_threads_via_gh",
                 Box::new(crate::pr_threads::scenario_pr_threads_via_gh),

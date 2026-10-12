@@ -84,6 +84,24 @@ fn panel_button(
     keyboard_nav::focusable(el)
 }
 
+fn status_text_width(text: SharedString, window: &Window) -> gpui::Pixels {
+    let len = text.len();
+    window
+        .text_system()
+        .shape_line(
+            text,
+            px(theme::rem_size_px() * 0.75),
+            &[gpui::TextRun {
+                len,
+                font: gpui::font(UI_FONT),
+                color: rgb(theme().text_main).into(),
+                ..Default::default()
+            }],
+            None,
+        )
+        .width
+}
+
 impl KagiApp {
     /// Status bar slot — the 22 px footer (T-BP-003 full implementation).
     ///
@@ -97,6 +115,7 @@ impl KagiApp {
         &mut self,
         status_footer: FooterStatus,
         bottom_panel_open: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let summary = self.view().status_summary.clone();
@@ -127,13 +146,21 @@ impl KagiApp {
         {
             status_vm.chips.push(chip);
         }
-        let branch_text = SharedString::from(status_vm.branch);
+        let branch_text = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+            &status_vm.branch,
+        ));
+        let branch_min_width =
+            status_text_width(branch_text.clone(), window).min(theme::scaled_px(60.));
+        // Bar padding, two panel-button widths, their margins and feedback gap.
+        let mut fixed_width = theme::scaled_px(16. + 2. * 24. + 4. + 2. + 6.);
         let branch_tip = branch_text.clone();
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_status_branch_identity(branch_text.clone(), branch_tip.clone());
 
         // ── Last refresh time ──────────────────────────────────
         let refresh_label = if summary.last_refresh_secs > 0 {
+            let text = SharedString::from(format_hms(summary.last_refresh_secs));
+            fixed_width += status_text_width(text.clone(), window) + theme::scaled_px(6.);
             Some(
                 div()
                     .id("status-refresh-time")
@@ -141,7 +168,7 @@ impl KagiApp {
                     .ml(theme::scaled_px(6.))
                     .text_color(rgb(theme().text_muted))
                     .flex_shrink_0()
-                    .child(SharedString::from(format_hms(summary.last_refresh_secs)))
+                    .child(text)
                     .when(cfg!(feature = "gui-e2e"), |el| {
                         el.child(super::e2e::measure_inside("status-refresh-time"))
                     }),
@@ -241,7 +268,7 @@ impl KagiApp {
                     .aria_label(branch_text.clone())
                     .relative()
                     .flex_shrink(1.)
-                    .min_w(theme::scaled_px(60.))
+                    .min_w(branch_min_width)
                     .truncate()
                     .text_color(rgb(theme().text_main))
                     .tooltip(move |window, cx| Tooltip::new(branch_tip.clone()).build(window, cx))
@@ -267,14 +294,17 @@ impl KagiApp {
                 FetchAge => (theme().text_muted, 6.),
                 FetchStale => (theme().color_warning, 6.),
             };
+            let text = SharedString::from(chip.text.clone());
+            fixed_width += status_text_width(text.clone(), window) + theme::scaled_px(margin);
             bar = bar.child(
                 div()
                     .relative()
                     .ml(theme::scaled_px(margin))
                     .text_color(rgb(color))
                     .flex_shrink_0()
-                    .child(SharedString::from(chip.text.clone()))
+                    .child(text)
                     .when(cfg!(feature = "gui-e2e"), |el| match chip.role {
+                        Dirty => el.child(super::e2e::measure_inside("status-dirty")),
                         AheadBehind => el.child(super::e2e::measure_inside("status-ahead-behind")),
                         UpstreamName => el.child(super::e2e::measure_inside("status-upstream")),
                         _ => el,
@@ -292,16 +322,22 @@ impl KagiApp {
         // wraps is laid out tall and then *centre*-clipped — the first line
         // (op name + reason) scrolls out of the bar and a middle line shows.
         // `footer_line` collapses it to the first line and `truncate()` keeps
-        // it one line at any width; `min_w_0` lets it shrink past its own text
-        // so the Terminal / Operation Log icons stay reachable at 320 px. The
-        // untruncated body is unchanged in the Operation Log and the oplog.
-        // A natural basis shares compression with branch identity instead
-        // of a zero-basis flex_1 leaving all remaining space to the branch.
+        // it one line at any width. A zero flex basis and readable nonempty
+        // minimum reserve feedback before branch identity absorbs excess width.
+        // The full body is unchanged in the Operation Log and the oplog.
+        let feedback_min_width = if footer_text.is_empty() {
+            px(0.)
+        } else {
+            // At 700px/167%, fixed chips plus both preferred text minima can
+            // exceed the bar. Reserve only actual room, with 1px for snapping.
+            (window.viewport_size().width - fixed_width - branch_min_width - px(1.))
+                .max(px(0.))
+                .min(theme::scaled_px(80.))
+        };
         let mut message = div()
             .id("status-footer-msg")
-            .flex_grow(1.)
-            .flex_shrink(1.)
-            .min_w_0()
+            .flex_1()
+            .min_w(feedback_min_width)
             .ml(theme::scaled_px(6.))
             .truncate()
             .text_color(rgb(footer_color))

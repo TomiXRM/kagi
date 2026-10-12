@@ -40,6 +40,11 @@ pub(super) struct PendingFocus {
     screen: FocusScreen,
 }
 
+pub(super) struct AlertReturnFocus {
+    opener: Option<PendingFocus>,
+    trap: FocusHandle,
+}
+
 impl KagiApp {
     fn focus_screen(&self) -> FocusScreen {
         if self.home_in_front() {
@@ -133,9 +138,16 @@ impl KagiApp {
             && self.front_layer(cx) == FrontLayer::Modal
             && self.alert_return_focus.is_none()
         {
-            self.alert_return_focus = window.focused(cx).map(|focus| PendingFocus {
-                focus,
-                screen: self.focus_screen(),
+            let trap = self
+                .modal_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            self.alert_return_focus = Some(AlertReturnFocus {
+                opener: window.focused(cx).map(|focus| PendingFocus {
+                    focus,
+                    screen: self.focus_screen(),
+                }),
+                trap,
             });
         }
         // A restored control may remain drawn during its close animation and
@@ -229,24 +241,36 @@ impl KagiApp {
             && self.active_modal_needs_alert_trap()
         {
             let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
+            if let Some(saved) = self.alert_return_focus.as_mut() {
+                if saved.trap != *focus {
+                    saved.trap = focus.clone();
+                }
+            }
             if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
                 window.focus(focus, cx);
             }
         }
         if !self.active_modal_needs_alert_trap() {
-            if let Some(opener) = self.alert_return_focus.take() {
-                let trapped = self.modal_focus.as_ref().is_some_and(|focus| {
-                    focus.is_focused(window) || focus.contains_focused(window, cx)
-                });
-                // Do not steal focus from a newer modal or another key owner.
-                if trapped && !self.has_active_modal() && !menu_visible {
-                    let valid = opener.screen == self.focus_screen()
-                        && self
-                            .root_focus
-                            .as_ref()
-                            .is_some_and(|root| root.contains(&opener.focus, window));
-                    if let Some(focus) = valid
-                        .then_some(opener.focus)
+            if let Some(saved) = self.alert_return_focus.take() {
+                let trapped =
+                    saved.trap.is_focused(window) || saved.trap.contains_focused(window, cx);
+                // A new named frame may intentionally reuse modal_focus.
+                // Its own focus is not a stranded alert focus.
+                let new_owner = self.active_modal_has_named_frame()
+                    || self.active_modal_input_focused(window, cx);
+                if trapped && !new_owner && !menu_visible {
+                    let opener = (!self.has_active_modal())
+                        .then_some(saved.opener)
+                        .flatten()
+                        .filter(|opener| {
+                            opener.screen == self.focus_screen()
+                                && self
+                                    .root_focus
+                                    .as_ref()
+                                    .is_some_and(|root| root.contains(&opener.focus, window))
+                        });
+                    if let Some(focus) = opener
+                        .map(|opener| opener.focus)
                         .or_else(|| self.root_focus.clone())
                     {
                         window.focus(&focus, cx);

@@ -1297,7 +1297,7 @@ pub struct KagiApp {
     /// Focus and screen identity captured before an overlay opened (#812 / #976).
     pending_focus: Option<overlay_focus::PendingFocus>,
     /// Alert opener, kept separate from pending focus applied during rendering.
-    alert_return_focus: Option<overlay_focus::PendingFocus>,
+    alert_return_focus: Option<overlay_focus::AlertReturnFocus>,
     /// A focus returned while a pane still animates closed; checked for
     /// membership again on later frames when its control may have unmounted.
     restored_focus: Option<gpui::FocusHandle>,

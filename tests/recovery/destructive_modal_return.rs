@@ -154,6 +154,98 @@ pub fn scenario_dirty_guard_focus_trap(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS dirty_guard_focus_trap");
 }
 
+pub fn scenario_alert_focus_reload(cx: &mut VisualTestAppContext) {
+    alert_focus_transition(cx, true);
+}
+
+pub fn scenario_alert_focus_notice(cx: &mut VisualTestAppContext) {
+    alert_focus_transition(cx, false);
+}
+
+fn alert_focus_transition(cx: &mut VisualTestAppContext, reload: bool) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+        let fixture = build_fixture();
+        let repo = fixture.path();
+        git_fixture::git(repo, &["branch", "focus-transition-target"]);
+        let (app, window) = mount(cx, repo);
+        app.update(cx, |app, cx| {
+            app.set_lang(lang, cx);
+            if reload {
+                app.open_amend_modal_with_message(
+                    kagi_git::AmendMode::MessageOnly,
+                    "focus reload".into(),
+                    cx,
+                );
+            } else {
+                app.open_delete_branch_modal("focus-transition-target", cx);
+            }
+        });
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(cx.read(|cx| if reload {
+            app.read(cx).amend_modal().is_some()
+        } else {
+            app.read(cx).delete_branch_modal().is_some()
+        }));
+        if reload {
+            app.update(cx, |app, cx| app.reload(cx));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                cx.run_until_parked();
+                paint(cx, window);
+                if cx.read(|cx| app.read(cx).amend_modal().is_none()) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "reload did not retire alert"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
+            let before = cx.read(|cx| app.read(cx).sidebar.visible);
+            cx.simulate_keystrokes(window, "secondary-b");
+            cx.run_until_parked();
+            assert_ne!(
+                cx.read(|cx| app.read(cx).sidebar.visible),
+                before,
+                "{lang:?}: reload retiring the trap must restore root actions"
+            );
+            cx.simulate_keystrokes(window, "secondary-b");
+            cx.run_until_parked();
+        } else {
+            app.update(cx, |app, cx| {
+                kagi::ui::e2e::deliver_app_notice(app, "Queued behind alert");
+                cx.notify();
+            });
+            cx.simulate_keystrokes(window, "escape");
+            cx.run_until_parked();
+            paint(cx, window);
+            assert_eq!(
+                cx.read(|cx| kagi::ui::e2e::app_notice_message(app.read(cx)).map(str::to_owned)),
+                Some("Queued behind alert".into())
+            );
+            cx.simulate_keystrokes(window, "escape");
+            cx.run_until_parked();
+            paint(cx, window);
+            assert!(
+                cx.read(|cx| app.read(cx).app_notice().is_none()),
+                "{lang:?}: the successor notice must receive Escape"
+            );
+        }
+        assert!(
+            !git_fixture::git_output(repo, &["branch", "--list", "focus-transition-target"])
+                .is_empty()
+        );
+        unmount(cx, app, window);
+    }
+    eprintln!(
+        "[gui-e2e] PASS alert_focus_{}",
+        if reload { "reload" } else { "notice" }
+    );
+}
+
 pub fn scenario_destructive_modal_return(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {

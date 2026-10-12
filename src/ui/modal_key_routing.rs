@@ -149,6 +149,29 @@ impl KagiApp {
         self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some()
     }
 
+    /// Cards rendered through input_dialog_frame own their replacement focus,
+    /// including fieldless named tasks that reuse the shared modal handle.
+    pub(super) fn active_modal_has_named_frame(&self) -> bool {
+        use modals::ActiveModal as M;
+        matches!(
+            self.active_modal.as_ref(),
+            Some(
+                M::CreateBranch(_)
+                    | M::CreateTag(_)
+                    | M::CreateWorktree(_)
+                    | M::StashPush(_)
+                    | M::RenameBranch(_)
+                    | M::SetUpstream(_)
+                    | M::WorktreeLockReason(_)
+                    | M::EditorFsPrompt(_)
+                    | M::RemoteBrowse(_)
+                    | M::PrFields(_)
+                    | M::Clone(_)
+                    | M::AnalyzeHelp(_)
+            )
+        )
+    }
+
     /// Attach the complete key routing for the single modal slot. Both the
     /// workspace and Welcome render paths pass through this wrapper, so a new
     /// modal key cannot be wired on only one surface.

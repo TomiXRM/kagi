@@ -1366,6 +1366,14 @@ mod macos {
                 Box::new(crate::destructive_modal_return::scenario_dirty_guard_focus_trap),
             ),
             (
+                "alert_focus_reload",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_reload),
+            ),
+            (
+                "alert_focus_notice",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_notice),
+            ),
+            (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),

@@ -1,7 +1,7 @@
 //! Real drawn list roles, Tab traversal, keyboard reveal and activation.
 use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::{AnyWindowHandle, Entity, Role, VisualTestAppContext};
+use gpui::{AnyWindowHandle, Entity, Focusable, Role, VisualTestAppContext};
 use kagi::ui::{e2e, i18n::Lang, list_a11y, theme, KagiApp};
 use kagi_domain::github::{Issue, IssueListSnapshot, IssueState};
 
@@ -500,23 +500,61 @@ fn branch_case(
                     _ => assert_eq!(app.rename_branch_modal().expect("rename form").old_name, last),
                 }
             });
-            let repository = git2::Repository::open(repo).unwrap();
-            assert_eq!(
-                repository.head().unwrap().target(),
-                Some(head),
-                "selection must not checkout before approval"
-            );
-            assert!(
-                repository
-                    .find_branch(&last, git2::BranchType::Local)
-                    .is_ok(),
-                "selection must not delete/rename before approval"
-            );
+            if command == "branch.rename" {
+                assert_rename_typing(cx, app, window);
+            }
+            assert_branch_unchanged(repo, &last, head);
             keys(cx, window, "escape");
             cx.run_until_parked();
             draw(cx, window);
         }
     }
+}
+
+fn assert_rename_typing(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let input = cx.read(|cx| {
+        app.read(cx)
+            .rename_branch_modal()
+            .unwrap()
+            .input_state
+            .clone()
+            .expect("Rename input")
+    });
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            input.read(cx).focus_handle(cx).is_focused(window)
+        })
+        .unwrap(),
+        "Rename input keeps focus after BranchPicker activation"
+    );
+    let before = cx.read(|cx| input.read(cx).value().to_string());
+    keys(cx, window, "z");
+    draw(cx, window);
+    let after = cx.read(|cx| input.read(cx).value().to_string());
+    assert_ne!(
+        after, before,
+        "typing reaches the Rename input without another click"
+    );
+    assert!(after.contains('z'));
+}
+
+fn assert_branch_unchanged(repo: &std::path::Path, last: &str, head: git2::Oid) {
+    let repository = git2::Repository::open(repo).unwrap();
+    assert_eq!(
+        repository.head().unwrap().target(),
+        Some(head),
+        "selection must not checkout before approval"
+    );
+    assert!(
+        repository
+            .find_branch(last, git2::BranchType::Local)
+            .is_ok(),
+        "selection must not delete/rename before approval"
+    );
 }
 pub fn scenario_branch_picker_keyboard(cx: &mut VisualTestAppContext) {
     let fixtures: Vec<_> = [1, 20, 200]

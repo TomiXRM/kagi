@@ -116,5 +116,9 @@ single candidate fits without clipping at fractional zoom. Enter/Space only rout
 the focused exact branch name to the existing Checkout/Delete/Rename
 plan handler; no write occurs before approval. Escape shares overlay
 focus return, and owner departure drops the snapshot and its row handles.
+Checkout/Delete schedule root focus for their approval cards. Rename instead
+clears pending focus: its input-modal initialization owns the first focus,
+which must not be overwritten after rendering. Typing reaches the new-name
+field immediately after either keyboard activation.
 This chooser is distinct from the contextual submenu hierarchy above.
 

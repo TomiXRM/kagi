@@ -176,11 +176,20 @@ fn picker_row(
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _window, cx| {
         if !matches!(&this.menu_overlay, Some(MenuOverlay::BranchPicker { rows, .. }) if Rc::ptr_eq(rows, &snapshot)) { return; }
         this.menu_overlay = None;
-        this.focus_root_for_modal();
         match mode {
-            BranchPickerMode::Checkout => this.open_plan_modal(raw.clone(), cx),
-            BranchPickerMode::Delete => this.open_delete_branch_modal(raw.clone(), cx),
-            BranchPickerMode::Rename => this.open_rename_branch_modal(raw.clone()),
+            BranchPickerMode::Checkout => {
+                this.focus_root_for_modal();
+                this.open_plan_modal(raw.clone(), cx);
+            }
+            BranchPickerMode::Delete => {
+                this.focus_root_for_modal();
+                this.open_delete_branch_modal(raw.clone(), cx);
+            }
+            BranchPickerMode::Rename => {
+                // The input's first render owns focus; a delayed root target steals it.
+                this.pending_focus = None;
+                this.open_rename_branch_modal(raw.clone());
+            }
         }
         cx.notify();
     });

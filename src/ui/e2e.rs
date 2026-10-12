@@ -8,6 +8,11 @@
 //! Plain helpers may compile in normal builds, but must not require
 //! `gpui/test-support`; the native runner opts into that dependency explicitly.
 
+#[cfg(feature = "gui-e2e")]
+pub use super::home_clone_card::{
+    clone_destination_presentation, take_clone_copy_activations, CloneDestinationPresentation,
+};
+
 use std::cell::RefCell;
 use std::path::Path;
 pub mod commit_panel_labels;
@@ -192,6 +197,7 @@ pub struct ControlPaint {
     pub font_weight: gpui::FontWeight,
     pub text_color: gpui::Hsla,
     pub ellipsis: bool,
+    pub middle_ellipsis: bool,
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -216,6 +222,10 @@ fn record_control_paint(name: &str, bounds: gpui::Bounds<gpui::Pixels>, window: 
         ellipsis: matches!(
             window.text_style().text_overflow.as_ref(),
             Some(gpui::TextOverflow::Truncate(affix)) if affix.as_ref() == "…"
+        ),
+        middle_ellipsis: matches!(
+            window.text_style().text_overflow.as_ref(),
+            Some(gpui::TextOverflow::TruncateMiddle(affix)) if affix.as_ref() == "…"
         ),
     };
     CONTROL_PAINTS.with(|map| {

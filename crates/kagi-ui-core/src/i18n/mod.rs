@@ -741,6 +741,8 @@ pub enum Msg {
     /// `{}` = the folder that will be created.
     CloneWillCreate,
     CloneChooseFolder,
+    CloneChangeFolder,
+    CloneCopyLocation,
     CloneConfirm,
     CloneBusy,
     /// `{}` = elapsed time, `m:ss`.
@@ -3066,6 +3068,10 @@ impl Msg {
             (Ja, CloneWillCreate) => "{} を作成します",
             (En, CloneChooseFolder) => "Choose…",
             (Ja, CloneChooseFolder) => "選択…",
+            (En, CloneChangeFolder) => "Change…",
+            (Ja, CloneChangeFolder) => "変更…",
+            (En, CloneCopyLocation) => "Copy Location",
+            (Ja, CloneCopyLocation) => "保存先をコピー",
             (En, CloneConfirm) => "Clone",
             (Ja, CloneConfirm) => "clone",
             (En, CloneBusy) => "A clone is already running in this window. Wait for it to finish.",

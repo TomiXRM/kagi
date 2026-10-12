@@ -14,7 +14,7 @@ use super::home_github::CloneModal;
 use super::i18n::Msg;
 use super::modal_renderers::modal_overlay;
 use super::render_helpers::safe_text;
-use super::theme::{self, theme};
+use super::theme::theme;
 use super::KagiApp;
 
 const CARD_W: f32 = 480.;
@@ -55,16 +55,55 @@ pub(crate) fn render_clone_modal(
         app.change_clone_parent(cx);
     });
 
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap_5()
-        .child(header(&modal))
-        .child(location(&modal, choose, cx))
+    let body = clone_body(&modal, choose, cx);
+    let buttons = clone_footer(
+        modal.started.is_some(),
+        disabled_reason,
+        cancel,
+        confirm,
+        cx,
+    );
+    let card = super::modal_shell::modal_card(CARD_W)
+        .relative()
+        .child(super::e2e::measure_inside("clone-card-bounds"))
+        .child(body)
+        .child(buttons.flex_shrink_0());
+
+    let esc = cx.listener(|app, e: &KeyDownEvent, window, cx| {
+        if e.keystroke.key == "escape" {
+            app.cancel_clone();
+            if let Some(root) = app.root_focus.clone() {
+                window.focus(&root, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    });
+    let card = super::modal_renderers::input_dialog_frame(
+        "clone-card",
+        &title,
+        available.then_some(Msg::CloneConfirm.t()),
+        card,
+        focus_handle.as_ref(),
+        |frame| frame.on_key_down(esc),
+        cx,
+    );
+    modal_overlay(super::e2e::measure_control("active-modal/clone", card)).into_any_element()
+}
+
+fn clone_body(
+    modal: &CloneModal,
+    choose: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    let mut body = super::modal_shell::modal_scroll_body()
+        .relative()
+        .child(super::e2e::measure_inside("clone-body"))
+        .child(header(modal))
+        .child(location(modal, choose, cx))
         .children(modal.started.map(progress));
     if let Some(target) = &modal.target {
-        // The shared tinted note rows: warnings read as notes, blockers as
-        // alerts to assistive technology (#354).
+        // Warnings remain notes and blockers alerts to assistive technology.
         let notes = target
             .plan
             .warnings
@@ -78,20 +117,36 @@ pub(crate) fn render_clone_modal(
                     .map(|n| (true, "\u{2717}", theme().color_blocker, n)),
             );
         for (i, (blocker, glyph, color, note)) in notes.enumerate() {
-            body = body.child(super::plan_card_rows::render_note_row(
-                SharedString::from(format!("clone-note-{i}")),
-                blocker,
-                glyph,
-                color,
-                &plan_note_text(note),
-                true,
-            ));
+            let id = SharedString::from(format!("clone-note-{i}"));
+            body = body.child(
+                div()
+                    .relative()
+                    .flex_shrink_0()
+                    .child(super::e2e::measure_inside(id.to_string()))
+                    .child(super::plan_card_rows::render_note_row(
+                        id,
+                        blocker,
+                        glyph,
+                        color,
+                        &plan_note_text(note),
+                        true,
+                    )),
+            );
         }
     }
+    body
+}
+
+fn clone_footer(
+    running: bool,
+    disabled_reason: Option<SharedString>,
+    cancel: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    confirm: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    cx: &gpui::App,
+) -> gpui::Div {
     let buttons = super::button_style::modal_button_row();
-    let buttons = if modal.started.is_some() {
-        // No cancel in v1 (ADR-0219 decision 6): the card can only step
-        // aside; the clone keeps going and its result arrives as usual.
+    if running {
+        // ADR-0219 decision 6: Hide steps aside without stopping the clone.
         buttons.child(super::e2e::measure_control(
             "clone-hide",
             modal_button(
@@ -127,41 +182,7 @@ pub(crate) fn render_clone_modal(
                     cx,
                 ),
             ))
-    };
-    let card = div()
-        .w(theme::scaled_px(CARD_W))
-        .flex()
-        .flex_col()
-        .gap_6()
-        .p_6()
-        .rounded_xl()
-        .bg(rgb(theme().elevated_surface(theme().panel)))
-        .border_1()
-        .border_color(rgb(theme().elevated_border(theme().surface)))
-        .shadow_lg()
-        .child(body)
-        .child(buttons);
-
-    let esc = cx.listener(|app, e: &KeyDownEvent, window, cx| {
-        if e.keystroke.key == "escape" {
-            app.cancel_clone();
-            if let Some(root) = app.root_focus.clone() {
-                window.focus(&root, cx);
-            }
-            cx.stop_propagation();
-            cx.notify();
-        }
-    });
-    let card = super::modal_renderers::input_dialog_frame(
-        "clone-card",
-        &title,
-        available.then_some(Msg::CloneConfirm.t()),
-        card,
-        focus_handle.as_ref(),
-        |frame| frame.on_key_down(esc),
-        cx,
-    );
-    modal_overlay(super::e2e::measure_control("active-modal/clone", card)).into_any_element()
+    }
 }
 
 /// The repository's name, and under it `owner/repo · host` with its
@@ -175,10 +196,14 @@ fn header(modal: &CloneModal) -> impl IntoElement {
         .gap_2()
         .text_sm()
         .text_color(rgb(theme().text_muted))
-        .child(SharedString::from(format!(
-            "{} · {}",
-            listing.name_with_owner, listing.host
-        )));
+        .child(
+            destination_path(
+                "clone-source",
+                safe_text(&format!("{} · {}", listing.name_with_owner, listing.host)),
+            )
+            .flex_1()
+            .min_w(px(0.)),
+        );
     for (on, label) in [
         (listing.is_private, Msg::HomeGithubPrivate.t()),
         (listing.is_fork, Msg::HomeGithubFork.t()),
@@ -204,30 +229,26 @@ fn header(modal: &CloneModal) -> impl IntoElement {
         .flex_col()
         .gap_1()
         .child(
-            div()
-                .text_xl()
-                .text_color(rgb(theme().text_main))
-                .child(SharedString::from(
-                    Msg::CloneTitle.t().replace("{}", listing.name()),
-                )),
+            destination_path(
+                "clone-title",
+                safe_text(&Msg::CloneTitle.t().replace("{}", listing.name())),
+            )
+            .text_xl()
+            .text_color(rgb(theme().text_main)),
         )
         .child(sub)
 }
 
-/// The folder the clone goes into: a field showing the chosen folder (or
-/// asking for one) with Choose…, and the folder that will be created.
+/// The resolved destination and its unchanged system parent-picker action.
 fn location(
     modal: &CloneModal,
     choose: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
     cx: &gpui::App,
 ) -> impl IntoElement {
-    let chosen = modal.target.as_ref().and_then(|target| {
-        target
-            .request
-            .dest
-            .parent()
-            .map(|p| p.display().to_string())
-    });
+    let chosen = modal
+        .target
+        .as_ref()
+        .map(|target| target.request.dest.display().to_string());
     let field = div()
         .flex_1()
         .min_w(px(0.))
@@ -238,26 +259,16 @@ fn location(
         .border_1()
         .border_color(rgb(theme().surface))
         .text_sm()
-        .truncate()
         .child(match &chosen {
-            Some(path) => div()
+            Some(path) => destination_path("clone-destination", safe_text(path))
                 .text_color(rgb(theme().text_main))
-                .child(safe_text(path)),
+                .into_any_element(),
             None => div()
                 .text_color(rgb(theme().text_muted))
-                .child(SharedString::from(Msg::CloneNoLocation.t())),
+                .child(SharedString::from(Msg::CloneNoLocation.t()))
+                .into_any_element(),
         });
-    let created = modal.target.as_ref().map(|target| {
-        div()
-            .text_xs()
-            .text_color(rgb(theme().text_muted))
-            .truncate()
-            .child(safe_text(
-                &Msg::CloneWillCreate
-                    .t()
-                    .replace("{}", &target.request.dest.display().to_string()),
-            ))
-    });
+    let created = chosen.as_ref().map(|path| destination_summary(path, cx));
     div()
         .flex()
         .flex_col()
@@ -279,7 +290,11 @@ fn location(
                     "clone-change-folder",
                     modal_button(
                         "clone-change-folder",
-                        Msg::CloneChooseFolder.t(),
+                        if chosen.is_some() {
+                            Msg::CloneChangeFolder.t()
+                        } else {
+                            Msg::CloneChooseFolder.t()
+                        },
                         ModalButtonKind::Secondary,
                         modal
                             .started
@@ -290,6 +305,70 @@ fn location(
                 )),
         )
         .children(created)
+}
+
+fn destination_summary(path: &str, cx: &gpui::App) -> impl IntoElement {
+    let summary = safe_text(&Msg::CloneWillCreate.t().replace("{}", path));
+    let copy = path.to_owned();
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .child(
+            destination_path("clone-destination-summary", summary)
+                .flex_1()
+                .min_w(px(0.))
+                .text_xs()
+                .text_color(rgb(theme().text_muted)),
+        )
+        .child(super::e2e::measure_control(
+            "clone-copy-location",
+            modal_button(
+                "clone-copy-location",
+                Msg::CloneCopyLocation.t(),
+                ModalButtonKind::Secondary,
+                None,
+                move |_, _, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    CLONE_COPY_ACTIVATIONS.with(|count| count.set(count.get() + 1));
+                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copy.clone()));
+                    cx.stop_propagation();
+                },
+                cx,
+            ),
+        ))
+}
+
+/// Full text reaches tooltip and AX; only the native text paint is shortened.
+fn destination_path(id: &'static str, full: SharedString) -> gpui::Stateful<gpui::Div> {
+    let tooltip = full.clone();
+    #[cfg(feature = "gui-e2e")]
+    if id == "clone-destination" {
+        record_clone_destination(Some(&full), Some(&full), Some(&tooltip));
+    }
+    #[cfg(feature = "gui-e2e")]
+    if id == "clone-destination-summary" {
+        CLONE_DESTINATION.with(|slot| {
+            if let Some(presentation) = slot.borrow_mut().as_mut() {
+                presentation.summary = Some(full.to_string());
+            }
+        });
+    }
+    div()
+        .id(id)
+        .role(gpui::Role::Label)
+        .aria_label(full.clone())
+        .aria_description(full.clone())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis_middle()
+        .relative()
+        .child(super::e2e::measure_inside(id))
+        .child(full)
 }
 
 /// The running clone: a spinner with elapsed time. Redrawn every second by
@@ -320,4 +399,46 @@ fn progress(started: std::time::Instant) -> impl IntoElement {
                     SharedString::from(Msg::CloneRunning.t().replace("{}", &elapsed)),
                 )),
         )
+}
+
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloneDestinationPresentation {
+    pub displayed: Option<String>,
+    pub accessibility: Option<String>,
+    pub tooltip: Option<String>,
+    pub summary: Option<String>,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static CLONE_DESTINATION: std::cell::RefCell<Option<CloneDestinationPresentation>> =
+        const { std::cell::RefCell::new(None) };
+    static CLONE_COPY_ACTIVATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(feature = "gui-e2e")]
+fn record_clone_destination(
+    displayed: Option<&str>,
+    accessibility: Option<&str>,
+    tooltip: Option<&str>,
+) {
+    CLONE_DESTINATION.with(|slot| {
+        *slot.borrow_mut() = Some(CloneDestinationPresentation {
+            displayed: displayed.map(str::to_owned),
+            accessibility: accessibility.map(str::to_owned),
+            tooltip: tooltip.map(str::to_owned),
+            summary: None,
+        });
+    });
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clone_destination_presentation() -> Option<CloneDestinationPresentation> {
+    CLONE_DESTINATION.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_copy_activations() -> usize {
+    CLONE_COPY_ACTIVATIONS.with(|count| count.replace(0))
 }

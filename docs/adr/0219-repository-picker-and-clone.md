@@ -35,3 +35,18 @@
 PR を 3 つに分ける。PR1 = 本 ADR、triple、`gh repo list` の読み取り、integration test。PR2 = Home タブ(最近 / フォルダーを開く / Remote Browse、Welcome の置き換え)。PR3 = Home の GitHub 一覧(自分と organization)と clone の card / 実行の配線、Tier A(fake `gh` とローカル bare repository)。キャンセル、clone の進捗表示(% 表示)は範囲外。自分の PR / Issue の一覧は #928。
 
 限界: `preflight_clone` の検査から `gh` が clone 先を作るまでの間に、別のプロセスが clone 先を symlink などへ差し替える並行置換は防がない(TOCTOU)。ユーザー自身の並行操作は前提外とし、#900 と同じ扱いにする(#926 review)。
+
+## Amendment (2026-10-12): clone card viewport and destination identity (#1296/#1297)
+
+Clone confirmation shares `modal_card`'s viewport cap and `modal_scroll_body`'s
+single scrolling region. Cancel / Clone (or Hide during execution) is a pinned,
+nonshrinking footer. Note count and UI zoom must not push confirmation outside
+the window. The existing single modal slot, picker, plan and running lifecycle
+are unchanged.
+
+Once selected, the location field names the full `request.dest` (`parent/repo`),
+not just its parent. Native middle ellipsis preserves both ends visually;
+tooltip and AX carry the sanitized full destination, and the plan summary
+names that same destination. EN/JA Change opens the existing parent picker;
+Copy Location is keyboard-reachable and copies the original destination without
+starting clone. While running, Change remains disabled and Copy stays read-only.

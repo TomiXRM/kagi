@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Clone confirmation cards use the shared viewport-capped modal frame with one scrolling body and a pinned Cancel/Clone/Hide footer, keeping long plans reachable at high zoom. (#1296)
+- Clone shows the resolved destination, with middle truncation, full-path tooltip/accessibility text, localized Change and Copy Location actions, and the same destination in its plan summary. The system picker and approved clone request remain unchanged. (#1297)
 - Apple Dark uses one lighter elevated fill for palettes, dialogs, menus, popovers, toasts and tooltips, with a neutral identifying boundary. Window chrome sits above panels and content, with literal 1px separators; readable secondary text, line numbers, scrollbar thumbs and the yellow accent retain at least 4.5:1 contrast. Apple Light and other/custom themes retain their existing fills. (#1274)
   - Review: elevated-card separators and outlined chips remain visible, Remote Browse selection/hover uses a distinct neutral, and Trust Repo, the co-author menu and full-hash tooltip share the floating fill. Generic component borders keep their existing stronger value; the Settings 1px oracle distinguishes its separator from the fill outside both RGB tolerance bands.
 - Restore native cross-worktree merge coverage after the destructive-dialog Return policy changed: root Return cancels the dirty-editor guard and preserves its buffer; explicitly focused Discard closes the editor before graph dragging resumes. Worktree navigation still retains unsaved editor state, and merge safety/receipt assertions are unchanged. (#1290)

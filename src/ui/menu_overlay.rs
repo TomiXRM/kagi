@@ -236,8 +236,8 @@ where
         .overflow_hidden()
         .rounded(theme::scaled_px(6.))
         .border_1()
-        .border_color(rgb(theme().selected))
-        .bg(rgb(theme().modal))
+        .border_color(rgb(theme().elevated_border(theme().selected)))
+        .bg(rgb(theme().elevated_surface(theme().modal)))
         .shadow_md();
     if panel.header {
         menu = menu.child(

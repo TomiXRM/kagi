@@ -168,11 +168,18 @@ impl KagiApp {
         };
         let tab_bar = tabs
             .list(div().id("bottom-panel-tab-bar"))
+            .when(cfg!(feature = "gui-e2e"), |bar| {
+                bar.relative()
+                    .child(e2e::measure_inside("bottom-panel-tabs"))
+            })
             .flex()
             .items_center()
             .w_full()
             .flex_shrink_0()
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().chrome_surface()))
+            .when(theme().slug == "apple-dark", |bar| {
+                bar.border_b_1().border_color(rgb(theme().surface))
+            })
             .child(
                 div()
                     .flex()

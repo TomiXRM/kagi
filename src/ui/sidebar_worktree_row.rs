@@ -395,6 +395,10 @@ fn state_chip(label: &'static str, color: u32) -> gpui::Div {
         .px_1()
         .rounded_sm()
         .bg(rgb(theme().surface))
+        .when(theme().slug == "apple-dark", |chip| {
+            chip.border_1()
+                .border_color(rgb(theme().elevated_border(theme().surface)))
+        })
         .text_color(rgb(color))
         .child(label)
 }
@@ -590,6 +594,10 @@ fn inspection_card(
                 .px_1()
                 .rounded_sm()
                 .bg(rgb(theme().surface))
+                .when(theme().slug == "apple-dark", |chip| {
+                    chip.border_1()
+                        .border_color(rgb(theme().elevated_border(theme().surface)))
+                })
                 .text_color(rgb(theme().color_branch))
                 .child(
                     svg()
@@ -616,8 +624,8 @@ fn inspection_card(
         .overflow_hidden()
         .rounded_md()
         .border_1()
-        .border_color(rgb(theme().surface))
-        .bg(rgb(theme().panel))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .shadow_md()
         .text_xs()
         .text_color(rgb(theme().text_sub))

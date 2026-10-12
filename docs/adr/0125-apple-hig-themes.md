@@ -891,3 +891,114 @@ number uses `text_main` instead of the identical secondary token. Unequal-role
 themes keep their existing mappings. Unit coverage pins both Apple input
 boundaries and checks equal-role hover/active distinction across every preset.
 
+## Amendment — 2026-10-12: Apple Dark elevation ladder (#1274)
+
+Floating surfaces are lighter than window chrome in Dark appearance. The
+previous palette, modal shell and toast painted `panel = #161618`, while
+menus and the component popover/tooltip bridge painted `modal = #2c2c2e`.
+They therefore disagreed about elevation. Reuse the existing `modal` field
+as the single elevated fill: `ELEVATED = #2a2a2c`; do not add another
+custom-theme schema field or alias.
+
+| Layer | Apple Dark source sRGB | Consumers |
+|---|---|---|
+| Base | `#101012` | Graph/diff content and sidebar base |
+| Panel | `#161618` | Inspector and bottom-panel body |
+| Chrome | `#1c1c1e` | Unified workspace/Home frame, repository tab strip, status bar, bottom-panel tabs |
+| Elevated | `#2a2a2c` | Command palette, dialog/modal cards, menus, popovers, toasts, tooltips |
+
+The ordering is strict relative luminance: **base < panel < chrome <
+elevated**. Chrome boundaries use the existing `surface = #2c2c2e` as
+literal one-logical-pixel hairlines. Elevated boundaries use opaque neutral
+`ELEVATED_BORDER = #414144`: 1.673:1 against chrome and 1.408:1 against
+elevated, exceeding the 1.3:1 separation target. Status glyphs and text keep
+their existing semantic accent colours; the floating card outline is neutral.
+
+The Apple-only resolution methods preserve every prior caller-specific
+fill/border for Apple Light, other presets and custom themes, including themes
+derived from Apple Dark with explicit overrides. The component bridge uses
+the same elevated fill for popovers/menus/tooltips and the same chrome fill
+for its title bar. Kagi-owned floating outlines resolve `ELEVATED_BORDER`;
+the pinned library retains its stronger shared neutral border. Keyboard/AX
+handlers, single-modal ownership and plan/confirmation semantics are unchanged.
+
+The #1239 WCAG relative-luminance helper is reused, not duplicated. Opaque
+secondary labels `#98989f` have 6.631:1 on the new base, 6.305:1 on panel,
+5.937:1 on chrome and 4.998:1 on elevated. Main white text reaches 14.325:1
+on elevated. ADR-0126's yellow accent `#ffd600` remains 13.459:1 on base and
+10.144:1 on elevated. Resting and active line numbers retain their
+secondary/white distinction. Only Apple Dark's resting scrollbar alpha
+increases from 65% to 80%; composited on base it is `#7d7d83`, 4.646:1,
+with opaque secondary hover/drag remaining distinct. Other themes' alpha
+and identifying input boundary (`#67676a` on Dark) remain unchanged.
+
+Review correction: preserve #1239's generic component border
+`#67676a` at 85% alpha, rather than weakening Markdown tables, Kbd outlines
+and scrollbar tracks by globally assigning `ELEVATED_BORDER`. The library
+has no separate popover-border token; its popup/Tooltip borders retain this
+stronger neutral. Kagi-owned cards and menus set their floating boundaries
+individually.
+
+Inside elevated cards, Settings/palette/platform-menu separators use
+`ELEVATED_BORDER`, not the nearly identical `surface = #2c2c2e`.
+The Settings native oracle pins `#414144` and requires at least 16 channel
+steps between line and fill, well outside both ±2 RGB tolerance bands:
+missing or thickened lines cannot masquerade as a 1px separator.
+Clone/worktree/remote repository chips retain their `surface` fill, with a
+Dark-only `ELEVATED_BORDER` outline; secondary labels therefore keep 4.863:1
+contrast instead of becoming unreadable on an opaque border-coloured fill.
+Remote directory selection and hover use `selected = #3a3a3c` in Dark.
+Trust Repo, the co-author menu and full-hash Tooltip also use the single
+elevated fill with identifying boundaries; their Light styling is unchanged.
+
+Native Tier A `dark_elevation_palette`, `dark_elevation_modal`,
+`dark_elevation_menu`, `dark_elevation_popover`, `dark_elevation_toast`
+sample real Metal-rendered interior pixels against literal `#2a2a2c`.
+Palette/modal/toast Light fills are pinned to `#f7f7f7`, and Light menus/
+overflow remain `#ffffff`. `dark_elevation_chrome` pins chrome fills and
+one-pixel boundary pixels. These are static-preset paint oracles, not a
+claim of native vibrancy/material, focus, VoiceOver or live-input parity.
+
+The existing `settings_quiet` oracle now pins the Dark floating fill and
+neutral frame boundary while preserving its one-pixel separator/adjacent-pixel
+checks and every Light expected RGB; it does not mistake Settings for panel
+chrome. All six elevation scenarios and the neighboring Settings, radio,
+sidebar, pane-hairline, primary-button, system-accent and Commit Panel viewport
+scenarios passed the scoped native runner. Palette/modal Before runs observed
+`#161618` where the new fill oracle requires `#2a2a2c`.
+Review Tier A also passes `remote_browse_dark_elevation`: real native row
+pixels pin accepted selection and pointer hover to `#3a3a3c`, idle rows to
+`#2a2a2c`, and restored idle fill after pointer exit. The tightened Settings
+Before run observed `[44, 44, 46, 255]` instead of separator `#414144`;
+the corrected separators pass the full Light/Dark/zoom matrix.
+
+### AppKit reference measurement and limitations
+
+On this Mac (macOS 26.6 / 25G72), explicit `NSAppearance.darkAqua`,
+Reduce Transparency and Increase Contrast both off, an ordered-out offscreen
+window with forced active/inactive `NSVisualEffectView` state was rendered
+with `cacheDisplay` and converted through an 8-bit sRGB CGContext.
+The central-third histogram contained 28,329 uniformly opaque pixels per
+capture. Native `.popover` / `.menu` material fallback samples were:
+
+| Material | Active within-window | Active behind-window | Inactive |
+|---|---|---|---|
+| Popover | `#232323` | `#4b4b4b` | `#282828` |
+| Menu | `#262626` | `#424242` | `#282828` |
+
+Dark `windowBackgroundColor` sampled `#1e1e1e`. Varying the offscreen
+backdrop black/`#1e1e1e`/white did not change these software fallback captures.
+Evidence: `/tmp/kagi-1274-appkit-reference.0Nduwv/measurements.json` and
+`method-and-findings.txt`, with native material PNGs.
+
+This is **not a measurement of a live NSPopover or tracking NSMenu**:
+macOS 26's realized popover glass produced a nonrepresentative white
+`cacheDisplay` centre; a nontracking menu backing view remained transparent.
+Live menu tracking was not started because it captures pointer events.
+`#2a2a2c` is therefore a deliberately opaque static elevated-family
+approximation, informed by the shared inactive `#282828` material sample,
+not an exact native material match. No user setting, pointer or foreground
+was changed. See Apple's [NSVisualEffectView](https://developer.apple.com/documentation/appkit/nsvisualeffectview)
+and its [popover](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/popover) /
+[menu](https://developer.apple.com/documentation/appkit/nsvisualeffectview/material-swift.enum/menu) materials.
+

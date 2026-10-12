@@ -138,6 +138,8 @@ fn toast_card(
     div()
         .w_full()
         .id(("toast-card", id))
+        .relative()
+        .child(e2e::measure_inside("toast-card"))
         .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
             this.set_hovered(id, *hovered);
         }))
@@ -148,9 +150,9 @@ fn toast_card(
         .px_4()
         .py_3()
         .rounded(theme::scaled_px(8.))
-        .bg(rgb(theme().panel))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .border_1()
-        .border_color(rgb(accent))
+        .border_color(rgb(theme().elevated_border(accent)))
         .text_base()
         .text_color(rgb(theme().text_main))
         .child(div().flex_shrink_0().child(icon))

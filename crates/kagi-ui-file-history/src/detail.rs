@@ -205,9 +205,9 @@ pub(crate) fn render_fh_row_menu(
         .top(pos.y)
         .w(theme::scaled_px(220.))
         .occlude()
-        .bg(rgb(theme().panel))
+        .bg(rgb(theme().elevated_surface(theme().panel)))
         .border_1()
-        .border_color(rgb(theme().surface))
+        .border_color(rgb(theme().elevated_border(theme().surface)))
         .rounded_md()
         .shadow_lg()
         .py(theme::scaled_px(2.));

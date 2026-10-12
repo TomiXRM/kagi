@@ -399,9 +399,9 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().surface))
+            .border_color(rgb(theme().elevated_border(theme().surface)))
             .map(|panel| super::e2e::probe_chrome_border("palette-frame", panel))
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg();
         #[cfg(feature = "gui-e2e")]
         {
@@ -421,7 +421,7 @@ impl KagiApp {
                             .child(super::e2e::measure_inside("palette-input"))
                     })
                     .border_b_1()
-                    .border_color(rgb(theme().surface))
+                    .border_color(rgb(theme().elevated_border(theme().surface)))
                     .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
                     .child(Input::new(input).appearance(true)),
             );

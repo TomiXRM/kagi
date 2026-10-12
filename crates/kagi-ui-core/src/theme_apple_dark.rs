@@ -12,20 +12,27 @@ pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
 /// Quiet identifying boundary: at least 3:1 on the dark base and panel.
 pub const INPUT_BORDER: u32 = 0x67676a;
 
+/// Opaque floating layer, informed by Dark AppKit material samples (ADR-0125).
+pub const ELEVATED: u32 = 0x2a2a2c;
+/// Neutral floating boundary: >= 1.3:1 on both chrome and elevated.
+pub const ELEVATED_BORDER: u32 = 0x414144;
+/// Unified frame / tabs / status, between the panel and floating layers.
+pub const CHROME: u32 = 0x1c1c1e;
+
 pub const APPLE_DARK: Theme = Theme {
     slug: Cow::Borrowed("apple-dark"),
     name: Cow::Borrowed("Apple Dark"),
     dark: true,
 
-    // systemGray6-dark ramp: base #1c1c1e, chrome one step below, chips above.
-    bg_base: 0x1c1c1e,
+    // Dark elevation: base < panel < chrome < elevated (ADR-0125, #1274).
+    bg_base: 0x101012,
     bg_row_alt: 0x18181a,
     surface: 0x2c2c2e,  // systemGray5 (dark)
     selected: 0x3a3a3c, // systemGray4 (dark) — neutral selection, Notes-style
     inactive_selected: 0x3a3a3c,
     panel: 0x161618,
     sidebar: 0x101012,
-    modal: 0x2c2c2e,
+    modal: ELEVATED,
     modal_overlay: 0x000000,
 
     text_main: 0xffffff, // label (dark)

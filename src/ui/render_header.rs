@@ -702,7 +702,10 @@ impl KagiApp {
             })
             .h(chrome_frame_height())
             .flex_shrink_0()
-            .bg(rgb(theme().panel))
+            .bg(rgb(theme().chrome_surface()))
+            .when(theme().slug == "apple-dark", |bar| {
+                bar.border_b_1().border_color(rgb(theme().surface))
+            })
             .text_color(rgb(theme().text_sub))
             .when(cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("toolbar-row"))

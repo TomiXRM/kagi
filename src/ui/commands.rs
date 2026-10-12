@@ -2657,8 +2657,8 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
+            .border_color(rgb(theme().elevated_border(theme().selected)))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg()
             .child(
                 div()
@@ -2727,8 +2727,8 @@ impl KagiApp {
             .overflow_hidden()
             .rounded(theme::scaled_px(8.0))
             .border_1()
-            .border_color(rgb(theme().selected))
-            .bg(rgb(theme().panel))
+            .border_color(rgb(theme().elevated_border(theme().selected)))
+            .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg()
             .child(
                 div()

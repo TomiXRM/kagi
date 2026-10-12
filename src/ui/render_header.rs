@@ -710,9 +710,9 @@ impl KagiApp {
             .when(cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("toolbar-row"))
             })
-            // ── LEFT column (flex_1, equal width to the RIGHT column so the
-            // centre cluster is window-centred regardless of side widths).
-            // 3-column layout: [LEFT flex_1][centre cluster][RIGHT flex_1]. ──
+            // Equal flex side columns center commands when space permits.
+            // At narrow widths the left retains readable repository identity,
+            // while the right may yield its secondary-workspace reservation.
             .child(
                 div()
                     .flex()
@@ -720,6 +720,9 @@ impl KagiApp {
                     .items_center()
                     .flex_1()
                     .min_w_0()
+                    .when(icon_only, |el| {
+                        el.min_w(theme::scaled_px(toolbar_overflow::ICON_IDENTITY_MIN_WIDTH))
+                    })
                     .when(!icon_only, |el| el.min_w(px(identity_width)))
                     // ── LEFT: Refresh (user request: left of the repo title) ──
                     .child({
@@ -806,6 +809,9 @@ impl KagiApp {
                             .flex_col()
                             .w(theme::scaled_px(180.))
                             .min_w_0()
+                            .when(icon_only, |el| {
+                                el.flex_shrink(1.).min_w(theme::scaled_px(40.))
+                            })
                             .relative()
                             .when(!icon_only, |el| {
                                 el.flex_shrink_0().child(toolbar_overflow::probe(
@@ -852,12 +858,13 @@ impl KagiApp {
                     // the other modes get this slot for their own actions, added
                     // when each mode needs them (user request).
                     .when(mode == WorkspaceMode::Graph, |el| {
-                        el.child(super::e2e::measure_control(
-                            "tb-repo-actions",
+                        el.child(
                             div()
+                                .relative()
                                 .flex()
                                 .flex_row()
                                 .items_center()
+                                .child(super::e2e::measure_inside("tb-repo-actions"))
                                 // Pull (↓N chip when behind>0)
                                 .child(
                                     make_btn(
@@ -981,10 +988,10 @@ impl KagiApp {
                                     )
                                     .on_click(terminal_click),
                                 ),
-                        ))
+                        )
                     }),
             ) // ── end CENTRE cluster ──
-            // ── RIGHT column (flex_1, equal width to the LEFT column) ──
+            // ── RIGHT column (flex_1; natural workspace/overflow minimum) ──
             // Settings — now a standard toolbar button (icon + "Settings"
             // label) matching Pull/Push (T-SETTINGS-001 / ADR-0080). Opens the
             // Settings overlay; also reachable via the kagi menu and cmd-,.
@@ -995,7 +1002,7 @@ impl KagiApp {
                     .items_center()
                     .justify_end()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(px(workspace_width))
                     .when(!icon_only, |el| {
                         // Balance the unscaled native-light exclusion against
                         // trailing padding/+ when both side columns have room.
@@ -1004,7 +1011,7 @@ impl KagiApp {
                         } else {
                             0.
                         };
-                        el.min_w(px(workspace_width)).flex_basis(px(balance))
+                        el.flex_basis(px(balance))
                     })
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
@@ -1025,6 +1032,8 @@ impl KagiApp {
                                             .absolute()
                                             .invisible()
                                             .flex()
+                                            .border_2()
+                                            .border_color(gpui::transparent_black())
                                             .px(keyboard_nav::inset(8.0))
                                             .child(
                                                 div()
@@ -1051,6 +1060,7 @@ impl KagiApp {
                                         .role(gpui::Role::Button)
                                         .aria_label(chip_text.clone())
                                         .relative()
+                                        .child(super::e2e::measure_inside("tb-update"))
                                         .flex_shrink_0()
                                         .child(toolbar_overflow::probe(
                                             layout_app.clone(),

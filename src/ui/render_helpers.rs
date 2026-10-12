@@ -62,6 +62,7 @@ pub(crate) fn render_rows(
     window_active: bool,
     badge_col_w: f32,
     graph_col_w: f32,
+    subject_min: f32,
     graph_compact: bool,
     graph_scroll_x: f32,
     stash_lanes: &[usize],
@@ -124,7 +125,7 @@ pub(crate) fn render_rows(
             // ── Graph lane area (T030) ────────────────────────
             // visible_lanes = how many lanes fit in the current graph column width.
             // This replaces the old MAX_LANES-based clipping.
-            let visible_lanes = graph_view::lanes_for_width(graph_col_w);
+            let visible_lanes = graph_view::lanes_for_width(theme::scaled(graph_col_w));
 
             // on_click handler: update the session's selection via cx.listener.
             let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
@@ -244,8 +245,8 @@ pub(crate) fn render_rows(
             .bg(row_bg)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
-            // #1306: a row-wide Tooltip remains reachable when a narrow graph
-            // leaves the subject no width. Child ref/author tooltips keep priority.
+            // Row-wide Tooltip preserves complete subjects; child ref/author
+            // tooltips retain priority.
             .tooltip({
                 let subject = row.summary.clone();
                 move |window, cx| metadata::subject_tooltip(subject.clone(), window, cx)
@@ -328,7 +329,7 @@ pub(crate) fn render_rows(
                     // commit list keeps scrolling normally.
                     .on_scroll_wheel(cx.listener(
                         move |this, e: &gpui::ScrollWheelEvent, _w, cx| {
-                            this.scroll_graph_by(&e.delta, cx);
+                            this.scroll_graph_by(&e.delta, graph_col_w, cx);
                         },
                     ))
                     .when(visible_lanes > 0, |el| {
@@ -441,7 +442,7 @@ pub(crate) fn render_rows(
                     }
                 })
             })
-            .child(metadata::subject(row, ix))
+            .child(metadata::subject(row, ix, subject_min))
             // Issue #337: AI-agent provenance badge (nothing when the
             // commit is unclassifiable — prefer no badge to a false one).
             .when_some(row.provenance.as_ref(), |el, prov| {

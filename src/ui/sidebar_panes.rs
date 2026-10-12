@@ -378,40 +378,32 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
         .count();
 
     // ── Filter input row (pinned above the virtualized list) ──────
-    let filter_area: gpui::AnyElement = if let Some(input_entity) = &filter_input {
-        div()
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .child(Input::new(input_entity).xsmall().appearance(true))
-            .into_any_element()
-    } else {
-        // Placeholder: clicking creates the InputState (requires Window).
-        let create_handler = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
-            this.ensure_sidebar_filter(window, cx);
-            cx.notify();
-        });
-        div()
-            .id("sidebar-filter-placeholder")
-            .px_2()
-            .py_1()
-            .flex_shrink_0()
-            .on_click(create_handler)
-            .hover(|s| s.bg(rgb(theme().surface)))
-            .child(
-                div()
-                    .h(theme::scaled_px(22.))
-                    .flex()
-                    .items_center()
-                    .px_2()
-                    .text_xs()
-                    .text_color(rgb(theme().text_muted))
-                    .bg(rgb(theme().bg_base))
-                    .rounded(theme::scaled_px(4.))
-                    .child(SharedString::from("filter…")),
+    let group_role = gpui::Role::Group;
+    let input_role = gpui::Role::TextInput;
+    let label = Msg::HomeGithubFilter.t();
+    #[cfg(feature = "gui-e2e")]
+    if let Some(input) = &filter_input {
+        super::sidebar::record_filter_semantics(input.entity_id(), group_role, input_role, label);
+    }
+    let filter_area = div()
+        .id("sidebar-filter")
+        .role(group_role)
+        .aria_label(label)
+        .relative()
+        .child(super::e2e::measure_inside("sidebar-filter"))
+        .px_2()
+        .py_1()
+        .flex_shrink_0()
+        .when_some(filter_input.as_ref(), |row, input| {
+            row.child(
+                Input::new(input)
+                    .role(input_role)
+                    .xsmall()
+                    .appearance(true)
+                    .cleanable(true),
             )
-            .into_any_element()
-    };
+        })
+        .into_any_element();
 
     // ── Branch Cleanup entry (ADR-0128, pinned above the list) ────
     // "Merged branches (N)" — N counts the merged-class rows (full / squash?

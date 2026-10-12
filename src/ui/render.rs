@@ -267,6 +267,10 @@ impl Render for KagiApp {
                 .row_focus
                 .yield_focus(fallback.as_ref(), window, cx);
             self.home_github
+                .recent
+                .keyboard
+                .yield_focus(fallback.as_ref(), window, cx);
+            self.home_github
                 .work
                 .pane_focus
                 .yield_focus(fallback.as_ref(), window, cx);
@@ -277,6 +281,24 @@ impl Render for KagiApp {
         if !self.pr_mode_visible() || self.home_in_front() {
             if let Some(mode) = self.pr_mode() {
                 mode.detail_focus
+                    .yield_focus(self.root_focus.as_ref(), window, cx);
+            }
+        }
+        let active = self.active_session();
+        let main_issues = !self.home_in_front()
+            && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Issues;
+        for (owner, ui) in &self.ui {
+            let composer_focused = ui
+                .issue_composer
+                .editors
+                .get(&None)
+                .is_some_and(|editor| editor.focused);
+            if Some(*owner) != active
+                || !main_issues
+                || ui.selected_github_issue.is_some()
+                || composer_focused
+            {
+                ui.issue_rows
                     .yield_focus(self.root_focus.as_ref(), window, cx);
             }
         }

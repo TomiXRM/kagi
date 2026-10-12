@@ -105,3 +105,16 @@ Submenu labels and reason prose use the existing EN/JA `Msg` tables in
 `kagi-ui-core`, including tooltips and accessibility descriptions.
 Preserve English Git domain words in JA under
 [ADR-0048](0048-ui-localization.md); never translate branch names or IDs.
+
+## Amendment — 2026-10-12: branch chooser keyboard/overflow (#1351)
+
+The command-driven BranchPicker snapshot freezes mode and complete local
+branch names. A bounded list uses existing `RowFocus` / `RowList`
+navigation/reveal and localized names. Candidate heights and the short-list
+viewport share the same rounded, zoom-scaled 36px row geometry, so even a
+single candidate fits without clipping at fractional zoom. Enter/Space only route
+the focused exact branch name to the existing Checkout/Delete/Rename
+plan handler; no write occurs before approval. Escape shares overlay
+focus return, and owner departure drops the snapshot and its row handles.
+This chooser is distinct from the contextual submenu hierarchy above.
+

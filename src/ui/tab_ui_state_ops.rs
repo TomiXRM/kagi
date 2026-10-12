@@ -128,6 +128,8 @@ impl TabUiState {
             github_issues_loading_more,
             github_issues_page: _,
             github_issues_list: _,
+            // Derived row-focus handles; intent is classified through Issues above.
+            issue_rows: _,
             github_issue_mentions: _,
             github_issue_tab,
             github_issue_filter,

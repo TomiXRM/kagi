@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Issues rows and Home's recent repositories use stable-keyed, single-stop keyboard lists with arrow/Home/End navigation, focused-row reveal and Enter/Space activation. Localized row names retain complete Issue and repository identities; removed or hidden rows release focus. (#1346, #1347)
+- Branch picker candidates share the existing roving list keyboard and focus-visible ring inside a bounded scrolling viewport. Checkout/Delete/Rename retain their frozen exact branch names and existing approval paths; Escape returns focus to the opener and repository departure discards the picker. (#1351)
 - Main windows publish the active repository and branch as their native title, returning to `Kagi` on Home. View menus offer localized Show/Hide Sidebar and Enter/Exit Full Screen labels; Window adds previous/next repository-tab navigation and Bring All to Front. About uses the single named dialog slot with a Close button, trapped focus and selectable version/copyright text. (#1312–#1315)
   - Review: match macOS's normalized brace-key tab shortcuts, preserve native window stacking and the invoking frontmost window when bringing main windows forward, and retain menu ownership while the application is inactive.
 - Restore native Settings live-apply coverage by comparing the repository toolbar's blank drag-region pixels with the chrome token rather than the distinct Apple Dark panel fill; theme changes still repaint both repository windows in EN/JA at 100%/167% zoom. (#1323)

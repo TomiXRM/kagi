@@ -50,3 +50,13 @@ tooltip and AX carry the sanitized full destination, and the plan summary
 names that same destination. EN/JA Change opens the existing parent picker;
 Copy Location is keyboard-reachable and copies the original destination without
 starting clone. While running, Change remains disabled and Copy stays read-only.
+
+## Amendment — 2026-10-12: recent repository keyboard list (#1347)
+
+Home's Recent sidebar uses the same single-stop `RowFocus` / `RowList`
+contract as its GitHub list, with full paths as stable keys. Its own
+variable-height list reveals focused rows; equal basenames retain distinct
+full-path accessibility descriptions and tooltips. Enter/Space reuse
+`open_repository`; list replacement and Home departure reconcile or release
+focus without opening an obsolete captured position.
+

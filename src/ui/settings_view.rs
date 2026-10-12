@@ -22,7 +22,6 @@
 //! restart. No new persistence layer is introduced.
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::Focusable as _;
 use gpui::{
     div, px, rgb, AnyElement, AppContext as _, Context, Entity, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
@@ -165,7 +164,6 @@ pub(super) fn render_settings_overlay(
     // renders *during* KagiApp's own update, which would panic ("cannot read …
     // while it is already being updated").
     theme_select: Option<Entity<ThemeSelectState>>,
-    theme_trigger_focus: Option<gpui::FocusHandle>,
     // The switches' focus handles, for the same reason.
     switches: super::keyboard_nav::FocusSlots,
     // The panel's focus-trap handle (#974), for the same reason. `None` only
@@ -258,13 +256,7 @@ pub(super) fn render_settings_overlay(
                 .flex()
                 .flex_col()
                 .gap_6()
-                .child(appearance_section(
-                    &app,
-                    theme_select,
-                    &switches,
-                    theme_trigger_focus,
-                    cx,
-                ))
+                .child(appearance_section(&app, theme_select, &switches, cx))
                 .child(language_section(&app))
                 .child(smart_commit_section(
                     &app,
@@ -457,7 +449,6 @@ pub(super) fn appearance_section(
     app: &Entity<KagiApp>,
     theme_select: Option<Entity<ThemeSelectState>>,
     switches: &super::keyboard_nav::FocusSlots,
-    theme_trigger_focus: Option<gpui::FocusHandle>,
     cx: &gpui::App,
 ) -> impl IntoElement {
     // ── Theme picker (gpui-component Select) ──
@@ -468,13 +459,7 @@ pub(super) fn appearance_section(
     // back to a static label so the row still renders.
     let theme_dropdown = match theme_select {
         Some(state) => {
-            let select = Select::new(&state)
-                .menu_width(px(220.0))
-                .small()
-                .w(px(220.0));
-            let expanded = theme_trigger_focus
-                .as_ref()
-                .is_some_and(|focus| state.read(cx).focus_handle(cx) != *focus);
+            let expanded = state.read(cx).is_open();
             let value = kagi_domain::text_safety::sanitize_control_bytes(theme().display_name());
             #[cfg(feature = "gui-e2e")]
             super::theme_select::record_ax(
@@ -487,14 +472,14 @@ pub(super) fn appearance_section(
             );
             super::e2e::measure_control(
                 "settings-theme-select",
-                div()
-                    .id("settings-theme-combobox")
+                Select::new(&state)
                     .role(gpui::Role::ComboBox)
                     .aria_label(Msg::SettingsTheme.t())
                     .aria_value(value)
                     .aria_expanded(expanded)
-                    .when(!expanded, |el| el.aria_active_descendant())
-                    .child(select),
+                    .menu_width(px(220.0))
+                    .small()
+                    .w(px(220.0)),
             )
         }
         None => div()
@@ -549,6 +534,7 @@ pub(super) fn appearance_section(
             "−",
             i18n::settings_zoom_action(false, &zoom_label),
             theme::step_zoom(zoom, false) == zoom,
+            false,
             dec,
         ))
         .child(
@@ -566,6 +552,7 @@ pub(super) fn appearance_section(
             "+",
             increase_name,
             theme::step_zoom(zoom, true) == zoom,
+            true,
             inc,
         ))
         .into_any_element();
@@ -846,6 +833,7 @@ fn stepper_btn(
     label: &'static str,
     name: String,
     disabled: bool,
+    increase: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
     #[cfg(feature = "gui-e2e")]
@@ -855,12 +843,66 @@ fn stepper_btn(
             .child(label)
             .outline()
             .small()
-            .disabled(disabled)
-            .on_click(on_click),
+            .disabled(disabled),
         name,
         disabled,
     );
-    super::e2e::measure_control(id, button)
+    super::e2e::measure_control(
+        id,
+        ZoomStepperButton {
+            id,
+            button,
+            increase,
+            on_click,
+        },
+    )
+}
+
+/// Reuse the kit Button's keyed focus owner, without adding a second stop.
+#[derive(IntoElement)]
+struct ZoomStepperButton<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> {
+    id: &'static str,
+    button: Button,
+    increase: bool,
+    on_click: F,
+}
+
+impl<F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static> gpui::RenderOnce
+    for ZoomStepperButton<F>
+{
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        let Self {
+            id,
+            button,
+            increase,
+            on_click,
+        } = self;
+        // Button::render uses this same public keyed-state API under the same
+        // element namespace. Capture its existing owner before installing the
+        // listener; no extra handle/entity is allocated.
+        let focus = window
+            .use_keyed_state(gpui::ElementId::from(id), cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        let button = button.on_click(move |event, window, cx| {
+            on_click(event, window, cx);
+            let bound = if increase {
+                theme::ZOOM_MAX
+            } else {
+                theme::ZOOM_MIN
+            };
+            if theme::zoom() == bound && focus.is_focused(window) {
+                // Both stepper stops still exist in this frame. Hand focus to
+                // the opposite direction before the clicked Button retires.
+                if increase {
+                    window.focus_prev(cx);
+                } else {
+                    window.focus_next(cx);
+                }
+            }
+        });
+        gpui::RenderOnce::render(button, window, cx)
+    }
 }
 
 // ────────────────────────────────────────────────────────────

@@ -160,11 +160,21 @@ fn zoom_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
             .expect("rendered zoom value");
         assert_eq!(status.role, gpui::Role::Status);
         assert_eq!(status.name, i18n::settings_zoom_value(&value));
+        if i18n::lang() == i18n::Lang::Ja {
+            assert_eq!(status.name, format!("{} {value}", Msg::SettingsZoom.t()));
+        }
         for (id, increase) in [("zoom-dec", false), ("zoom-inc", true)] {
             let ax =
                 kagi::ui::settings_view::appearance_ax_for_e2e(id).expect("rendered zoom button");
             assert_eq!(ax.role, gpui::Role::Button);
             assert_eq!(ax.name, i18n::settings_zoom_action(increase, &value));
+            if i18n::lang() == i18n::Lang::Ja {
+                let verb = if increase { "上げる" } else { "下げる" };
+                assert_eq!(
+                    ax.name,
+                    format!("{}を{verb} ({value})", Msg::SettingsZoom.t())
+                );
+            }
             assert_eq!(
                 ax.disabled,
                 theme::step_zoom(theme::zoom(), increase) == theme::zoom()
@@ -252,6 +262,7 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         (1.556, false, 1.5),
         (1.556, true, 1.6),
         (1.667, true, 1.67),
+        (0.8, false, 0.7),
     ] {
         theme::set_zoom(start);
         cx.update(theme::sync_gpui_component_theme);
@@ -283,6 +294,9 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
             settings::read_setting("ui_zoom").unwrap(),
             format!("{:.0}", expected * 1000.)
         );
+        if expected == theme::ZOOM_MIN || expected == theme::ZOOM_MAX {
+            assert_boundary_focus(cx, app, window, increase);
+        }
     }
     for (zoom, id, next) in [
         (0.7, "zoom-dec", "zoom-inc"),
@@ -341,4 +355,23 @@ fn draw_focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
         w.draw(cx).clear();
     })
     .unwrap();
+}
+
+fn assert_boundary_focus(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    increased: bool,
+) {
+    e2e::pr_detail::clear_key_focus();
+    keys(cx, window, "f19");
+    let opposite = if increased { "zoom-dec" } else { "zoom-inc" };
+    assert_eq!(
+        e2e::pr_detail::key_focus(),
+        Some(gpui::ElementId::from(opposite)),
+        "reaching a bound preserves focus on the opposite stepper"
+    );
+    keys(cx, window, "tab");
+    draw_focus(cx, window);
+    assert_eq!(cx.update_window(window, |_, w, cx| app.read(cx).settings_switch_focused_for_e2e(w)).unwrap(), Some(0), "Tab after reaching a bound continues to the adjacent Compact graph switch, not the window's first stop");
 }

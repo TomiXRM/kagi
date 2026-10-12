@@ -58,10 +58,11 @@ that crashed macOS.
 
 For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
 `settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
-role/name/value/expanded/disabled properties on the actual Appearance controls
-in the native Settings host, across EN/JA and Apple Light/Dark. Theme open,
-confirmation and Escape preserve the existing Select identity and focus owner;
-zoom buttons retain kit keyboard activation and the existing discrete caps.
+role/name/value/expanded/disabled properties on Appearance controls in the native
+Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
+to the kit's actual focused Select root; confirmation and Escape preserve its
+identity and focus owner. Zoom retains kit activation and discrete caps, hands
+focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
 These probes are not native VoiceOver or Full Keyboard Access evidence.
 Tier B inspects the live ComboBox and option names and both zoom button/value
 nodes at 100%, 70% and 167%, including disabled announcements.

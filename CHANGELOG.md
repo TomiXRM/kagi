@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Settings' theme picker exposes a localized ComboBox name, current theme value and open/closed state, with named options. UI zoom controls announce localized decrease/increase actions with the current percentage; the value is a named Status and bound buttons are disabled. (#1349, #1350)
+  - Review: theme semantics belong to the actual focused Select trigger, not an unfocused wrapper. Reaching a zoom bound keeps keyboard focus on the opposite stepper, and the next Tab continues beside the zoom row; Japanese announcements use the visible UI ズーム term.
 - Japanese Rebase confirmation correctly names the source branch (`{} を rebase`), not the destination. (#1343)
 - Rebase and unarmed Replay confirmations bound their branch-bearing label to a zoom-scaled 160px middle-ellipsis region while retaining complete source/destination identities in the plan, tooltip and accessibility description. Cancel and confirmation stay inside the card; Replay's armed warning remains fully visible without ellipsis and its two-stage safety gate is unchanged. (#1344)
 - Push plans retain complete sanitized commit subjects up to the shared 4 KiB UTF-8 display bound; only row layout ellipsizes. Accessibility labels and viewport-wrapped tooltips reveal complete subjects, while Copy all and Copy commits retain the full model subjects for checked-out and named-branch push plans. (#1345)

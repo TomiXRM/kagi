@@ -160,13 +160,23 @@ pub(crate) fn named_button(
     label: impl Into<SharedString>,
     toggled: Option<bool>,
 ) -> Button {
-    named_button_with_description(button, label.into(), toggled, None)
+    named_button_with_description(button, label.into(), toggled, None, false)
 }
 
 /// The pinned kit disables interaction/paint but does not publish AX disabled.
 pub(crate) fn named_disabled_button(
     button: Button,
     label: impl Into<SharedString>,
+    disabled: bool,
+) -> Button {
+    named_button_with_description(button, label.into(), None, None, disabled)
+}
+
+fn named_button_with_description(
+    button: Button,
+    label: SharedString,
+    toggled: Option<bool>,
+    description: Option<SharedString>,
     disabled: bool,
 ) -> Button {
     struct AccessibleButton(Button);
@@ -176,32 +186,12 @@ pub(crate) fn named_disabled_button(
         }
     }
     impl gpui::StatefulInteractiveElement for AccessibleButton {}
-    let button = AccessibleButton(named_button(button, label, None));
-    if disabled {
-        button
-            .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
-                builder.parent_node().set_disabled();
-            })
-            .0
-    } else {
-        button.0
-    }
-}
-
-fn named_button_with_description(
-    button: Button,
-    label: SharedString,
-    toggled: Option<bool>,
-    description: Option<SharedString>,
-) -> Button {
-    struct AccessibleButton(Button);
-    impl gpui::InteractiveElement for AccessibleButton {
-        fn interactivity(&mut self) -> &mut gpui::Interactivity {
-            self.0.interactivity()
-        }
-    }
-    impl gpui::StatefulInteractiveElement for AccessibleButton {}
     let mut button = AccessibleButton(button).aria_label(label);
+    if disabled {
+        button = button.a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
+            builder.parent_node().set_disabled();
+        });
+    }
     if let Some(description) = description {
         button = button
             .aria_description(description.clone())
@@ -397,6 +387,7 @@ fn render_modal_button(
             label,
             None,
             Some(description),
+            false,
         )
     } else {
         KagiButton::styled(id, label, role, cx)

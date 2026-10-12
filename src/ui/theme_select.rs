@@ -7,7 +7,6 @@
 //! Theme files are read only at startup (`theme::init_active`) and by the
 //! explicit "Reload Themes" command — never from render or a watcher.
 
-use gpui::Focusable as _;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Window};
 use gpui_component::select::SelectEvent;
 use std::process::Command;
@@ -115,10 +114,6 @@ pub(super) fn install(kagi: &Entity<KagiApp>, window: &mut Window, cx: &mut App)
         )
         .detach();
         app.theme_select = Some(theme_select);
-        app.theme_select_trigger_focus = app
-            .theme_select
-            .as_ref()
-            .map(|state| state.read(cx).focus_handle(cx));
         // Drained once per process: a second window does not repeat them.
         app.report_theme_load_errors(theme::take_theme_load_errors(), cx);
     });

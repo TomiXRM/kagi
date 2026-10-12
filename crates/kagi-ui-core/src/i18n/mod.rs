@@ -29,15 +29,15 @@ pub fn settings_zoom_action(increase: bool, value: &str) -> String {
     match (lang(), increase) {
         (Lang::En, false) => format!("Decrease UI zoom ({value})"),
         (Lang::En, true) => format!("Increase UI zoom ({value})"),
-        (Lang::Ja, false) => format!("UI の表示倍率を下げる ({value})"),
-        (Lang::Ja, true) => format!("UI の表示倍率を上げる ({value})"),
+        (Lang::Ja, false) => format!("UI ズームを下げる ({value})"),
+        (Lang::Ja, true) => format!("UI ズームを上げる ({value})"),
     }
 }
 
 pub fn settings_zoom_value(value: &str) -> String {
     match lang() {
         Lang::En => format!("UI zoom {value}"),
-        Lang::Ja => format!("UI の表示倍率 {value}"),
+        Lang::Ja => format!("UI ズーム {value}"),
     }
 }
 

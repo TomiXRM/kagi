@@ -1168,7 +1168,6 @@ pub struct KagiApp {
     /// until then / in headless paths; a `SelectEvent::Confirm` subscription
     /// applies the chosen theme via `set_theme`.
     pub theme_select: Option<Entity<settings_view::ThemeSelectState>>,
-    pub(crate) theme_select_trigger_focus: Option<gpui::FocusHandle>,
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
@@ -1519,7 +1518,6 @@ impl KagiApp {
             file_history_geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
             graph_compact: theme::compact_graph(),
             theme_select: None,
-            theme_select_trigger_focus: None,
             settings_switches: Default::default(),
             settings_controls: Default::default(),
             settings_scroll: gpui::ScrollHandle::new(),

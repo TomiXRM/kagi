@@ -69,6 +69,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_window.rs"]
+mod menus_window;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -107,6 +111,10 @@ mod smart_picker;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_filter.rs"]
+mod sidebar_filter;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -289,6 +297,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_controls.rs"]
+mod settings_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
@@ -1307,6 +1318,10 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_filter_tab_entry",
+                Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
+            ),
+            (
                 "hairline_dividers",
                 Box::new(crate::recovery_hairline_dividers::scenario_hairline_dividers),
             ),
@@ -1365,6 +1380,26 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "window_title_identity",
+                Box::new(crate::menus_window::scenario_window_title_identity),
+            ),
+            (
+                "view_menu_state_labels",
+                Box::new(crate::menus_window::scenario_view_menu_state_labels),
+            ),
+            (
+                "window_menu_items",
+                Box::new(crate::menus_window::scenario_window_menu_items),
+            ),
+            (
+                "window_menu_front_order",
+                Box::new(crate::menus_window::scenario_window_menu_front_order),
+            ),
+            (
+                "about_dialog",
+                Box::new(crate::menus_window::scenario_about_dialog),
             ),
             (
                 "settings_window_open_raise",
@@ -2246,6 +2281,14 @@ mod macos {
                 Box::new(crate::overlay_focus::scenario_settings_hidden_return_target),
             ),
             (
+                "settings_provider_keys",
+                Box::new(crate::settings_controls::scenario_settings_provider_keys),
+            ),
+            (
+                "settings_analyze_ignore_feedback",
+                Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
+            ),
+            (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
@@ -2475,6 +2518,7 @@ mod macos {
             ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             ("status_bar_fit", Box::new(crate::status_bar_fit::scenario_status_bar_fit)),
+            ("status_bar_busy_height", Box::new(crate::status_bar_fit::scenario_status_bar_busy_height)),
             ("status_bar_feedback_min", Box::new(crate::status_bar_fit::scenario_status_bar_feedback_min)),
             ("status_bar_short_branch", Box::new(crate::status_bar_fit::scenario_status_bar_short_branch)),
             (

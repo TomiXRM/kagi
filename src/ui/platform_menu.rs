@@ -69,7 +69,17 @@ impl KagiApp {
             let enabled = matches!(state, commands::CommandState::Enabled);
             // `platform_menu_label` adds the "✓ " active marker for the current
             // language (no-op for ordinary commands).
-            let label = platform_menu_label(id, command.map(|c| c.label).unwrap_or(id));
+            let state_label = super::window_menu::state_label(
+                id,
+                super::window_menu::ViewMenuState {
+                    sidebar_visible: this.sidebar.visible,
+                    ..super::window_menu::current_state(cx)
+                },
+            );
+            let label = platform_menu_label(
+                id,
+                state_label.unwrap_or_else(|| command.map(|c| c.label).unwrap_or(id)),
+            );
             // Render the stored `secondary-*` notation as a platform label
             // (Ctrl+J on Linux), so the menu matches what the user must press.
             let key = commands::effective_keystroke(id)

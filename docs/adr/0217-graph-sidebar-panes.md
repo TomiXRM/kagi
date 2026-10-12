@@ -27,3 +27,20 @@ Graph の Repository Navigator は local branch / remote branch / worktree / tag
 - pane ごとに branch / tag 等を再分類・再 clone する: divider drag と再描画が O(全 ref) になる。
 - 開閉用の第 2 key / 独立した bool 配列: `SidebarState::collapsed` と保存値が乖離する。
 - viewport が低いとき pane を自動で閉じる: 明示的なユーザーの開閉状態を変更してしまう。
+
+## Amendment — 2026-10-12: first-frame filter entry (#1309)
+
+The window-owned filter InputState is created by the shared window entity
+constructor, before the first frame, rather than by clicking an inert
+placeholder. Its gpui-kit Input retains dense sidebar sizing and uses Home's
+localized filter wording and clear affordance. Tab reaches it immediately;
+Cmd+F focuses it in Graph, and Escape clears it and returns to the local
+list's first available stop (the header when empty/collapsed). This does not
+change the window-global ownership in decision 3 or copy state on tab switches.
+
+Review clarification: only the gpui-kit Input carries TextInput; its immediate
+Group ancestor carries the EN/JA filter name. The pinned Input has no direct
+accessible-name API, so naming its focused inner node requires an upstream
+gpui-kit seam. Do not simulate that name with a second unfocused TextInput.
+The placeholder uses a language cache and updates the retained state before
+drawing after a language switch.

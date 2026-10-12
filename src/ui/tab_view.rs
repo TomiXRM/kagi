@@ -46,6 +46,7 @@ use crate::graph::WipAnchor;
 #[derive(Clone, Default)]
 pub struct TabViewState {
     pub header: SharedString,
+    pub window_title: SharedString,
     pub rows: Vec<CommitRow>,
     pub stash_graph_rows: Vec<commit_list::StashRow>,
     pub stash_graph_lanes: Vec<usize>,
@@ -232,6 +233,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
     toolbar_state.log_headless();
 
     TabViewState {
+        window_title: format!("{repo_name} — {}", status_summary.branch).into(),
         header,
         rows,
         stash_graph_rows,

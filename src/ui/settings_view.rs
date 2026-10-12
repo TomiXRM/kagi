@@ -63,7 +63,14 @@ impl KagiApp {
                 .multi_line(true)
                 .auto_grow(8, 22)
         });
+        self.settings_controls.saved_ignore = Some(content.clone());
         input.update(cx, |s, cx| s.set_value(content, window, cx));
+        cx.subscribe(&input, |_, _, event, cx| {
+            if matches!(event, gpui_component::input::InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
         self.analyze_ignore_input = Some(input);
     }
 }
@@ -123,7 +130,7 @@ pub fn current_theme_index() -> IndexPath {
 // Each piece of state is passed in because this renders during KagiApp's own
 // update and must not `app.read(cx)` (see the parameter comments).
 #[allow(clippy::too_many_arguments)]
-pub fn render_settings_overlay(
+pub(super) fn render_settings_overlay(
     app: Entity<KagiApp>,
     // The appearance-section theme picker's SelectState entity, passed in by the
     // caller (which holds `&self`) — we must NOT `app.read(cx)` here because this
@@ -142,6 +149,8 @@ pub fn render_settings_overlay(
     // the same reason (no `app.read(cx)` during render). Built lazily via
     // `KagiApp::ensure_analyze_ignore_input` when the overlay opens.
     analyze_ignore_input: Option<Entity<InputState>>,
+    controls: &super::settings_controls::SettingsControls,
+    analyze_dirty: bool,
     scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
@@ -222,10 +231,30 @@ pub fn render_settings_overlay(
                 .gap_6()
                 .child(appearance_section(&app, theme_select, &switches, cx))
                 .child(language_section(&app))
-                .child(smart_commit_section(&app, &smart, &switches, cx))
-                .child(analyze_ignore_section(&app, analyze_ignore_input)),
+                .child(smart_commit_section(
+                    &app,
+                    &smart,
+                    &switches,
+                    controls,
+                    trap.clone(),
+                    cx,
+                ))
+                .child(analyze_ignore_section(
+                    &app,
+                    analyze_ignore_input,
+                    analyze_dirty,
+                    controls.ignore_error.as_deref(),
+                )),
             cx,
         ));
+    controls.repair_focus(
+        true,
+        matches!(smart.provider, super::smart_commit::SmartProvider::Ollama)
+            && !smart.detected_models.is_empty(),
+        trap.as_ref(),
+        window,
+        cx,
+    );
 
     // Scrim + centred panel.
     div()
@@ -581,7 +610,7 @@ pub(super) fn appearance_section(
             } else {
                 settings::ToolbarDisplay::IconAndText
             });
-            cx.set_menus(super::commands::build_menus());
+            cx.set_menus(super::commands::build_menus(cx));
             let _ = app_toolbar.update(cx, |_, cx| cx.notify());
         })
         .into_any_element();
@@ -787,6 +816,8 @@ pub(super) fn smart_commit_section(
     app: &Entity<KagiApp>,
     smart: &super::smart_commit::SmartCommitState,
     switches: &super::keyboard_nav::FocusSlots,
+    controls: &super::settings_controls::SettingsControls,
+    pointer_focus: Option<gpui::FocusHandle>,
     cx: &gpui::App,
 ) -> impl IntoElement {
     let current = smart.model.clone();
@@ -819,71 +850,9 @@ pub(super) fn smart_commit_section(
     // selectable when detected on $PATH; undetected ones are shown disabled with
     // a "not found on PATH" hint.
     let provider = smart.provider;
-    let provider_chips = {
-        use super::smart_commit::SmartProvider;
-        let mut row = div().flex().flex_row().flex_wrap().gap_2().justify_end();
-        // (label, this-provider, available)
-        let entries: Vec<(String, SmartProvider, bool)> = {
-            let mut v = vec![("Ollama".to_string(), SmartProvider::Ollama, true)];
-            for p in kagi_git::message_gen::CliProvider::ALL {
-                v.push((
-                    p.display_name().to_string(),
-                    SmartProvider::Cli(p),
-                    smart.cli_available_for(p),
-                ));
-            }
-            v
-        };
-        for (label, this, available) in entries {
-            let selected = provider == this;
-            let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().ui_accent())
-            } else if available {
-                (theme().bg_base, theme().text_sub, theme().selected)
-            } else {
-                // Disabled: dim, no selection affordance.
-                (theme().bg_base, theme().text_sub, theme().selected)
-            };
-            let hint = if available {
-                label.clone()
-            } else {
-                i18n::provider_not_found_hint(&label)
-            };
-            let mut chip = div()
-                .id(SharedString::from(format!("sc-provider-{}", this.slug())))
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(border))
-                .bg(rgb(bg))
-                .text_sm()
-                .text_color(rgb(fg))
-                .child(SharedString::from(hint));
-            if available {
-                let app2 = app.downgrade();
-                let handler =
-                    move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                        let _ = app2.update(cx, |app, cx| {
-                            app.smart_commit.set_provider(this);
-                            cx.notify();
-                        });
-                    };
-                chip = chip
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                            .cursor_pointer()
-                    })
-                    .on_click(handler);
-            } else {
-                // Visually communicate "disabled".
-                chip = chip.opacity(0.5);
-            }
-            row = row.child(chip);
-        }
-        row.into_any_element()
-    };
+    let provider_chips =
+        super::settings_controls::provider_chips(app, smart, controls, pointer_focus.clone(), cx)
+            .into_any_element();
 
     // ── Prominent warning when a CLI provider is selected (ADR-0099) ──
     // The user explicitly asked for an unmissable warning about cost / quota /
@@ -928,44 +897,8 @@ pub(super) fn smart_commit_section(
             .child(SharedString::from(note))
             .into_any_element()
     } else {
-        let mut chips = div().flex().flex_row().flex_wrap().gap_2().justify_end();
-        for m in models {
-            let selected = current.as_deref() == Some(m.as_str());
-            let (bg, fg, border) = if selected {
-                (theme().selected, theme().text_main, theme().ui_accent())
-            } else {
-                (theme().bg_base, theme().text_sub, theme().selected)
-            };
-            let app2 = app.downgrade();
-            let m_for_handler = m.clone();
-            let handler = move |_: &gpui::ClickEvent, _w: &mut gpui::Window, cx: &mut gpui::App| {
-                let model = m_for_handler.clone();
-                let _ = app2.update(cx, |app, cx| {
-                    app.smart_commit.set_model(model);
-                    cx.notify();
-                });
-            };
-            chips = chips.child(
-                div()
-                    .id(SharedString::from(format!("sc-model-{}", m)))
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(border))
-                    .bg(rgb(bg))
-                    .text_sm()
-                    .text_color(rgb(fg))
-                    .hover(|s| {
-                        s.bg(rgb(theme().selected))
-                            .text_color(rgb(theme().text_main))
-                            .cursor_pointer()
-                    })
-                    .on_click(handler)
-                    .child(SharedString::from(m.clone())),
-            );
-        }
-        chips.into_any_element()
+        super::settings_controls::model_chips(app, smart, controls, pointer_focus, cx)
+            .into_any_element()
     };
 
     // The Ollama model picker is only relevant when Ollama is the provider.
@@ -1021,6 +954,8 @@ pub(super) fn smart_commit_section(
 pub(super) fn analyze_ignore_section(
     app: &Entity<KagiApp>,
     input: Option<Entity<InputState>>,
+    dirty: bool,
+    error: Option<&str>,
 ) -> impl IntoElement {
     // Multiline editor (or a fallback note pre-window / headless).
     let editor: AnyElement = match input.clone() {
@@ -1037,39 +972,31 @@ pub(super) fn analyze_ignore_section(
 
     // ── Save: write the editor's current text to the analyze_ignore file ──
     let save_btn = {
-        let input = input.clone();
         let app = app.downgrade();
         Button::new("analyze-ignore-save")
             .label(Msg::SettingsAnalyzeIgnoreSave.t())
             .primary()
             .small()
-            .on_click(move |_, _w, cx| {
-                if let Some(state) = &input {
-                    let text = state.read(cx).value().to_string();
-                    settings::write_analyze_ignore(&text);
-                    let _ = app.update(cx, |_a, cx| cx.notify());
-                }
+            .on_click(move |_, window, cx| {
+                let _ = app.update(cx, |app, cx| app.save_analyze_ignore(false, window, cx));
             })
     };
+    let save_btn =
+        super::button_style::named_button(save_btn, Msg::SettingsAnalyzeIgnoreSave.t(), None);
 
     // ── Reset: restore the documented defaults (both editor + file) ──
     let reset_btn = {
-        let input = input.clone();
         let app = app.downgrade();
         Button::new("analyze-ignore-reset")
             .label(Msg::SettingsAnalyzeIgnoreReset.t())
             .outline()
             .small()
             .on_click(move |_, window, cx| {
-                if let Some(state) = &input {
-                    state.update(cx, |s, cx| {
-                        s.set_value(settings::DEFAULT_ANALYZE_IGNORE, window, cx)
-                    });
-                    settings::write_analyze_ignore(settings::DEFAULT_ANALYZE_IGNORE);
-                    let _ = app.update(cx, |_a, cx| cx.notify());
-                }
+                let _ = app.update(cx, |app, cx| app.save_analyze_ignore(true, window, cx));
             })
     };
+    let reset_btn =
+        super::button_style::named_button(reset_btn, Msg::SettingsAnalyzeIgnoreReset.t(), None);
 
     div()
         .flex()
@@ -1115,6 +1042,24 @@ pub(super) fn analyze_ignore_section(
                         "settings-analyze-editor",
                         editor,
                     ))
+                    .when(dirty, |el| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-dirty",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().text_sub))
+                                .child(Msg::SettingsAnalyzeIgnoreUnsaved.t()),
+                        ))
+                    })
+                    .when_some(error, |el, error| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-error",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().color_blocker))
+                                .child(SharedString::from(error.to_string())),
+                        ))
+                    })
                     .child(
                         div()
                             .flex()

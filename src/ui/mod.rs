@@ -4,6 +4,7 @@
 //! functions, never Git bindings directly; bypassing that boundary breaks layering.
 //! ADR-0166 exports real [`KagiApp`] for `gui_e2e_runner`; `main.rs` is a thin wrapper, and removing the export breaks the runner.
 
+mod about;
 mod activity_chart;
 pub mod activity_view;
 mod analyze_help;
@@ -39,6 +40,7 @@ pub mod ecosystem;
 pub mod editor_fs_ops;
 #[cfg(test)]
 mod env_tests;
+pub mod window_menu;
 // ADR-0166: GUI E2E seam — pub helpers the `harness = false` main-thread runner
 // (`tests/gui_e2e_runner.rs`) uses to mount the real KagiApp offscreen.
 pub mod e2e;
@@ -139,6 +141,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod settings_controls;
 mod settings_theme_folder;
 pub mod settings_view;
 #[cfg(target_os = "macos")]
@@ -210,6 +213,7 @@ actions!(
     kagi,
     [
         ToggleBottomPanel,
+        FocusSidebarFilter,
         CloseMainDiff,
         CopyDiffSelection,
         DiffPrevFile,
@@ -1007,6 +1011,7 @@ pub struct KagiApp {
     pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
     /// Armed only by a press on blank unified chrome, never toolbar controls.
     pub(crate) titlebar_should_move: bool,
+    pub(crate) native_window_title: SharedString,
     #[cfg(feature = "gui-e2e")]
     pub(crate) window_active_override: Option<bool>,
     /// #482 stage 2 (ADR-0183): every open session's snapshot-derived read
@@ -1164,6 +1169,7 @@ pub struct KagiApp {
     /// Focus handles of Settings' switches, one per toggle in drawing order
     /// (#970), handed to the overlay's renderer.
     pub(crate) settings_switches: keyboard_nav::FocusSlots,
+    pub(crate) settings_controls: settings_controls::SettingsControls,
     /// Settings' single scroll owner survives control updates and redraws.
     pub settings_scroll: gpui::ScrollHandle,
     /// Settings' focus trap (#974): the panel tracks this handle, and
@@ -1460,6 +1466,7 @@ impl KagiApp {
             window_active: true,
             toolbar_layout: render_header::toolbar_overflow::Layout::default(),
             titlebar_should_move: false,
+            native_window_title: SharedString::default(),
             #[cfg(feature = "gui-e2e")]
             window_active_override: None,
             view_epoch: 0,
@@ -1510,6 +1517,7 @@ impl KagiApp {
             graph_compact: theme::compact_graph(),
             theme_select: None,
             settings_switches: Default::default(),
+            settings_controls: Default::default(),
             settings_scroll: gpui::ScrollHandle::new(),
             settings_focus: None,
             analyze_ignore_input: None,
@@ -3037,6 +3045,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
             M::Update(_) => {}
@@ -3125,6 +3134,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),
             M::Update(_) => self.cancel_update_modal(),
@@ -3246,23 +3256,6 @@ impl KagiApp {
             self.commit_list_index(index),
             row_height(self.graph_compact),
         )
-    }
-
-    /// W2-SIDEBAR: Lazily create the sidebar filter InputState (requires &mut Window).
-    ///
-    /// Called from the on_click handler on the filter placeholder area.
-    /// No-op if already created.
-    pub fn ensure_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.sidebar.filter.is_none() {
-            let input_entity = cx.new(|cx| InputState::new(window, cx).placeholder("filter…"));
-            self.sidebar.filter = Some(input_entity);
-        }
-        // Focus the input after creation (or if already exists).
-        if let Some(ref ent) = self.sidebar.filter {
-            ent.update(cx, |state, cx| {
-                state.focus(window, cx);
-            });
-        }
     }
 }
 
@@ -3558,7 +3551,7 @@ fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // content fills the title-bar area. macOS still draws the traffic lights,
     // positioned over the unified frame, which reserves an unscaled 80px inset.
     Some(gpui::TitlebarOptions {
-        title: None,
+        title: Some("Kagi".into()),
         appears_transparent: true,
         traffic_light_position: Some(gpui::point(px(9.0), px(16.0))),
     })

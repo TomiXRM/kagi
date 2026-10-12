@@ -71,6 +71,14 @@ footer padding with every chip (including at 700×500/167%). They fail before th
 feedback-first/natural-width/rounding policies. The original fit scenario also
 checks sanitized C1-control branch identity through the label/Tooltip/AX path.
 
+For #1321, `status_bar_busy_height` uses the same matrix and requires Busy
+feedback height not to exceed the actual footer height, with all feedback
+bounds contained inside the footer. The pre-fix spinner/text block stack was
+26.5px high inside a 20px footer at 100%. `status_bar_feedback_min` measures the
+text child's actual bounds, not its spinner-inclusive container; Busy reserves
+the unchanged scaled 10px spinner plus 4px gap in addition to its text budget,
+capped by actual remaining room. Run `KAGI_GUI_E2E_ONLY='status_'` with KEEP_GOING.
+
 `primary_button_states` (#1076) sends real hover / mouse-down events to a
 modal Primary and compares native Metal fill pixels for every built-in theme.
 The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
@@ -158,6 +166,26 @@ confirmed Drop records exactly one successful receipt, and root Return leaves
 the stash/repository unchanged without a drop receipt. Duplicate-OID suppression
 and close/reopen owner lifetime remain covered. These are native Tier A oracles,
 not a change to product safety or Tier B evidence.
+
+For #1298 / #1299 use
+`KAGI_GUI_E2E_ONLY='settings_provider_keys,settings_analyze_ignore_feedback'`
+with KEEP_GOING; run `settings_` for the neighboring baseline. These two
+scenarios explicitly select the production 715px macOS Settings host in
+EN/JA, Apple Light/Dark and 100%/167%. Provider/model selection uses the
+renderer's named selected Tab recorder and real Enter/Space down/up after
+focus-handle setup, with 0/1/20 models, unavailable CLI refusal, persisted
+values and no generation modal. Analyze clicks actual visible/scroll-reachable
+Save/Reset controls against a directory at the target path and a mode-000
+settings directory: errors retain the draft/dirty marker and original bytes;
+removing the obstacle permits Save/Reset and quiet confirmation. Toast dismissal
+uses the real named close control, not direct stack mutation; keyboard dismissal
+also Tabs to the close control while both hosts render the shared stack, then
+checks pane Left/Right and native Cmd+W after removal. Tier B still owns
+provider/model Tab traversal, focus-visible rings, VoiceOver names,
+selected/unavailable state and native toast appearance.
+The persistent-error host-handle unit uses opt-in GPUI test support, without
+launching the native runner:
+`cargo test -p kagi --features gui-e2e --lib closed_window_releases_persistent_error_close_handles`.
 
 For #1198 use `KAGI_GUI_E2E_ONLY=settings_window_` with KEEP_GOING for the
 six production macOS host scenarios (EN/JA, 100%/167%) plus host-isolation

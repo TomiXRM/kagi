@@ -80,7 +80,12 @@ fn assert_fit(win: AnyWindowHandle, dimensions: (f32, f32), branch: &str) -> [gp
     ]
 }
 
-fn check_window(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimensions: (f32, f32)) {
+fn check_window(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+    dimensions: (f32, f32),
+    check_busy_height: bool,
+) {
     let state = e2e::app_state(repo).unwrap();
     let captured: Rc<RefCell<Option<Entity<KagiApp>>>> = Rc::default();
     let output = captured.clone();
@@ -132,6 +137,15 @@ fn check_window(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimension
                 );
             }
             let widths = assert_fit(win, dimensions, branch);
+            if busy && check_busy_height {
+                let footer = e2e::control_bounds(win.window_id(), "pr-menu-footer").unwrap();
+                let feedback = e2e::footer_message_bounds();
+                assert!(
+                    feedback.size.height <= footer.size.height,
+                    "Busy feedback exceeds footer height: {feedback:?}; footer {footer:?}"
+                );
+                contained(footer, feedback, "Busy feedback inside footer");
+            }
             assert_eq!(
                 *fixed_widths.get_or_insert(widths),
                 widths,
@@ -142,7 +156,7 @@ fn check_window(cx: &mut VisualTestAppContext, repo: &std::path::Path, dimension
     unmount(cx, app, win);
 }
 
-pub fn scenario_status_bar_fit(cx: &mut VisualTestAppContext) {
+fn status_bar_matrix(cx: &mut VisualTestAppContext, check_busy_height: bool) {
     let _restore = ToolbarRestore::capture(cx);
     let fixture = build_fixture();
     for appearance in ["apple-light", "apple-dark"] {
@@ -158,13 +172,22 @@ pub fn scenario_status_bar_fit(cx: &mut VisualTestAppContext) {
                 ] {
                     settings::set_toolbar_display(display);
                     for dimensions in [(700., 500.), (940., 660.)] {
-                        check_window(cx, fixture.path(), dimensions);
+                        check_window(cx, fixture.path(), dimensions, check_busy_height);
                     }
                 }
             }
         }
     }
+}
+
+pub fn scenario_status_bar_fit(cx: &mut VisualTestAppContext) {
+    status_bar_matrix(cx, false);
     eprintln!("[gui-e2e] PASS status_bar_fit: 120-char branch, fixed chips/timer, Busy/Failed feedback and panel controls fit 700x500/940x660; full tooltip/AX retained in EN/JA, 100%/167%, both toolbar presentations and Apple themes");
+}
+
+pub fn scenario_status_bar_busy_height(cx: &mut VisualTestAppContext) {
+    status_bar_matrix(cx, true);
+    eprintln!("[gui-e2e] PASS status_bar_busy_height: Busy feedback contained inside footer in EN/JA, 100%/167%, both Apple themes and toolbar presentations");
 }
 
 fn natural_width(cx: &mut VisualTestAppContext, win: AnyWindowHandle, text: &str) -> gpui::Pixels {
@@ -234,19 +257,23 @@ fn review_leg(
     let app = captured.borrow().clone().unwrap();
     cx.run_until_parked();
     let branch = if feedback {
-        "feature/12345678901234567"
+        "feature/12345678901234567".repeat(if dimensions.0 >= 940. { 5 } else { 1 })
     } else {
-        "main"
+        "main".to_owned()
     };
     let text = if feedback {
-        "failed"
+        if dimensions.0 >= 940. {
+            "failed: operation"
+        } else {
+            "failed"
+        }
     } else {
         "failed: no current branch"
     };
     for busy in [false, true] {
         app.update(cx, |app, cx| {
             let summary = &mut app.view_mut().status_summary;
-            summary.branch = branch.into();
+            summary.branch = branch.clone();
             summary.is_dirty = true;
             summary.staged = 2;
             summary.unstaged = 3;
@@ -272,14 +299,18 @@ fn review_leg(
             draw(cx, win, dimensions);
         }
         if feedback {
-            let width = e2e::footer_message_bounds().size.width;
+            let width = e2e::control_bounds(win.window_id(), "status-footer-text")
+                .expect("feedback text drawn")
+                .size
+                .width;
             let minimum = natural_width(cx, win, text).min(theme::scaled_px(80.));
             assert!(
                 width + px(0.5) >= minimum,
-                "short feedback sacrificed to branch: {width:?} < {minimum:?}"
+                "short feedback sacrificed to branch: {width:?} < {minimum:?}; busy={busy}, dimensions={dimensions:?}, container={:?}",
+                e2e::footer_message_bounds()
             );
         } else {
-            assert_short_branch_fit(cx, win, branch);
+            assert_short_branch_fit(cx, win, &branch);
         }
     }
     unmount(cx, app, win);

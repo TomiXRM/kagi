@@ -25,6 +25,7 @@ pub use kagi_ui_editor::*;
 
 use super::i18n::{self, Msg};
 use super::render_helpers::{render_diff_list, DiffHeader};
+use super::workspace_mode::WorkspaceMode;
 use super::{
     build_main_diff_view, EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp,
     MainDiffSource, MainDiffView, ToastKind,
@@ -47,6 +48,7 @@ fn editor_hooks() -> EditorHooks {
     EditorHooks {
         lang_for_path: super::diff_view::lang_for_path,
         image_from_bytes: super::avatar_fetch::image_from_bytes,
+        pane_selectors: Box::<super::editor_pane_selectors::PaneSelectors>::default(),
         render_hunks: Box::new(|view, cx| {
             // `view.diff` is seeded below as a boxed `MainDiffView` (a bin
             // type the crate can't name) — downcast and hand it to the
@@ -650,7 +652,10 @@ impl KagiApp {
         let Some(ev) = self.ui().editor_workspace.clone() else {
             return;
         };
-        if !ev.read(cx).dirty {
+        let view = ev.read(cx);
+        if (self.workspace_mode() == WorkspaceMode::Editor && view.showing_history_commit())
+            || !view.dirty
+        {
             return;
         }
         ev.update(cx, |v, cx| v.save(cx));

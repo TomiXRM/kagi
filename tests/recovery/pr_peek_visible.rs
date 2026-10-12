@@ -498,12 +498,20 @@ fn dirty_editor(
 }
 
 pub fn scenario_pr_peek_dirty_guard(cx: &mut VisualTestAppContext) {
-    use crate::recovery_operations::{press_enter, press_key};
+    use crate::recovery_operations::press_key;
     let _restore = crate::recovery_layout::GlobalSettings::capture();
     theme::set_zoom(1.);
     for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
         kagi::ui::i18n::set_lang(lang);
-        for case in ["cancel", "approve", "tab", "superseded", "buffer", "editor"] {
+        for case in [
+            "cancel",
+            "return",
+            "approve",
+            "tab",
+            "superseded",
+            "buffer",
+            "editor",
+        ] {
             let (_fixture, repo, base, head) = peek_fixture();
             std::fs::write(repo.join("other.txt"), "other buffer\n").unwrap();
             let mut before = repository_state(&repo);
@@ -539,8 +547,13 @@ pub fn scenario_pr_peek_dirty_guard(cx: &mut VisualTestAppContext) {
                 );
             });
             match case {
-                "cancel" => {
-                    press_key(cx, &app, window, "escape");
+                "cancel" | "return" => {
+                    press_key(
+                        cx,
+                        &app,
+                        window,
+                        if case == "return" { "enter" } else { "escape" },
+                    );
                     cx.read(|cx| {
                         let state = app.read(cx);
                         assert!(state.editor_dirty_guard_modal().is_none());
@@ -588,7 +601,12 @@ pub fn scenario_pr_peek_dirty_guard(cx: &mut VisualTestAppContext) {
                         base
                     );
                     before = repository_state(&repo);
-                    press_enter(cx, &app, window);
+                    crate::destructive_modal_return::focused_confirm(
+                        cx,
+                        &app,
+                        window,
+                        "editor-dirty-guard-discard",
+                    );
                     cx.run_until_parked();
                     assert_compare_consumer(cx, &app, window, &base, &head);
                     let shown = cx.read(|cx| {

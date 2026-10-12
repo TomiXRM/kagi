@@ -271,31 +271,90 @@ pub(super) fn mode_toggle(
     } else {
         ("icons/eye.svg", Msg::ComposerPreview.t())
     };
-    Button::new(id.into())
+    let id = id.into();
+    let name = Msg::ComposerPreview.t();
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::pr_detail::record_control(
+            id.to_string(),
+            Some(gpui::Role::Button),
+            Some(name),
+            Some(preview),
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&id, true, false, None);
+    }
+    #[cfg(feature = "gui-e2e")]
+    let probe_id = id.to_string();
+    Button::new(id)
         .icon(Icon::empty().path(icon))
         .small()
+        .tab_stop(true)
+        .map(|button| super::button_style::named_button(button, name, Some(preview)))
         .tooltip(tooltip)
-        .on_click(on_click)
+        .on_click(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::pr_detail::record_activation(&probe_id);
+            on_click(event, window, cx);
+        })
 }
 
-/// The submit. Amber only while it can actually be pressed: an unavailable
-/// action tinted like an available one is a lie the reader acts on, so the
-/// disabled state stays on Button's neutral path.
+/// Ordinary submit uses the same Primary variant as `KagiButton`; unavailable
+/// actions keep Button's existing neutral disabled appearance.
 pub(super) fn submit(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     disabled: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> Button {
-    let button = Button::new(id.into())
+) -> AnyElement {
+    let id = id.into();
+    let label = label.into();
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::pr_detail::record_control(
+            id.to_string(),
+            Some(gpui::Role::Button),
+            Some(&label),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(
+            &id,
+            !disabled,
+            disabled,
+            Some(if disabled {
+                super::button_style::ButtonRole::Secondary
+            } else {
+                super::button_style::ButtonRole::Primary
+            }),
+        );
+    }
+    #[cfg(feature = "gui-e2e")]
+    let probe_id = id.to_string();
+    #[cfg(feature = "gui-e2e")]
+    let measure_id = id.to_string();
+    let button = Button::new(id)
         .icon(Icon::empty().path("icons/comment-send.svg"))
-        .label(label.into());
-    if disabled { button } else { button.warning() }
+        .label(label.clone())
+        .map(|button| super::button_style::named_button(button, label, None));
+    let button = if disabled { button } else { button.primary() }
         .rounded(px(999.))
         .h(theme::scaled_px(36.))
         .px_3()
         .disabled(disabled)
-        .on_click(on_click)
+        .on_click(move |event, window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::pr_detail::record_activation(&probe_id);
+            on_click(event, window, cx);
+        });
+    #[cfg(feature = "gui-e2e")]
+    {
+        super::e2e::measure_control(measure_id, button)
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        button.into_any_element()
+    }
 }
 
 /// The composer's one-line status: where the text you typed currently lives.

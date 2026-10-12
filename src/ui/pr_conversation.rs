@@ -4,8 +4,10 @@
 //! Split out of `pr_mode.rs` — these are pure renderers over a `PrTab`, with
 //! no state of their own.
 
+use super::button_style::{ButtonRole, KagiButton};
 use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use gpui_component::text::TextViewStyle;
+use gpui_component::Sizable as _;
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
 
 use super::i18n::Msg;
@@ -602,25 +604,37 @@ fn render_apply_suggestion(
 ) -> gpui::AnyElement {
     let open = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-convo-apply-suggestion-{id}"));
         this.open_apply_suggestion_modal(suggestion.clone(), cx);
         cx.notify();
     });
+    #[cfg(feature = "gui-e2e")]
+    {
+        let name = format!("pr-convo-apply-suggestion-{id}");
+        super::e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(Msg::PrApplySuggestion.t()),
+            None,
+            None,
+        );
+        super::e2e::pr_detail::record_button_state(&name, true, false, Some(ButtonRole::Secondary));
+    }
     super::e2e::measure_control(
         format!("pr-convo-apply-suggestion-{id}"),
-        div()
-            .id(("pr-convo-apply-suggestion", id))
-            .px_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(theme().color_branch))
-            .text_xs()
-            .text_color(rgb(theme().color_branch))
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(theme().selected)))
-            // The selectable text under the row would start a selection.
-            .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
-            .on_click(open)
-            .child(SharedString::from(Msg::PrApplySuggestion.t())),
+        KagiButton::styled(
+            ("pr-convo-apply-suggestion", id),
+            Msg::PrApplySuggestion.t(),
+            ButtonRole::Secondary,
+            cx,
+        )
+        .small()
+        .tab_stop(true)
+        .map(|button| super::button_style::named_button(button, Msg::PrApplySuggestion.t(), None))
+        // The selectable text under the row would start a selection.
+        .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
+        .on_click(open),
     )
     .into_any_element()
 }

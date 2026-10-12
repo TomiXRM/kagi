@@ -9,6 +9,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use super::workspace_mode::WorkspaceMode;
 use super::*;
 
 impl KagiApp {
@@ -271,6 +272,12 @@ impl Render for KagiApp {
         } else {
             // The same for the Graph sidebar's rows and headers (#981).
             self.yield_sidebar_focus(window, cx);
+        }
+        if !self.pr_mode_visible() || self.home_in_front() {
+            if let Some(mode) = self.pr_mode() {
+                mode.detail_focus
+                    .yield_focus(self.root_focus.as_ref(), window, cx);
+            }
         }
         // Before any tab list picks its Tab stop this frame (#968).
         super::keyboard_nav::forget_roving_without_focus(window);
@@ -725,6 +732,15 @@ impl Render for KagiApp {
             // keybinding's `!Input && !Terminal` predicate already keeps these
             // off text fields and the terminal.
             .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
+                if this.workspace_mode() == WorkspaceMode::Editor
+                    && this
+                        .ui()
+                        .editor_workspace
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).showing_history_commit())
+                {
+                    return;
+                }
                 if this.ui().operation_history.can_undo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_undo_modal();
@@ -736,6 +752,15 @@ impl Render for KagiApp {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
+                if this.workspace_mode() == WorkspaceMode::Editor
+                    && this
+                        .ui()
+                        .editor_workspace
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).showing_history_commit())
+                {
+                    return;
+                }
                 if this.ui().operation_history.can_redo() {
                     if !this.reject_if_busy(cx) {
                         this.open_history_redo_modal();

@@ -2,7 +2,7 @@
 use crate::ui::{
     e2e,
     i18n::{pr_threads, Msg},
-    theme::theme,
+    theme::{self, theme},
     types::ToastKind,
     KagiApp,
 };
@@ -91,6 +91,40 @@ fn rows(hunk: &Hunk, id: usize, start: usize) -> gpui::Div {
         )
 }
 
+fn copy_button(hunk: &Hunk, id: usize, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    let name = format!("pr-convo-hunk-copy-{id}");
+    let full = hunk.full.clone();
+    let copy = cx.listener(move |app: &mut KagiApp, _: &gpui::ClickEvent, _, cx| {
+        cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        e2e::pr_detail::record_activation(&format!("pr-convo-hunk-copy-{id}"));
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.to_string()));
+        app.push_toast(ToastKind::Info, Msg::PrHunkCopied.t(), cx);
+    });
+    let button = Button::new(("pr-convo-hunk-copy", id))
+        .ghost()
+        .xsmall()
+        .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
+        .size(theme::scaled_px(24.))
+        .tab_stop(true)
+        .tooltip(Msg::PrHunkCopy.t())
+        .map(|button| crate::ui::button_style::named_button(button, Msg::PrHunkCopy.t(), None))
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(copy);
+    #[cfg(feature = "gui-e2e")]
+    {
+        e2e::pr_detail::record_control(
+            &name,
+            Some(gpui::Role::Button),
+            Some(Msg::PrHunkCopy.t()),
+            None,
+            None,
+        );
+        e2e::pr_detail::record_button_state(&name, true, false, None);
+    }
+    e2e::measure_control(name, button).into_any_element()
+}
+
 pub(super) fn render(
     hunk: &Rc<Hunk>,
     id: usize,
@@ -103,12 +137,6 @@ pub(super) fn render(
         hunk.lines.len().min(PREVIEW_LINES)
     };
     let rows = rows(hunk, id, hunk.lines.len() - shown);
-    let full = hunk.full.clone();
-    let copy = cx.listener(move |app: &mut KagiApp, _: &gpui::ClickEvent, _, cx| {
-        cx.stop_propagation();
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(full.to_string()));
-        app.push_toast(ToastKind::Info, Msg::PrHunkCopied.t(), cx);
-    });
     div()
         .id(("pr-convo-hunk", id))
         .relative()
@@ -129,16 +157,7 @@ pub(super) fn render(
                     el.child(disclosure(hunk, id, shown, item, cx))
                 })
                 .child(div().flex_1())
-                .child(e2e::measure_control(
-                    format!("pr-convo-hunk-copy-{id}"),
-                    Button::new(("pr-convo-hunk-copy", id))
-                        .ghost()
-                        .xsmall()
-                        .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
-                        .label(Msg::PrHunkCopy.t())
-                        .tooltip(Msg::PrHunkCopy.t())
-                        .on_click(copy),
-                )),
+                .child(copy_button(hunk, id, cx)),
         )
         .child(
             div()

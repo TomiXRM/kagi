@@ -225,6 +225,43 @@ impl KagiApp {
         });
     }
 
+    pub fn replace_issue_reply_body_for_e2e(
+        &mut self,
+        number: u64,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&Some(number))
+            .and_then(|editor| editor.body_input.clone())
+            .expect("Reply body input created by window-bearing render");
+        input.update(cx, |state, cx| {
+            state.replace_all(text.to_owned(), window, cx);
+        });
+    }
+
+    pub fn focus_issue_body_for_e2e(
+        &mut self,
+        number: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_issue_inputs(window, cx);
+        let input = self
+            .ui()
+            .issue_composer
+            .editors
+            .get(&number)
+            .and_then(|editor| editor.body_input.clone())
+            .expect("Composer body input created by window-bearing render");
+        input.update(cx, |state, cx| state.focus(window, cx));
+    }
+
     /// Put the New Issue Composer back where a scenario found it: empty
     /// title, empty body, body hidden again. A scenario that exercises the
     /// pristine Composer has to leave it pristine, or every measure after it
@@ -277,6 +314,16 @@ impl KagiApp {
             .get(&None)
             .expect("seeded Composer");
         (editor.draft.clone(), editor.focused)
+    }
+
+    pub fn issue_reply_snapshot_for_e2e(&self, number: u64) -> IssueDraft {
+        self.ui()
+            .issue_composer
+            .editors
+            .get(&Some(number))
+            .expect("seeded Reply Composer")
+            .draft
+            .clone()
     }
 
     /// Focus the production New Issue title input before the harness sends a

@@ -60,6 +60,14 @@ pub use op::{
     plan_not_shown_retry, pull_failed_stash_restored, rebase_repository_settings_may_block_start,
     recorded_outcome_notice, terminal_nonconcurrent_blocked, terminal_ports_exhausted, Op,
 };
+
+/// Accessibility action for a document tab's localized display name.
+pub fn tab_close_name(name: &str) -> String {
+    match lang() {
+        Lang::En => format!("Close {name}"),
+        Lang::Ja => format!("{name} を閉じる"),
+    }
+}
 pub use plan::{plan_note_text, plan_recovery_text, plan_title_text};
 pub use queue::{queue_text, QueueText};
 
@@ -1025,6 +1033,7 @@ pub enum Msg {
     StatusShowOperationLog,
     StatusHideOperationLog,
     ToolbarOverflow,
+    TabOverflow,
     /// Appearance → Reduce-motion row title (issue #354 / ADR-0173).
     SettingsReduceMotion,
     /// Appearance → Reduce-motion row description.
@@ -3592,6 +3601,8 @@ impl Msg {
             (Ja, StatusHideOperationLog) => "操作ログを隠す (↵ / Space)",
             (En, ToolbarOverflow) => "More Toolbar Commands",
             (Ja, ToolbarOverflow) => "その他のツールバーコマンド",
+            (En, TabOverflow) => "All Tabs",
+            (Ja, TabOverflow) => "すべてのタブ",
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {

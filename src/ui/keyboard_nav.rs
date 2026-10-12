@@ -73,6 +73,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     super::diff_selection::keyboard::bind_keys(cx);
     super::sidebar_focus::bind_keys(cx);
     super::conflict_editor_keys::bind_keys(cx);
+    super::operations::oplog_restore_inspection::bind_keys(cx);
     kagi_ui_core::keyboard_nav::bind_keys(cx);
     cx.bind_keys([
         KeyBinding::new("up", TabListPrev, Some("KagiCommitPanelView")),

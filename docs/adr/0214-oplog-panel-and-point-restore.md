@@ -346,11 +346,17 @@ Up/Down, Home/End and PageUp/PageDown reveal the focused row. The card traverses
 Copy all, the named body region, refs, preview and footer in document order.
 Warnings/blockers render uncapped within that keyboard-scrollable body instead
 of owning inaccessible wheel-only scrollers. Ref/preview panes retain their
-independent caps; focusing a row also reveals it in the body. This deliberate
+independent caps; a change of focused row also reveals it in the body, after
+the inner list's layout has converged. Repainting the same focused row must not
+undo subsequent pointer-wheel or scrollbar movement of the body. This deliberate
 nested-scroll exception preserves the existing six-row preview while allowing
-unbounded safety prose to be inspected. Pointer inspection focuses the row
-without selecting or approving an operation. The shared keyboard-only ring
-identifies inspection; no pressed/selected operation state is added.
+unbounded safety prose to be inspected. Each pane consumes its wheel events,
+including at its ends: wheel input over refs/preview never chains into the body.
+The body owns a dedicated key context and six scroll actions, deeper than the
+app-wide navigation bindings; the row-list context wins inside either pane.
+Pointer inspection focuses the row without selecting or approving an operation.
+The shared keyboard-only ring identifies inspection; no pressed/selected
+operation state is added.
 Empty/unavailable previews keep their existing explanation rather than an empty
 Tab stop. The canonical refs, Copy all, two-stage approval, execution plan and
 backend write pipeline are unchanged.

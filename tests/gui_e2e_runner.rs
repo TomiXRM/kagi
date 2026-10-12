@@ -3671,6 +3671,18 @@ mod macos {
                 Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_keyboard),
             ),
             (
+                "oplog_restore_body_keys",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_keys),
+            ),
+            (
+                "oplog_restore_body_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_wheel),
+            ),
+            (
+                "oplog_restore_pane_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_pane_wheel),
+            ),
+            (
                 "oplog_restore_guarded_rows",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_guarded_rows),
             ),

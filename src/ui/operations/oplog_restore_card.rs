@@ -428,6 +428,7 @@ pub(crate) fn render(
                 .relative()
                 .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
                 .flex_shrink_0()
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                 .child(crate::ui::e2e::measure_inside("restore-refs")),
             text(OplogPanelMsg::RestoreRefs),
         ))
@@ -582,9 +583,10 @@ pub(crate) fn render(
     let body = crate::ui::render_helpers::with_system_vertical_scrollbar(
         "restore-body-scrollbar",
         &inspection.body_scroll,
-        crate::ui::e2e::measure_control("restore-body", body),
+        body,
         cx,
-    );
+    )
+    .child(crate::ui::e2e::measure_inside("restore-body"));
     let mut buttons = crate::ui::button_style::modal_button_row()
         .flex_shrink_0()
         .child(crate::ui::e2e::measure_control(

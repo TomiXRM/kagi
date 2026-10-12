@@ -3324,6 +3324,14 @@ mod macos {
                 "graph_columns_fit",
                 Box::new(crate::graph_column_divider::scenario_graph_columns_fit),
             ),
+            (
+                "graph_columns_compressed_drag",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_compressed_drag),
+            ),
+            (
+                "graph_columns_inspector_fit",
+                Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
+            ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
                 "diff_survives_reload",

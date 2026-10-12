@@ -61,6 +61,7 @@ pub(crate) fn render_rows(
     window_active: bool,
     badge_col_w: f32,
     graph_col_w: f32,
+    subject_min: f32,
     graph_compact: bool,
     graph_scroll_x: f32,
     stash_lanes: &[usize],
@@ -440,7 +441,7 @@ pub(crate) fn render_rows(
                     }
                 })
             })
-            .child(metadata::subject(row, ix))
+            .child(metadata::subject(row, ix, subject_min))
             // Issue #337: AI-agent provenance badge (nothing when the
             // commit is unclassifiable — prefer no badge to a false one).
             .when_some(row.provenance.as_ref(), |el, prov| {

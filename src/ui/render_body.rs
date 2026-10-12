@@ -160,12 +160,14 @@ impl KagiApp {
         let center_width = f32::from(window.viewport_size().width)
             - theme::scaled(self.sidebar.width + 4.) * sidebar_fraction
             - theme::scaled(right_width + 4.) * right_fraction;
-        let (badge_col_w, graph_col_w) = super::graph_columns::fit(
+        let columns = super::graph_columns::fit(
             self.badge_col_w,
             self.graph_col_w,
             center_width,
             f32::from(window.rem_size()) * 1.5, // px_3 on both row edges.
         );
+        self.graph_column_fit = columns;
+        let (badge_col_w, graph_col_w) = (columns.badge, columns.graph);
         // Tab switches, zoom and fitting all change the visible lane window.
         let lane_count = self.view().rows.first().map(|r| r.lane_count).unwrap_or(0);
         let max = (lane_count as f32 * graph_view::lane_w() - theme::scaled(graph_col_w)).max(0.);
@@ -597,6 +599,7 @@ impl KagiApp {
                                             this.window_active,
                                             badge_col_w,
                                             graph_col_w,
+                                            columns.subject_min,
                                             compact,
                                             this.ui().graph_scroll_x,
                                             &this.view().stash_graph_lanes,

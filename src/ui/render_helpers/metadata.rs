@@ -2,11 +2,11 @@
 
 use super::*;
 
-pub(super) fn subject(row: &CommitRow, ix: usize) -> impl IntoElement {
+pub(super) fn subject(row: &CommitRow, ix: usize, min_width: f32) -> impl IntoElement {
     div()
         .id(("graph-subject", ix))
         .flex_1()
-        .min_w(theme::scaled_px(super::super::graph_columns::SUBJECT_MIN))
+        .min_w(theme::scaled_px(min_width))
         .text_color(rgb(theme().text_main))
         .truncate()
         .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {

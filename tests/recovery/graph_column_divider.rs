@@ -286,3 +286,113 @@ pub fn scenario_graph_columns_fit(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS graph_columns_fit");
 }
+
+fn capped_drag(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    window: AnyWindowHandle,
+    name: &str,
+) {
+    let before = bounds(window, name);
+    let prefs = cx.read(|cx| (app.read(cx).badge_col_w, app.read(cx).graph_col_w));
+    let saved = ["badge_col_w", "graph_col_w"].map(kagi_ui_core::settings::read_setting);
+    let start = before.center();
+    cx.simulate_mouse_move(window, start, None, Modifiers::none());
+    cx.simulate_mouse_down(window, start, MouseButton::Left, Modifiers::none());
+    for dx in [5., 20., 30.] {
+        cx.simulate_mouse_move(
+            window,
+            start + point(px(dx), px(0.)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.run_until_parked();
+        frame(cx, window, Instant::now());
+    }
+    cx.simulate_mouse_up(
+        window,
+        start + point(px(30.), px(0.)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    assert_eq!(
+        cx.read(|cx| (app.read(cx).badge_col_w, app.read(cx).graph_col_w)),
+        prefs,
+        "{name}: a capped expansion must preserve preferred widths"
+    );
+    assert_eq!(
+        ["badge_col_w", "graph_col_w"].map(kagi_ui_core::settings::read_setting),
+        saved
+    );
+    assert_eq!(bounds(window, name).left(), before.left());
+}
+
+pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["badge_col_w", "graph_col_w", "reduce_motion"]);
+    let previous_motion = theme::reduce_motion();
+    theme::set_reduce_motion(true);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.badge_col_w = 150.;
+        app.graph_col_w = 176.;
+        app.sidebar.width = 240.;
+        cx.notify();
+    });
+    theme::set_zoom(1.67);
+    resize(cx, window, 940., 660.);
+    for name in ["divider-graph-col", "divider-badge-col"] {
+        capped_drag(cx, &app, window, name);
+    }
+    theme::set_zoom(1.);
+    resize(cx, window, 1392., 883.);
+    assert_eq!(bounds(window, "divider-badge-col").left(), px(365.5));
+    assert_eq!(bounds(window, "divider-graph-col").left(), px(527.5));
+    e2e::set_panel_motion_clock(None);
+    theme::set_reduce_motion(previous_motion);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS graph_columns_compressed_drag");
+}
+
+pub fn scenario_graph_columns_inspector_fit(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let previous_motion = theme::reduce_motion();
+    theme::set_reduce_motion(true);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    app.update(cx, |app, cx| {
+        app.badge_col_w = 150.;
+        app.graph_col_w = 176.;
+        app.sidebar.width = 240.;
+        app.panel_width = 360.;
+        app.inspector_visible = true;
+        app.select(0);
+        cx.notify();
+    });
+    theme::set_zoom(1.67);
+    for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
+        kagi::ui::i18n::set_lang(lang);
+        resize(cx, window, 1440., 883.);
+        let row = bounds(window, "graph-commit-row");
+        for name in ["graph-commit-author", "graph-commit-time"] {
+            let cell = bounds(window, name);
+            assert!(
+                cell.right() <= row.right(),
+                "{lang:?} Inspector: {name} must fit row {row:?}, got {cell:?}"
+            );
+        }
+        let subject = bounds(window, "graph-commit-subject");
+        assert!(subject.size.width > px(0.));
+        assert!(
+            subject.size.width < theme::scaled_px(120.),
+            "only sub-minimum center panes relax the subject floor"
+        );
+    }
+    e2e::set_panel_motion_clock(None);
+    theme::set_reduce_motion(previous_motion);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS graph_columns_inspector_fit");
+}

@@ -73,6 +73,7 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub scroll: ListState,
     pub item_index: F,
     pub projection: Option<Arc<super::super::diff_split::cache::SplitProjection>>,
+    pub items: Option<std::rc::Rc<Vec<super::super::render_helpers::row_overlay::Item>>>,
 }
 
 impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
@@ -120,7 +121,7 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                 }
                 let cursor = if let Some(projection) = &self.projection {
                     let distance = if action.page {
-                        page_distance(&self.scroll, &projection.rows, &self.item_index)
+                        page_distance(&self.scroll, self.items.as_deref().map(Vec::as_slice))
                     } else {
                         1
                     };
@@ -150,32 +151,22 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
 /// but must never become keyboard caret stops.
 fn page_distance(
     scroll: &ListState,
-    rows: &[super::super::diff_split::SplitDiffRow],
-    item_index: &impl Fn(usize) -> usize,
+    items: Option<&[super::super::render_helpers::row_overlay::Item]>,
 ) -> usize {
-    use super::super::diff_split::SplitDiffRow;
+    use super::super::render_helpers::row_overlay::Item;
     let top = scroll.logical_scroll_top().item_ix;
     let bottom = scroll.viewport_bounds().bottom();
     let mut visible = 0usize;
-    for row in rows {
-        let source = match row {
-            SplitDiffRow::Full(index) => *index,
-            SplitDiffRow::Pair { left, right } => match left.or(*right) {
-                Some(index) => index,
-                None => continue,
-            },
-        };
-        let item = item_index(source);
-        if item < top {
-            continue;
-        }
+    for item in top..scroll.item_count() {
         let Some(bounds) = scroll.bounds_for_item(item) else {
             break;
         };
         if bounds.bottom() > bottom {
             break;
         }
-        visible += 1;
+        if items.is_none_or(|items| matches!(items.get(item), Some(Item::Row(_)))) {
+            visible += 1;
+        }
     }
     visible.saturating_sub(1).max(1)
 }

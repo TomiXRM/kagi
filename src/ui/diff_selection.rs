@@ -153,6 +153,25 @@ fn move_rows(
     Some(target)
 }
 
+/// A wholly one-sided add/delete run remains navigable from either affinity.
+/// Only an unequal replacement's filler skips the missing preferred column.
+fn replacement_row(rows: &[super::diff_split::SplitDiffRow], at: usize) -> bool {
+    use super::diff_split::SplitDiffRow;
+    let boundary = |row: &SplitDiffRow| {
+        matches!(row, SplitDiffRow::Full(_))
+            || matches!(row, SplitDiffRow::Pair { left, right } if left == right)
+    };
+    rows[..at]
+        .iter()
+        .rev()
+        .take_while(|row| !boundary(row))
+        .chain(rows[at..].iter().take_while(|row| !boundary(row)))
+        .any(|row| {
+            matches!(row,
+            SplitDiffRow::Pair { left: Some(left), right: Some(right) } if left != right)
+        })
+}
+
 /// Navigate aligned rows, retaining unified indices for anchor and clipboard.
 fn move_split_rows(
     key: u64,
@@ -188,19 +207,17 @@ fn move_split_rows(
     } else {
         loop {
             let target = match split[visual] {
-                SplitDiffRow::Full(index) => index,
+                SplitDiffRow::Full(index) => Some(index),
                 SplitDiffRow::Pair { left, right: rhs } => {
-                    if right {
-                        rhs.or(left)?
-                    } else {
-                        left.or(rhs)?
-                    }
+                    let preferred = if right { rhs } else { left };
+                    preferred.or_else(|| {
+                        (!replacement_row(split, visual))
+                            .then(|| left.or(rhs))
+                            .flatten()
+                    })
                 }
             };
-            if action.boundary
-                || (action.step > 0 && target >= cursor)
-                || (action.step < 0 && target <= cursor)
-            {
+            if let Some(target) = target {
                 break target;
             }
             let next = if action.step > 0 {

@@ -133,6 +133,15 @@ pub fn scenario_split_diff_keyboard_order(cx: &mut VisualTestAppContext) {
         "replacement a\nreplacement b\nreplacement c\nline 7\n",
         "right-affinity Shift+Down skips opposite-side fillers without shrinking"
     );
+    for expected in [
+        "replacement c\n",
+        "replacement b\n",
+        "replacement a\n",
+        "line 1\n",
+    ] {
+        keys(cx, window, "up cmd-c");
+        assert_eq!(clipboard(cx), expected, "right-affinity Up reverses Down");
+    }
     unmount(cx, app, window);
     split_page_wrapped(cx);
 }
@@ -178,6 +187,16 @@ fn split_page_wrapped(cx: &mut VisualTestAppContext) {
     );
     draw(cx, window);
     assert_row_visible(cx, &app, last);
+    let base: String = (0..100).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(temp.path().join("f.txt"), format!("{base}added only\n")).unwrap();
+    open(cx, &app);
+    draw(cx, window);
+    keys(cx, window, "home down down down down cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "added only\n",
+        "one-sided additions remain navigable"
+    );
     unmount(cx, app, window);
 }
 

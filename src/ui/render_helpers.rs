@@ -688,6 +688,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                     rows,
                     scroll: selection_scroll,
                     projection: selection_projection.clone(),
+                    items: selection_items.clone(),
                     item_index: move |row| {
                         let base = selection_projection
                             .as_ref()

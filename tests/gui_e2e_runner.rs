@@ -300,6 +300,10 @@ mod status_controls;
 mod toolbar_overflow;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toolbar_overflow_priority.rs"]
+mod toolbar_overflow_priority;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_fields_focus.rs"]
 mod pr_fields_focus;
 
@@ -1393,6 +1397,18 @@ mod macos {
                 Box::new(crate::destructive_modal_return::scenario_destructive_modal_return),
             ),
             (
+                "dirty_guard_focus_trap",
+                Box::new(crate::destructive_modal_return::scenario_dirty_guard_focus_trap),
+            ),
+            (
+                "alert_focus_reload",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_reload),
+            ),
+            (
+                "alert_focus_notice",
+                Box::new(crate::destructive_modal_return::scenario_alert_focus_notice),
+            ),
+            (
                 "sync_to_remote_armed",
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
@@ -2311,6 +2327,10 @@ mod macos {
             ("issue_body_zoom", Box::new(crate::github_text::scenario_issue_body_zoom)),
             ("toolbar_no_overlap", Box::new(crate::toolbar_overflow::scenario_toolbar_no_overlap)),
             ("toolbar_overflow", Box::new(crate::toolbar_overflow::scenario_toolbar_overflow)),
+            (
+                "toolbar_overflow_priority",
+                Box::new(crate::toolbar_overflow_priority::scenario_toolbar_overflow_priority),
+            ),
             ("status_controls", Box::new(crate::status_controls::scenario_status_controls)),
             (
                 "pr_threads_via_gh",

@@ -69,6 +69,10 @@ mod proc_identity;
 mod theme_custom;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_window.rs"]
+mod menus_window;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -1368,6 +1372,26 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "window_title_identity",
+                Box::new(crate::menus_window::scenario_window_title_identity),
+            ),
+            (
+                "view_menu_state_labels",
+                Box::new(crate::menus_window::scenario_view_menu_state_labels),
+            ),
+            (
+                "window_menu_items",
+                Box::new(crate::menus_window::scenario_window_menu_items),
+            ),
+            (
+                "window_menu_front_order",
+                Box::new(crate::menus_window::scenario_window_menu_front_order),
+            ),
+            (
+                "about_dialog",
+                Box::new(crate::menus_window::scenario_about_dialog),
             ),
             (
                 "settings_window_open_raise",

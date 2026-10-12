@@ -449,3 +449,32 @@ fn ignored_files_remove_warning_renders_counts_in_japanese() {
     );
     set_lang_no_persist(Lang::En);
 }
+
+#[test]
+fn native_window_menu_and_about_labels() {
+    for (msg, en, ja) in [
+        (Msg::AboutTitle, "About Kagi", "Kagiについて"),
+        (Msg::MenuHideSidebar, "Hide Sidebar", "サイドバーを非表示"),
+        (Msg::MenuShowSidebar, "Show Sidebar", "サイドバーを表示"),
+        (
+            Msg::MenuEnterFullScreen,
+            "Enter Full Screen",
+            "フルスクリーンにする",
+        ),
+        (
+            Msg::MenuExitFullScreen,
+            "Exit Full Screen",
+            "フルスクリーンを解除",
+        ),
+        (Msg::MenuPreviousTab, "Show Previous Tab", "前のタブを表示"),
+        (Msg::MenuNextTab, "Show Next Tab", "次のタブを表示"),
+        (
+            Msg::MenuBringAllToFront,
+            "Bring All to Front",
+            "すべてを手前に移動",
+        ),
+    ] {
+        assert_eq!(msg.t_for(Lang::En), en);
+        assert_eq!(msg.t_for(Lang::Ja), ja);
+    }
+}

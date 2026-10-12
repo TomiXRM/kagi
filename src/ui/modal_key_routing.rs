@@ -123,6 +123,7 @@ impl KagiApp {
                 | M::Update(_)
                 | M::SmartCommit(_)
                 | M::AnalyzeHelp(_)
+                | M::About(_)
                 | M::PrFields(_)
                 | M::SetUpstream(_)
                 | M::RenameBranch(_)
@@ -166,7 +167,8 @@ impl KagiApp {
                 | M::RemoteBrowse(_)
                 | M::PrFields(_)
                 | M::Clone(_)
-                | M::AnalyzeHelp(_),
+                | M::AnalyzeHelp(_)
+                | M::About(_),
             ) => true,
             None
             | Some(
@@ -225,6 +227,16 @@ impl KagiApp {
     ) -> gpui::AnyElement {
         let escape = cx.listener(move |this, _: &CloseMainDiff, window, cx| {
             if this.cancel_active_modal(cx) {
+                return;
+            }
+            use gpui::Focusable as _;
+            if this
+                .sidebar
+                .filter
+                .as_ref()
+                .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+            {
+                this.clear_sidebar_filter(window, cx);
                 return;
             }
             if workspace_fallbacks && this.cancel_workspace_overlay(window, cx) {

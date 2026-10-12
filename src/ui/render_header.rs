@@ -202,6 +202,8 @@ impl KagiApp {
         );
         let el = menu_act!(el, cmds::MinimizeWindow, "window.minimize");
         let el = menu_act!(el, cmds::ZoomWindow, "window.zoom");
+        let el = menu_act!(el, cmds::PreviousTab, "window.previousTab");
+        let el = menu_act!(el, cmds::NextTab, "window.nextTab");
         let el = menu_act!(el, cmds::NewWindow, "window.new");
         let el = menu_act!(el, cmds::CloseWindow, "window.close");
         let el = menu_act!(el, cmds::KeyboardShortcuts, "help.shortcuts");
@@ -222,7 +224,7 @@ impl KagiApp {
         }));
         let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
             settings::set_toolbar_display(action.mode);
-            cx.set_menus(cmds::build_menus());
+            cx.set_menus(cmds::build_menus(cx));
             cx.notify();
         }));
         // W22-I18N: language switch actions (always enabled).

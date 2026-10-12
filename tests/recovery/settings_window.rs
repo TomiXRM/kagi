@@ -24,13 +24,13 @@ fn settle(cx: &mut VisualTestAppContext, handle: AnyWindowHandle) {
     }
 }
 
-struct SettingsHostGuard {
+pub(crate) struct SettingsHostGuard {
     cx: VisualTestAppContext,
     previous: bool,
 }
 
 impl SettingsHostGuard {
-    fn native(cx: &mut VisualTestAppContext) -> Self {
+    pub(crate) fn native(cx: &mut VisualTestAppContext) -> Self {
         let previous = cx.read(|cx| cx.global::<SettingsHostForE2e>().native);
         cx.update(|cx| cx.set_global(SettingsHostForE2e { native: true }));
         Self {

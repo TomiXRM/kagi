@@ -49,11 +49,44 @@ pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 /// rest of the session (it is not written to `settings.json`).
 const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static FILTER_SEMANTICS: std::cell::Cell<Option<(gpui::EntityId, gpui::Role, gpui::Role, &'static str)>> = const { std::cell::Cell::new(None) };
+    static FILTER_PLACEHOLDER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn record_filter_semantics(
+    input: gpui::EntityId,
+    group_role: gpui::Role,
+    input_role: gpui::Role,
+    label: &'static str,
+) {
+    FILTER_SEMANTICS.with(|record| record.set(Some((input, group_role, input_role, label))));
+}
+
+/// Renderer-fed assignments, not a native accessibility-tree snapshot.
+#[cfg(feature = "gui-e2e")]
+pub fn filter_semantics_for_e2e() -> Option<(gpui::EntityId, gpui::Role, gpui::Role, &'static str)>
+{
+    FILTER_SEMANTICS.with(|record| record.get())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn record_filter_placeholder(label: &'static str) {
+    FILTER_PLACEHOLDER.with(|record| record.set(Some(label)));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn filter_placeholder_for_e2e() -> Option<&'static str> {
+    FILTER_PLACEHOLDER.with(|record| record.get())
+}
+
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
 /// App-global (not per-tab), preserved across repository reloads. `new()`
 /// restores the five-pane weights and collapsed sections from settings once;
-/// the filter `InputState` is created lazily on first focus.
+/// the filter `InputState` is created with the window before its first frame.
 pub struct SidebarState {
     /// Current sidebar width in pixels (T023: user-resizable).
     pub width: f32,
@@ -82,9 +115,9 @@ pub struct SidebarState {
     tree_positions_for: Option<u64>,
     /// Sole runtime owner of section collapse, restored and persisted as a mask.
     pub collapsed: HashSet<&'static str>,
-    /// Lazy `InputState` for the filter input (gpui-component IME 対応); created
-    /// on first click of the filter area (requires `&mut Window`).
+    /// Window-owned filter input; initialized before the first GUI frame.
     pub filter: Option<Entity<InputState>>,
+    pub(super) filter_placeholder_lang: Option<super::i18n::Lang>,
     /// Whether the navigator is shown (View → Toggle Sidebar). Default `true`.
     pub visible: bool,
     /// Transient pointer gesture, never repository data (ADR-0199).
@@ -120,6 +153,7 @@ impl SidebarState {
             tree_positions_for: None,
             collapsed,
             filter: None,
+            filter_placeholder_lang: None,
             visible: true,
             swipe: Default::default(),
             settle_gen: 0,

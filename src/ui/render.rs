@@ -112,6 +112,7 @@ impl KagiApp {
 
 impl Render for KagiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_window_presentation(window, cx);
         self.poll_app_jobs(cx);
         self.present_app_notice();
         // #914: modal button closures bypass root Enter/Escape. A real exit
@@ -239,6 +240,7 @@ impl Render for KagiApp {
         self.sync_pr_fields_input(window, cx);
         self.sync_issue_inputs(window, cx);
         self.sync_list_filter_input(window, cx);
+        self.sync_sidebar_filter_placeholder(window, cx);
         self.sync_pending_focus(window, cx);
         // GPUI can retain focus on an input whose modal was just unmounted.
         // Only a handle tracked by the last drawn dispatch tree may hold the
@@ -395,8 +397,7 @@ impl Render for KagiApp {
         // never rebuild the rows.
         //
         // ADR-0116: owner + `view_epoch` and navigator inputs gate the
-        // O(all-refs) clone+collect. Filter InputState does not notify KagiApp,
-        // so its current value is folded in every frame.
+        // O(all-refs) clone+collect.
         let sidebar_filter_text: String = self
             .sidebar
             .filter
@@ -642,6 +643,11 @@ impl Render for KagiApp {
             .on_drag_move::<DividerDrag>(divider_drag_move)
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
+            .on_action(
+                cx.listener(|this, _: &super::FocusSidebarFilter, window, cx| {
+                    this.focus_sidebar_filter(window, cx);
+                }),
+            )
             .on_action(copy_diff_selection)
             .on_action(save_editor_file)
             .on_action(

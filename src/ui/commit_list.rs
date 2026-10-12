@@ -334,7 +334,8 @@ pub struct CommitRow {
     /// Short (8-hex) commit id. Retained for Detail Panel / oplog (T021: not rendered in row).
     #[allow(dead_code)]
     pub short_id: SharedString,
-    /// First line of the commit message (truncated to 72 chars at build time).
+    /// Sanitized first message line, bounded to 4 KiB on a UTF-8 boundary.
+    /// Ordinary subjects remain complete; one-line layout supplies ellipsis.
     pub summary: SharedString,
     /// Author name (display only).
     pub author: SharedString,
@@ -591,19 +592,8 @@ fn commit_to_row(
 ) -> CommitRow {
     let short_id = SharedString::from(c.id.short().to_string());
 
-    // issue #414: commit summary + author are remote-origin text shown on every
-    // graph row (the list the user looks at continuously). Neutralize terminal
-    // control bytes before truncation/display, matching the detail panel.
-    let safe_summary = kagi_domain::text_safety::sanitize_control_bytes(&c.summary);
-    // Truncate summary at 72 chars to keep rows manageable.
-    // Count chars (not bytes): byte slicing would panic on multi-byte
-    // summaries (e.g. Japanese commit messages).
-    let summary = if safe_summary.chars().count() > 72 {
-        let truncated: String = safe_summary.chars().take(71).collect();
-        SharedString::from(format!("{truncated}…"))
-    } else {
-        SharedString::from(safe_summary)
-    };
+    // #1306: retain subject identity; the one-line element owns visual ellipsis.
+    let summary = display_subject(&c.summary);
 
     let author = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
         &c.author.name,
@@ -649,6 +639,53 @@ fn commit_to_row(
         parents: c.parents.clone(),
         is_head,
         is_merge,
+    }
+}
+
+/// Graph identity has a defensive 4 KiB bound *after* control-byte sanitization.
+/// Ordinary long subjects remain complete for AX and Tooltip; only pathological
+/// subjects get a model ellipsis. The Inspector retains the entire message.
+fn display_subject(subject: &str) -> SharedString {
+    const MAX_BYTES: usize = 4096;
+    // Sanitization only expands bytes, so text beyond this raw UTF-8 prefix
+    // cannot fit. Bound the work/allocation as well as the retained identity.
+    let mut input_end = subject.len().min(MAX_BYTES);
+    while !subject.is_char_boundary(input_end) {
+        input_end -= 1;
+    }
+    let mut safe = kagi_domain::text_safety::sanitize_control_bytes(&subject[..input_end]);
+    if input_end < subject.len() || safe.len() > MAX_BYTES {
+        let mut end = MAX_BYTES - '…'.len_utf8();
+        while !safe.is_char_boundary(end) {
+            end -= 1;
+        }
+        safe.truncate(end);
+        safe.push('…');
+    }
+    SharedString::from(safe)
+}
+
+#[cfg(test)]
+mod subject_tests {
+    #[test]
+    fn subjects_preserve_identity_until_sanitized_utf8_bound() {
+        for subject in [
+            "x".repeat(300),
+            "日本語😀".repeat(300),
+            "safe\x1b[31m".repeat(300),
+        ] {
+            assert_eq!(
+                super::display_subject(&subject).as_ref(),
+                kagi_domain::text_safety::sanitize_control_bytes(&subject)
+            );
+        }
+        assert_eq!(super::display_subject(&"x".repeat(4096)).len(), 4096);
+        for subject in ["😀".repeat(2000), "\x1b".repeat(2000)] {
+            let displayed = super::display_subject(&subject);
+            assert!(displayed.len() <= 4096);
+            assert!(displayed.ends_with('…'));
+            assert!(!displayed.contains('\x1b'));
+        }
     }
 }
 

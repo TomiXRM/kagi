@@ -4,6 +4,22 @@
 
 use super::{lang, Lang};
 
+/// Disclosure name includes the durable identity, not only a truncated op.
+pub fn entry_disclosure_name(id: u64, time: &str, op: &str, outcome: &str) -> String {
+    match lang() {
+        Lang::En => format!("Operation entry #{id}, {time}, {op}, {outcome}"),
+        Lang::Ja => format!("操作エントリ #{id}、{time}、{op}、{outcome}"),
+    }
+}
+
+/// Copy action names the same entry as its disclosure.
+pub fn entry_copy_name(identity: &str) -> String {
+    match lang() {
+        Lang::En => format!("Copy entry: {identity}"),
+        Lang::Ja => format!("エントリをコピー: {identity}"),
+    }
+}
+
 /// The Operation Log panel's fixed strings: one key each in the `Msg`
 /// catalog, under [`super::Msg::OplogPanel`] (#871 review).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

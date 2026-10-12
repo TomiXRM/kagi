@@ -16,7 +16,7 @@
 //! `author.time` (Unix epoch seconds, UTC).
 
 use crate::commit::Commit;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A fixed recent window + chart resolution. `All` covers the whole history
 /// (its window is computed from the data, not a fixed length).
@@ -87,11 +87,12 @@ impl Granularity {
     }
 }
 
-/// One sub-bucket: commit / merge counts.
+/// One sub-bucket: commit / merge counts and distinct authors by email.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActivityBucket {
     pub commits: u32,
     pub merges: u32,
+    pub authors: u32,
 }
 
 /// Per-author aggregate for the contributor ranking.
@@ -122,6 +123,20 @@ pub struct GranularityData {
     pub bucket_secs: i64,
     /// The `now` the window was computed against (tooltip "ago" reference).
     pub now: i64,
+}
+
+impl GranularityData {
+    /// Bucket start as an unambiguous UTC date/time for accessibility.
+    pub fn bucket_date(&self, index: usize) -> String {
+        let epoch = self.start + index as i64 * self.bucket_secs;
+        let minutes = epoch.div_euclid(60).rem_euclid(24 * 60);
+        format!(
+            "{} {:02}:{:02} UTC",
+            fmt_ymd(epoch),
+            minutes / 60,
+            minutes % 60
+        )
+    }
 }
 
 /// Aggregated activity for one repository snapshot, per granularity.
@@ -187,6 +202,7 @@ fn aggregate_one(commits: &[Commit], now: i64, g: Granularity) -> GranularityDat
 
     let mut buckets = vec![ActivityBucket::default(); n];
     let mut authors: BTreeMap<String, Contributor> = BTreeMap::new();
+    let mut bucket_authors = BTreeSet::new();
     let mut total_commits = 0u32;
     let mut total_merges = 0u32;
 
@@ -198,6 +214,7 @@ fn aggregate_one(commits: &[Commit], now: i64, g: Granularity) -> GranularityDat
         let idx = (((t - start) / bucket) as usize).min(n - 1);
         let is_merge = c.parents.len() >= 2;
         buckets[idx].commits += 1;
+        buckets[idx].authors += u32::from(bucket_authors.insert((idx, c.author.email.as_str())));
         total_commits += 1;
         if is_merge {
             buckets[idx].merges += 1;
@@ -435,5 +452,47 @@ mod tests {
             (d.contributors[0].commits, d.contributors[0].merges),
             (2, 1)
         );
+    }
+
+    #[test]
+    fn distinct_authors_are_scoped_to_each_bucket_and_window() {
+        let commits = [
+            commit(NOW - 100, 1, "A", "a@x"),
+            commit(NOW - 200, 2, "Renamed A", "a@x"),
+            commit(NOW - 300, 1, "B", "b@x"),
+            commit(NOW - 3600, 1, "A", "a@x"),
+            commit(NOW - 100_000, 1, "Old", "old@x"),
+            commit(NOW + 1, 1, "Future", "future@x"),
+        ];
+        let activity = aggregate(&commits, NOW);
+        let day = activity.get(Granularity::Day);
+        assert_eq!(
+            (
+                day.buckets[47].commits,
+                day.buckets[47].merges,
+                day.buckets[47].authors
+            ),
+            (3, 1, 2)
+        );
+        assert_eq!(day.buckets[46].authors, 1);
+        assert_eq!(day.buckets[45].authors, 0);
+        assert_eq!(day.contributors.len(), 2);
+        assert_eq!(activity.get(Granularity::Week).contributors.len(), 3);
+        assert!(aggregate(&[], NOW)
+            .day
+            .buckets
+            .iter()
+            .all(|bucket| bucket.authors == 0));
+    }
+
+    #[test]
+    fn bucket_dates_include_utc_time_and_handle_negative_epochs() {
+        let data = GranularityData {
+            start: -60,
+            bucket_secs: 60,
+            ..Default::default()
+        };
+        assert_eq!(data.bucket_date(0), "1969-12-31 23:59 UTC");
+        assert_eq!(data.bucket_date(1), "1970-01-01 00:00 UTC");
     }
 }

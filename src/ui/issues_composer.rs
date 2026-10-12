@@ -399,6 +399,7 @@ pub(super) fn render_composer(
                 }))
                 .child(
                     Input::new(&title)
+                        .aria_label(Msg::A11yIssueTitle.t())
                         .appearance(false)
                         .bordered(false)
                         .focus_bordered(false)
@@ -484,7 +485,17 @@ pub(super) fn render_composer(
                 });
                 cx.stop_propagation();
             }))
-            .child(super::timeline_row::body_input(&input).h_full())
+            .child(
+                super::timeline_row::body_input(
+                    &input,
+                    if number.is_some() {
+                        Msg::A11yCommentBody.t()
+                    } else {
+                        Msg::A11yIssueBody.t()
+                    },
+                )
+                .h_full(),
+            )
             .into_any_element()
     };
     if !empty_create {

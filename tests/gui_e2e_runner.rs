@@ -120,6 +120,10 @@ mod dark_elevation;
 mod inactive_selection;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/tab_strip.rs"]
+mod tab_strip;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
 
@@ -134,6 +138,10 @@ mod recovery_sidebar_panes;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/input_names.rs"]
+mod input_names;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -1361,6 +1369,10 @@ mod macos {
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
             (
+                "input_names_inventory",
+                Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
                 "hairline_dividers",
                 Box::new(crate::recovery_hairline_dividers::scenario_hairline_dividers),
             ),
@@ -1499,6 +1511,14 @@ mod macos {
             (
                 "repo_tabs_neutral",
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
+            ),
+            (
+                "tab_strip_overflow",
+                Box::new(crate::tab_strip::scenario_tab_strip_overflow),
+            ),
+            (
+                "tab_close_names",
+                Box::new(crate::tab_strip::scenario_tab_close_names),
             ),
             (
                 "unified_toolbar",

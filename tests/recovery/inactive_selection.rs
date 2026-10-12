@@ -220,10 +220,10 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                                     &pixel[..3],
                                     "{slug}: inactive cell must differ from its gap"
                                 );
-                                let panel = theme::theme().panel;
+                                let chrome = theme::theme().chrome_surface();
                                 assert_eq!(
                                     &gap[..3],
-                                    &[(panel >> 16) as u8, (panel >> 8) as u8, panel as u8],
+                                    &[(chrome >> 16) as u8, (chrome >> 8) as u8, chrome as u8],
                                     "gap is strip background"
                                 );
                             }

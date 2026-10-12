@@ -469,7 +469,11 @@ impl KagiApp {
                     .border_b_1()
                     .border_color(rgb(theme().elevated_border(theme().surface)))
                     .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
-                    .child(Input::new(input).appearance(true)),
+                    .child(
+                        Input::new(input)
+                            .aria_label(i18n::Msg::A11yCommandPaletteQuery.t())
+                            .appearance(true),
+                    ),
             );
         }
 

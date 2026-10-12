@@ -51,25 +51,7 @@ const SIDEBAR_DEFAULT_WIDTH: f32 = 240.0;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
-    static FILTER_SEMANTICS: std::cell::Cell<Option<(gpui::EntityId, gpui::Role, gpui::Role, &'static str)>> = const { std::cell::Cell::new(None) };
     static FILTER_PLACEHOLDER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(feature = "gui-e2e")]
-pub(super) fn record_filter_semantics(
-    input: gpui::EntityId,
-    group_role: gpui::Role,
-    input_role: gpui::Role,
-    label: &'static str,
-) {
-    FILTER_SEMANTICS.with(|record| record.set(Some((input, group_role, input_role, label))));
-}
-
-/// Renderer-fed assignments, not a native accessibility-tree snapshot.
-#[cfg(feature = "gui-e2e")]
-pub fn filter_semantics_for_e2e() -> Option<(gpui::EntityId, gpui::Role, gpui::Role, &'static str)>
-{
-    FILTER_SEMANTICS.with(|record| record.get())
 }
 
 #[cfg(feature = "gui-e2e")]

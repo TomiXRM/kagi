@@ -25,6 +25,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::settings::{read_setting, write_setting};
 
+pub fn settings_zoom_action(increase: bool, value: &str) -> String {
+    match (lang(), increase) {
+        (Lang::En, false) => format!("Decrease UI zoom ({value})"),
+        (Lang::En, true) => format!("Increase UI zoom ({value})"),
+        (Lang::Ja, false) => format!("UI ズームを下げる ({value})"),
+        (Lang::Ja, true) => format!("UI ズームを上げる ({value})"),
+    }
+}
+
+pub fn settings_zoom_value(value: &str) -> String {
+    match lang() {
+        Lang::En => format!("UI zoom {value}"),
+        Lang::Ja => format!("UI ズーム {value}"),
+    }
+}
+
 // Lang + active-language atomic
 pub mod activity;
 pub mod analyze;
@@ -1614,6 +1630,15 @@ pub enum Msg {
     EditorTreePreviewMarkdown,
     EditorWorkspacePreviewShow,
     EditorWorkspacePreviewEdit,
+    EditorFindPrevious,
+    EditorFindNext,
+    EditorFindReplace,
+    EditorFindReplaceAll,
+    EditorFindClose,
+    EditorFindCase,
+    EditorFindReplaceMode,
+    EditorFindField,
+    EditorFindReplacementField,
     EditorWorkspaceMermaidRendering,
     EditorWorkspaceMermaidNeedsCli,
     EditorWorkspaceMermaidFailed,
@@ -4078,6 +4103,24 @@ impl Msg {
             (En, EditorWorkspacePreviewShow) => "Preview",
             (Ja, EditorWorkspacePreviewEdit) => "編集に戻る",
             (En, EditorWorkspacePreviewEdit) => "Back to editor",
+            (En, EditorFindPrevious) => "Previous match",
+            (Ja, EditorFindPrevious) => "前の一致",
+            (En, EditorFindNext) => "Next match",
+            (Ja, EditorFindNext) => "次の一致",
+            (En, EditorFindReplace) => "Replace",
+            (Ja, EditorFindReplace) => "置換",
+            (En, EditorFindReplaceAll) => "Replace all",
+            (Ja, EditorFindReplaceAll) => "すべて置換",
+            (En, EditorFindClose) => "Close",
+            (Ja, EditorFindClose) => "閉じる",
+            (En, EditorFindCase) => "Match case",
+            (Ja, EditorFindCase) => "大文字と小文字を区別",
+            (En, EditorFindReplaceMode) => "Show replacement field",
+            (Ja, EditorFindReplaceMode) => "置換欄を表示",
+            (En, EditorFindField) => "Find",
+            (Ja, EditorFindField) => "検索",
+            (En, EditorFindReplacementField) => "Replacement",
+            (Ja, EditorFindReplacementField) => "置換文字列",
             (Ja, EditorWorkspaceMermaidRendering) => "図を描画中…",
             (En, EditorWorkspaceMermaidRendering) => "Rendering diagram…",
             (Ja, EditorWorkspaceMermaidNeedsCli) => "図の描画には mermaid-cli (mmdc) が必要です",
@@ -4221,7 +4264,7 @@ impl Msg {
             (En, SmartGeneratingLocal) => "Generating with local LLM…",
             (Ja, SmartGeneratingLocal) => "ローカルLLMで生成中…",
             (En, SmartGeneratingProvider) => "Generating with {}…",
-            (Ja, SmartGeneratingProvider) => "{}で生成中…",
+            (Ja, SmartGeneratingProvider) => "{} で生成中…",
             (En, SmartGeneratedLocal) => "Generated with local LLM",
             (Ja, SmartGeneratedLocal) => "ローカルLLMで生成しました",
             (En, SmartGenerationFallback) => "LLM unavailable — used rule-based",
@@ -4643,6 +4686,27 @@ pub fn smart_model_switch_note(model: &str) -> String {
     match lang() {
         Lang::En => format!("{} — start Ollama to switch", model),
         Lang::Ja => format!("{}。切り替えるには Ollama を起動してください", model),
+    }
+}
+
+/// Commit footer help names the actual backend; only Ollama owns a Kagi model.
+pub fn smart_footer_provider(provider: &str, model: Option<&str>, generating: bool) -> String {
+    let provider = kagi_domain::text_safety::sanitize_control_bytes(provider);
+    let name = match model.filter(|model| !model.is_empty()) {
+        Some(model) => format!(
+            "{} ({})",
+            provider,
+            kagi_domain::text_safety::sanitize_control_bytes(model)
+        ),
+        None => provider,
+    };
+    if generating {
+        Msg::SmartGeneratingProvider.t().replace("{}", &name)
+    } else {
+        match lang() {
+            Lang::En => format!("Generate commit message with {name}"),
+            Lang::Ja => format!("{name} で commit メッセージを生成"),
+        }
     }
 }
 

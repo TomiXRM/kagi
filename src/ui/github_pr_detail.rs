@@ -533,6 +533,30 @@ impl KagiApp {
         self.ui().pr_details.availability(pr, PrDetailStage::Status)
     }
 
+    /// Install only a fixture's L2 freshness; classification and row paint stay production-owned.
+    #[cfg(feature = "gui-e2e")]
+    pub fn seed_pr_status_fresh_for_e2e(&mut self, number: u64, cx: &mut Context<Self>) {
+        let ui = self.ui_mut().expect("mounted repository UI");
+        let pr = ui
+            .github_prs
+            .iter()
+            .find(|pr| pr.number == number)
+            .expect("fixture PR");
+        let key = DetailKey {
+            pr: pr.key(),
+            stage: PrDetailStage::Status,
+        };
+        let slot = ui.pr_details.slots.entry(key).or_default();
+        slot.generation = slot.generation.wrapping_add(1);
+        slot.head_sha.clone_from(&pr.head_sha);
+        slot.availability = PrDetailAvailability::Fresh;
+        slot.refreshed_at = Some(Instant::now());
+        slot.successful_head = Some(pr.head_sha.clone());
+        slot.next_retry_at = None;
+        slot.error = None;
+        cx.notify();
+    }
+
     /// Called by the dashboard `uniform_list` processor after layout identifies
     /// the visible range. Repeated frames with the same PR set are free.
     pub(super) fn observe_visible_prs(&mut self, visible: BTreeSet<PrKey>, cx: &mut Context<Self>) {

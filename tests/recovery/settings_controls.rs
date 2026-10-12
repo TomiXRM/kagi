@@ -11,7 +11,7 @@ use kagi::ui::{
     theme, KagiApp, ToastKind,
 };
 
-fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(crate) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     // Cocoa content-height requests are asynchronous; settle layout without
     // draining the toast ticker or changing its lifetime.
     for _ in 0..4 {
@@ -171,7 +171,7 @@ pub fn scenario_settings_provider_keys(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS settings_provider_keys EN/JA Light/Dark 100/167%, 0/1/20 models");
 }
 
-fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
+pub(crate) fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str) {
     draw(cx, window);
     let mut bounds = e2e::control_bounds(window.window_id(), name).unwrap();
     let viewport = cx

@@ -362,7 +362,7 @@ pub(super) fn render_sidebar_pages(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let offset = app.sidebar.swipe.offset();
-    let width = f32::from(theme::scaled_px(app.sidebar.width));
+    let width = f32::from(theme::scaled_px(app.pane_fit.sidebar));
     let viewport = div()
         .id("sidebar-mode-panel")
         .relative()
@@ -439,10 +439,8 @@ pub(super) fn render_sidebar_pages(
 
     div()
         .relative()
-        // `sidebar.width` is the unscaled, persisted width; scale at render so
-        // it tracks zoom uniformly with the text. The resize/drag math in
-        // `render_divider` interprets cursor deltas in the same scaled space.
-        .w(theme::scaled_px(app.sidebar.width))
+        // Fitting is presentation-only; keep preference and rendered width apart.
+        .w(theme::scaled_px(app.pane_fit.sidebar))
         .flex_shrink_0()
         .h_full()
         .flex()
@@ -484,7 +482,7 @@ impl KagiApp {
                 // The commit boundary is a fraction of the sidebar the user can
                 // see, so it is measured in the same rendered pixels the
                 // viewport is laid out in.
-                let width = f32::from(theme::scaled_px(self.sidebar.width));
+                let width = f32::from(theme::scaled_px(self.pane_fit.sidebar));
                 self.sidebar.swipe.start(origin, nav_pages().len(), width);
             }
             TouchPhase::Cancelled => {

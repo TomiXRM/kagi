@@ -6,6 +6,28 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn editor_find_controls_have_semantic_names_in_both_languages() {
+    for (message, english, japanese) in [
+        (Msg::EditorFindPrevious, "Previous match", "前の一致"),
+        (Msg::EditorFindNext, "Next match", "次の一致"),
+        (Msg::EditorFindReplace, "Replace", "置換"),
+        (Msg::EditorFindReplaceAll, "Replace all", "すべて置換"),
+        (Msg::EditorFindClose, "Close", "閉じる"),
+        (Msg::EditorFindCase, "Match case", "大文字と小文字を区別"),
+        (
+            Msg::EditorFindReplaceMode,
+            "Show replacement field",
+            "置換欄を表示",
+        ),
+        (Msg::EditorFindField, "Find", "検索"),
+        (Msg::EditorFindReplacementField, "Replacement", "置換文字列"),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+}
+
+#[test]
 fn terminal_empty_states_are_localized_and_keep_os_detail() {
     for (message, english, japanese) in [
         (

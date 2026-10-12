@@ -56,6 +56,16 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
+`settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
+role/name/value/expanded/disabled properties on Appearance controls in the native
+Settings host, across EN/JA and Apple Light/Dark. Theme semantics are assigned
+to the kit's actual focused Select root; confirmation and Escape preserve its
+identity and focus owner. Zoom retains kit activation and discrete caps, hands
+focus to the opposite stepper at each bound, and Tabs onward to Compact graph.
+These probes are not native VoiceOver or Full Keyboard Access evidence.
+Tier B inspects the live ComboBox and option names and both zoom button/value
+nodes at 100%, 70% and 167%, including disabled announcements.
 For #1336/#1337/#1338/#1341 use
 `KAGI_GUI_E2E_ONLY='diff_header_identity,toast_live_status,worktree_inspection_actions,clone_progress_status'`
 with KEEP_GOING. Diff identity observes the invoked full-path Tooltip and
@@ -112,6 +122,28 @@ selected session and selected file. `KagiApp::set_window_active_for_e2e` overrid
 activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
+
+For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
+with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,
+compares its Button role/name/toggled assignments, measures real button bounds,
+and hovers each control to observe invoked Tooltip builders in EN/JA,
+940×660 / 1392×883, 100%/167% and Apple Light/Dark. `Window::focus_next`
+traverses rendered stops; F19 records the control receiving the simulated key.
+Enter/Space exercise navigation, case matching, replacement disclosure,
+Replace/Replace all and Close. Escape returns to the owning code buffer,
+replacement stays unsaved/undoable, and a live locale switch retains the query.
+The ownership leg focuses the replacement-disclosure Button, then sends
+Select All / Backspace / Delete / word deletion / Paste / Cut / Undo / Redo /
+movement keys and asserts that the hidden code buffer never changes. It also
+checks that the case Button cannot edit its containing query and that a native
+padding click directs editing to Find. Actual Issue-body and Conflict-Result
+hosts check initial and retained EN/JA names/help, without replacing their inputs.
+The fork's `test-support` feature is enabled only by the Editor's `gui-e2e`
+feature; normal builds retain no probes. This is renderer/tooltip/simulated-input
+evidence, not physical Tab, Full Keyboard Access, VoiceOver or live IME.
+Tier B: in the real EN/JA Editor window open Cmd+F, Tab through the controls,
+inspect names/help/toggle states in Accessibility Inspector, activate them,
+and check Escape focus return, composition, replacement undo and guarded Save.
 
 For #1301 / #1302 use `KAGI_GUI_E2E_ONLY='activity_,bottom_panel'` with
 KEEP_GOING. `activity_granularity_keys` checks the five existing periods'
@@ -368,6 +400,23 @@ rows/header and palette frame/divider; it is not a screenshot-pixel sample.
 Pair with the existing `palette_selection_scroll`, `palette_push_modal_keys`
 and toolbar scenarios. Real fading, macOS preference changes and JA IME are
 Tier B comparisons, not TestDispatcher assertions.
+
+For #1352 use `KAGI_GUI_E2E_ONLY='pr_dashboard_'` with KEEP_GOING and a
+120-second child timeout. The draft-contrast matrix is split into four
+Light/Dark × narrow/wide children so every native capture fits the timeout,
+without dropping EN/JA, 100%/167% or rest/hover × active/inactive coverage.
+Production cell bounds select actual Metal glyph-interior and blank-background
+pixels for titles, number, author, age and the localized Draft state; inherited
+row opacity is included in the captured pixel, not replaced with theme RGB.
+Draft/ready rows retain identical title/author/age facts and the ListItem name.
+The same children also draw a local draft with Conflicting status: a GUI-only
+fixture seam seeds L2 freshness, while production classification must retain
+Needs You's blocker-coloured STATE. The plain Draft reason alone is muted.
+There is no selected dashboard row state. Pair with the ui-core
+`apple_pr_dashboard_draft_text_meets_wcag_aa_on_row_backgrounds` unit test.
+Tier B remains a real-window comparison of draft/ready rows and opening a draft
+in Apple Light/Dark; native VoiceOver and Full Keyboard Access are not proven
+by the recorder or image contrast.
 
 For #1016 PR B use `KAGI_GUI_E2E_ONLY='modal_polish_'` with
 `KAGI_GUI_E2E_KEEP_GOING=1` (`tests/recovery/modal_polish_b.rs`). The three

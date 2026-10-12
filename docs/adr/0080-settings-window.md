@@ -60,3 +60,30 @@
 - New `MenuOverlay::Settings` variant + a `settings_view` render module; a gear button
   in `render_header_slot`; menu + `cmd-,` action. No repo/git access from the view.
 - ticket: T-SETTINGS-001.
+
+## Amendment — 2026-10-12: Appearance accessibility (#1349 / #1350)
+
+The existing open-density Settings controls keep their layout and interaction.
+The gpui-kit Select revision 406b02f2 exposes role/name/value/expanded builders
+on its actual focused root plus an is_open getter. Kagi uses those directly
+for ComboBox, localized Theme name, current display-name value and expanded
+state; the initial unfocused wrapper/active-descendant approach was removed
+after review. Observing Select notifications repaints the value and expanded
+state without another open flag or retained trigger handle. ThemeOption's row
+rendering adds named ListBoxOption content in EN/JA.
+
+Zoom keeps the kit's outline Buttons. Their AX names describe increase/decrease
+and the live percentage; the percentage itself is a localized Status. Japanese
+names use the same UI ズーム term as the visible setting. Comparing step_zoom
+with the current value disables only bound actions. The kit owns disabled
+paint/interaction but does not publish AX disabled; the shared AccessibleButton
+adapter adds that property to the same Button node. Glyphs are children rather
+than Button labels so rendering cannot overwrite the name with −/+.
+The stepper renderer captures the kit's existing keyed Button focus owner,
+without allocating another handle or adding a stop. If the pressed direction
+is actually focused when it reaches a bound, its handler transfers focus to the
+opposite stepper before redraw disables it; the next Tab reaches Compact graph,
+not the first window stop. Existing styling, selection, Escape, live apply and
+persistence remain kit/existing-path owned; loading, empty and error states are
+not introduced. Renderer-fed Tier A metadata is not native VoiceOver evidence;
+native AX delivery remains a Tier B inspection.

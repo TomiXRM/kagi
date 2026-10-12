@@ -3,7 +3,7 @@ use crate::macos::{build_fixture, mount, unmount};
 use gpui::{rgb, FontWeight, VisualTestAppContext};
 use kagi::ui::{e2e, theme};
 
-fn luminance(color: u32) -> f64 {
+pub(crate) fn luminance(color: u32) -> f64 {
     [(color >> 16) as u8, (color >> 8) as u8, color as u8]
         .into_iter()
         .zip([0.2126, 0.7152, 0.0722])

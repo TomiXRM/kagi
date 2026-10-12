@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_contrast.rs"]
+mod pr_dashboard_contrast;
+#[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
 #[cfg(target_os = "macos")]
@@ -159,6 +162,9 @@ mod bottom_panel_motion;
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_column_divider.rs"]
 mod graph_column_divider;
+#[cfg(target_os = "macos")]
+#[path = "recovery/pane_budget.rs"]
+mod pane_budget;
 #[cfg(target_os = "macos")]
 #[path = "recovery/side_panel_motion.rs"]
 mod side_panel_motion;
@@ -324,6 +330,9 @@ mod overlay_focus;
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_appearance_ax.rs"]
+mod settings_appearance_ax;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_controls.rs"]
 mod settings_controls;
 #[cfg(target_os = "macos")]
@@ -388,6 +397,14 @@ mod editor_diff_extent_reload;
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_tabs.rs"]
 mod editor_tabs;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_find.rs"]
+mod editor_find;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/editor_find_hosts.rs"]
+mod editor_find_hosts;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_threads.rs"]
@@ -1358,6 +1375,22 @@ mod macos {
             (
                 "pr_dashboard_responsive",
                 Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
+            ),
+            (
+                "pr_dashboard_draft_contrast_light_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-dark")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_light_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-dark")),
             ),
             (
                 "color_vision_theme",
@@ -2362,6 +2395,14 @@ mod macos {
                 Box::new(crate::settings_controls::scenario_settings_provider_keys),
             ),
             (
+                "settings_theme_select_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_theme_select_ax),
+            ),
+            (
+                "settings_zoom_stepper_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
+            ),
+            (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
@@ -2583,6 +2624,10 @@ mod macos {
             (
                 "editor_toggle_keys",
                 Box::new(crate::editor_tabs::scenario_editor_toggle_keys),
+            ),
+            (
+                "editor_find_controls_a11y",
+                Box::new(crate::editor_find::scenario_editor_find_controls_a11y),
             ),
             ("pr_threads", Box::new(crate::pr_threads::scenario_pr_threads)),
             ("review_hunk_full", Box::new(crate::github_text::scenario_review_hunk_full)),
@@ -2823,6 +2868,10 @@ mod macos {
             (
                 "commit_panel_footer_tab_order",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_footer_tab_order),
+            ),
+            (
+                "smart_commit_footer_provider",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_commit_footer_provider),
             ),
             (
                 "commit_panel_coauthor_keys",
@@ -3448,6 +3497,18 @@ mod macos {
             (
                 "right_selection_motion",
                 Box::new(crate::side_panel_motion::scenario_right_selection_motion),
+            ),
+            (
+                "pane_budget_fit",
+                Box::new(crate::pane_budget::scenario_pane_budget_fit),
+            ),
+            (
+                "pane_budget_worktree_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_worktree_anchor),
+            ),
+            (
+                "pane_budget_group_anchor",
+                Box::new(crate::pane_budget::scenario_pane_budget_group_anchor),
             ),
             (
                 "graph_column_divider_hidden",

@@ -741,3 +741,21 @@ reads, native width/zoom transitions and Escape/Home leaks eight `InputState`
 handles on unchanged `origin/dev` too. That independent lifecycle defect is
 excluded from this layout regression; its leak assertion was not suppressed.
 
+
+## Amendment — 2026-10-12: readable draft dashboard rows (#1352)
+
+The open-row table retains GitHub's explicit Draft state rather than treating
+drafts as disabled actions. Draft titles keep `text_main`; number, author,
+branch pair, age and the existing localized Draft state use `text_muted`.
+Remove the 75% whole-row opacity, which also attenuated required small text.
+The existing List/ListItem name, pointer-open route and surface hover remain
+unchanged. This dashboard has no selected-row presentation; inactive windows
+retain the same metadata rather than adding an artificial selection state.
+
+Apple Light/Dark unit coverage reuses the WCAG contrast helper for both
+base and hover fills. Tier A `pr_dashboard_draft_contrast` compares native
+Metal glyph-interior and background pixels, including ancestor compositing,
+on draft and ready rows at 940×660 / 1392×883, EN/JA, 100%/167%, rest/hover
+and active/inactive presentation. Theme-token assertions alone do not prove
+composited text contrast. Keyboard/VoiceOver delivery remains separate Tier B
+evidence, not a claim from the ListItem recorder.

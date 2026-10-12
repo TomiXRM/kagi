@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_contrast.rs"]
+mod pr_dashboard_contrast;
+#[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
 #[cfg(target_os = "macos")]
@@ -1339,6 +1342,22 @@ mod macos {
             (
                 "pr_dashboard_responsive",
                 Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
+            ),
+            (
+                "pr_dashboard_draft_contrast_light_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_narrow",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (940., 660.), "apple-dark")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_light_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-light")),
+            ),
+            (
+                "pr_dashboard_draft_contrast_dark_wide",
+                Box::new(|cx| crate::pr_dashboard_contrast::scenario_pr_dashboard_draft_contrast(cx, (1392., 883.), "apple-dark")),
             ),
             (
                 "color_vision_theme",

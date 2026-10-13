@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector changed-file rows use the sidebar's dense 20-reference-pixel height with Finder-inspired 13px labels and 16px status-badge columns, including directories, Generated and overflow notes. A shared UI-core file-tree font token replaces the initially requested extra-small text. Reduced top padding and metadata/Comparing spacing bring files upward without changing title line height, keyboard reveal, accessibility names or preferred pane widths. (#1464, Inspector portion of #1467)
+  - Review: reuse the sidebar row-height constant and use 1.2em filename leading so Inter descenders remain inside truncation's content mask; native glyph containment now covers `package-000.json`.
 - All five Graph sidebar panes collapse from their roving keyboard row with Left, returning focus to the header; Enter/Space now toggle empty headers like pointer clicks without changing saved weights. Filtered group disclosures explain in English/Japanese why matching groups stay expanded and never silently change the normal collapse choices. (#1449, #1450)
   - Review: outline Left collapses an expanded group first, otherwise reveals its parent; only top-level rows collapse the pane. Worktree inspection-card controls are excluded and retain their card/focus.
 - Native menus follow the English/Japanese display language, including standard Edit items. Window's AppKit role remains independent of its translated title. Edit Undo/Redo route to focused text input or the same available repository-history plan as their shortcuts, never from Terminal or historical snapshots. File Save exposes the existing ⌘S action only for a saveable dirty live Editor buffer. (#1438, #1439, #1440)

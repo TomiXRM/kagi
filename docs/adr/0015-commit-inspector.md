@@ -80,12 +80,13 @@ UI-core's `theme::FILE_TREE_FONT_PX` is shared through the existing
 `text_size(scaled_px(token))` convention. Other file/ref surfaces adopt it
 independently; this amendment changes only Inspector.
 Files, directories, Generated disclosure and the unfocusable More note share
-one explicit 20-reference-pixel height with the native list's unmeasured extent.
-No per-row margins inflate the scroll estimate. File badges/names and Generated
-text use single-line leading so the existing fixed focus ring fits inside the
-dense frame. Tree indentation remains 12 reference pixels. At 167%, rows exceed
-20 logical pixels. Finder's grouping, font family and selection policy are not
-copied by this size-only change.
+sidebar's `SIDEBAR_ROW_H` for their explicit 20-reference-pixel height and the
+native list's unmeasured extent. No per-row margins inflate the scroll estimate.
+File badges/names use 1.2em leading: 1em clips Inter descenders in the truncated
+name column's content mask. The existing fixed focus ring still fits inside
+the dense frame. Tree indentation remains 12 reference pixels. At 167%, rows
+exceed 20 logical pixels. Finder's grouping, font family and selection policy
+are not copied by this size-only change.
 
 Top padding is halved (`pt_2` → `pt_1`); metadata, co-author/trailer and action
 bottom margins use `mb_1` rather than `mb_2`. Comparing uses `py_px`/`mb_1`.
@@ -128,3 +129,16 @@ instead of requiring activation or a narrow screenshot. Native Tier A still
 covers all narrow geometry/keyboard legs. All launched processes exited, and
 only the newly created Finder reference window was closed after capture.
 VoiceOver delivery, IME and real-app FPS were not exercised.
+
+Review regression: filename fixtures contain `package-000.json`, including
+`p`, `g` and `j` descenders. The native text system shapes the name and computes
+baseline-relative glyph extents against the actual paint-stage content mask.
+Before the 1.2em correction, `p` ended at 472.3941px beyond the 471.5px mask:
+the new assertion failed verbatim rather than accepting a contained line box.
+Glyph containment is checked in every Inspector scale presentation cell.
+The review-scoped native run again passed all 17 scenarios, including the
+16 glyph-containment matrix cells. The four wide Tier B after captures were
+refreshed with default features and unchanged fixture commit `1955d837`;
+`review-comparison-*.png` and `review-finder-kagi-native-scale.png` are the
+final owner-facing comparisons. Each raw capture is 2784×1766, matching the
+baseline's 1392×883 logical window without resampling or window shadow.

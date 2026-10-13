@@ -17,7 +17,7 @@ use std::{cell::RefCell, rc::Rc};
 
 const LIST: &str = "inspector-files-scroll";
 const FOLD: &str = "\0generated";
-const ROW_HEIGHT: f32 = 20.;
+const ROW_HEIGHT: f32 = super::sidebar::SIDEBAR_ROW_H;
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
@@ -385,7 +385,7 @@ fn file_row(
     .gap_1()
     .pl(theme::scaled_px(*depth as f32 * 12.))
     .h(theme::scaled_px(ROW_HEIGHT))
-    .line_height(relative(1.))
+    .line_height(relative(1.2))
     .hover(|s| s.bg(rgb(theme().surface)))
     .when(selected, |el| {
         el.bg(theme().selected_for_window(presentation.active))

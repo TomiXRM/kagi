@@ -9,7 +9,7 @@ fn fixture() -> tempfile::TempDir {
     std::fs::create_dir(fixture.path().join("src")).unwrap();
     for ix in 0..105 {
         std::fs::write(
-            fixture.path().join(format!("src/file-{ix:03}.txt")),
+            fixture.path().join(format!("src/package-{ix:03}.json")),
             "file\n",
         )
         .unwrap();
@@ -85,6 +85,40 @@ fn inspect_rows(
             "{name}: fits focus frame"
         );
     }
+    let name = e2e::control_paint(window.window_id(), "inspector-file-name-1").unwrap();
+    cx.update_window(window, |_, window, _| {
+        let text = "package-000.json";
+        let mut style = window.text_style();
+        style.font_family = theme::UI_FONT.into();
+        style.font_weight = name.font_weight;
+        let text_system = window.text_system();
+        let line = text_system.shape_line(
+            text.into(),
+            name.font_size,
+            &[style.to_run(text.len())],
+            None,
+        );
+        let baseline = name.bounds.top()
+            + (name.bounds.size.height - line.ascent - line.descent) / 2.
+            + line.ascent;
+        for (index, character) in text.char_indices() {
+            let font = line.font_id_for_index(index).expect("shaped filename font");
+            let glyph = text_system
+                .typographic_bounds(font, name.font_size, character)
+                .expect("native filename glyph bounds");
+            // CoreText glyph coordinates are baseline-relative and positive up.
+            let top = baseline - glyph.bottom();
+            let bottom = baseline - glyph.top();
+            assert!(
+                top >= name.mask.top() && bottom <= name.mask.bottom(),
+                "filename glyph {character:?}, including descenders, must fit its mask: \
+                 glyph={top:?}..{bottom:?}, mask={:?}..{:?}",
+                name.mask.top(),
+                name.mask.bottom()
+            );
+        }
+    })
+    .unwrap();
     assert!(
         (bounds(window, "inspector-file-badge-1").size.width - theme::scaled_px(16.)).abs()
             <= px(0.6),

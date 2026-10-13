@@ -15,6 +15,7 @@ pub(crate) struct SettingsControls {
     pub models: TabFocus,
     pub saved_ignore: Option<String>,
     pub ignore_error: Option<String>,
+    pub(super) reset_alert: Option<super::settings_analyze::AnalyzeResetAlert>,
 }
 
 impl SettingsControls {
@@ -224,6 +225,9 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !reset && !self.analyze_ignore_dirty(cx) {
+            return;
+        }
         let Some(input) = self.analyze_ignore_input.clone() else {
             return;
         };
@@ -253,11 +257,9 @@ impl KagiApp {
     }
 
     pub(super) fn analyze_ignore_dirty(&self, cx: &App) -> bool {
-        self.settings_controls.ignore_error.is_some()
-            || self.analyze_ignore_input.as_ref().is_some_and(|input| {
-                Some(input.read(cx).value().as_ref())
-                    != self.settings_controls.saved_ignore.as_deref()
-            })
+        self.analyze_ignore_input.as_ref().is_some_and(|input| {
+            Some(input.read(cx).value().as_ref()) != self.settings_controls.saved_ignore.as_deref()
+        })
     }
 }
 

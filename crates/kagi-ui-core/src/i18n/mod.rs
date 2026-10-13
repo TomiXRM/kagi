@@ -399,6 +399,7 @@ pub enum Msg {
     TerminalRestart,
     TerminalPasteTitle,
     TerminalPasteBody,
+    TerminalPasteControlBody,
     TerminalPasteConfirm,
     TerminalFocusDescription,
     UnbornEmptyTitle,
@@ -1081,6 +1082,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreUnsaved,
     SettingsAnalyzeIgnoreSaved,
     SettingsAnalyzeIgnoreFailed,
+    SettingsAnalyzeIgnoreClean,
+    SettingsAnalyzeResetTitle,
+    SettingsAnalyzeResetDetail,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -2607,10 +2611,12 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
-            (En, TerminalPasteTitle) => "Paste multiple lines into Terminal?",
-            (Ja, TerminalPasteTitle) => "Terminal に複数行を Paste しますか？",
+            (En, TerminalPasteTitle) => "Paste into Terminal?",
+            (Ja, TerminalPasteTitle) => "Terminal に Paste しますか？",
             (En, TerminalPasteBody) => "This shell has not enabled bracketed paste. Newlines in this text may execute commands immediately. Paste only if you trust the clipboard contents.",
             (Ja, TerminalPasteBody) => "この shell は bracketed paste を有効にしていません。テキストの改行でコマンドが直ちに実行される場合があります。clipboard の内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteControlBody) => "This clipboard contains invisible control characters that may interrupt programs or execute commands. This shell has not enabled bracketed paste. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteControlBody) => "clipboard に不可視の制御文字が含まれています。プログラムの中断やコマンドの実行につながる場合があります。この shell は bracketed paste を有効にしていません。内容を信頼できる場合だけ Paste してください。",
             (En, TerminalPasteConfirm) => "Paste",
             (Ja, TerminalPasteConfirm) => "Paste",
             (En, TerminalFocusDescription) => "Terminal input. Tab and Shift-Tab send shell completion keys. Press Control-Shift-Tab or Command-Shift-J to focus the bottom-panel tabs; use Left or Right, then Return to switch tabs.",
@@ -3704,6 +3710,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
             (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
             (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (En, SettingsAnalyzeIgnoreClean) => "Saved",
+            (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
+            (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. The default patterns will replace the editor contents and the saved analyze_ignore file.",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。編集内容と保存済みの analyze_ignore ファイルをデフォルトのパターンに置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.

@@ -102,10 +102,18 @@ pub fn scenario_home_empty_section_wording(cx: &mut VisualTestAppContext) {
                         );
                         continue;
                     }
-                    let expected = match lang {
-                        Lang::En => format!("No repositories to display for {owner} on {host}."),
-                        Lang::Ja => {
-                            format!("{host} の {owner} で表示できるリポジトリはありません。")
+                    let expected = match (owner == Msg::HomeGithubMine.t(), lang) {
+                        (true, Lang::En) => {
+                            format!("You have no repositories to display on {host}.")
+                        }
+                        (true, Lang::Ja) => {
+                            format!("{host} に表示できるあなたのリポジトリはありません。")
+                        }
+                        (false, Lang::En) => {
+                            format!("No repositories to display for {owner} on {host}.")
+                        }
+                        (false, Lang::Ja) => {
+                            format!("{host} の {owner} には表示できるリポジトリがありません。")
                         }
                     };
                     assert_eq!(text, &expected, "owner-scoped production item");

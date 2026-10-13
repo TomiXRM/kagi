@@ -356,10 +356,14 @@ fn github_items(
         }
         shown += rows.len();
         let empty = list.repos.is_empty().then(|| {
-            Msg::HomeGithubSectionEmpty
-                .t()
-                .replace("{owner}", &title)
-                .replace("{host}", host)
+            if section.owner.is_none() {
+                Msg::HomeGithubMineEmpty.t().replace("{host}", host)
+            } else {
+                Msg::HomeGithubSectionEmpty
+                    .t()
+                    .replace("{owner}", &title)
+                    .replace("{host}", host)
+            }
         });
         items.push(HomeItem::Heading(title));
         if let Some(empty) = empty {

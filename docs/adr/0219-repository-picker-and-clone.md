@@ -107,8 +107,11 @@ exit/removal path.
 
 ## Amendment (2026-10-13): owner-scoped Home empty wording (#1453)
 
-A successfully read zero-repository owner section names its own heading and
-the host that the displayed list was read from in EN and JA. It says there
+A successfully read zero-repository organization section names its owner and
+the host that the displayed list was read from in EN and JA. The user's section
+uses a separate host-only sentence: Yours/自分 is a heading label, not an owner
+name to interpolate into prose. Japanese organization wording uses「には」.
+Each sentence says there
 are no repositories **to display for that section**, not that the account or
 GitHub as a whole has no repositories. Saved lists retain their account's host;
 token-authenticated reads use the same `GH_HOST` / `github.com` selection as gh.

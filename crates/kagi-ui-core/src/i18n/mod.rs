@@ -786,6 +786,8 @@ pub enum Msg {
     HomeGithubFailedHint,
     /// `{owner}` = section heading; `{host}` = host this list was read from.
     HomeGithubSectionEmpty,
+    /// `{host}` = host the user's successfully empty list was read from.
+    HomeGithubMineEmpty,
     HomeGithubNoMatch,
     /// `{}` = how many were read.
     HomeGithubTruncated,
@@ -3231,7 +3233,9 @@ impl Msg {
                 "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
             }
             (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
-            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} で表示できるリポジトリはありません。",
+            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
+            (En, HomeGithubMineEmpty) => "You have no repositories to display on {host}.",
+            (Ja, HomeGithubMineEmpty) => "{host} に表示できるあなたのリポジトリはありません。",
             (En, HomeGithubNoMatch) => "No repository matches the filter.",
             (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
             (En, HomeGithubTruncated) => {

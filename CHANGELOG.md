@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Selected PR dashboard rows retain active/inactive selection fill on hover. Hidden clones keep a source-named running status and keyboard-reachable Show Progress action without starting another clone. Home's successful empty repository sections name their owner and host instead of claiming the whole account has no repositories; retrieval failures remain distinct. (#1451, #1452, #1453)
+  - Review: the user's empty section uses a natural host-only sentence instead of interpolating the Yours/自分 heading; organization names remain explicit with idiomatic Japanese wording.
 - Restore always-visible repository/Home document tabs in a separate titlebar above the unchanged 52/60-reference-px toolbar, with trailing + when opening a document is available; only blank spacers handle window drag and double-click. Owner decision supersedes unified single-document chrome. (#1462, supersedes #1179)
   - Review: narrow-to-wide resizing retires tab overflow and restores natural widths without reopening documents; main-window native lights return to (9,9), while Settings retains (9,16). Home-only windows omit inert +/×, and chrome hairline coverage follows the restored row order.
   - Exact-fit review: each titlebar reservation follows GPUI's device-pixel rounding; the measured natural item span has no extra pixel/ceiling, so contents that fit their budget do not spuriously show ».

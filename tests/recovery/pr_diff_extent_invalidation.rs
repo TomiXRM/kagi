@@ -289,14 +289,16 @@ fn ends(
     wheel(cx, app, window, 20_000_000.);
     let viewport = reading(cx, app).viewport;
     let first = row(cx, app, 1).expect("true first row must be measured after reflow");
-    if first.size.height > viewport.size.height {
+    let header = row(cx, app, 0).expect("initial hunk header measured");
+    // Returning to item 0 reserves the header as well as the first code row.
+    // A row that fits by itself may not fit below its header at high zoom.
+    if header.size.height + first.size.height > viewport.size.height {
         let top = cx.read(|cx| {
             let mode = app.read(cx).pr_mode().unwrap();
             mode.tabs[mode.active.unwrap()]
                 .diff_scroll
                 .logical_scroll_top()
         });
-        let header = row(cx, app, 0).expect("initial hunk header measured");
         assert!(
             top.item_ix == 0 && top.offset_in_item == gpui::px(0.),
             "oversized first data row must return to the native list start"

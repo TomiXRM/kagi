@@ -185,6 +185,19 @@ without reloading or discarding edits. No restore action exists on this Editor
 surface and none is added: historical content must not become a working-tree
 write outside the existing approved write lifecycle.
 
+The Editor's bottom-panel presentation cap reserves 200 reference pixels for
+the compound workspace header, file tabs, history selector, snapshot identity,
+and at least two source lines, after subtracting titlebar/toolbar/status chrome.
+Fitting never overwrites the preferred panel height. The native snapshot
+oracle retains its 60px readable-body floor at 940×660 / 167%, including a
+166-reference-pixel preference retained from a desktop window. Header styling,
+Button hit targets, terminal ownership and the live buffer remain unchanged.
+Pointer resizing uses the same presentation cap, preserves its measured press
+origin through clamp overshoot, and restores the larger preference when the
+pointer returns to that origin. Its native oracle measures the pressed body
+and discovers the cap through a real overshoot rather than assuming all
+workspace modes have the Graph's height budget.
+
 Copy retains the pinned selectable TextView's existing clipboard semantics:
 the shared Root trims outer whitespace, including the final newline. Snapshot
 source content remains unchanged; no local clipboard override or second
@@ -204,6 +217,12 @@ A dirty live buffer in the foreground historical Editor must remain
 dirty and unchanged on disk before and after clicking the reader. Native
 coverage retains a real undo-capable history entry and verifies no modal opens.
 Open current leaves historical state with the same live Input focused.
+
+Native Save availability and dispatched writer admission are separate:
+menus remain disabled while busy, but an already-dispatched request for a
+visible live buffer reaches the existing lease refusal/footer/toast path.
+Hidden or historical buffers cannot save. Ordinary modal routing remains
+inert; a reconciled panic notice must be dismissed before retrying.
 
 For LF content, each literal block contains at most 32 source lines so
 TextView's existing `ListState` virtualizes chunks rather than laying out the

@@ -6,6 +6,26 @@ use super::*;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::IconName;
 
+/// The same presented body limit governs fitting and pointer resizing.
+pub(super) fn max_body_height(window: &Window, editor: bool) -> f32 {
+    let viewport_height = f32::from(window.viewport_size().height);
+    let scale = theme::scaled(1.);
+    let mut max_height = (viewport_height * BOTTOM_PANEL_MAX_FRAC / scale).max(BOTTOM_PANEL_MIN_H);
+    if editor {
+        // Workspace header, file tabs, history selector, snapshot identity,
+        // and two source lines must fit together, even after a desktop resize.
+        const EDITOR_MIN_BODY_H: f32 = 200.;
+        let shell_height = f32::from(super::render_header::chrome_frame_height())
+            + theme::scaled(super::tabs::TAB_STRIP_H + STATUS_BAR_H);
+        let editor_cap = (viewport_height - shell_height) / scale
+            - EDITOR_MIN_BODY_H
+            - BOTTOM_PANEL_DIVIDER_H
+            - BOTTOM_PANEL_TAB_H;
+        max_height = max_height.min(editor_cap.max(BOTTOM_PANEL_MIN_H));
+    }
+    max_height
+}
+
 impl KagiApp {
     #[cfg(feature = "gui-e2e")]
     pub fn bottom_tab_focused_for_e2e(&self, window: &Window) -> Option<usize> {

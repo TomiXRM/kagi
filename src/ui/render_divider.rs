@@ -143,9 +143,11 @@ impl KagiApp {
                 else {
                     return;
                 };
-                let viewport_h = f32::from(window.viewport_size().height);
                 let cursor_y = f32::from(event.event.position.y);
-                let max_h = ((viewport_h * BOTTOM_PANEL_MAX_FRAC) / z).max(BOTTOM_PANEL_MIN_H);
+                let max_h = super::render_bottom::max_body_height(
+                    window,
+                    self.workspace_mode() == workspace_mode::WorkspaceMode::Editor,
+                );
                 let new_h =
                     (origin_height + (origin_y - cursor_y) / z).clamp(BOTTOM_PANEL_MIN_H, max_h);
                 // Returning to the press position restores a preference that

@@ -84,6 +84,13 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
 
     guard.complete();
     assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+    // The visible Busy refusal remains a modal until the user dismisses it.
+    // Releasing the lease alone must not make Save operate behind that modal.
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
     app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

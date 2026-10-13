@@ -726,9 +726,10 @@ impl KagiApp {
         let panel_visible = self.panel_motion.bottom.visible(motion_now);
         // Fit only the presentation; shrinking a window or increasing zoom
         // must not replace the larger preferred height.
-        let max_height = (f32::from(window.viewport_size().height) * BOTTOM_PANEL_MAX_FRAC
-            / theme::scaled(1.))
-        .max(BOTTOM_PANEL_MIN_H);
+        let max_height = super::render_bottom::max_body_height(
+            window,
+            matches!(layout.center, workspace::CenterPane::Editor),
+        );
         let panel_height = self
             .bottom_panel_height
             .clamp(BOTTOM_PANEL_MIN_H, max_height);

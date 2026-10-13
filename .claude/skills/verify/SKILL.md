@@ -56,6 +56,18 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1417/#1418 use
+`KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
+The in-memory system-display injection never writes macOS preferences. Both
+scenarios cover 940×660 / 1392×883, EN/JA and 100%/167%. Motion counts the actual
+loading/spinner animation-construction branches and freezes the panel clock to
+require immediate native pane geometry after system/app opt-ins. Transparency
+checks the production tile token's alpha/restoration, label contrast and Metal
+padding pixels of an actual PR tile. These injections do not prove native
+NSWorkspace notification delivery. Tier B: toggle Reduce Motion/Transparency in
+System Settings with an isolated running Kagi, compare pane/spinner and PR tile
+before/after without restarting, and restore both OS preferences afterward.
+
 For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
 `settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
 role/name/value/expanded/disabled properties on Appearance controls in the native

@@ -18,6 +18,8 @@ use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
 pub mod sidebar_labels;
+#[cfg(feature = "gui-e2e")]
+pub mod system_accessibility;
 
 #[cfg(feature = "gui-e2e")]
 pub mod activity;
@@ -1304,7 +1306,8 @@ thread_local! {
     static CLONE_RUN: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
 }
 
-/// Record a native folder request and deliver its answer through the real callback.
+/// #1043 / #1383: record the native folder request and await its answer through
+/// the same completion task as production. An unqueued request is cancelled.
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_folder_prompt(
     prompt: &str,
@@ -1318,7 +1321,6 @@ pub(crate) fn take_folder_prompt(
 pub fn queue_folder_answer(task: gpui::Task<Result<Option<std::path::PathBuf>, String>>) {
     FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(task).is_none()));
 }
-
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
     queue_folder_answer(gpui::Task::ready(Ok(folder)));

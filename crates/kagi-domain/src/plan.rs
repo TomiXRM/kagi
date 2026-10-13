@@ -38,6 +38,8 @@ pub enum BranchNameError {
     CreateLeadingDash(String),
     /// create-branch: a branch with this name already exists.
     CreateExists(String),
+    /// A parent or descendant ref occupies this branch namespace.
+    CreateNamespaceCollision { name: String, existing: String },
 }
 
 impl std::fmt::Display for BranchNameError {
@@ -65,6 +67,13 @@ impl std::fmt::Display for BranchNameError {
                     f,
                     "A branch named '{}' already exists in this repository.",
                     name
+                )
+            }
+            BranchNameError::CreateNamespaceCollision { name, existing } => {
+                write!(
+                    f,
+                    "Branch '{}' conflicts with existing ref '{}'.",
+                    name, existing
                 )
             }
         }

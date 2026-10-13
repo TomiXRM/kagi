@@ -23,6 +23,7 @@ pub struct PrBodyDetail {
     pub changed_files: u32,
     pub additions: u32,
     pub deletions: u32,
+    pub commit_total: Option<usize>,
 }
 
 /// Whether volatile L2 fields can be used for an attention verdict.
@@ -71,6 +72,7 @@ pub fn inherit_pr_details(listed: &mut PullRequest, old: &PullRequest) {
     listed.changed_files = old.changed_files;
     listed.additions = old.additions;
     listed.deletions = old.deletions;
+    listed.commit_total = listed.commit_total.or(old.commit_total);
 }
 
 /// Copy an L2 answer read from `base_repo` onto `pr`, when it is that PR at
@@ -97,6 +99,7 @@ pub fn apply_pr_body(pr: &mut PullRequest, base_repo: &str, detail: &PrBodyDetai
     pr.changed_files = detail.changed_files;
     pr.additions = detail.additions;
     pr.deletions = detail.deletions;
+    pr.commit_total = detail.commit_total.or(pr.commit_total);
     true
 }
 
@@ -214,11 +217,29 @@ mod tests {
             changed_files: 0,
             additions: 0,
             deletions: 0,
+            commit_total: Some(10),
         };
         assert!(!apply_pr_body(&mut pr, "github.com/acme/a", &body));
         assert!(apply_pr_body(&mut pr, "github.com/acme/b", &body));
         assert!(pr.body.is_empty());
         assert_eq!((pr.changed_files, pr.additions, pr.deletions), (0, 0, 0));
+        assert_eq!(pr.commit_total, Some(10));
+        let mut reduced = body.clone();
+        reduced.commit_total = None;
+        assert!(apply_pr_body(&mut pr, "github.com/acme/b", &reduced));
+        assert_eq!(
+            pr.commit_total,
+            Some(10),
+            "reduced L3 retains explicit L1 total"
+        );
+        let mut listed = pr.clone();
+        listed.commit_total = Some(12);
+        inherit_pr_details(&mut listed, &pr);
+        assert_eq!(
+            listed.commit_total,
+            Some(12),
+            "fresh L1 count wins over retained details"
+        );
         assert_eq!(pr.updated_at, "old-time", "L3 cannot overwrite L1 fields");
 
         let mut wrong = status;

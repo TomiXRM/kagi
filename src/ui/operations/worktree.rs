@@ -77,39 +77,61 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The Input entity is this form's identity; the existing attachment
+        // visit also retires a request on tab departure, even after return.
+        let Some(path_input) = self
+            .create_worktree_modal()
+            .and_then(|modal| modal.path_state.as_ref())
+            .map(Entity::entity_id)
+        else {
+            return;
+        };
+        let Some(owner) = self
+            .active_session()
+            .and_then(|session| self.app_sessions.attachment(session))
+        else {
+            return;
+        };
         let prompt = i18n::Msg::InputChooseFolder.t();
         #[cfg(feature = "gui-e2e")]
-        if let Some(answer) = crate::ui::e2e::take_folder_prompt(prompt) {
-            cx.spawn_in(window, async move |app, acx| {
-                if let Ok(Some(folder)) = answer.await {
-                    let _ = app.update_in(acx, |app, window, cx| {
-                        app.place_create_worktree_in(&folder, window, cx);
-                    });
-                }
-            })
-            .detach();
-        }
+        let Some(receiver) = crate::ui::e2e::take_folder_prompt(prompt) else {
+            return;
+        };
         #[cfg(not(feature = "gui-e2e"))]
-        {
-            let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: false,
-                directories: true,
-                multiple: false,
-                prompt: Some(SharedString::from(prompt)),
+        let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(SharedString::from(prompt)),
+        });
+        cx.spawn_in(window, async move |app, acx| {
+            #[cfg(feature = "gui-e2e")]
+            let folder = receiver.await.ok().flatten();
+            #[cfg(not(feature = "gui-e2e"))]
+            let folder = receiver
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                .and_then(|paths| paths.into_iter().next());
+            let Some(folder) = folder else {
+                return;
+            };
+            let _ = app.update_in(acx, |app, window, cx| {
+                let current = app
+                    .active_session()
+                    .and_then(|session| app.app_sessions.attachment(session));
+                if !current.is_some_and(|current| {
+                    current.session == owner.session && current.visit == owner.visit
+                }) || !app.create_worktree_modal().is_some_and(|modal| {
+                    modal.path_state.as_ref().map(Entity::entity_id) == Some(path_input)
+                }) {
+                    return;
+                }
+                app.place_create_worktree_in(&folder, window, cx);
             });
-            cx.spawn_in(window, async move |app, acx| {
-                let Ok(Ok(Some(paths))) = receiver.await else {
-                    return;
-                };
-                let Some(folder) = paths.into_iter().next() else {
-                    return;
-                };
-                let _ = app.update_in(acx, |app, window, cx| {
-                    app.place_create_worktree_in(&folder, window, cx);
-                });
-            })
-            .detach();
-        }
+        })
+        .detach();
     }
 
     /// Put `<folder>/<branch>` in the open card's path field. The next input
@@ -168,8 +190,8 @@ impl KagiApp {
         };
         match &plan_result {
             Ok(plan) => {
-                eprintln!(
-                    "[kagi] plan: create-worktree '{}' path='{}' blockers={} warnings={}",
+                klog!(
+                    "plan: create-worktree '{}' path='{}' blockers={} warnings={}",
                     branch,
                     path,
                     plan.blockers.len(),

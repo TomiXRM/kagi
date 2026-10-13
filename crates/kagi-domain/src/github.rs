@@ -122,6 +122,9 @@ pub struct PullRequest {
     pub changed_files: u32,
     pub additions: u32,
     pub deletions: u32,
+    /// Authoritative GitHub commit total; absent in reduced projections.
+    /// Never infer this from loaded history or a potentially capped array.
+    pub commit_total: Option<usize>,
     /// `createdAt` / `updatedAt`, verbatim RFC-3339 as `gh` returns them
     /// (always UTC, zero-padded, fixed width). Kept as text on purpose: in
     /// that form lexicographic order *is* chronological order, so sorting
@@ -161,6 +164,7 @@ impl Default for PullRequest {
             changed_files: 0,
             additions: 0,
             deletions: 0,
+            commit_total: None,
             created_at: String::new(),
             updated_at: String::new(),
         }

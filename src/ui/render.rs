@@ -643,6 +643,13 @@ impl Render for KagiApp {
             }))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
+            // Targets override this default during capture; leaving any target
+            // must not retain its prohibited cursor.
+            .on_drag_move::<BranchDrag>(|_, window, cx| {
+                if cx.active_drag_cursor_style() != Some(gpui::CursorStyle::OpenHand) {
+                    cx.set_active_drag_cursor_style(gpui::CursorStyle::OpenHand, window);
+                }
+            })
             .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, _, _| {
                 if event.button == MouseButton::Left {
                     this.finish_bottom_panel_resize();

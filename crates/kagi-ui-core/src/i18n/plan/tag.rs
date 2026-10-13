@@ -24,6 +24,12 @@ fn name_error_ja(err: &TagNameError) -> String {
             super::advice_text(Msg::AdviceTagNameErrorLeadingDash, &[name])
         }
         TagNameError::Exists(name) => format!("tag はすでに存在します。\ntag `{}`", name),
+        TagNameError::NamespaceCollision { name, existing } => {
+            format!(
+                "既存の ref `{}` と名前空間が競合しています。\ntag `{}`",
+                existing, name
+            )
+        }
     }
 }
 

@@ -131,3 +131,37 @@ Discard closes it per ADR-0125's safe Return policy (#1277). It rejects external
 then confirms a two-parent merge and checks both worktrees and the destination
 receipt. Backend fixtures in `tests/drag_merge_test.rs` cover a dirty parent and
 both fresh and stale approvals against a dirty linked destination.
+
+## Invalid drag destinations (#1421)
+
+Drag-over is read-only feedback, not a merge plan. Sidebar rows and graph chips
+use one acceptance predicate for their highlight, prohibited cursor and drop
+dispatch. A source dropped onto itself or a remote-only target that resolves to
+that source's local name is invalid and does nothing: no plan, queue, toast or
+repository write. Exact local names retain precedence over remote aliases.
+
+The pure `merge_into_target_name` domain helper is shared with the backend
+target resolver and worktree routing; hover supplies the session-owned ref
+inventory and performs no Git I/O. Different ref names at the same commit are
+not collapsed: containment, conflicts and freshness remain plan/preflight
+decisions. Leaving a target restores the drag cursor, and valid drops retain
+the existing plan → confirm → preflight → execute → verify → oplog path.
+
+The predicate reuses `TabViewState::branch_targets` for local membership and
+a `remote_branch_names` HashSet built once alongside every session inventory.
+Frame-time lookup borrows the operand strings: no name formatting, allocation
+or branch-vector scans. Publishing/replacing a read replaces its index too;
+other sessions retain their own inventory and index.
+
+Only proven self/alias identity is an early no-op. A destination absent from
+the inventory is not prohibited merely because it is absent. In particular,
+the detached `HEAD` graph chip retains the normal merge-plan trigger so its
+`HeadDetached` blocker explains the refusal; it never becomes executable.
+`branch_drag_detached_target` sends a real drop to that chip and asserts both
+its highlight and the blocked plan. The read-model integration regression
+checks remote-name additions/removals and session-owner isolation.
+
+`branch_drag_self_target` sends real native drag events and compares target
+fill pixels, cursor state and modal/toast outcomes for self, remote alias and
+distinct targets in EN/JA, Apple Light/Dark, 100%/167%, 940×660 and 1392×883.
+This is Tier A evidence, not native VoiceOver or real-window Tier B evidence.

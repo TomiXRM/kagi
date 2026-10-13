@@ -241,7 +241,6 @@ pub enum Msg {
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
-    PathPickerFailed,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -397,6 +396,10 @@ pub enum Msg {
     TerminalNotStartedHint,
     TerminalRestartHint,
     TerminalRestart,
+    TerminalPasteTitle,
+    TerminalPasteBody,
+    TerminalPasteConfirm,
+    TerminalFocusDescription,
     UnbornEmptyTitle,
     UnbornEmptyHint,
     BusyMerge,
@@ -511,6 +514,12 @@ pub enum Msg {
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
+    /// Computed plan file preview; `{}` is the full count.
+    ModalFilesToChange,
+    /// Bounded preview remainder; `{}` is the omitted count.
+    ModalFilesMore,
+    /// Preview producer reached its cap; the true omitted count is unknown.
+    ModalFilesMoreUnknown,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -698,6 +707,9 @@ pub enum Msg {
     PrSectionAssigned,
     /// Swimlane pane (ADR-0200).
     PrLaneTitle,
+    PrLaneLoaded,
+    PrLaneCommit,
+    PrLaneContext,
     PrNavigator,
     PrSwimlane,
     NoPrOpen,
@@ -1757,6 +1769,8 @@ pub enum Msg {
     RemoteDetached,
     RemoteNoCommits,
     RemoteOpenRepository,
+    RepositoryPickerOpen,
+    PathPickerFailed,
     RemoteOpeningRepository,
     RemoteClose,
     RemoteDirectoryList,
@@ -2358,8 +2372,6 @@ impl Msg {
             (Ja, ToastDismiss) => "通知を閉じる",
             (En, ToastOpenRepository) => "Open Repository",
             (Ja, ToastOpenRepository) => "リポジトリを開く",
-            (En, PathPickerFailed) => "{picker} failed: {error}",
-            (Ja, PathPickerFailed) => "{picker} に失敗しました: {error}",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
@@ -2594,6 +2606,14 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
+            (En, TerminalPasteTitle) => "Paste multiple lines into Terminal?",
+            (Ja, TerminalPasteTitle) => "Terminal に複数行を Paste しますか？",
+            (En, TerminalPasteBody) => "This shell has not enabled bracketed paste. Newlines in this text may execute commands immediately. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteBody) => "この shell は bracketed paste を有効にしていません。テキストの改行でコマンドが直ちに実行される場合があります。clipboard の内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteConfirm) => "Paste",
+            (Ja, TerminalPasteConfirm) => "Paste",
+            (En, TerminalFocusDescription) => "Terminal input. Tab and Shift-Tab send shell completion keys. Press Control-Shift-Tab or Command-Shift-J to focus the bottom-panel tabs; use Left or Right, then Return to switch tabs.",
+            (Ja, TerminalFocusDescription) => "Terminal 入力。Tab と Shift-Tab は shell の補完キーを送信します。Control-Shift-Tab または Command-Shift-J で下部パネルのタブに移動し、左右キーと Return でタブを切り替えます。",
             (En, UnbornEmptyTitle) => "No commits yet",
             (Ja, UnbornEmptyTitle) => "まだ commit がありません",
             (En, UnbornEmptyHint) => "Add files and create the first commit",
@@ -2772,6 +2792,12 @@ impl Msg {
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
             (Ja, OpenedInFinder) => "Finder で開きました",
+            (En, ModalFilesToChange) => "Files to change ({})",
+            (Ja, ModalFilesToChange) => "変更するファイル ({})",
+            (En, ModalFilesMore) => "…and {} more",
+            (Ja, ModalFilesMore) => "…ほか {} 件",
+            (En, ModalFilesMoreUnknown) => "…and more files",
+            (Ja, ModalFilesMoreUnknown) => "…ほかにもファイルがあります",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
             (En, ConflictContinue) => "Continue",
@@ -3056,6 +3082,12 @@ impl Msg {
             (Ja, PrSectionAssigned) => "担当",
             (En, PrLaneTitle) => "SWIMLANE",
             (Ja, PrLaneTitle) => "SWIMLANE",
+            (En, PrLaneLoaded) => "{} loaded",
+            (Ja, PrLaneLoaded) => "{} 読み込み済み",
+            (En, PrLaneCommit) => "{}; SHA {}; PR #{}",
+            (Ja, PrLaneCommit) => "{}、SHA {}、PR #{}",
+            (En, PrLaneContext) => "{}; SHA {}; read-only context",
+            (Ja, PrLaneContext) => "{}、SHA {}、読み取り専用の周辺履歴",
             (En, PrNavigator) => "Navigator",
             (Ja, PrNavigator) => "ナビゲーター",
             (En, PrSwimlane) => "Swimlane / Files",
@@ -3631,10 +3663,10 @@ impl Msg {
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
-                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+                "Stop decorative animations. macOS Reduce Motion is also respected, even when this switch is off."
             }
             (Ja, SettingsReduceMotionDesc) => {
-                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+                "装飾的なアニメーションを静止させます。オフでも macOS の「視差効果を減らす」を尊重します。"
             }
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",
@@ -4300,6 +4332,10 @@ impl Msg {
             (Ja, RemoteNoCommits) => "(commit はまだありません)",
             (En, RemoteOpenRepository) => "Open repository (read-only)",
             (Ja, RemoteOpenRepository) => "リポジトリを開く (読み取り専用)",
+            (En, RepositoryPickerOpen) => "Open Repository",
+            (Ja, RepositoryPickerOpen) => "リポジトリを開く",
+            (En, PathPickerFailed) => "{picker} failed: {error}",
+            (Ja, PathPickerFailed) => "{picker} に失敗しました: {error}",
             (En, RemoteOpeningRepository) => "Opening…",
             (Ja, RemoteOpeningRepository) => "開いています…",
             (En, RemoteClose) => "Close",
@@ -4703,6 +4739,13 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
         CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
         CreateLeadingDash(name) => branch_leading_dash_fmt(name),
         CreateExists(name) => branch_exists_fmt(name),
+        CreateNamespaceCollision { name, existing } => match lang() {
+            Lang::En => e.to_string(),
+            Lang::Ja => format!(
+                "既存の ref `{}` と名前空間が競合しています。\nbranch `{}`",
+                existing, name
+            ),
+        },
     }
 }
 

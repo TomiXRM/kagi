@@ -889,27 +889,93 @@ impl KagiApp {
     /// directory as a repository tab.  Headless builds cannot open the panel
     /// (use `KAGI_OPEN_REPO` instead — see main.rs).
     pub fn pick_repository(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
+        let owner = self.repository_picker_owner();
+        let receiver = cx.prompt_for_paths(Self::repository_picker_options());
+
+        cx.spawn(async move |weak, acx| {
+            let response = receiver.await;
+            let _ = weak.update(acx, |app, cx| {
+                app.complete_repository_picker_response(owner, response, cx);
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn repository_picker_options() -> PathPromptOptions {
+        PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some(SharedString::from("Open Repository")),
-        });
+            prompt: Some(SharedString::from(Msg::RepositoryPickerOpen.t())),
+        }
+    }
 
-        cx.spawn(async move |weak, acx| {
-            let picked: Option<PathBuf> = match receiver.await {
-                Ok(Ok(Some(paths))) => paths.into_iter().next(),
-                _ => None,
-            };
-            if let Some(path) = picked {
-                acx.update(|cx| {
-                    let _ = weak.update(cx, |app, cx| {
-                        app.open_repository(path, cx);
-                    });
-                });
+    fn complete_repository_picker(
+        &mut self,
+        owner: Option<PathBuf>,
+        result: Result<Option<Vec<PathBuf>>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(Some(paths)) => {
+                if let Some(path) = paths.into_iter().next() {
+                    self.open_repository(path, cx);
+                }
             }
-        })
-        .detach();
+            Ok(None) => {}
+            Err(error) => self.report_path_picker_failure(
+                owner,
+                "open-repository-picker",
+                Msg::RepositoryPickerOpen.t(),
+                error,
+                cx,
+            ),
+        }
+    }
+
+    fn complete_repository_picker_response<E: std::fmt::Display, C: std::fmt::Display>(
+        &mut self,
+        owner: Option<PathBuf>,
+        response: Result<Result<Option<Vec<PathBuf>>, E>, C>,
+        cx: &mut Context<Self>,
+    ) {
+        let result = response
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()));
+        self.complete_repository_picker(owner, result, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn repository_picker_options_for_e2e() -> PathPromptOptions {
+        Self::repository_picker_options()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn deliver_repository_picker_for_e2e(
+        &mut self,
+        response: Result<Result<Option<Vec<PathBuf>>, String>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.complete_repository_picker_response(self.repository_picker_owner(), response, cx);
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn repository_picker_owner_for_e2e(&self) -> Option<PathBuf> {
+        self.repository_picker_owner()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn deliver_owned_repository_picker_for_e2e(
+        &mut self,
+        owner: Option<PathBuf>,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.complete_repository_picker(owner, Err(error), cx);
+    }
+
+    fn repository_picker_owner(&self) -> Option<PathBuf> {
+        self.repo_path.clone().filter(|_| !self.home_in_front())
     }
 
     // ──────────────────────────────────────────────────────────────────────

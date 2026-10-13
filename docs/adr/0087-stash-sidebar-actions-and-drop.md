@@ -56,3 +56,17 @@ apply は ADR-0004/0009 の設計どおり **stash を残す**ので、ユーザ
 - テスト: `tests/stash_pop_test.rs::test_stash_drop_removes_entry_without_touching_working_tree`
   (drop 後 entry が1件減り WT は clean のまま、残るのは古い側)。
 - 関連: 進行中表示は ADR-0086 の統一 busy snackbar に乗る([[0086-busy-snackbar-sync-icon]])。
+
+## Amendment — 2026-10-13: approved stash identity (#1384)
+
+Apply, Pop and Drop cards display `stash@{N}: <message>` from the approved
+plan, not the live sidebar occupant. The dense target label sanitizes control
+bytes, truncates in the middle, and exposes the full sanitized value through
+its tooltip and AX label. Loading has no confirmable target; a blocked plan
+retains its target and existing Cancel/Return policy.
+
+The existing ordered full-OID `stash_identity` remains the execution contract:
+preflight refuses count, order or selected-OID drift, including replacement at
+the same index with unchanged stack depth. Typed refusal reasons remain EN/JA.
+Apply warnings are visible in the card independently of collapsed recovery
+commands (#652); no operation semantics or recovery command bytes change.

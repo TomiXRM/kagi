@@ -5,7 +5,7 @@ use gpui::rgb;
 use kagi_domain::github::{stack_order, CiState, PrAttention, PrGroup, PrReason, PullRequest};
 
 use super::i18n::Msg;
-use super::theme::theme;
+use super::theme::{self, theme};
 use super::KagiApp;
 
 /// The card is defined by its border rather than a heavy fill, so the border
@@ -14,6 +14,22 @@ pub(super) fn card_border() -> gpui::Hsla {
     let mut color: gpui::Hsla = rgb(theme().text_muted).into();
     color.a = if theme().dark { 0.45 } else { 0.55 };
     color
+}
+
+/// A card on the dashboard's base page. No grey anywhere (user request): solid white in light
+/// themes, and in dark ones plain black over the page. A partly transparent
+/// white still mixed with what was behind it and came out grey, which is why
+/// the light theme kept looking washed out.
+pub(super) fn dash_card_bg() -> gpui::Hsla {
+    if theme().dark {
+        if theme::reduce_transparency() {
+            rgb(theme::pr_card_opaque_bg()).into()
+        } else {
+            gpui::hsla(0., 0., 0., 0.35)
+        }
+    } else {
+        gpui::hsla(0., 0., 1., 1.)
+    }
 }
 
 pub(super) fn ci_glyph(ci: CiState) -> (&'static str, u32) {

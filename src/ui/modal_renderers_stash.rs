@@ -18,11 +18,80 @@ use super::theme::{self, theme as current_theme};
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, FocusHandle, KeyDownEvent, SharedString};
 use gpui_component::{Icon, IconName};
+use kagi_domain::plan::OperationPlan;
 use kagi_domain::plan_note::{PlanNote, ShellKind, StashNote};
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
 };
 use std::rc::Rc;
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static ENTRY_LABEL: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
+    static WARNING_GLYPH: std::cell::RefCell<Option<&'static str>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_stash_entry_label_for_e2e() -> Option<SharedString> {
+    ENTRY_LABEL.with(|label| label.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_stash_warning_glyph_for_e2e() -> Option<&'static str> {
+    WARNING_GLYPH.with(|glyph| glyph.borrow_mut().take())
+}
+
+/// The approved entry, not the current occupant of its volatile index.
+pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<gpui::Stateful<gpui::Div>> {
+    use kagi_domain::plan_note::{PlanTitle, RecoveryKind, StashRecovery, StashTitle};
+    let index = match &plan.title {
+        PlanTitle::Stash(
+            StashTitle::Apply { index } | StashTitle::Pop { index } | StashTitle::Drop { index },
+        ) => *index,
+        _ => return None,
+    };
+    let message = plan
+        .stash_identity
+        .as_ref()
+        .filter(|identity| identity.oids.get(index).is_some())
+        .and_then(|_| match &plan.recovery.as_ref()?.kind {
+            RecoveryKind::Stash(
+                StashRecovery::Apply { message, .. }
+                | StashRecovery::Pop { message, .. }
+                | StashRecovery::Drop { message, .. },
+            ) => Some(message.as_str()),
+            _ => None,
+        });
+    let mut label = String::with_capacity(message.map_or(0, str::len) + 24);
+    use std::fmt::Write as _;
+    let _ = write!(label, "stash@{{{index}}}");
+    if let Some(message) = message {
+        label.push_str(": ");
+        kagi_domain::text_safety::append_sanitized_control_bytes(&mut label, message);
+    }
+    let full = SharedString::from(label);
+    let tooltip = full.clone();
+    #[cfg(feature = "gui-e2e")]
+    ENTRY_LABEL.with(|label| *label.borrow_mut() = Some(full.clone()));
+    Some(
+        div()
+            .id("stash-entry-identity")
+            .role(gpui::Role::Label)
+            .aria_label(full.clone())
+            .aria_description(full.clone())
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .flex_shrink_0()
+            .min_w(gpui::px(0.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_middle()
+            .relative()
+            .child(super::e2e::measure_inside("stash-entry-identity"))
+            .child(full),
+    )
+}
 
 // ──────────────────────────────────────────────────────────────
 // Stash push modal renderer (T015)
@@ -381,6 +450,34 @@ pub(crate) fn render_stash_apply_modal(
     let mut body = modal_scroll_body()
         // ── Current → Predicted ─────────────────────────────
         .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+
+    if let Some(entry) = stash_entry_label(&plan) {
+        body = body.child(entry);
+    }
+    if !plan.warnings.is_empty() {
+        let mut warnings = div().flex().flex_col().gap_1().flex_shrink_0();
+        for (index, warning) in plan.warnings.iter().enumerate() {
+            let glyph = "\u{26a0}";
+            #[cfg(feature = "gui-e2e")]
+            WARNING_GLYPH.with(|value| *value.borrow_mut() = Some(glyph));
+            warnings = warnings.child(
+                div()
+                    .relative()
+                    .when(index == 0, |row| {
+                        row.child(super::e2e::measure_inside("stash-apply-warning"))
+                    })
+                    .child(super::plan_card_rows::render_note_row(
+                        format!("stash-apply-warning-{index}").into(),
+                        false,
+                        glyph,
+                        current_theme().color_warning,
+                        &plan_note_text(warning),
+                        false,
+                    )),
+            );
+        }
+        body = body.child(warnings);
+    }
 
     // ── Blockers ──────────────────────────────────────────
     if !plan.blockers.is_empty() {

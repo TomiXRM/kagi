@@ -103,13 +103,19 @@ the existing full inline error and bounded toast. Pane changes and host reopen
 retain the same editor.
 
 Reset keeps its explicit immediate-save meaning. When the draft differs from
-saved text, the shared Settings form state owns an AlertDialog rendered and
-key-routed inside the originating native Settings window or portable Settings
-overlay. The main window's single active_modal invariant applies to its own
-repository modals, not an alert in a separate Settings host. Settings never
-replaces or invalidates a repository plan, dirty guard, trust prompt, or pending
-asynchronous plan. A repository modal arriving in the portable window still
-closes that window's Settings overlay and retires its alert without writing.
+saved text, KagiApp's Settings form state (`settings_controls.reset_alert`)
+owns the AlertDialog outside `active_modal`. Both native and portable Settings
+render and key-route it inside their own host. The single `active_modal` slot
+remains the main window's modal invariant; a Settings form alert is not another
+occupant of that slot and never replaces or invalidates an existing or pending
+main-window plan, dirty guard, trust prompt, or other modal.
+
+In the portable host, Settings is an overlay inside the main window. Any
+`active_modal` (including AppNotice, About, Update, Clone and RemoteBrowse) or
+visible Commit Panel plan causes `sync_pending_focus` to close Settings and
+retire its alert without writing. The native host is a separate window:
+the alert's originating window id keeps main-window rendering from retiring
+it, and SettingsWindow release clears its own alert without writing.
 
 Both hosts use the same alert renderer, focus trap, and AlertReturnFocus helper.
 The alert names both discarded unsaved patterns and the saved analyze_ignore

@@ -275,6 +275,16 @@ impl Theme {
         }
     }
 
+    /// Graph-only selection: accent over normal stripes/lane tints, normal ink.
+    /// Non-key windows retain the existing opaque neutral selection.
+    pub fn selection_wash(&self, active: bool) -> Hsla {
+        if active {
+            to_hsla(self.ui_accent()).alpha(0.30)
+        } else {
+            to_hsla(self.inactive_selected)
+        }
+    }
+
     /// Segmented controls, modes and tabs retain a subtle fill, not row accent.
     #[inline]
     pub fn segment_selected_bg(&self) -> Hsla {
@@ -2350,6 +2360,29 @@ mod tests {
                 assert_eq!(t.segment_selected_bg(), to_hsla(t.selected));
                 assert_eq!(t.selection_foreground(true), to_hsla(t.text_main));
                 assert_eq!(t.on_accent(), filled_button_foreground(t.ui_accent(), t));
+            }
+        }
+    }
+
+    #[test]
+    fn graph_selection_wash_preserves_normal_primary_contrast() {
+        for slug in ["apple-light", "apple-dark"] {
+            let t = THEMES.iter().find(|t| &*t.slug == slug).unwrap();
+            let accent = if t.dark {
+                SystemAccent::Yellow
+            } else {
+                SystemAccent::Blue
+            };
+            let _injection = AccentInjection::new(accent, Some(true));
+            assert_eq!(t.selection_wash(true).a, 0.30);
+            assert_eq!(t.selection_wash(false), to_hsla(t.inactive_selected));
+            for stripe in [t.bg_base, t.bg_row_alt] {
+                let selected = to_hsla(stripe).blend(t.selection_wash(true));
+                let selected_rgb = u32::from(selected.to_rgb()) >> 8;
+                assert!(
+                    contrast_ratio(t.text_main, selected_rgb) >= 4.5,
+                    "{slug}: normal Graph primary ink on selected stripe"
+                );
             }
         }
     }

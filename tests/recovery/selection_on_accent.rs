@@ -357,7 +357,11 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
         draw(cx, window);
         let row = e2e::control_bounds(window.window_id(), "graph-commit-row")
             .expect("selected graph row");
-        let fill = theme::SystemAccent::Blue.rgb(slug == "apple-dark");
+        let fill = composite(
+            theme::SystemAccent::Blue.rgb(slug == "apple-dark"),
+            0.30,
+            theme::theme().bg_base,
+        );
         assert_eq!(
             rgb_pixel(
                 cx,
@@ -366,27 +370,30 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
                 f32::from(row.top()) + 1.
             ),
             fill,
-            "active selection paints the exact system accent, not a wash"
+            "Graph selection paints accent over its normal stripe"
         );
         let label = e2e::control_bounds(window.window_id(), "graph-commit-label")
             .expect("actual summary label probe");
         let paint = e2e::control_paint(window.window_id(), "graph-commit-label").unwrap();
         assert_eq!(
             paint.text_color,
-            Hsla::from(gpui::rgb(0xffffff)),
-            "active selected summary is white"
+            Hsla::from(gpui::rgb(theme::theme().text_main)),
+            "Graph selected summary retains normal ink"
         );
-        assert_label_pixels(cx, window, label, 0xffffff);
+        assert_label_pixels(cx, window, label, theme::theme().text_main);
+        assert!(contrast(theme::theme().text_main, fill) >= 4.5);
         let badge = e2e::control_paint(window.window_id(), "graph-selected-badge-label")
             .expect("selected transparent ref chip label painted");
-        assert_eq!(badge.text_color, Hsla::from(gpui::rgb(0xffffff)));
+        let lane = cx.read(|cx| app.read(cx).view().rows[0].node_color);
+        let (_, _, badge_ink) = theme::badge_style(theme::lane_color_u32(lane));
+        assert_eq!(badge.text_color, Hsla::from(gpui::rgb(badge_ink)));
         let badge_bounds =
             e2e::control_bounds(window.window_id(), "graph-selected-badge-label").unwrap();
-        assert_label_pixels(cx, window, badge_bounds, 0xffffff);
+        assert_label_pixels(cx, window, badge_bounds, badge_ink);
         let secondary = e2e::control_paint(window.window_id(), "graph-commit-secondary").unwrap();
         assert_eq!(
             secondary.text_color,
-            Hsla::from(gpui::rgb(0xffffff)).alpha(0.7)
+            Hsla::from(gpui::rgb(theme::theme().text_sub))
         );
         assert_neutral_segment(cx, window, "sidebar-mode-graph", "sidebar-mode-graph-label");
         let selected = cx.read(|cx| app.read(cx).ui().selected);

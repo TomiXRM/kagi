@@ -83,7 +83,7 @@ pub(crate) fn render_badges_column(
     // instead of its semantic HEAD/branch/remote/tag colour, so pills agree with
     // the graph line / node / band. `None` = classic semantic colours.
     lane_pill_color: Option<u32>,
-    selected_presentation: Option<bool>,
+    is_selected: bool,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Content layout (reworked — user report: a label ellipsized at a fixed
@@ -176,12 +176,9 @@ pub(crate) fn render_badges_column(
         let worktrees = badge.worktrees.clone();
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
-        let badge_foreground = selected_presentation
-            .filter(|active| theme().selection_uses_on_accent(true, *active))
-            .map(|active| theme().selection_foreground(active))
-            .unwrap_or_else(|| rgb(badge_text).into());
+        let badge_foreground = rgb(badge_text);
         let name_el = div().min_w(px(0.)).truncate().child(name).when(
-            cfg!(feature = "gui-e2e") && selected_presentation.is_some() && is_primary,
+            cfg!(feature = "gui-e2e") && is_selected && is_primary,
             |el| {
                 el.relative()
                     .child(super::e2e::measure_inside("graph-selected-badge-label"))

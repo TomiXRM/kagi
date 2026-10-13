@@ -296,6 +296,21 @@ all nine `compact_layout_*` entries (the geometry matrix remains partitioned),
 both restored-titlebar scenarios, density/on-accent/sidebar/pane-budget neighbors,
 and shared composer/file-row keyboard, localization, reload and selection checks.
 
+Real-window Tier B now records Apple Light/Dark at EN/100%, dynamically resizing
+the production build from 1392×883 to 900×660 with the same staged/unstaged fixture.
+Window-only captures show the wide navigator/right Commit Panel, compact pinned
+composer plus Changes columns, and the local-branch rail Popover plus Changes.
+Evidence is external to Git at
+`/tmp/kagi-hig-audit-20261008/compact-layout-tierb/`. Each app uses the isolated
+`kagi-compact` USER/log directory and copied stress repository; only its recorded
+PID is briefly activated for capture, the previous foreground is restored, and
+each process is quit afterward. This is screenshot/click/resize evidence, not
+JA/high-zoom/IME/VoiceOver manual acceptance.
+
+Review removes the unused compact-only list/selector/bulk-action message keys:
+Changes renders the original `CommitPanel*` localization tested by the shared
+Commit Panel chrome test, not a parallel English-only message family.
+
 ## Consequences
 
 Narrow windows gain graph space without changing toolbar or graph geometry.

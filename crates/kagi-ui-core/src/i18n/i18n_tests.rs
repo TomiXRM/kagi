@@ -152,19 +152,8 @@ fn compact_composer_localizes_prose_and_keeps_git_controls_english() {
         Msg::CommitPanelNothingUnstaged.t_for(Lang::Ja),
         "未 stage の変更がありません"
     );
-    for message in [
-        Msg::CompactCommitAffordance,
-        Msg::CompactUnstaged,
-        Msg::CompactStaged,
-        Msg::CompactList,
-        Msg::CompactTree,
-        Msg::CompactStageAll,
-        Msg::CompactUnstageAll,
-        Msg::CompactDiscardAll,
-    ] {
-        assert!(!message.t_for(Lang::En).is_empty());
-        assert_eq!(message.t_for(Lang::En), message.t_for(Lang::Ja));
-    }
+    assert_eq!(Msg::CompactCommitAffordance.t_for(Lang::En), "Commit…");
+    assert_eq!(Msg::CompactCommitAffordance.t_for(Lang::Ja), "Commit…");
 }
 
 #[test]

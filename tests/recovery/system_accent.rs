@@ -20,6 +20,7 @@ fn pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, x: f32, y: f32)
     .unwrap()
 }
 
+#[track_caller]
 fn assert_rgb(actual: [u8; 4], expected: u32) {
     for (got, want) in actual[..3].iter().zip([
         (expected >> 16) as u8,
@@ -125,7 +126,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                default_expected,
+                graph_wash(default_expected, theme::theme().bg_base),
             );
             let selected = cx.read(|cx| app.read(cx).ui().selected);
             app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
@@ -149,7 +150,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                default_expected,
+                graph_wash(default_expected, theme::theme().bg_base),
             );
 
             let output = std::process::Command::new("git")
@@ -316,7 +317,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                expected,
+                graph_wash(expected, theme::theme().bg_base),
             );
             drop(injected);
         }
@@ -324,4 +325,12 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| app.set_theme(&before, cx));
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS system_accent_chrome: Apple Dark default yellow, Light default system, explicit System/Theme accent primary/ring/graph pixels for five injected colours; fixed geometry and retained inactive selection");
+}
+
+fn graph_wash(accent: u32, background: u32) -> u32 {
+    [0, 8, 16].into_iter().fold(0, |rgb, shift| {
+        let fg = ((accent >> shift) & 255) as f32;
+        let bg = ((background >> shift) & 255) as f32;
+        rgb | (((fg * 0.30 + bg * 0.70).round() as u32) << shift)
+    })
 }

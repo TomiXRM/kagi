@@ -90,47 +90,46 @@ pub(crate) fn render_rows(
             let is_selected = selected == Some(ix);
             let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 
-            // Selection wins over zebra striping.
+            // Graph keeps its normal stripe beneath the accent wash (#1485).
+            let default_bg: gpui::Hsla = rgb(if ix % 2 == 0 {
+                theme().bg_base
+            } else {
+                theme().bg_row_alt
+            })
+            .into();
             let row_bg = if is_selected {
-                theme().selected_for_window(window_active)
-            } else if ix % 2 == 0 {
-                rgb(theme().bg_base).into()
+                default_bg.blend(theme().selection_wash(window_active))
             } else {
-                rgb(theme().bg_row_alt).into()
+                default_bg
             };
-            let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
-            let foreground = if uses_on_accent {
-                theme().selection_foreground(window_active)
-            } else {
-                rgb(theme().text_main).into()
-            };
-            let secondary_foreground = if uses_on_accent {
-                theme().selection_secondary_foreground(window_active)
-            } else {
-                rgb(theme().text_sub).into()
-            };
-            let muted_foreground = if uses_on_accent {
-                theme().selection_secondary_foreground(window_active)
-            } else {
-                rgb(theme().text_muted).into()
-            };
+            let foreground = rgb(theme().text_main).into();
+            let secondary_foreground = rgb(theme().text_sub).into();
+            let muted_foreground = rgb(theme().text_muted).into();
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
             // BEHIND the graph column only and tinted by this row's lane colour.
             // It is a separate absolute layer — NOT the row background — with
             // vertical inset so adjacent bands don't touch and the row stays a
             // neutral list. The message column is intentionally left neutral so
-            // text stays readable. Gated on lane-compaction; skipped on the
-            // selected row so the selection highlight always wins. Tuple =
-            // (normal, hover) wash colours.
+            // text stays readable. Selected active rows retain the lane band
+            // under their wash; inactive rows keep the existing grey fill.
+            // Tuple = (normal, hover) wash colours.
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
-                if theme::graph_lane_compact() && !is_selected {
+                if theme::graph_lane_compact() && (!is_selected || window_active) {
                     let c = theme().lane_color(row.node_color);
                     let (na, ha) = if theme().dark {
                         (0.18, 0.24)
                     } else {
                         (0.11, 0.15)
                     };
-                    Some((gpui::hsla(c.h, c.s, c.l, na), gpui::hsla(c.h, c.s, c.l, ha)))
+                    let normal = gpui::hsla(c.h, c.s, c.l, na);
+                    let hover = gpui::hsla(c.h, c.s, c.l, ha);
+                    if is_selected {
+                        // Composite the wash after the lane tint, not beneath it.
+                        let selected = default_bg.blend(normal).blend(theme().selection_wash(true));
+                        Some((selected, selected))
+                    } else {
+                        Some((normal, hover))
+                    }
                 } else {
                     None
                 };
@@ -269,6 +268,9 @@ pub(crate) fn render_rows(
             .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
                 el.child(super::e2e::measure_inside("graph-commit-row"))
             })
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.child(super::e2e::measure_inside(format!("graph-row-{ix}")))
+            })
             .bg(row_bg)
             .text_color(foreground)
             .on_click(click_handler)
@@ -291,7 +293,7 @@ pub(crate) fn render_rows(
                 badge_col_w,
                 connector_color,
                 pill_lane,
-                is_selected.then_some(window_active),
+                is_selected,
                 &mut *cx,
             ))
             // ── Inner divider spacer (badge|graph handle width) ──
@@ -347,7 +349,12 @@ pub(crate) fn render_rows(
                                 .bottom(theme::scaled_px(3.))
                                 .rounded(theme::scaled_px(3.))
                                 .bg(band)
-                                .hover(|s| s.bg(band_hover)),
+                                .hover(|s| s.bg(band_hover))
+                                .when(cfg!(feature = "gui-e2e"), |el| {
+                                    el.child(super::e2e::measure_inside(format!(
+                                        "graph-lane-band-{ix}"
+                                    )))
+                                }),
                         )
                     })
                     // Clip to the column so nothing reaches the BRANCH/TAG or

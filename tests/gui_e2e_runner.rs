@@ -170,6 +170,10 @@ mod inactive_selection;
 mod selection_on_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_selection_wash.rs"]
+mod graph_selection_wash;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/tab_strip.rs"]
 mod tab_strip;
 
@@ -1735,6 +1739,10 @@ mod macos {
             (
                 "selection_on_accent",
                 Box::new(crate::selection_on_accent::scenario_selection_on_accent),
+            ),
+            (
+                "graph_selection_wash",
+                Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
             ),
             (
                 "repo_tabs_neutral",

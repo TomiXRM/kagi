@@ -2,6 +2,10 @@
 use super::*;
 use kagi::ui::{diff_view::MainDiffSource, list_a11y};
 
+#[path = "inspector_segment.rs"]
+mod segment;
+pub use segment::scenario_compact_inspector_segment_keys;
+
 const DIMENSIONS: (f32, f32) = (900., 660.);
 const MESSAGE: &str = "Compact inspector commit\n\nRetained commit body 日本語";
 

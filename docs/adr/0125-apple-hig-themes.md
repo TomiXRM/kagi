@@ -1105,10 +1105,10 @@ supersedes that reservation: the separate toolbar has no traffic-light exclusion
 and Home alike. This supersedes #1179's unified frame and single-document hiding;
 it is an explicit layout reversal, not a theme-specific exception.
 
-The main repository/Home window's first row starts at y=0 and is a
-36-reference-px titlebar. Its native macOS traffic lights retain their GPUI owner
-and return to the pre-#1179 (9,9) logical-px position, centering them in the 100%
-titlebar, with an unscaled 80px exclusion
+The main repository/Home window's first row starts at y=0 and is a fixed
+36-logical-px titlebar, independent of shared density and UI zoom (#1500).
+Its native macOS traffic lights retain their GPUI owner and the pre-#1179
+(9,9) logical-px position, centred at every zoom, with an unscaled 80px exclusion
 in this row only. Repository and Home document tabs are always visible, including
 a single repository or Home-only document. The titlebar owns trailing + and tab
 overflow; Home-only windows without a remote repository omit the inert +.
@@ -1117,6 +1117,20 @@ The old #1180 40px strip geometry is superseded by this 36px titlebar, while its
 always-visible single-document policy is restored.
 Settings retains its independent 46-logical-px titlebar and #1198's native-light
 position (9,16); the main-window reversal does not change Settings geometry.
+
+**#1500 zoom alignment amendment (2026-10-14):** tab labels use the existing
+14-reference-px small-text role capped at 14 logical px, so text fits the fixed
+native chrome at 167%. Toolbar heights, typography and zoom are unchanged.
+The titlebar overflow trigger also caps its height at 24 logical px, retaining
+its shared keyboard/menu owner without changing toolbar overflow geometry.
+Editor bottom-panel fitting subtracts the fixed 36-logical-px titlebar before
+converting the remaining body budget to reference units; only the status bar
+and toolbar contributions scale.
+The `titlebar_tabs` matrix changes zoom on each actual macOS window through
+100% → 167% → 100%, reads all three AppKit `standardWindowButton:` bounds
+converted to the content view, and compares their centres with the titlebar
+centre within 2 logical px. It also retains unscaled light-size/exclusion,
+tab close/+, blank-only drag targets, overflow and resize assertions.
 
 The second row is the toolbar: Icon Only remains 52 reference px (46.8 logical
 px at 100%); Icon and Text remains 60 reference px (54 logical px at 100%).
@@ -1155,9 +1169,9 @@ contents that exactly fit the measured budget must not create ».
 Chrome hairline oracles sample toolbar fill below the titlebar and body fill
 below the toolbar/Home frame, matching the restored row order.
 
-Native desktop `commit_panel_viewport` measures **408 logical px** for the file
-list at 1392×883@100%: #1179's historical 440.5px minus the restored titlebar's
-snapped 32.5px frame, including its literal 1px separator.
+Native desktop `commit_panel_viewport` measures **404.5 logical px** for the file
+list at 1392×883@100% after #1500: #1179's historical 440.5px minus the fixed
+36px titlebar frame, including its literal 1px separator.
 Fixed composer (257px), Generate (21.5px), Commit
 (25px), desktop panel width (324px) and small-body AutoGrow contracts are unchanged.
 At 940×560/167%, the added titlebar exposes the previous zero minimum on the

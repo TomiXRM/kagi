@@ -11,19 +11,43 @@
 //! here is the *same* lane as in the main graph rather than a second opinion
 //! about it. Nothing is laid out, fetched or read here.
 
-use std::collections::HashSet;
-
 use gpui::{div, prelude::*, px, relative, rgb, Context, SharedString};
 
 use super::graph_view;
+#[cfg(test)]
+use super::graph_window::{column_of, is_local_connector};
 use super::graph_window::{
-    column_of, follow_scroll, gutter_width, is_local_connector, lane_columns, max_scroll,
-    render_rail, Rail, CONTEXT_OPACITY, MAX_RAIL_LANES,
+    follow_scroll, gutter_width, lane_columns, max_scroll, render_rail, Rail, CONTEXT_OPACITY,
+    MAX_RAIL_LANES,
 };
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
 use super::KagiApp;
+
+#[derive(PartialEq, Eq)]
+struct WindowKey {
+    pr: kagi_domain::github::PrKey,
+    span: (usize, usize),
+    root: Option<usize>,
+}
+
+/// Session-owned vertical scroll and stable-key row focus for the companion.
+pub(super) struct Navigation {
+    pub(super) keyboard: super::list_keyboard::ListKeyboard,
+    scroll: gpui::ListState,
+    window: std::cell::RefCell<Option<WindowKey>>,
+}
+
+impl Default for Navigation {
+    fn default() -> Self {
+        Self {
+            keyboard: Default::default(),
+            scroll: gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.)),
+            window: Default::default(),
+        }
+    }
+}
 
 /// Row height, matching the navigator's meta line rather than the commit
 /// list's 29px: the pane is a companion to the PR body, not a second history.
@@ -39,7 +63,11 @@ const CONTEXT_ROWS: usize = 10;
 /// list. When the PR's commits are not in the loaded history window there is
 /// no neighbourhood to draw, and a lane alone would be a worse version of the
 /// COMMITS tab: the detail then takes the whole pane.
-pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option<gpui::AnyElement> {
+pub(super) fn render_pr_lane(
+    app: &KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> Option<gpui::AnyElement> {
     let mode = app.pr_mode()?;
     let tab = mode.active.and_then(|ix| mode.tabs.get(ix))?;
     let number = tab.pr.number;
@@ -56,11 +84,10 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         .filter_map(|c| view.commit_row_index.get(&c.id).copied())
         .collect();
     hits.sort_unstable();
-    let window = hits
+    let span = hits
         .first()
         .zip(hits.last())
         .and_then(|(first, last)| lane_window(*first, *last, view.rows.len()));
-    let mine: HashSet<&kagi_git::CommitId> = tab.commits.iter().map(|c| &c.id).collect();
 
     // Lane numbers come from the repository-wide graph, where a PR's branch
     // can be lane 12 while the window only uses five lanes - and lane 12 is
@@ -72,14 +99,14 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
     // an elision row saying how many commits were skipped (user request). A
     // base inside the window is simply one of its rows; one not loaded at all
     // cannot be drawn.
-    let root: Option<usize> = window.and_then(|(_, hi)| {
+    let root: Option<usize> = span.and_then(|(_, hi)| {
         root_row(
             hi,
             view.commit_row_index.get(&tab.base).copied(),
             view.rows.len(),
         )
     });
-    let columns = match window {
+    let columns = match span {
         Some((lo, hi)) => lane_columns(
             (lo..=hi)
                 .chain(root)
@@ -102,64 +129,25 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
         Some(x) => x.clamp(0.0, max_scroll(lanes, rail, graph_view::LANE_W)),
         None => follow_scroll(pr_column, rail, graph_view::LANE_W),
     };
-    // The commit list draws the node as the author's avatar in compact-lane
-    // mode; the same setting means the same thing here.
-    let avatars = theme::graph_lane_compact().then_some(app.avatars.images.as_ref());
-    let lane_body = window.map(|(lo, hi)| {
-        let mut body = div()
-            .id("pr-lane-body")
-            .flex_1()
-            .min_h(px(0.))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col();
-        for ix in lo..=hi {
-            let Some(row) = view.rows.get(ix) else {
-                continue;
-            };
-            body = body.child(render_lane_row(
-                ix,
-                row,
-                &key,
-                mine.contains(&row.id),
-                &Rail {
-                    width: rail,
-                    scroll,
-                    columns: &columns,
-                    avatars,
-                },
-                cx,
-            ));
-        }
-        if let Some(root_ix) = root {
-            if let Some(row) = view.rows.get(root_ix) {
-                body = body
-                    .child(render_elision_row(root_ix - hi - 1, rail))
-                    .child(render_lane_row(
-                        root_ix,
-                        row,
-                        &key,
-                        false,
-                        &Rail {
-                            width: rail,
-                            scroll,
-                            columns: &columns,
-                            avatars,
-                        },
-                        cx,
-                    ));
-            }
-        }
-        // Horizontal wheel/trackpad deltas scroll the rail; vertical ones are
-        // left to the body's own scroll, exactly as the commit list's graph
-        // column does.
-        let scroll_by = cx.listener(
-            move |this: &mut KagiApp, e: &gpui::ScrollWheelEvent, _w, cx| {
-                this.pr_lane_scroll_by(&e.delta, lanes, rail, scroll, cx);
-            },
-        );
-        body.on_scroll_wheel(scroll_by)
-    });
+    let active = app.window_active_for_render(window);
+    let selected = tab
+        .selected_commit
+        .and_then(|ix| tab.commits.get(ix))
+        .map(|c| c.id.clone());
+    let heading = lane_heading(number, tab.pr.commit_total, hits.len());
+    let lane_body = LaneBody {
+        key,
+        span,
+        root,
+        hits,
+        columns,
+        rail,
+        scroll,
+        selected,
+        active,
+        heading: heading.clone(),
+    }
+    .render(app, window, cx);
 
     // The pane's lower third lists the files of a file view. The checks and
     // the properties left it for the PR's own page (mock 7a), so on every
@@ -189,7 +177,7 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .flex()
             .flex_col()
             .bg(rgb(theme().bg_base))
-            .child(render_header(number, hits.len()))
+            .child(render_header(heading))
             .when(local_refs_loading, |lane| {
                 lane.child(
                     div()
@@ -205,6 +193,112 @@ pub(super) fn render_pr_lane(app: &KagiApp, cx: &mut Context<KagiApp>) -> Option
             .children(detail)
             .into_any_element(),
     )
+}
+
+struct LaneBody {
+    key: std::rc::Rc<kagi_domain::github::PrKey>,
+    span: Option<(usize, usize)>,
+    root: Option<usize>,
+    hits: Vec<usize>,
+    columns: std::collections::BTreeMap<usize, usize>,
+    rail: f32,
+    scroll: f32,
+    selected: Option<kagi_git::CommitId>,
+    active: bool,
+    heading: String,
+}
+
+impl LaneBody {
+    fn render(
+        self,
+        app: &KagiApp,
+        window: &mut gpui::Window,
+        cx: &mut Context<KagiApp>,
+    ) -> Option<gpui::AnyElement> {
+        let nav = &app.pr_mode()?.lane_navigation;
+        let Some((lo, hi)) = self.span else {
+            nav.keyboard
+                .yield_focus(app.root_focus.as_ref(), window, cx);
+            return None;
+        };
+        let signature = WindowKey {
+            pr: self.key.as_ref().clone(),
+            span: (lo, hi),
+            root: self.root,
+        };
+        if nav.window.borrow().as_ref() != Some(&signature) {
+            nav.scroll
+                .reset(hi - lo + 1 + usize::from(self.root.is_some()) * 2);
+            *nav.window.borrow_mut() = Some(signature);
+        }
+        let scroll = nav
+            .scroll
+            .clone()
+            .with_uniform_item_height(theme::scaled_px(ROW_H));
+        let rows = nav.keyboard.rows(
+            self.hits
+                .iter()
+                .map(|ix| (app.view().rows[*ix].id.0.as_str(), ix - lo)),
+            &scroll,
+            app.root_focus.as_ref(),
+            window,
+            cx,
+        );
+        let label = format!("{} {}", Msg::PrLaneTitle.t(), self.heading);
+        let frame = super::list_a11y::list_box_named(
+            "pr-lane-body",
+            rows.list(div().id("pr-lane-body")),
+            label.into(),
+        )
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col();
+        let lanes = self.columns.len().max(1);
+        let width = self.rail;
+        let horizontal = self.scroll;
+        let render = cx.processor(move |app: &mut KagiApp, entry: usize, _, cx| {
+            let ix = if entry <= hi - lo {
+                lo + entry
+            } else if entry == hi - lo + 1 {
+                return render_elision_row(self.root.unwrap() - hi - 1, self.rail);
+            } else {
+                self.root.unwrap()
+            };
+            let row = &app.view().rows[ix];
+            let slot = self.hits.binary_search(&ix).ok();
+            let rail = Rail {
+                width: self.rail,
+                scroll: self.scroll,
+                columns: &self.columns,
+                avatars: theme::graph_lane_compact().then_some(app.avatars.images.as_ref()),
+            };
+            render_lane_row(
+                ix,
+                row,
+                &self.key,
+                (slot, self.selected.as_ref() == Some(&row.id), self.active),
+                &rows,
+                &rail,
+                cx,
+            )
+        });
+        Some(
+            frame
+                .child(
+                    gpui::list(scroll, move |ix, window, cx| render(ix, window, cx))
+                        .flex_1()
+                        .min_h(px(0.)),
+                )
+                .child(super::e2e::measure_inside("pr-lane-body"))
+                .on_scroll_wheel(cx.listener(
+                    move |app: &mut KagiApp, e: &gpui::ScrollWheelEvent, _, cx| {
+                        app.pr_lane_scroll_by(&e.delta, lanes, width, horizontal, cx);
+                    },
+                ))
+                .into_any_element(),
+        )
+    }
 }
 
 /// The rows to draw: the PR's own span, widened by [`CONTEXT_ROWS`] either
@@ -227,10 +321,16 @@ const SUBJECT_W: f32 = 240.0;
 pub(super) const MAX_PANE_WIDTH: f32 =
     graph_view::LANE_W * (MAX_RAIL_LANES as f32 + 0.5) + SUBJECT_W;
 
-/// The pane always has an active PR (see [`render_pr_lane`]), so the header
-/// names it rather than asking whether there is one. The count is the PR's own
-/// commits, not the windowed rows: the context is not part of the PR.
-fn render_header(number: u64, commits: usize) -> gpui::Div {
+/// The heading explicitly distinguishes an authoritative total from loaded hits.
+fn lane_heading(number: u64, total: Option<usize>, loaded: usize) -> String {
+    let count = match total {
+        Some(total) => format!("{total} {}", Msg::PrModeCommits.t()),
+        None => Msg::PrLaneLoaded.t().replacen("{}", &loaded.to_string(), 1),
+    };
+    format!("#{number} \u{00B7} {count}")
+}
+
+fn render_header(heading: String) -> gpui::Div {
     div()
         .flex()
         .flex_row()
@@ -249,10 +349,7 @@ fn render_header(number: u64, commits: usize) -> gpui::Div {
             div()
                 .font_weight(gpui::FontWeight::NORMAL)
                 .text_color(rgb(theme().color_branch))
-                .child(SharedString::from(format!(
-                    "#{number} \u{00B7} {commits} {}",
-                    Msg::PrModeCommits.t()
-                ))),
+                .child(SharedString::from(heading)),
         )
 }
 
@@ -296,6 +393,27 @@ fn render_elision_row(skipped: usize, rail: f32) -> gpui::AnyElement {
         .into_any_element()
 }
 
+fn lane_row_label(subject: &str, sha: &str, number: u64, is_mine: bool) -> String {
+    let template = if is_mine {
+        Msg::PrLaneCommit
+    } else {
+        Msg::PrLaneContext
+    };
+    let number = number.to_string();
+    let args = [subject, sha, number.as_str()];
+    let mut parts = template.t().split("{}");
+    let mut label = parts.next().unwrap_or_default().to_owned();
+    for (ix, (arg, part)) in args.iter().zip(parts).enumerate() {
+        if ix == 0 {
+            kagi_domain::text_safety::append_sanitized_control_bytes(&mut label, arg);
+        } else {
+            label.push_str(arg);
+        }
+        label.push_str(part);
+    }
+    label
+}
+
 /// One history row: its node on the rail, then the subject.
 ///
 /// A row of the PR is lit and selects that commit in the PR; a context row is
@@ -305,40 +423,61 @@ fn render_lane_row(
     ix: usize,
     row: &super::commit_list::CommitRow,
     pr: &std::rc::Rc<kagi_domain::github::PrKey>,
-    is_mine: bool,
+    (slot, selected, active): (Option<usize>, bool, bool),
+    rows: &std::rc::Rc<super::keyboard_nav::RowList>,
     rail: &Rail<'_>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let commit = row.id.clone();
-    let pr = pr.clone();
-    let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_lane_select(&pr, &commit, cx);
-    });
-    div()
-        .id(("pr-lane-row", ix))
+    let is_mine = slot.is_some();
+    let label = lane_row_label(&row.summary, &row.id.0, pr.number, is_mine);
+    let el = div().id(("pr-lane-row", ix));
+    let el = if let Some(slot) = slot {
+        let commit = row.id.clone();
+        let pr = pr.clone();
+        let focus = rows.clone();
+        super::list_a11y::list_option(
+            "pr-lane-body",
+            rows.row(slot, el),
+            slot,
+            rows.len(),
+            label,
+            selected,
+        )
+        .cursor_pointer()
+        .when(!selected, |el| {
+            el.hover(|style| style.bg(rgb(theme().surface)))
+        })
+        .when(selected, |el| el.bg(theme().selected_for_window(active)))
+        .on_click(cx.listener(move |app: &mut KagiApp, _, window, cx| {
+            focus.focus_row(slot, window, cx);
+            app.pr_lane_select(&pr, &commit, cx);
+        }))
+    } else {
+        el.role(gpui::Role::ListItem)
+            .aria_label(SharedString::from(label))
+            .opacity(CONTEXT_OPACITY)
+    };
+    let el = el
         .flex()
         .flex_row()
         .items_center()
         .flex_shrink_0()
         .h(theme::scaled_px(ROW_H))
-        .when(!is_mine, |el| el.opacity(CONTEXT_OPACITY))
-        .when(is_mine, |el| {
-            el.cursor_pointer()
-                .hover(|s| s.bg(rgb(theme().surface)))
-                .on_click(click)
-        })
-        .child(render_rail(
-            row.lane,
-            row.node_color,
-            &row.edges,
-            graph_view::GraphNode::Commit {
-                is_head: row.is_head,
-                is_merge: row.is_merge,
-            },
-            Some((&row.author_email, &row.author)),
-            ROW_H,
-            rail,
-        ))
+        .child(
+            render_rail(
+                row.lane,
+                row.node_color,
+                &row.edges,
+                graph_view::GraphNode::Commit {
+                    is_head: row.is_head,
+                    is_merge: row.is_merge,
+                },
+                Some((&row.author_email, &row.author)),
+                ROW_H,
+                rail,
+            )
+            .when(is_mine, |el| el.ml(px(-super::keyboard_nav::RING))),
+        )
         .child(
             div()
                 .flex_1()
@@ -352,13 +491,64 @@ fn render_lane_row(
                     theme().text_muted
                 }))
                 .child(safe_text(&row.summary)),
-        )
-        .into_any_element()
+        );
+    #[cfg(feature = "gui-e2e")]
+    let el = super::e2e::measure_control(format!("pr-lane-row-{ix}"), el);
+    el.into_any_element()
+}
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn pr_lane_history_for_e2e(&self) -> Vec<super::commit_list::CommitRow> {
+        self.view().rows.clone()
+    }
+
+    pub fn set_pr_lane_total_for_e2e(&mut self, total: Option<usize>, cx: &mut Context<Self>) {
+        if let Some(mode) = self.pr_mode_mut() {
+            if let Some(tab) = mode.active.and_then(|ix| mode.tabs.get_mut(ix)) {
+                tab.pr.commit_total = total;
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn set_pr_lane_history_for_e2e(
+        &mut self,
+        rows: Vec<super::commit_list::CommitRow>,
+        cx: &mut Context<Self>,
+    ) {
+        let index = rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| (row.id.clone(), ix))
+            .collect();
+        self.view_mut().rows = rows;
+        self.view_mut().commit_row_index = index;
+        cx.notify();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lane_names_keep_literal_braces_and_neutralize_control_bytes() {
+        let name = lane_row_label("Fix {} \u{001b} subject", "fullsha", 7, true);
+        assert!(name.contains("Fix {}"));
+        assert!(name.contains("fullsha"));
+        assert!(name.contains("PR #7"));
+        assert!(!name.contains('\u{001b}'));
+        let context = lane_row_label("Context", "othersha", 7, false);
+        assert!(context.contains("othersha"));
+        assert!(!context.contains("PR #7"));
+    }
+
+    #[test]
+    fn explicit_total_is_independent_of_loaded_history() {
+        assert_eq!(lane_heading(7, Some(10), 3), lane_heading(7, Some(10), 10));
+        assert_ne!(lane_heading(7, None, 3), lane_heading(7, Some(3), 3));
+        assert_ne!(lane_heading(7, None, 3), lane_heading(7, None, 10));
+    }
 
     /// The branch root is drawn under the window only when it is actually
     /// further down than the context reaches and is loaded at all.

@@ -34,3 +34,31 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
 - 依存追加: gpui-terminal / portable-pty(どちらも permissive)
 - terminal 内の git 操作の反映は T029 の .git watcher が既に担う(追加実装ほぼ不要)
 - 0.1.0 の API 変化リスクはバージョン固定 + fork 前提で吸収
+
+## Amendment — 2026-10-13: safe paste and focus exit (#1403, #1406, #1407)
+
+- Clipboard text goes to the vendored `TerminalView`, whose alacritty emulator
+  already tracks shell output's DECSET/DECRST `?2004`, including split output.
+  Enabled mode sends exactly one `ESC[200~` / `ESC[201~` pair around the
+  UTF-8 payload with ESC and ETX removed, matching alacritty's paste safety
+  policy. Embedded ESC could otherwise end bracketed input and execute the
+  following lines; ETX could interrupt the receiving shell. CR/LF and all
+  other payload bytes are unchanged. Raw keys never use this filtering path.
+- With bracketed paste disabled, text containing LF or CR is held in the single
+  `active_modal` slot. The localized warning shows the clipboard contents;
+  only an explicit Paste button approves sending. Return defaults to Cancel,
+  and Escape/Cancel send no text. Approval freezes the owning session and shell
+  spawn generation, so a restarted shell or switched/closed tab cannot inherit it.
+  Confirmation consults the current mode again.
+- Control-Shift-Tab or Command-Shift-J in `Terminal` focuses its existing
+  bottom-panel Terminal tab. Left/Right then Return switches panels using the
+  established manual-activation selector. The terminal subtree's localized
+  accessibility description documents this route. Escape remains shell input.
+- Hiding a focused terminal yields immediately to the visible graph root;
+  closing from another focus owner leaves that owner alone. The fully clipped
+  render path also yields terminal focus, and hiding/reopening retains the PTY,
+  process, output and spawn generation.
+- Tier A `terminal_paste_bracketed`, `terminal_focus_exit`,
+  `terminal_hide_focus` uses a real isolated PTY with a capture program and
+  production Cmd-V/key handlers at 940×660 / 1392×883, 100% / 167%, EN / JA.
+  Native VoiceOver and physical keyboard behavior remain Tier B evidence.

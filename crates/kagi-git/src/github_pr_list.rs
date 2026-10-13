@@ -38,6 +38,7 @@ query($owner: String!, $name: String!, $states: [PullRequestState!], $cursor: St
         labels(first: 20) { nodes { name color description } }
         reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
         comments { totalCount }
+        commits { totalCount }
       }
     }
   }
@@ -226,6 +227,7 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
         changed_files: count_at(v, "changedFiles"),
         additions: count_at(v, "additions"),
         deletions: count_at(v, "deletions"),
+        commit_total: super::github::explicit_commit_total(v),
         created_at: s("createdAt"),
         updated_at: s("updatedAt"),
     })
@@ -235,6 +237,21 @@ fn pr_from_value(v: &serde_json::Value) -> Option<PullRequest> {
 mod tests {
     use super::*;
     use kagi_domain::github::{CiState, Mergeable};
+
+    #[test]
+    fn list_projection_requests_and_retains_authoritative_commit_total() {
+        assert!(PR_LIST_QUERY.contains("commits { totalCount }"));
+        let pr = pr_from_value(&serde_json::json!({
+            "number": 7, "commits": { "totalCount": 10 }
+        }))
+        .unwrap();
+        assert_eq!(pr.commit_total, Some(10));
+        let reduced = pr_from_value(&serde_json::json!({
+            "number": 7, "commits": [{}, {}, {}]
+        }))
+        .unwrap();
+        assert_eq!(reduced.commit_total, None);
+    }
 
     const SAMPLE: &str = r#"[
       {"number":236,"title":"feat(ui): stash peek","headRefName":"feat/stash-peek",

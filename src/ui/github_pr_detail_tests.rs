@@ -757,6 +757,7 @@ fn ui_with_fresh_opened_details() -> TabUiState {
                 changed_files: 0,
                 additions: 0,
                 deletions: 0,
+                commit_total: None,
             }),
         ),
     ] {

@@ -556,7 +556,7 @@ impl CommitPanelView {
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    // Headers and both 20px hit-height floors remain visible;
+                    // Headers and a full compact row in each list remain visible;
                     // shorter viewports yield list height before the composer.
                     .flex()
                     .flex_col()
@@ -578,7 +578,7 @@ impl CommitPanelView {
                             })
                             .child(super::e2e::measure_inside("cp-us-viewport"))
                             .flex_1()
-                            .min_h(px(20.))
+                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()
@@ -658,7 +658,7 @@ impl CommitPanelView {
                             })
                             .child(super::e2e::measure_inside("cp-st-viewport"))
                             .flex_1()
-                            .min_h(px(20.))
+                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()

@@ -1164,10 +1164,13 @@ At 940×560/167%, the added titlebar exposes the previous zero minimum on the
 compound message group: its body/action row could extend below the group's
 allocation and overpaint Commit. The group now reserves the existing Medium
 subject, gap and body/action-row minimum together; the footer reserves its
-existing padding, gaps, Small Commit and optional status/warning lines. File
-viewports keep a 20-logical-px hit-height floor and yield before the composer on
-very short windows. AutoGrow measurement, desktop geometry and focus owners stay
-unchanged.
+existing padding, gaps, Small Commit and optional status/warning lines. With the
+#1463/#1467 compact list integration, each file viewport reserves one scaled
+22-reference-px row (at least 20 logical px) plus its 4px focus/border allowance;
+file lists yield remaining height before the composer on very short windows.
+AutoGrow measurement, desktop geometry and focus owners stay unchanged. Native
+integration still measures 408px on desktop and keeps the composer/actions
+contained at 940×560/167%; density and viewport oracles are not weakened.
 The Home virtual-list overdraw rationale above remains authoritative: check
 fixed chrome and the first Recent row against the window, and compact GitHub
 actions/names against their row; do not require partially mounted virtual rows

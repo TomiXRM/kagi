@@ -163,3 +163,48 @@ stack order, restoring the original frontmost window last without changing the
 selected repository. Inactive renders retain the last menu owner; only the first
 publication may occur without an active main window.
 
+
+## Amendment — 2026-10-13: localized native roles and live Editor Save (#1438–#1440)
+
+Native and portable headings share `i18n::menu_heading`; ordinary actions use
+the existing `command_label` resolver, including the EN/JA command vocabulary.
+Standard Edit text uses shared `Msg` labels. Canonical section identifiers are
+unchanged: the shell publisher selects AppKit's Window submenu by canonical
+section position after installing each translated tree. This is necessary
+because GPUI caf5007 otherwise assigns the Window role only to `"Window"`.
+Every theme/language/toolbar/window rebuild goes through that publisher.
+
+The native Settings host publishes only its Edit focus target, retaining the
+main window's View labels; its Input never inherits a repository-history label.
+
+Undo/Redo are not responder-chain stubs: the pinned backend dispatches those
+OS selectors to GPUI tags. They use Input's real Undo/Redo actions when an
+attached Input owns focus, otherwise the guarded repository-history actions.
+History labels include the actual pending entry summary. Dispatch-tree
+availability excludes missing history, busy/modal/Home state, focused Input
+or Terminal, and the foreground historical Editor. Text Input availability
+remains the pinned component's own dispatch contract (an empty text-history
+action is safely handled there); no duplicate input undo stack is introduced.
+Cut/Copy/Paste/Select All retain their actual AppKit responder selectors.
+
+Review: Japanese Undo uses the macOS-standard 「取り消す」, shared by plain
+Input and targeted history labels. History label publication is independent
+of modal/write-busy availability; those conditions only gate dispatch-tree
+handlers. Home retains the last history labels without reading a parked
+session, while focused Input still selects its own actions. Only a changed
+editing target (Input, Terminal or snapshot) or actual history entry changes
+the Edit presentation. This avoids unnecessary whole-menu replacements:
+pinned GPUI accumulates `menu_actions` each time `set_menus` runs.
+
+`MenuNode::EditorSave` exposes the existing `SaveEditorFile` action in File,
+with the same ⌘S binding and save path. Its owner is the live Editor entity,
+so native handler registration and the portable row read the same
+`editor_save_available` predicate: dirty editable open buffer, current Editor,
+no selected historical commit, external-change decision, modal or write.
+Graph/closed/clean/snapshot buffers therefore have no available Save handler.
+This entity-owned node deliberately avoids a second registry state cache.
+
+Role/density/reference: native macOS menu / AppKit-owned / standard File and
+Edit menus. Existing portable row rendering is reused; there is no new control
+style, modal, save executor, repository mutation or operation-log path.
+

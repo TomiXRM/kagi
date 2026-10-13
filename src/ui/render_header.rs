@@ -226,7 +226,7 @@ impl KagiApp {
         }));
         let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
             settings::set_toolbar_display(action.mode);
-            cx.set_menus(cmds::build_menus(cx));
+            cmds::publish_menus(cx);
             cx.notify();
         }));
         // W22-I18N: language switch actions (always enabled).

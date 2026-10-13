@@ -507,6 +507,8 @@ fn render_table_row(
 ) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-home-row-{}", open.number));
         this.pr_mode_open(&open, cx);
     });
     let menu_pr = pr.clone();
@@ -678,13 +680,14 @@ fn render_table_row(
         );
     super::list_a11y::list_option(
         "pr-list",
-        super::timeline_row::clickable(super::timeline_row::row(
+        super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
             &pr.author,
             kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
-        )),
+        )
+        .when(!selected, super::timeline_row::clickable),
         position,
         size,
         label,
@@ -699,6 +702,7 @@ fn render_table_row(
     })
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
+            .cursor_pointer()
     })
     .items_center()
     .flex_shrink_0()

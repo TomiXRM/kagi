@@ -53,6 +53,9 @@ mod ref_validation;
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_hover_selected.rs"]
+mod pr_dashboard_hover_selected;
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_keyboard.rs"]
 mod pr_dashboard_keyboard;
 #[cfg(target_os = "macos")]
@@ -101,6 +104,9 @@ mod toast_dismiss;
 #[path = "recovery/feedback_status.rs"]
 mod feedback_status;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/clone_hidden_status.rs"]
+mod clone_hidden_status;
 #[cfg(target_os = "macos")]
 #[path = "recovery/clone_progress_status.rs"]
 mod clone_progress_status;
@@ -296,6 +302,9 @@ mod commit_paging;
 #[cfg(target_os = "macos")]
 #[path = "recovery/context_menu_keys.rs"]
 mod context_menu_keys;
+#[cfg(target_os = "macos")]
+#[path = "recovery/home_empty_section_wording.rs"]
+mod home_empty_section_wording;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
@@ -1469,6 +1478,10 @@ mod macos {
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_dashboard_keyboard),
             ),
             (
+                "pr_dashboard_hover_selected",
+                Box::new(crate::pr_dashboard_hover_selected::scenario_pr_dashboard_hover_selected),
+            ),
+            (
                 "pr_filter_strip_keyboard",
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
             ),
@@ -1720,6 +1733,10 @@ mod macos {
                 Box::new(crate::home_github::scenario_home_github),
             ),
             (
+                "home_empty_section_wording",
+                Box::new(crate::home_empty_section_wording::scenario_home_empty_section_wording),
+            ),
+            (
                 "home_work",
                 Box::new(crate::home_work::scenario_home_work),
             ),
@@ -1850,6 +1867,10 @@ mod macos {
             (
                 "clone_completion_navigation",
                 Box::new(crate::clone_owner::scenario_clone_completion_navigation),
+            ),
+            (
+                "clone_hidden_status",
+                Box::new(crate::clone_hidden_status::scenario_clone_hidden_status),
             ),
             (
                 "smart_commit_generation_owner",

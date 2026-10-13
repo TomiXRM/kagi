@@ -66,8 +66,9 @@ pub(super) fn row(
         .child(content)
 }
 
-/// A row that opens what it shows: pointer and hover fill, one definition for
-/// the Issues list and the PR home table.
+/// An unselected row that opens what it shows: pointer and surface hover fill,
+/// shared by the Issues list and PR home table. Selected rows retain their own
+/// active/inactive fill and pointer cursor instead of applying this hover wash.
 pub(super) fn clickable(row: Stateful<Div>) -> Stateful<Div> {
     row.cursor_pointer().hover(|s| s.bg(rgb(theme().surface)))
 }

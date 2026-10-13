@@ -118,6 +118,12 @@ impl TabUiState {
     }
 
     pub(super) fn leave_pr_mode(&mut self) {
+        if let Some(mode) = &self.pr_mode {
+            for tab in &mode.tabs {
+                super::diff_selection::retire_surface(tab.diff_layout.selection_owner());
+                super::diff_selection::retire_surface(tab.conflict_layout.selection_owner());
+            }
+        }
         self.pr_mode = None;
         self.filter_controls.menu = None;
         self.reset_pr_strip();

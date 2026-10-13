@@ -280,6 +280,10 @@ pub enum Msg {
     /// ADR-0124: diff-header selected mode segments.
     DiffViewSplit,
     DiffViewUnified,
+    /// Line-ending-only replacement captions; existing sigils/columns identify sides.
+    DiffLineEndingLf,
+    DiffLineEndingCrLf,
+    DiffLineEndingNone,
     DiffBinaryNoText,
     DiffImageAdded,
     DiffImageModified,
@@ -2431,6 +2435,12 @@ impl Msg {
             (Ja, DiffNotOpen) => "diff が開かれていません",
             (En | Ja, DiffViewSplit) => "Split",
             (En | Ja, DiffViewUnified) => "Unified",
+            (En, DiffLineEndingLf) => "LF line ending",
+            (Ja, DiffLineEndingLf) => "LF 改行",
+            (En, DiffLineEndingCrLf) => "CRLF line ending",
+            (Ja, DiffLineEndingCrLf) => "CRLF 改行",
+            (En, DiffLineEndingNone) => "No line ending",
+            (Ja, DiffLineEndingNone) => "改行なし",
             (En, DiffBinaryNoText) => "Binary file — no text diff. Open in external editor to compare.",
             (Ja, DiffBinaryNoText) => "binary ファイル — テキスト diff はありません。外部エディタで開いて比較してください。",
             (En, DiffImageAdded) => "Added image (no previous version)",

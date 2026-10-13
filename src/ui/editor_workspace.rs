@@ -44,12 +44,12 @@ impl KagiApp {
 
 /// The host hooks injected at construction (ADR-0121 C4): the bin-owned
 /// helpers the crate renders/loads with but must not own.
-fn editor_hooks() -> EditorHooks {
+fn editor_hooks(owner: crate::app::SessionId) -> EditorHooks {
     EditorHooks {
         lang_for_path: super::diff_view::lang_for_path,
         image_from_bytes: super::avatar_fetch::image_from_bytes,
         pane_selectors: Box::<super::editor_pane_selectors::PaneSelectors>::default(),
-        render_hunks: Box::new(|view, cx| {
+        render_hunks: Box::new(move |view, cx| {
             // `view.diff` is seeded below as a boxed `MainDiffView` (a bin
             // type the crate can't name) — downcast and hand it to the
             // shared diff-list renderer, exactly as the pre-C4 in-crate arm
@@ -59,6 +59,7 @@ fn editor_hooks() -> EditorHooks {
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                super::diff_selection::retire_surface(view.diff_layout.selection_owner());
                 view.diff_layout.clear(&view.diff_scroll);
                 return gpui::div().into_any_element();
             };
@@ -68,6 +69,7 @@ fn editor_hooks() -> EditorHooks {
                 view.diff_scroll.clone(),
                 &view.diff_layout,
                 None,
+                super::diff_selection::SelectionOwner::Editor(owner),
                 cx,
             )
             .into_any_element()
@@ -75,12 +77,13 @@ fn editor_hooks() -> EditorHooks {
         // T-WS-EDITOR-008: same downcast shape as `render_hunks`, over the
         // independent `history_diff` field so selecting a History commit
         // never touches the WIP hunks pane's diff.
-        render_history_diff: Box::new(|view, cx| {
+        render_history_diff: Box::new(move |view, cx| {
             let Some(diff) = view
                 .history_diff
                 .as_ref()
                 .and_then(|d| d.downcast_ref::<MainDiffView>())
             else {
+                super::diff_selection::retire_surface(view.history_diff_layout.selection_owner());
                 view.history_diff_layout.clear(&view.history_diff_scroll);
                 return gpui::div().into_any_element();
             };
@@ -90,6 +93,7 @@ fn editor_hooks() -> EditorHooks {
                 view.history_diff_scroll.clone(),
                 &view.history_diff_layout,
                 None,
+                super::diff_selection::SelectionOwner::Editor(owner),
                 cx,
             )
             .into_any_element()
@@ -143,7 +147,7 @@ impl KagiApp {
         // open would hide the editor we are about to create (same reasoning
         // as the two closes above). PR mode holds no unsaved state.
         self.with_ui(|ui| ui.leave_pr_mode());
-        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(), root_focus));
+        let view = cx.new(|_| EditorWorkspaceView::new(repo_path, editor_hooks(owner), root_focus));
         let pane_id = view.entity_id();
         // The pane's own background reads (file list, diff, history, blame,
         // snapshot) are frozen to this owner's repository at open time and land
@@ -442,6 +446,10 @@ impl KagiApp {
                             next,
                         ) {
                             (Some(current), Some(next)) => current.adopt(next),
+                            (Some(current), None) => {
+                                super::diff_selection::retire_revision(current.height_source);
+                                *slot = None;
+                            }
                             (_, next) => {
                                 *slot = next.map(|next| Box::new(next) as Box<dyn std::any::Any>);
                             }
@@ -579,6 +587,11 @@ impl KagiApp {
     /// Close the Editor workspace (drops the entity; Graph mode is derived
     /// from `editor_workspace.is_none()`).
     pub fn close_editor_workspace(&mut self) {
+        if let Some(owner) = self.active_session() {
+            super::diff_selection::retire_owner(super::diff_selection::SelectionOwner::Editor(
+                owner,
+            ));
+        }
         if let Some(ui) = self.ui_mut() {
             ui.editor_workspace = None;
         }

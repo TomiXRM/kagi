@@ -36,12 +36,9 @@ fn open(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
 }
 
 fn surface(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> (u64, usize) {
-    use std::hash::{Hash, Hasher};
     cx.read(|cx| {
         let pane = app.read(cx).ui().main_diff.as_ref().unwrap().read(cx);
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        (pane.view.title.as_ref(), pane.view.rows.len()).hash(&mut hash);
-        (hash.finish(), pane.view.rows.len())
+        (pane.selection_token_for_e2e(), pane.view.rows.len())
     })
 }
 

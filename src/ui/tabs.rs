@@ -205,6 +205,7 @@ impl KagiApp {
     pub(crate) fn depart_active_tab(&mut self) {
         self.close_departing_screen_overlays();
         if let Some(session) = self.active_session() {
+            super::diff_selection::retire_session(session);
             self.app_sessions.depart(session);
             if self
                 .file_menu

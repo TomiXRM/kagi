@@ -537,6 +537,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     scroll_handle: gpui::ListState,
     list_layout: &kagi_ui_core::diff_list::DiffListLayout,
     hunk: Option<super::diff_view::hunk_action::HunkAction>,
+    owner: super::diff_selection::SelectionOwner,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     super::diff_view::highlight::ensure_highlight(&view, cx);
@@ -544,11 +545,14 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
     // reuses both pairing and move detection across frames and embeddings.
     let split = super::theme::diff_split();
     let projection = split.then(|| super::diff_split::split_projection(&view.rows));
-    // R1: selection-surface semantics stay title+count based, independently of
-    // the derived-layout cache's immutable row identity.
-    let sel_key = super::diff_selection::surface_key(view.title.as_ref(), view.rows.len());
-    // Focus follows the title, not the row-count-dependent selection token.
-    let focus_key = super::diff_selection::surface_key(view.title.as_ref(), 0);
+    let sel_key = super::diff_selection::SelectionKey::new(
+        owner,
+        list_layout.selection_owner(),
+        view.height_source,
+    );
+    super::diff_selection::sync(sel_key);
+    // Focus belongs to the retained list, not its replaceable content.
+    let focus_key = list_layout.selection_owner().token();
     // #351: an embedding's overlay adds one list item under each expanded row.
     let overlay = header.overlay.take();
     let layout = overlay

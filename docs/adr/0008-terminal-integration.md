@@ -39,8 +39,11 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
 
 - Clipboard text goes to the vendored `TerminalView`, whose alacritty emulator
   already tracks shell output's DECSET/DECRST `?2004`, including split output.
-  Enabled mode sends exactly `ESC[200~`, the original UTF-8 payload and
-  `ESC[201~`. Raw key input (including Tab and Shift-Tab) never uses this path.
+  Enabled mode sends exactly one `ESC[200~` / `ESC[201~` pair around the
+  UTF-8 payload with ESC and ETX removed, matching alacritty's paste safety
+  policy. Embedded ESC could otherwise end bracketed input and execute the
+  following lines; ETX could interrupt the receiving shell. CR/LF and all
+  other payload bytes are unchanged. Raw keys never use this filtering path.
 - With bracketed paste disabled, text containing LF or CR is held in the single
   `active_modal` slot. The localized warning shows the clipboard contents;
   only an explicit Paste button approves sending. Return defaults to Cancel,

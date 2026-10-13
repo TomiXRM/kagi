@@ -282,7 +282,7 @@ impl KagiApp {
                     // terminal's own on_key_down → PTY (history, vim, etc.).
                     .key_context("Terminal")
                     .role(gpui::Role::Group)
-                    .aria_label("Terminal")
+                    .aria_label(SharedString::from(i18n::Msg::ToolbarTerminal.t()))
                     .aria_description(terminal::input::focus_description())
                     .on_action(cx.listener(|this, _: &TerminalExitFocus, window, cx| {
                         this.exit_terminal_focus(window, cx);

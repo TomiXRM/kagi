@@ -1159,15 +1159,28 @@ impl TerminalView {
         if !bracketed && !multiline_confirmed && text.contains(['\n', '\r']) {
             return false;
         }
-        // Hold one writer lock across both delimiters and the exact payload.
+        // Hold one writer lock across both delimiters and the safe payload.
         // Keystrokes and query replies cannot interleave with paste framing.
         let mut writer = self.stdin_writer.lock();
+        let bytes = text.as_bytes();
         if bracketed {
             let _ = writer.write_all(b"\x1b[200~");
-        }
-        let _ = writer.write_all(text.as_bytes());
-        if bracketed {
+            // kagi: Match alacritty's paste safety policy: embedded ESC can
+            // terminate bracketed input; ETX can interrupt the receiving shell.
+            // Write retained byte slices without allocating or changing CR/LF.
+            let mut start = 0;
+            for (index, byte) in bytes.iter().enumerate() {
+                if matches!(byte, b'\x1b' | b'\x03') {
+                    if start < index {
+                        let _ = writer.write_all(&bytes[start..index]);
+                    }
+                    start = index + 1;
+                }
+            }
+            let _ = writer.write_all(&bytes[start..]);
             let _ = writer.write_all(b"\x1b[201~");
+        } else {
+            let _ = writer.write_all(bytes);
         }
         let _ = writer.flush();
         true

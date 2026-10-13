@@ -33,6 +33,8 @@ while True:
     if data == b'\x04':
         os.write(1, b'\x1b[?2004l')
         (root / 'disabled').touch()
+    elif data == b'\x05':
+        break
     else:
         with (root / 'input').open('ab') as f:
             f.write(data)
@@ -137,11 +139,87 @@ fn matrix(
                 focus_terminal(cx, &app, win);
                 settle(cx, || shell.dir.path().join("ready").exists());
                 exercise(cx, &app, win, &shell);
+                stop_capture_shell(cx, &app);
                 unmount(cx, app, win);
             }
         }
     }
 }
+fn stop_capture_shell(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    cx.read(|cx| {
+        app.read(cx)
+            .ui()
+            .terminal_session
+            .as_ref()
+            .unwrap()
+            .paste_writer
+            .as_ref()
+            .unwrap()
+            .write_input("\x05");
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .unwrap()
+                .view
+                .is_none()
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "capture shell did not exit"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn assert_stale_paste_rejected(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    shell: &CaptureShell,
+) {
+    focus_terminal(cx, app, win);
+    paste(cx, win, "stale\ncommand\n");
+    let generation = cx.read(|cx| app.read(cx).terminal_paste_modal().unwrap().generation);
+    let before = shell.bytes();
+    stop_capture_shell(cx, app);
+    std::fs::remove_file(shell.dir.path().join("ready")).unwrap();
+    focus_terminal(cx, app, win);
+    settle(cx, || shell.dir.path().join("ready").exists());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().terminal_session.as_ref().unwrap().spawns),
+        generation + 1
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).terminal_paste_modal().unwrap().generation),
+        generation
+    );
+    crate::app_conflict::click_control(cx, win, "terminal-paste-confirm");
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).terminal_paste_modal().is_none()));
+    assert_eq!(
+        shell.bytes(),
+        before,
+        "approval from the exited shell must not reach its replacement"
+    );
+    focus_terminal(cx, app, win);
+    paste(cx, win, "fresh");
+    settle(cx, || shell.bytes().len() > before.len());
+    assert_eq!(
+        &shell.bytes()[before.len()..],
+        b"\x1b[200~fresh\x1b[201~",
+        "the replacement PTY remains usable after stale approval is discarded"
+    );
+}
+
 pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
     matrix(cx, |cx, app, win, shell| {
         paste(cx, win, "one\ntwo\r\n日本語");
@@ -150,6 +228,14 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
             shell.bytes(),
             b"\x1b[200~one\ntwo\r\n\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[201~",
             "enabled bracketed paste must protect every clipboard line"
+        );
+        let offset = shell.bytes().len();
+        paste(cx, win, "safe\x1b[201~\necho injected\x03\r\n日本語");
+        settle(cx, || shell.bytes().len() > offset);
+        assert_eq!(
+            &shell.bytes()[offset..],
+            b"\x1b[200~safe[201~\necho injected\r\n\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[201~",
+            "bracketed paste must remove embedded ESC and ETX without changing CR/LF"
         );
         cx.read(|cx| {
             app.read(cx)
@@ -178,6 +264,7 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
         crate::app_conflict::click_control(cx, win, "terminal-paste-confirm");
         settle(cx, || shell.bytes().len() > before.len());
         assert_eq!(&shell.bytes()[before.len()..], b"approved\ncommand\n");
+        assert_stale_paste_rejected(cx, app, win, shell);
     });
 }
 pub fn scenario_terminal_focus_exit(cx: &mut VisualTestAppContext) {

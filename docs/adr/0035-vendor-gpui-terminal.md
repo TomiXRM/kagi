@@ -38,3 +38,7 @@ writing; Kagi owns the confirmation UI. `SharedWriter::write_input` remains
 raw key transport only, replacing the former app-side clipboard write path.
 This is a safety correction within the minimal vendor-fix policy; no second
 mode parser or Kagi-specific modal dependency is introduced into the vendor.
+
+Review: enabled bracketed payloads remove ESC and ETX, matching alacritty's
+paste policy so clipboard content cannot terminate its own paste bracket.
+CR/LF and all other UTF-8 bytes are retained; raw keystrokes are unfiltered.

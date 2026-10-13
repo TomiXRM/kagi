@@ -269,7 +269,7 @@ fn unknown_wait_recovers(
     window: AnyWindowHandle,
     lang: Lang,
 ) {
-    let _shell = crate::gui_isolation::StandInShell::install();
+    // Use the scenario's shell guard, which outlives the restarted child.
     exit_three(cx, app);
     draw(cx, window);
     let reason = "wait: Interrupted system call (os error 4)";

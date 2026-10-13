@@ -140,10 +140,7 @@ actions!(
         // View → Language (W22-I18N / ADR-0048): one action per UI language.
         LangEnglish,
         LangJapanese,
-        // ADR-0084: app-level Undo/Redo (Cmd+Z / Cmd+Shift+Z). Distinct from the
-        // OsAction text-input EditUndo/EditRedo — these move branch refs via the
-        // history plan→confirm modal and are bound only when neither a text Input
-        // nor the Terminal is focused.
+        // ADR-0084: repository Undo/Redo, distinct from Input's text actions.
         HistoryUndo,
         HistoryRedo,
     ]
@@ -231,10 +228,12 @@ pub enum MenuNode {
     /// the dropdown panel (it has no nested-panel support) — both behaviours are
     /// preserved from before ADR-0085.
     Submenu(DynSubmenu),
-    /// An OS-standard Edit item (handled by the macOS responder chain via
-    /// `MenuItem::os_action`).  Only ever appears inside a `mac_only` section,
-    /// so Linux skips it wholesale (it has no responder chain — see ADR-0085 §4).
+    /// Standard Edit entry: focused GPUI Undo/Redo or a native responder-chain
+    /// selector. The macOS-only section is skipped by the portable dropdown
+    /// (the intentional Edit-menu OS difference — ADR-0085 §4).
     OsEdit(OsEditItem),
+    /// The editor's existing Save action, whose dirty-buffer owner is an entity.
+    EditorSave,
     #[cfg(target_os = "macos")]
     Services,
 }
@@ -246,7 +245,7 @@ pub enum DynSubmenu {
     ToolbarDisplay,
 }
 
-/// The OS-standard Edit items (macOS responder chain — ADR-0029).
+/// Standard macOS Edit entries; Undo/Redo share the focused keyboard actions.
 pub enum OsEditItem {
     Undo,
     Redo,
@@ -262,7 +261,7 @@ pub struct MenuSection {
     pub label: &'static str,
     /// Ordered entries; separators and submenus are positional.
     pub items: &'static [MenuNode],
-    /// macOS-only section (relies on the responder chain).  Linux skips it
+    /// macOS-only section. Linux skips it
     /// entirely — see ADR-0085 §4 (the intentional Edit-menu OS difference).
     /// Read by `linux_menu_sections`.
     pub mac_only: bool,
@@ -303,6 +302,8 @@ pub const MENU_BAR: &[MenuSection] = &[
         items: &[
             MenuNode::Command("file.newTab"),
             MenuNode::Command("file.closeTab"),
+            MenuNode::Separator,
+            MenuNode::EditorSave,
             MenuNode::Separator,
             MenuNode::Command("file.cloneRepository"),
             MenuNode::Command("file.openRepository"),
@@ -1041,11 +1042,10 @@ pub(crate) fn is_enabled(app: &KagiApp, id: &str) -> bool {
 /// An id present in [`MENU_BAR`] but missing here is a wiring bug; we
 /// `debug_assert!` so it's caught in dev, and fall back to a non-dispatching
 /// item (`About`, which is always available) so release builds stay usable.
-fn action_menu_item(id: &str, state: super::window_menu::ViewMenuState) -> MenuItem {
+fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> MenuItem {
     let label: SharedString = super::window_menu::state_label(id, state)
-        .or_else(|| command(id).map(|c| c.label))
-        .map(SharedString::from)
-        .unwrap_or_else(|| SharedString::from(id.to_string()));
+        .unwrap_or_else(|| super::command_palette::command_label(id, i18n::lang()))
+        .into();
     match id {
         // kagi (app menu)
         "app.about" => MenuItem::action(label, About),
@@ -1129,18 +1129,45 @@ fn action_menu_item(id: &str, state: super::window_menu::ViewMenuState) -> MenuI
     }
 }
 
-/// Build the `MenuItem` for an OS-standard Edit entry (macOS responder chain).
-fn os_edit_menu_item(kind: &OsEditItem) -> MenuItem {
+/// Undo/Redo use the same focused GPUI actions as the keyboard. Other standard
+/// Edit commands retain AppKit responder-chain handling.
+fn os_edit_menu_item(kind: &OsEditItem, state: &super::window_menu::ViewMenuState) -> MenuItem {
+    use gpui_component::input::{Redo, Undo};
     match kind {
-        OsEditItem::Undo => MenuItem::os_action("Undo", EditUndo, OsAction::Undo),
-        OsEditItem::Redo => MenuItem::os_action("Redo", EditRedo, OsAction::Redo),
-        OsEditItem::Cut => MenuItem::os_action("Cut", EditCut, OsAction::Cut),
-        OsEditItem::Copy => MenuItem::os_action("Copy", EditCopy, OsAction::Copy),
-        OsEditItem::Paste => MenuItem::os_action("Paste", EditPaste, OsAction::Paste),
+        OsEditItem::Undo if state.input_focused => MenuItem::action(Msg::MenuUndo.t(), Undo),
+        OsEditItem::Redo if state.input_focused => MenuItem::action(Msg::MenuRedo.t(), Redo),
+        OsEditItem::Undo => MenuItem::action(
+            history_menu_label(Msg::MenuUndo, state.undo_summary.as_ref()),
+            HistoryUndo,
+        ),
+        OsEditItem::Redo => MenuItem::action(
+            history_menu_label(Msg::MenuRedo, state.redo_summary.as_ref()),
+            HistoryRedo,
+        ),
+        OsEditItem::Cut => MenuItem::os_action(Msg::MenuCut.t(), EditCut, OsAction::Cut),
+        OsEditItem::Copy => MenuItem::os_action(Msg::MenuCopy.t(), EditCopy, OsAction::Copy),
+        OsEditItem::Paste => MenuItem::os_action(Msg::MenuPaste.t(), EditPaste, OsAction::Paste),
         OsEditItem::SelectAll => {
-            MenuItem::os_action("Select All", EditSelectAll, OsAction::SelectAll)
+            MenuItem::os_action(Msg::MenuSelectAll.t(), EditSelectAll, OsAction::SelectAll)
         }
     }
+}
+
+fn history_menu_label(verb: Msg, summary: Option<&SharedString>) -> SharedString {
+    match summary {
+        Some(summary) => format!("{} {}", verb.t(), summary).into(),
+        None => verb.t().into(),
+    }
+}
+
+/// Publish the canonical tree, then restore AppKit's role using the canonical
+/// section identifier rather than its translated display heading.
+pub fn publish_menus(cx: &mut App) {
+    let window_section = MENU_BAR
+        .iter()
+        .position(|section| section.label == "Window")
+        .expect("canonical Window menu");
+    crate::native_menus::publish(cx, build_menus(cx), window_section);
 }
 
 /// Build the shared canonical tree with the active window's presentation labels.
@@ -1158,7 +1185,7 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
                 .items
                 .iter()
                 .map(|node| match node {
-                    MenuNode::Command(id) => action_menu_item(id, state),
+                    MenuNode::Command(id) => action_menu_item(id, &state),
                     MenuNode::Separator => MenuItem::separator(),
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
@@ -1172,7 +1199,8 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
                             .collect(),
                         disabled: false,
                     }),
-                    MenuNode::OsEdit(kind) => os_edit_menu_item(kind),
+                    MenuNode::OsEdit(kind) => os_edit_menu_item(kind, &state),
+                    MenuNode::EditorSave => MenuItem::action(Msg::MenuSave.t(), SaveEditorFile),
                     #[cfg(target_os = "macos")]
                     MenuNode::Services => {
                         MenuItem::os_submenu(Msg::MenuServices.t(), gpui::SystemMenuType::Services)
@@ -1180,7 +1208,7 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
                 })
                 .collect();
             Menu {
-                name: section.label.into(),
+                name: i18n::menu_heading(section.label, i18n::lang()).into(),
                 items,
                 disabled: false,
             }
@@ -1222,7 +1250,7 @@ fn theme_submenu() -> Menu {
         })
         .collect();
     Menu {
-        name: "Theme".into(),
+        name: i18n::menu_heading("Theme", i18n::lang()).into(),
         items,
         disabled: false,
     }
@@ -1272,27 +1300,15 @@ fn lang_submenu() -> Menu {
         items.push(item);
     }
     Menu {
-        name: "Language".into(),
+        name: i18n::menu_heading("Language", i18n::lang()).into(),
         items,
         disabled: false,
     }
 }
 
-// Edit-menu action stubs: gpui's `os_action` still needs an `Action` value for
-// the dispatch tag, but the OS performs the actual edit via the responder
-// chain — these are never dispatched to kagi.  No global KeyBinding is bound to
-// them, so they never interfere with text-input cmd-z/x/c/v/a.
-actions!(
-    kagi_edit,
-    [
-        EditCut,
-        EditCopy,
-        EditPaste,
-        EditSelectAll,
-        EditUndo,
-        EditRedo
-    ]
-);
+// Cut/Copy/Paste/Select All are real AppKit responder-chain selectors. Undo/Redo
+// deliberately use Input or repository actions, not unhandled OS dispatch tags.
+actions!(kagi_edit, [EditCut, EditCopy, EditPaste, EditSelectAll]);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Keybinding registration.
@@ -1432,8 +1448,8 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     )]);
     // ADR-0084: app-level Undo/Redo. Historical text is selectable, not an
     // input, but must never route text undo to repository operation history.
-    // A focused text field (Input) keeps
-    // OS-standard text undo (OsAction::Undo) and the terminal keeps its own
+    // A focused text field keeps Input's own Undo/Redo actions; the terminal
+    // keeps its own
     // Cmd+Z — the app history move only fires elsewhere (e.g. commit graph).
     // gpui 0.2.2 only accepts `&&`/`||` (single `&` fails to parse).
     cx.bind_keys([
@@ -1480,7 +1496,7 @@ pub(crate) fn setup_app(cx: &mut App) {
         cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
         cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
     }
-    cx.set_menus(build_menus(cx));
+    publish_menus(cx);
 }
 
 pub(super) fn quit_app(cx: &mut App) {
@@ -2112,7 +2128,7 @@ impl KagiApp {
         self.apply_terminal_config(cx);
 
         // Rebuild the menu bar (active marker moved).
-        cx.set_menus(build_menus(cx));
+        publish_menus(cx);
         cx.refresh_windows();
         cx.notify();
     }
@@ -2128,7 +2144,7 @@ impl KagiApp {
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {
         i18n::set_lang(l);
         klog!("lang: {}", l.slug());
-        cx.set_menus(build_menus(cx));
+        publish_menus(cx);
         cx.refresh_windows();
         if let Some(select) = self.theme_select.as_ref() {
             select.update(cx, |_, cx| cx.notify());
@@ -3034,7 +3050,7 @@ mod standard_app_action_tests {
             ("app.hideOthers", HideOtherApps.name()),
             ("app.showAll", ShowAllApps.name()),
         ] {
-            match action_menu_item(id, super::super::window_menu::ViewMenuState::default()) {
+            match action_menu_item(id, &super::super::window_menu::ViewMenuState::default()) {
                 MenuItem::Action {
                     action, os_action, ..
                 } => {

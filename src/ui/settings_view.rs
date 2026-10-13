@@ -681,7 +681,7 @@ pub(super) fn appearance_section(
             } else {
                 settings::ToolbarDisplay::IconAndText
             });
-            cx.set_menus(super::commands::build_menus(cx));
+            super::commands::publish_menus(cx);
             let _ = app_toolbar.update(cx, |_, cx| cx.notify());
         })
         .into_any_element();

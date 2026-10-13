@@ -6,16 +6,22 @@ use super::{
 };
 use gpui::{AnyWindowHandle, App, Context, Global, Window};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewMenuState {
     pub sidebar_visible: bool,
     pub fullscreen: bool,
+    pub input_focused: bool,
+    pub undo_summary: Option<gpui::SharedString>,
+    pub redo_summary: Option<gpui::SharedString>,
 }
 impl Default for ViewMenuState {
     fn default() -> Self {
         Self {
             sidebar_visible: true,
             fullscreen: false,
+            input_focused: false,
+            undo_summary: None,
+            redo_summary: None,
         }
     }
 }
@@ -46,11 +52,33 @@ pub(crate) fn register_main_window(window: &Window, cx: &mut App) {
 }
 pub(crate) fn current_state(cx: &App) -> ViewMenuState {
     cx.try_global::<WindowMenus>()
-        .map(|menus| menus.state)
+        .map(|menus| menus.state.clone())
         .unwrap_or_default()
 }
+/// Utility hosts retain the main window's View labels, but Edit must describe
+/// their own focused Input rather than the repository behind them.
+pub(super) fn publish_settings_edit_state(window: &mut Window, cx: &mut App) {
+    use gpui::Focusable as _;
+    use gpui_component::WindowExt as _;
+    if !window.is_window_active() || !cx.has_global::<WindowMenus>() {
+        return;
+    }
+    let input_focused = window
+        .focused_input(cx)
+        .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window));
+    let menus = cx.global_mut::<WindowMenus>();
+    if menus.owner == Some(window.window_handle()) && menus.state.input_focused == input_focused {
+        return;
+    }
+    menus.owner = Some(window.window_handle());
+    menus.state.input_focused = input_focused;
+    menus.state.undo_summary = None;
+    menus.state.redo_summary = None;
+    commands::publish_menus(cx);
+}
+
 /// Used by both native menus and the in-app dropdown; IDs and bindings do not vary.
-pub fn state_label(id: &str, state: ViewMenuState) -> Option<&'static str> {
+pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
     let msg = match id {
         "view.toggleSidebar" if state.sidebar_visible => Msg::MenuHideSidebar,
         "view.toggleSidebar" => Msg::MenuShowSidebar,
@@ -97,10 +125,78 @@ impl KagiApp {
         }
         self.publish_window_menu_state(window, cx);
     }
-    pub(super) fn publish_window_menu_state(&self, window: &Window, cx: &mut Context<Self>) {
+    fn menu_input_focused(&self, window: &mut Window, cx: &mut App) -> bool {
+        use gpui::Focusable as _;
+        use gpui_component::WindowExt as _;
+        window.focused_input(cx).is_some_and(|input| {
+            let focus = input.read(cx).focus_handle(cx);
+            focus.is_focused(window)
+                && self
+                    .root_focus
+                    .as_ref()
+                    .is_some_and(|root| root.contains(&focus, window))
+        })
+    }
+    pub(super) fn history_menu_available(
+        &self,
+        redo: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let input = self.menu_input_focused(window, cx);
+        let terminal = self
+            .ui()
+            .terminal_session
+            .as_ref()
+            .and_then(|session| session.view.as_ref())
+            .is_some_and(|view| view.read(cx).focus_handle().is_focused(window));
+        let snapshot = self.workspace_mode() == super::workspace_mode::WorkspaceMode::Editor
+            && self
+                .ui()
+                .editor_workspace
+                .as_ref()
+                .is_some_and(|view| view.read(cx).showing_history_commit());
+        !self.home_in_front()
+            && self.repo_path.is_some()
+            && !self.has_active_modal()
+            && !self.op_latched()
+            && !input
+            && !terminal
+            && !snapshot
+            && if redo {
+                self.ui().operation_history.can_redo()
+            } else {
+                self.ui().operation_history.can_undo()
+            }
+    }
+    pub(super) fn publish_window_menu_state(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let previous = current_state(cx);
+        let summary = |old: &Option<gpui::SharedString>, entry: Option<&kagi_git::HistoryEntry>| {
+            entry.map(|entry| {
+                old.as_ref()
+                    .filter(|old| old.as_ref() == entry.summary)
+                    .cloned()
+                    .unwrap_or_else(|| entry.summary.clone().into())
+            })
+        };
         let state = ViewMenuState {
             sidebar_visible: self.sidebar.visible,
             fullscreen: window.is_fullscreen(),
+            input_focused: self.menu_input_focused(window, cx),
+            undo_summary: summary(
+                &previous.undo_summary,
+                self.ui()
+                    .operation_history
+                    .peek_undo()
+                    .filter(|_| self.history_menu_available(false, window, cx)),
+            ),
+            redo_summary: summary(
+                &previous.redo_summary,
+                self.ui()
+                    .operation_history
+                    .peek_redo()
+                    .filter(|_| self.history_menu_available(true, window, cx)),
+            ),
         };
         let handle = window.window_handle();
         let language = i18n::lang();
@@ -111,7 +207,7 @@ impl KagiApp {
         menus.owner = Some(handle);
         menus.state = state;
         menus.language = Some(language);
-        cx.set_menus(commands::build_menus(cx));
+        commands::publish_menus(cx);
     }
     pub(super) fn show_adjacent_tab(
         &mut self,

@@ -264,7 +264,7 @@ impl KagiApp {
                 },
             ) => {
                 let mut items = github_items(
-                    sections,
+                    (sections, home.section_host().as_ref()),
                     orgs_error.as_deref(),
                     home.refresh_error.as_deref(),
                     key.orgs_loading || key.reading,
@@ -299,7 +299,7 @@ pub(super) const HOME_LIST: &str = "home-list";
 /// read: every list read in full, nothing failed and nothing still being
 /// read (`reading`: the organizations, or a refresh).
 fn github_items(
-    sections: &[OwnerRepos],
+    scope: (&[OwnerRepos], &str),
     orgs_error: Option<&str>,
     refresh_error: Option<&str>,
     reading: bool,
@@ -307,6 +307,7 @@ fn github_items(
     query: &str,
     cloning: Option<&str>,
 ) -> Vec<HomeItem> {
+    let (sections, host) = scope;
     let mut items = Vec::new();
     let mut shown = 0usize;
     let mut complete = !reading && orgs_error.is_none() && refresh_error.is_none();
@@ -354,9 +355,19 @@ fn github_items(
             continue;
         }
         shown += rows.len();
+        let empty = list.repos.is_empty().then(|| {
+            if section.owner.is_none() {
+                Msg::HomeGithubMineEmpty.t().replace("{host}", host)
+            } else {
+                Msg::HomeGithubSectionEmpty
+                    .t()
+                    .replace("{owner}", &title)
+                    .replace("{host}", host)
+            }
+        });
         items.push(HomeItem::Heading(title));
-        if list.repos.is_empty() {
-            items.push(HomeItem::Note(Msg::HomeGithubEmpty.t().to_string()));
+        if let Some(empty) = empty {
+            items.push(HomeItem::Note(empty));
         }
         items.extend(rows);
         if list.truncated {
@@ -634,6 +645,22 @@ fn github_row(
 /// Tier A hooks for the list's place (#942 review).
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn invalidate_home_items_for_e2e(&mut self) {
+        self.home_github.list_key = None;
+    }
+    /// Observe the actual cached entries consumed by the production renderer.
+    pub fn home_item_text_for_e2e(&self) -> Vec<(String, String)> {
+        self.home_github
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                HomeItem::Heading(text) => Some(("heading".into(), text.clone())),
+                HomeItem::Note(text) => Some(("note".into(), text.clone())),
+                HomeItem::Repo(repo, _, _) => Some(("repo".into(), repo.name_with_owner.clone())),
+                _ => None,
+            })
+            .collect()
+    }
     pub fn home_scroll_for_e2e(&self) -> Option<gpui::ListState> {
         self.home_github.list.clone()
     }

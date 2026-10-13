@@ -658,6 +658,9 @@ pub enum Msg {
     CommitTitle,
     /// Commit panel: body input placeholder.
     CommitBody,
+    /// Commit draft persistence failure, followed by the I/O detail.
+    CommitDraftSaveFailed,
+    CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
     /// Commit panel: tooltip on the person+ (co-author) icon.
@@ -795,7 +798,10 @@ pub enum Msg {
     /// `{}` = why the read failed.
     HomeGithubRefreshFailed,
     HomeGithubFailedHint,
-    HomeGithubEmpty,
+    /// `{owner}` = section heading; `{host}` = host this list was read from.
+    HomeGithubSectionEmpty,
+    /// `{host}` = host the user's successfully empty list was read from.
+    HomeGithubMineEmpty,
     HomeGithubNoMatch,
     /// `{}` = how many were read.
     HomeGithubTruncated,
@@ -842,6 +848,9 @@ pub enum Msg {
     /// `{}` = the host it downloads from.
     CloneRunningHint,
     CloneHide,
+    /// `{}` = the full source of the single running clone.
+    CloneHiddenRunning,
+    CloneShowProgress,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -3041,6 +3050,10 @@ impl Msg {
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
             (Ja, CommitBody) => "説明(任意)",
+            (En, CommitDraftSaveFailed) => "Draft could not be saved",
+            (Ja, CommitDraftSaveFailed) => "下書きを保存できません",
+            (En, CommitDraftSaveRetry) => "Save Draft",
+            (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
             (En, AddCoAuthor) => "Add co-author",
@@ -3260,8 +3273,10 @@ impl Msg {
             (Ja, HomeGithubFailedHint) => {
                 "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
             }
-            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
-            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
+            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
+            (En, HomeGithubMineEmpty) => "You have no repositories to display on {host}.",
+            (Ja, HomeGithubMineEmpty) => "{host} に表示できるあなたのリポジトリはありません。",
             (En, HomeGithubNoMatch) => "No repository matches the filter.",
             (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
             (En, HomeGithubTruncated) => {
@@ -3338,6 +3353,10 @@ impl Msg {
             }
             (En, CloneHide) => "Continue in background",
             (Ja, CloneHide) => "バックグラウンドで続ける",
+            (En, CloneHiddenRunning) => "Cloning {}…",
+            (Ja, CloneHiddenRunning) => "{} を clone 中…",
+            (En, CloneShowProgress) => "Show Progress",
+            (Ja, CloneShowProgress) => "進捗を表示",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",

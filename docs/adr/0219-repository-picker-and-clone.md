@@ -105,3 +105,22 @@ At the existing four-toast cap, routine arrivals evict older routine feedback
 before actionable completions or errors; activation still starts the normal
 exit/removal path.
 
+## Amendment (2026-10-13): owner-scoped Home empty wording (#1453)
+
+A successfully read zero-repository organization section names its owner and
+the host that the displayed list was read from in EN and JA. The user's section
+uses a separate host-only sentence: Yours/自分 is a heading label, not an owner
+name to interpolate into prose. Japanese organization wording uses「には」.
+Each sentence says there
+are no repositories **to display for that section**, not that the account or
+GitHub as a whole has no repositories. Saved lists retain their account's host;
+token-authenticated reads use the same `GH_HOST` / `github.com` selection as gh.
+Unreadable owner lists keep their existing failure reason and never receive
+the genuine-empty sentence. Search completeness and no-match rules are unchanged.
+
+The `home_empty_section_wording` Tier A scenario observes the production
+renderer’s cached entries for self=1 / orgA=0 / orgB=1, all successful owners
+empty, and a failed organization, on github.com and an Enterprise host in both
+languages. This is a wording-only change; no controls, density or layout policy
+are changed, and the scenario is not native VoiceOver or screenshot evidence.
+

@@ -395,9 +395,10 @@ commit workflow, new read store, persisted layout mode, or wide-layout redesign.
 The rail remains a dense Finder-inspired navigator, using the existing named
 controls and kit Popover rather than a parallel overflow navigation model.
 Its seven controls retain their natural heights; the rail scrolls when the
-workspace is short and reveals the actual keyboard-focused trigger. Tall-window
-spacing, the 1000-logical-pixel breakpoint and restored window-size policy stay
-unchanged.
+workspace is short and reveals the actual keyboard-focused trigger once per
+focus transition. Leaving the rail resets that reveal owner; subsequent wheel
+scrolling is never pinned to the retained keyboard focus. Tall-window spacing,
+the 1000-logical-pixel breakpoint and restored window-size policy stay unchanged.
 
 Cmd-F in compact Graph opens the current Graph navigator through the same rail
 owner and focuses the existing sidebar Input only once its Popover is rendered.

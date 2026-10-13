@@ -472,6 +472,29 @@ fn short_reach(
             );
         }
     }
+    // A focused trigger must not pin subsequent pointer scrolling to itself.
+    root(cx, app, win);
+    tab_to(cx, win, TRIGGERS[0], false);
+    let rail = bounds(win, "compact-rail");
+    wheel(cx, win, rail, -10000.);
+    contained(
+        rail,
+        bounds(win, TRIGGERS[6]),
+        "wheel reaches Issues while Local retains keyboard focus",
+    );
+    let local_top = bounds(win, TRIGGERS[0]).top();
+    assert!(
+        local_top < rail.top(),
+        "Local scrolls outside the short rail"
+    );
+    for _ in 0..3 {
+        settle(cx, win);
+        assert_eq!(
+            bounds(win, TRIGGERS[0]).top(),
+            local_top,
+            "focused Local does not reset the pointer scroll offset",
+        );
+    }
     for id in TRIGGERS {
         let rail = bounds(win, "compact-rail");
         // Actual wheel/pointer route, independently of focus-driven reveal.

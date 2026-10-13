@@ -57,6 +57,7 @@ struct RailState {
     focus_pending: bool,
     filter_pending: bool,
     scroll: ScrollHandle,
+    revealed: Option<usize>,
 }
 
 #[derive(Default)]
@@ -83,6 +84,7 @@ fn render_state(window: &mut Window, cx: &mut App) -> Entity<RailState> {
         focus_pending: false,
         filter_pending: false,
         scroll: ScrollHandle::new(),
+        revealed: None,
     });
     let cache = cx.default_global::<RailCache>();
     cache.0.retain(|_, state| state.upgrade().is_some());
@@ -209,15 +211,20 @@ pub(super) fn select_worktree(
 /// Seven dense, named controls; the separator is inside the fixed outer width.
 pub(super) fn render(app: &KagiApp, window: &mut Window, cx: &mut Context<KagiApp>) -> AnyElement {
     let cached = render_state(window, cx);
-    cached.update(cx, |state, _| {
+    let scroll = cached.update(cx, |state, _| {
         state.root = app.root_focus.clone();
         state.owner = app.active_session();
+        let focused = state.triggers.focused(window);
+        if focused != state.revealed {
+            state.revealed = focused;
+            if let Some(index) = focused {
+                // Reveal once per focus transition, preserving later wheel scrolling.
+                // The sixth child is the tall-window flexible separator.
+                state.scroll.scroll_to_item(index + usize::from(index >= 5));
+            }
+        }
+        state.scroll.clone()
     });
-    let scroll = cached.read(cx).scroll.clone();
-    if let Some(index) = cached.read(cx).triggers.focused(window) {
-        // The sixth child is the tall-window flexible separator.
-        scroll.scroll_to_item(index + usize::from(index >= 5));
-    }
     let rail = div()
         .id("compact-rail")
         .relative()

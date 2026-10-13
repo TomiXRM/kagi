@@ -72,6 +72,8 @@ deadline rather than dropping EN/JA × 100%/167% × Apple Light/Dark cells.
 leg, then checks the same rendered Input entity/value on reopen and at 1000px.
 `compact_rail_short_window` uses real 940×400@167% / 400×300@100% windows,
 wheel/pointer and Tab/Shift-Tab reveal plus the production legacy-size restore.
+With Local retaining keyboard focus, wheel input must still reach Issues and
+preserve the resulting offset across subsequent frames; focus reveal is one-shot.
 `compact_popover_sections` checks shared PR disclosure and Issue category
 callbacks, native focus-ring pixels and actual AccessKit role/name/state nodes.
 `compact_rail_ax` reads those nodes after keyboard toggle, Escape, outside click

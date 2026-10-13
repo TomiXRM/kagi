@@ -2517,6 +2517,21 @@ real read produces it. Used by `remote_refresh_departed_owner`,
 `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`,
 `ecosystem_evidence_detached_samepath` and `workspace_mode_toolbar`.
 
+`clone_picker_owner` (#1402, Clone side of #1420) uses
+`e2e::queue_folder_answer` with `evidence_support::deferred` to substitute a
+native folder dialog's `Result<Option<PathBuf>, String>`: late answers cannot
+replan a replacement/reopened card; cancellation is silent; failures preserve
+the card, report a localized error and record a failed receipt only when a
+repository owns the screen. It does not validate an actual OS dialog.
+`clone_completion_navigation` (#1405) uses `e2e::queue_clone_run` only to hold
+dispatch: release runs the real local clone, verification and successful oplog
+receipt. It proves background completion preserves the active session,
+selection, focus and tab count until the drawn Open Repository action is
+clicked (EN) or reached by Tab and activated with Enter (JA). Current-card
+completion opens normally. Its matrix covers 940×660/1392×883, 100%/167% and
+Apple Light/Dark. Use `KAGI_GUI_E2E_ONLY='clone_,home_,toast_'` for neighbors.
+Actual folder sheets, occlusion and native focus remain Tier B.
+
 The same kind of stand-in, outside `e2e::queue_*`:
 
 - `KagiApp::queue_issue_list_fetch_for_e2e` (the next Issues list read, in

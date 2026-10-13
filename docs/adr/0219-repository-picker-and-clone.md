@@ -70,3 +70,34 @@ request. Completion/error still uses the existing toast path and receipt.
 GPUI's pinned accessibility API has no live-region setter, so native start/
 terminal speech is not claimed. Hide dismisses the card without stopping or
 releasing its running owner, and no determinate percentage is fabricated.
+
+## Amendment (2026-10-13): clone task ownership and quiet completion (#1402/#1405; #1420 Clone side)
+
+The native destination picker captures the existing task FocusHandle (a fresh
+card incarnation, retained during replanning), Home/workspace presentation and
+the initiating repository attachment's session/visit where one exists. This is
+the same form-identity plus attachment pattern as Create Worktree (#1383), not
+a source-name comparison or a second modal owner. Dismissal/replacement,
+same-source reopen and repository departure retire the answer. Only the same
+unstarted card accepts it. Cancel is silent; platform/channel errors preserve
+the form and use the shared bounded toast failure path. The failure receipt owner
+is frozen at launch only when a repository screen is in front. Home (including
+Home over a parked repository) keeps diagnostics in the process log instead of
+inventing or misattributing a repository receipt.
+
+This supersedes decision 7's unconditional success navigation: only a user
+still waiting on the initiating running card and attachment gets automatic
+opening. Hidden or departed clones finish normally, retain their existing
+receipt/notification and offer a localized Open Repository Button. That Button
+alone opens/activates the destination. No background tab is added and the
+current session, selected commit and focus are not changed by arrival. The
+single-clone admission, preflight, execution, verification and recording are
+unchanged. Native Tier A uses deferred folder answers and a dispatch-only hold
+before a real fixture clone; it does not manufacture successful clone reports.
+Reopening the same running clone's card in the same visit is an explicit return
+to that task and retains automatic opening. Its original request identifies the
+running operation; folder-picker answers still require the original card focus
+identity. Actionable completion feedback remains until activation or dismissal
+(subject to the existing notification cap), instead of disappearing after four
+seconds before the user can act.
+

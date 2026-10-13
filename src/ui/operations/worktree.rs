@@ -79,8 +79,15 @@ impl KagiApp {
     ) {
         let prompt = i18n::Msg::InputChooseFolder.t();
         #[cfg(feature = "gui-e2e")]
-        if let Some(folder) = crate::ui::e2e::take_folder_prompt(prompt) {
-            self.place_create_worktree_in(&folder, window, cx);
+        if let Some(answer) = crate::ui::e2e::take_folder_prompt(prompt) {
+            cx.spawn_in(window, async move |app, acx| {
+                if let Ok(Some(folder)) = answer.await {
+                    let _ = app.update_in(acx, |app, window, cx| {
+                        app.place_create_worktree_in(&folder, window, cx);
+                    });
+                }
+            })
+            .detach();
         }
         #[cfg(not(feature = "gui-e2e"))]
         {

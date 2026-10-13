@@ -37,6 +37,7 @@ impl ToastRemoved {
     }
 }
 impl gpui::EventEmitter<ToastRemoved> for ToastStack {}
+impl gpui::EventEmitter<super::types::ToastAction> for ToastStack {}
 
 fn error_preview(message: &str) -> String {
     let mut preview = String::new();
@@ -58,28 +59,31 @@ fn error_preview(message: &str) -> String {
 /// name only through a visible label. This adapter adds GPUI's stateful naming
 /// API to the existing Button's interactivity; it does not build another control.
 #[derive(gpui::IntoElement)]
-pub(super) struct ToastCloseButton(
+pub(super) struct ToastButton(
     pub gpui_component::button::Button,
     pub u64,
     pub super::types::ToastCloseFocus,
+    pub &'static str,
 );
 
-impl gpui::InteractiveElement for ToastCloseButton {
+impl gpui::InteractiveElement for ToastButton {
     fn interactivity(&mut self) -> &mut gpui::Interactivity {
         self.0.interactivity()
     }
 }
 
-impl gpui::StatefulInteractiveElement for ToastCloseButton {}
+impl gpui::StatefulInteractiveElement for ToastButton {}
 
-impl gpui::RenderOnce for ToastCloseButton {
+impl gpui::RenderOnce for ToastButton {
     fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
         let focus = window
-            .use_keyed_state(("toast-dismiss", self.1), cx, |_, cx| cx.focus_handle())
+            .use_keyed_state((self.3, self.1), cx, |_, cx| cx.focus_handle())
             .read(cx)
             .clone();
         #[cfg(feature = "gui-e2e")]
-        CLOSE_FOCUS.with(|slot| *slot.borrow_mut() = Some(focus.clone()));
+        if self.3 == "toast-dismiss" {
+            CLOSE_FOCUS.with(|slot| *slot.borrow_mut() = Some(focus.clone()));
+        }
         let id = window.window_handle().window_id();
         let mut hosts = self.2.borrow_mut();
         if let Some((_, previous)) = hosts.iter_mut().find(|(host, _)| *host == id) {
@@ -90,6 +94,14 @@ impl gpui::RenderOnce for ToastCloseButton {
         drop(hosts);
         self.0.render(window, cx)
     }
+}
+
+fn take_toast_focus(toast: &Toast) -> Vec<(gpui::WindowId, gpui::FocusHandle)> {
+    let mut focus = std::mem::take(&mut *toast.close_focus.borrow_mut());
+    if let Some(action) = &toast.action_focus {
+        focus.extend(std::mem::take(&mut *action.borrow_mut()));
+    }
+    focus
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -198,9 +210,11 @@ impl ToastStack {
             id,
             kind,
             message,
+            action: None,
             born: Instant::now(),
             paused_at: None,
             close_focus: Default::default(),
+            action_focus: None,
             dismissing: None,
         });
         if self.toasts.len() > TOASTS_MAX {
@@ -210,7 +224,7 @@ impl ToastStack {
                 .position(|t| t.kind != ToastKind::Error && t.id != id)
                 .unwrap_or(0);
             let removed = self.toasts.remove(oldest);
-            self.removed_focus = std::mem::take(&mut *removed.close_focus.borrow_mut());
+            self.removed_focus = take_toast_focus(&removed);
         }
     }
 
@@ -233,13 +247,16 @@ impl ToastStack {
                 .close_focus
                 .borrow_mut()
                 .retain(|(host, _)| *host != id);
+            if let Some(action) = &toast.action_focus {
+                action.borrow_mut().retain(|(host, _)| *host != id);
+            }
         }
     }
 
     /// Remove a toast by id (after the exit animation has played).
     pub fn remove(&mut self, id: u64) {
         if let Some(toast) = self.toasts.iter().find(|t| t.id == id) {
-            self.removed_focus = std::mem::take(&mut *toast.close_focus.borrow_mut());
+            self.removed_focus = take_toast_focus(toast);
         }
         self.toasts.retain(|t| t.id != id);
         if self.toasts.is_empty() {
@@ -310,6 +327,31 @@ impl ToastStack {
         }
         self.ensure_ticker(cx);
         cx.notify();
+    }
+
+    /// Add an action to the receipt's existing toast, without a second arrival.
+    pub(super) fn set_latest_action(
+        &mut self,
+        action: super::types::ToastAction,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(toast) = self.toasts.last_mut() {
+            toast.action = Some(action);
+            toast.action_focus = Some(Default::default());
+            cx.notify();
+        }
+    }
+
+    pub(super) fn activate_action(&mut self, id: u64, cx: &mut Context<Self>) {
+        let action = self
+            .toasts
+            .iter_mut()
+            .find(|toast| toast.id == id && toast.dismissing.is_none())
+            .and_then(|toast| toast.action.take());
+        if let Some(action) = action {
+            cx.emit(action);
+            self.begin_exit(id, cx);
+        }
     }
 
     /// Begin sliding a toast out (× button or auto-expiry), then remove it once
@@ -404,6 +446,21 @@ mod tests {
         assert_eq!(stack.toasts().len(), TOASTS_MAX);
         // Oldest should have been dropped.
         assert!(!stack.toasts().iter().any(|t| t.message == "msg 0"));
+    }
+
+    #[test]
+    fn actionable_completion_waits_for_explicit_dismissal() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Success, "clone finished");
+        let toast = stack.toasts.last_mut().unwrap();
+        toast.action = Some(super::super::types::ToastAction::OpenRepository(
+            "clone".into(),
+        ));
+        toast.born -= Duration::from_secs(60);
+        assert!(stack.expiring_ids().is_empty());
+        let id = stack.toasts[0].id;
+        stack.start_exit(id);
+        assert!(stack.toasts[0].dismissing.is_some());
     }
 
     #[test]

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Clone folder-picker answers belong to the initiating card and repository visit; dismissed, replaced and reopened cards reject late answers. Hidden/background clones no longer switch repositories on completion: the existing notification offers an explicit Open Repository action, while a user waiting on the current card retains automatic opening. Native picker errors leave the card unchanged and show bounded feedback (with durable detail owned by the repository screen present at launch, never Home's background tab); cancellation stays silent. (#1402, #1405; #1420 Clone side)
 - Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Note names and the shared warning icon/style inside the scrolling plan body. Create Worktree uses the same warning list. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
 - Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
   - Review: opening/closing Generated splices only its children, retaining the disclosure's scroll position and focus. Reaching the final row also reveals the unfocusable overflow notice, including after its rows have been measured.

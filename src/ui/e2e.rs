@@ -653,6 +653,17 @@ pub fn build_kagi_entity(
             )
             .detach();
         }
+        if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.subscribe(
+                stack,
+                |app, _, action: &super::types::ToastAction, cx| match action {
+                    super::types::ToastAction::OpenRepository(path) => {
+                        app.open_repository(path.clone(), cx);
+                    }
+                },
+            )
+            .detach();
+        }
         let seed = std::mem::take(&mut app_state.op_log_seed);
         app_state.op_log = Some(super::operations::oplog_restore::op_log_panel(seed, cx));
         #[cfg(target_os = "macos")]
@@ -1289,22 +1300,39 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static FOLDER_ANSWER: RefCell<Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>>> = const { RefCell::new(None) };
+    static CLONE_RUN: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
 }
 
-/// #1043: the system folder dialog cannot be driven from the GUI runner. A
-/// request is recorded under its prompt and answered with the folder set by
-/// [`answer_folder_prompt`]; with none set it is cancelled.
+/// Record a native folder request and deliver its answer through the real callback.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn take_folder_prompt(
+    prompt: &str,
+) -> Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>> {
     FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
     FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
 }
 
-/// The folder the next dialog request chooses (`None`: it is cancelled).
+/// Queue the next dialog answer using the shared deferred-task transport.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_folder_answer(task: gpui::Task<Result<Option<std::path::PathBuf>, String>>) {
+    FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(task).is_none()));
+}
+
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
-    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+    queue_folder_answer(gpui::Task::ready(Ok(folder)));
+}
+
+/// Hold dispatch only: the real clone still executes, verifies and records.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_clone_run(task: gpui::Task<()>) {
+    CLONE_RUN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_clone_run() -> Option<gpui::Task<()>> {
+    CLONE_RUN.with(|slot| slot.borrow_mut().take())
 }
 
 /// The prompts of the folder dialogs requested since the last call.

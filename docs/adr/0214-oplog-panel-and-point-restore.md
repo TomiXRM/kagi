@@ -336,3 +336,30 @@ hover. The pinned kit Button's low-alpha outer ring and built-in hover style do
 not fit this dense quiet-copy contract. The list container uses `RowList::list`
 rather than duplicating its key context.
 
+
+## Amendment — 2026-10-13: keyboard inspection (#1382)
+
+The dense, read-only restore targets and AFTER graph use retained, stable-keyed
+RowFocus/RowList navigation with independent ListState scrolling and the existing
+system scrollbar. Each list has one Tab stop and a localized accessibility name;
+Up/Down, Home/End and PageUp/PageDown reveal the focused row. The card traverses
+Copy all, the named body region, refs, preview and footer in document order.
+Warnings/blockers render uncapped within that keyboard-scrollable body instead
+of owning inaccessible wheel-only scrollers. Ref/preview panes retain their
+independent caps; a change of focused row also reveals it in the body, after
+the inner list's layout has converged. Repainting the same focused row must not
+undo subsequent pointer-wheel or scrollbar movement of the body. This deliberate
+nested-scroll exception preserves the existing six-row preview while allowing
+unbounded safety prose to be inspected. A pane consumes wheel input only when
+it has overflow and can move in the requested direction at the event's start.
+An event that reaches its boundary still belongs to that pane; later outward
+events chain to the body. Fitting panes also pass wheel input to the body.
+This avoids both simultaneous outer drift and a wheel dead zone over short lists.
+The body owns a dedicated key context and six scroll actions, deeper than the
+app-wide navigation bindings; the row-list context wins inside either pane.
+Pointer inspection focuses the row without selecting or approving an operation.
+The shared keyboard-only ring identifies inspection; no pressed/selected
+operation state is added.
+Empty/unavailable previews keep their existing explanation rather than an empty
+Tab stop. The canonical refs, Copy all, two-stage approval, execution plan and
+backend write pipeline are unchanged.

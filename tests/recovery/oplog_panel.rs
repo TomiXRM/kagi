@@ -32,14 +32,14 @@ fn next_second() {
     ));
 }
 
-fn run(backend: &mut Backend, actor: Actor, op: Operation) {
+pub(super) fn run(backend: &mut Backend, actor: Actor, op: Operation) {
     backend.set_actor(actor);
     let plan = backend.plan(&op).unwrap();
     assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
     backend.run(&op, &plan).unwrap();
 }
 
-fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(super) fn paint(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
     cx.update_window(window, |_, window, cx| {
         window.refresh();
@@ -535,7 +535,7 @@ fn branch_names(repo: &Path) -> String {
 }
 
 /// The card the open entry point leads to, read back from the app.
-fn restore_card(
+pub(super) fn restore_card(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
 ) -> kagi::ui::modals::oplog_restore::OplogRestoreModal {

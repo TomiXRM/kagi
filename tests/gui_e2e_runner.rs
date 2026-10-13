@@ -42,12 +42,19 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/open_picker.rs"]
+mod open_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ref_validation.rs"]
 mod ref_validation;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_keyboard.rs"]
+mod pr_dashboard_keyboard;
 #[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
@@ -533,6 +540,9 @@ mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
+#[cfg(target_os = "macos")]
+#[path = "recovery/oplog_restore_keys.rs"]
+mod recovery_oplog_restore_keys;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_select.rs"]
 mod recovery_oplog_select;
@@ -1453,6 +1463,14 @@ mod macos {
             (
                 "pr_list_roles",
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
+            ),
+            (
+                "pr_dashboard_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_dashboard_keyboard),
+            ),
+            (
+                "pr_filter_strip_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
             ),
             (
                 "pr_dashboard_responsive",
@@ -2390,6 +2408,22 @@ mod macos {
             (
                 "trust_failure_feedback",
                 Box::new(crate::modal_polish_b::scenario_trust_failure_feedback),
+            ),
+            (
+                "open_repository_picker_localized",
+                Box::new(crate::open_picker::scenario_open_repository_picker_localized),
+            ),
+            (
+                "open_repository_picker_error",
+                Box::new(crate::open_picker::scenario_open_repository_picker_error),
+            ),
+            (
+                "open_repository_picker_home_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_home_owner),
+            ),
+            (
+                "open_repository_picker_frozen_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_frozen_owner),
             ),
             (
                 "worktree_folder_picker",
@@ -3805,6 +3839,22 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_keyboard",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_keyboard),
+            ),
+            (
+                "oplog_restore_body_keys",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_keys),
+            ),
+            (
+                "oplog_restore_body_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_wheel),
+            ),
+            (
+                "oplog_restore_pane_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_pane_wheel),
             ),
             (
                 "oplog_restore_guarded_rows",

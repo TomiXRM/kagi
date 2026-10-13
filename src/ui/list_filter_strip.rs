@@ -47,7 +47,7 @@ impl ListKind {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
     State,
     Labels,
@@ -69,6 +69,8 @@ pub(super) struct FilterControls {
     inputs: [Option<Entity<InputState>>; 2],
     subscriptions: [Option<Subscription>; 2],
     placeholder_lang: Option<super::i18n::Lang>,
+    pub focus: super::keyboard_nav::FocusSlots,
+    menu_keys: super::menu_keys::MenuKeys,
     pub menu: Option<FilterMenu>,
 }
 
@@ -88,7 +90,22 @@ fn sort(app: &KagiApp, kind: ListKind) -> ListSort {
 
 impl KagiApp {
     pub(super) fn sync_list_filter_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(owner), Some(kind)) = (self.active_session(), ListKind::current(self)) else {
+        let Some(owner) = self.active_session() else {
+            return;
+        };
+        let covered =
+            self.has_modal_or_visible_plan(cx) || self.visible_platform_menu_section().is_some();
+        if covered {
+            self.with_ui(|ui| ui.filter_controls.menu = None);
+        }
+        self.ui().filter_controls.menu_keys.sync(
+            self.filter_menu_visible() && !covered,
+            covered,
+            self.root_focus.as_ref(),
+            window,
+            cx,
+        );
+        let Some(kind) = ListKind::current(self) else {
             return;
         };
         let lang = super::i18n::lang();
@@ -135,26 +152,58 @@ impl KagiApp {
 }
 
 // Extracted from pr_dashboard's filter/sort chips: one shared chrome.
-fn chip(id: &'static str, active: bool, window_active: bool) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex_shrink_0()
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .when(active, |el| {
-            el.bg(theme().selected_for_window(window_active))
-        })
-        .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
-        } else {
-            theme().text_sub
-        }))
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme().surface)))
+fn chip(
+    id: &'static str,
+    active: bool,
+    window_active: bool,
+    label: &str,
+    app: &KagiApp,
+    cx: &gpui::App,
+) -> gpui::Stateful<gpui::Div> {
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::pr_detail::record_control(id, Some(gpui::Role::Button), Some(label), None, None);
+    let slot = match id {
+        "list-filter-state" => 0,
+        "list-filter-label" => 1,
+        "list-filter-author" => 2,
+        "list-filter-draft" => 3,
+        "list-filter-checks" => 4,
+        "list-filter-sort" => 5,
+        "list-filter-direction" => 6,
+        "list-filter-clear" => 7,
+        _ => 8,
+    };
+    super::keyboard_nav::focusable(
+        div()
+            .id(id)
+            .track_focus(
+                &app.ui()
+                    .filter_controls
+                    .focus
+                    .get(slot, cx)
+                    .tab_index(0)
+                    .tab_stop(true),
+            )
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(label.to_owned())),
+    )
+    .flex_shrink_0()
+    .px_2()
+    .py_px()
+    .rounded_sm()
+    .border_1()
+    .border_color(rgb(theme().selected))
+    .when(active, |el| {
+        el.bg(theme().selected_for_window(window_active))
+    })
+    .text_xs()
+    .text_color(rgb(if active {
+        theme().text_main
+    } else {
+        theme().text_sub
+    }))
+    .cursor_pointer()
+    .hover(|style| style.bg(rgb(theme().surface)))
 }
 
 fn menu_chip(
@@ -169,26 +218,30 @@ fn menu_chip(
     let owner = app.active_session();
     super::e2e::measure_control(
         id,
-        chip(id, active, app.window_active)
+        chip(id, active, app.window_active, &label, app, cx)
+            .aria_expanded(
+                app.filter_menu_visible()
+                    && app
+                        .ui()
+                        .filter_controls
+                        .menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.kind == kind && menu.field == field),
+            )
             .child(safe_text(&label))
-            .on_click(
-                cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
-                    if app.active_session() != owner {
-                        return;
-                    }
-                    if let Some(focus) = &app.root_focus {
-                        window.focus(focus, cx);
-                    }
-                    app.with_ui(|ui| {
-                        ui.filter_controls.menu = Some(FilterMenu {
-                            kind,
-                            field,
-                            position: event.position(),
-                        })
-                    });
-                    cx.notify();
-                }),
-            ),
+            .on_click(cx.listener(move |app, event: &gpui::ClickEvent, _, cx| {
+                if app.active_session() != owner {
+                    return;
+                }
+                app.with_ui(|ui| {
+                    ui.filter_controls.menu = Some(FilterMenu {
+                        kind,
+                        field,
+                        position: event.position(),
+                    })
+                });
+                cx.notify();
+            })),
     )
 }
 
@@ -331,50 +384,74 @@ pub(super) fn render_strip(
         ))
         .child(super::e2e::measure_control(
             "list-filter-direction",
-            chip("list-filter-direction", false, app.window_active)
-                .child(SharedString::from(match order.direction {
+            chip(
+                "list-filter-direction",
+                false,
+                app.window_active,
+                match order.direction {
                     SortDirection::Ascending => Msg::ListSortAscending.t(),
                     SortDirection::Descending => Msg::ListSortDescending.t(),
-                }))
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    if app.active_session() == owner {
-                        apply_choice(app, kind, Choice::Direction, cx);
-                    }
-                })),
+                },
+                app,
+                cx,
+            )
+            .child(SharedString::from(match order.direction {
+                SortDirection::Ascending => Msg::ListSortAscending.t(),
+                SortDirection::Descending => Msg::ListSortDescending.t(),
+            }))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                if app.active_session() == owner {
+                    apply_choice(app, kind, Choice::Direction, cx);
+                }
+            })),
         ))
         .child(super::e2e::measure_control(
             "list-filter-clear",
-            chip("list-filter-clear", false, app.window_active)
-                .child(SharedString::from(Msg::ListFilterClear.t()))
-                .on_click(cx.listener(move |app, _, window, cx| {
-                    if app.active_session() != owner {
-                        return;
+            chip(
+                "list-filter-clear",
+                false,
+                app.window_active,
+                Msg::ListFilterClear.t(),
+                app,
+                cx,
+            )
+            .child(SharedString::from(Msg::ListFilterClear.t()))
+            .on_click(cx.listener(move |app, _, window, cx| {
+                if app.active_session() != owner {
+                    return;
+                }
+                match kind {
+                    ListKind::Prs => {
+                        app.set_github_pr_filter(super::tab_view::default_pr_filter(), cx)
                     }
-                    match kind {
-                        ListKind::Prs => {
-                            app.set_github_pr_filter(super::tab_view::default_pr_filter(), cx)
-                        }
-                        ListKind::Issues => {
-                            app.set_github_issue_filter(super::tab_view::default_issue_filter(), cx)
-                        }
+                    ListKind::Issues => {
+                        app.set_github_issue_filter(super::tab_view::default_issue_filter(), cx)
                     }
-                    if let Some(input) = app.ui().filter_controls.inputs[kind.index()].clone() {
-                        input.update(cx, |input, cx| input.set_value("", window, cx));
-                    }
-                })),
+                }
+                if let Some(input) = app.ui().filter_controls.inputs[kind.index()].clone() {
+                    input.update(cx, |input, cx| input.set_value("", window, cx));
+                }
+            })),
         ))
         .child(
-            chip("list-filter-refresh", false, app.window_active)
-                .child(SharedString::from(Msg::PrRefresh.t()))
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    if app.active_session() != owner {
-                        return;
-                    }
-                    match kind {
-                        ListKind::Prs => app.refresh_pr_strip(cx),
-                        ListKind::Issues => app.refresh_github_issues(cx),
-                    }
-                })),
+            chip(
+                "list-filter-refresh",
+                false,
+                app.window_active,
+                Msg::PrRefresh.t(),
+                app,
+                cx,
+            )
+            .child(SharedString::from(Msg::PrRefresh.t()))
+            .on_click(cx.listener(move |app, _, _, cx| {
+                if app.active_session() != owner {
+                    return;
+                }
+                match kind {
+                    ListKind::Prs => app.refresh_pr_strip(cx),
+                    ListKind::Issues => app.refresh_github_issues(cx),
+                }
+            })),
         );
     strip.into_any_element()
 }
@@ -639,7 +716,7 @@ pub(super) fn render_menu(
                 app.with_ui(|ui| ui.filter_controls.menu = None);
             }
         },
-        None,
+        Some(&app.ui().filter_controls.menu_keys),
         window,
         cx,
     ))

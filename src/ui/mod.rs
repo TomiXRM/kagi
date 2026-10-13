@@ -154,6 +154,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod picker_failure;
 mod settings_analyze;
 mod settings_controls;
 mod settings_theme_folder;

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR dashboard rows now share stable-identity keyboard navigation and offscreen reveal; Enter/Space open the focused PR. Shared filter/sort/Clear/Refresh chips and dashboard All PRs/Refresh are named, focus-visible keyboard buttons in English and Japanese. (#1408, #1413, #1414)
 - Open Repository's native picker approval button follows the EN/JA UI language. Picker failures produce a bounded error toast and durable Operation Log detail for an active repository (a process diagnostic on Home); cancellation stays silent. (#1419, #1420)
   - Review: Home foreground never writes a receipt against retained background tabs, and a pending native picker retains its launch repository context across tab switches.
 - PR swimlane commits share retained keyboard row navigation and complete subject/SHA/PR accessibility names. Selected commits retain the shared active/inactive selection fill, including on hover; inert context rows remain read-only. Headings use an authoritative PR commit total when supplied, otherwise explicitly say how many commits are loaded in English and Japanese. (#1409, #1410, #1412)

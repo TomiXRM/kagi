@@ -4597,7 +4597,7 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
     })
     .unwrap();
     let list = recorded_list("pr-list").expect("PR list drawn");
-    assert_eq!(list.role, Some(Role::List));
+    assert_eq!(list.role, Some(Role::ListBox));
     assert_eq!(list.label, kagi_ui_core::i18n::Msg::A11yPrList.t());
     assert_eq!(list.size, 3);
     let labels: Vec<&str> = list.rows.values().map(|(l, _)| l.as_str()).collect();
@@ -4616,8 +4616,8 @@ pub fn scenario_pr_list_roles(cx: &mut VisualTestAppContext) {
             label.contains("@alice") && label.contains("main"),
             "{label}"
         );
-        assert!(!selected, "the table keeps no selection");
+        assert!(!selected, "unfocused dashboard options are not selected");
     }
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS pr_list_roles: List + ListItem, named rows in filtered order, positions/size");
+    eprintln!("[gui-e2e] PASS pr_list_roles: ListBox + options, named rows in filtered order, positions/size");
 }

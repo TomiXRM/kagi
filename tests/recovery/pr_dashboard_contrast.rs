@@ -134,7 +134,7 @@ fn cell_matrix(cx: &mut VisualTestAppContext, app: &gpui::Entity<KagiApp>, win: 
         }
     }
     let list = list_a11y::recorded_list("pr-list").unwrap();
-    assert_eq!(list.role, Some(Role::List));
+    assert_eq!(list.role, Some(Role::ListBox));
     assert_eq!(list.size, 2);
     assert!(list
         .rows

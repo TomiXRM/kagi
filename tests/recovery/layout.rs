@@ -848,7 +848,7 @@ fn pr_table_frame(
     app.update(cx, |_, cx| cx.notify());
     draw(cx, win, dimensions);
     let list = kagi::ui::list_a11y::recorded_list("pr-list").expect("actual PR table");
-    assert_eq!(list.role, Some(gpui::Role::List));
+    assert_eq!(list.role, Some(gpui::Role::ListBox));
     assert_eq!(list.size, 100);
     assert!(
         !list.rows.is_empty() && list.rows.len() < 100,

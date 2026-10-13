@@ -53,6 +53,9 @@ mod ref_validation;
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_keyboard.rs"]
+mod pr_dashboard_keyboard;
+#[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
 #[cfg(target_os = "macos")]
@@ -1454,6 +1457,14 @@ mod macos {
             (
                 "pr_list_roles",
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
+            ),
+            (
+                "pr_dashboard_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_dashboard_keyboard),
+            ),
+            (
+                "pr_filter_strip_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
             ),
             (
                 "pr_dashboard_responsive",

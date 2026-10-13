@@ -82,6 +82,16 @@ pub fn plan_create_tag(
         .into_iter()
         .map(|e| PlanNote::Tag(TagNote::NameError(e)))
         .collect();
+    if let Some(existing) =
+        super::branch::ref_namespace_collision(repo, &format!("refs/tags/{name}"))?
+    {
+        blockers.push(PlanNote::Tag(TagNote::NameError(
+            TagNameError::NamespaceCollision {
+                name: name.to_string(),
+                existing,
+            },
+        )));
+    }
 
     let oid = git2::Oid::from_str(&at.0)
         .map_err(|e| GitError::Other(format!("invalid commit id '{}': {}", at.0, e.message())));

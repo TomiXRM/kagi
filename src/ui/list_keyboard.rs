@@ -89,6 +89,7 @@ impl super::KagiApp {
                 .oplog_restore_modal()
                 .and_then(|modal| modal.inspection.preview.focused(window)),
             "issue-keyboard-list" => self.ui().issue_rows.focused(window),
+            "inspector-files-scroll" => self.ui().inspector_model.keyboard.focused(window),
             "home-recent-list" => self.home_github.recent.keyboard.focused(window),
             "branch-picker-list" => match &self.menu_overlay {
                 Some(super::commands::MenuOverlay::BranchPicker { rows, .. }) => {

@@ -16,7 +16,7 @@ use kagi_git::DiffLineKind;
 use super::diff_view::{render_main_diff_row, DiffRow};
 use super::theme;
 
-mod cache;
+pub(super) mod cache;
 
 // ──────────────────────────────────────────────────────────────
 // ADR-0124: side-by-side (split) diff rows
@@ -308,6 +308,15 @@ fn split_cell(
         .map(|el| {
             #[cfg(feature = "gui-e2e")]
             let el = crate::ui::e2e::diff_controls::row(sel_key, row_ix, el);
+            #[cfg(feature = "gui-e2e")]
+            let el = if idx.is_some() {
+                el.child(crate::ui::e2e::measure_inside(format!(
+                    "split-cell-{}",
+                    i_id(side, row_ix)
+                )))
+            } else {
+                el
+            };
             el
         })
         // #349 move marker: a solid vertical BAR in the gutter (line-style, not

@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ref_validation.rs"]
+mod ref_validation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -130,6 +134,10 @@ mod tab_strip;
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_warnings.rs"]
+mod create_branch_warnings;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
@@ -447,10 +455,17 @@ mod recovery_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/file_history_open.rs"]
 mod file_history_open;
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_history_keyboard.rs"]
+mod inspector_history_keyboard;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
 mod editor_snapshot_readonly;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/blame_identity.rs"]
+mod blame_identity;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/header_fit.rs"]
@@ -485,6 +500,10 @@ mod recovery_modal_compact;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_card_994.rs"]
 mod recovery_plan_card_994;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_preview_files.rs"]
+mod recovery_plan_preview_files;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1346,6 +1365,14 @@ mod macos {
                 Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
             ),
             (
+                "plan_preview_files",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
+            ),
+            (
                 "plan_recovery_noop",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
             ),
@@ -1809,6 +1836,14 @@ mod macos {
                 Box::new(
                     crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
                 ),
+            ),
+            (
+                "create_ref_collision_blockers",
+                Box::new(crate::ref_validation::scenario_create_ref_collision_blockers),
+            ),
+            (
+                "set_upstream_missing_blocker",
+                Box::new(crate::ref_validation::scenario_set_upstream_missing_blocker),
             ),
             (
                 "create_branch_execution_failure_keeps_input",
@@ -2796,6 +2831,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_create_branch_input_confirm_ime),
             ),
             (
+                "create_branch_warnings",
+                Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
+            ),
+            (
                 "stash_push_stacked_preview",
                 Box::new(crate::recovery_operations::scenario_stash_push_stacked_preview),
             ),
@@ -2879,6 +2918,22 @@ mod macos {
                 Box::new(crate::editor_snapshot_readonly::scenario),
             ),
             (
+                "blame_dirty_mapping",
+                Box::new(crate::blame_identity::dirty_mapping),
+            ),
+            (
+                "blame_full_identity",
+                Box::new(crate::blame_identity::full_identity),
+            ),
+            (
+                "blame_crlf_identity",
+                Box::new(crate::blame_identity::crlf_identity),
+            ),
+            (
+                "blame_hidden_mapping",
+                Box::new(crate::blame_identity::hidden_mapping),
+            ),
+            (
                 "file_history_virtualized",
                 Box::new(|cx| {
                     let fixture = build_fixture();
@@ -2890,6 +2945,22 @@ mod macos {
             (
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
+            ),
+            (
+                "inspector_files_keyboard",
+                Box::new(crate::inspector_history_keyboard::inspector),
+            ),
+            (
+                "file_history_focus_return",
+                Box::new(crate::inspector_history_keyboard::history),
+            ),
+            (
+                "inspector_generated_focus_retained",
+                Box::new(crate::inspector_history_keyboard::generated_focus_retained),
+            ),
+            (
+                "inspector_overflow_keyboard",
+                Box::new(crate::inspector_history_keyboard::overflow_keyboard),
             ),
             (
                 "header_fit",
@@ -3328,6 +3399,10 @@ mod macos {
             (
                 "diff_keyboard_selection",
                 Box::new(crate::diff_keyboard::scenario_diff_keyboard_selection),
+            ),
+            (
+                "split_diff_keyboard_order",
+                Box::new(crate::diff_keyboard::scenario_split_diff_keyboard_order),
             ),
             (
                 "hunk_staging_content_identity",

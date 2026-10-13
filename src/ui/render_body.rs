@@ -892,7 +892,7 @@ impl KagiApp {
         // toolbar, operation strip and status bar stay outside, as siblings
         // on the root; Conflict Mode replaces this row and has no panel.
         match self.tabs.get(self.active_tab) {
-            Some(tab) if self.tab_strip_visible() => {
+            Some(tab) => {
                 super::tab_panel_a11y::tab_panel(body_row, "repo-tab-panel", tab.name.clone())
             }
             _ => body_row,

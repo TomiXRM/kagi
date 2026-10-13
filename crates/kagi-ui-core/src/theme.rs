@@ -667,6 +667,10 @@ pub fn scaled_px(n: f32) -> gpui::Pixels {
     gpui::px(n * (BASE_REM_PX / 16.0) * zoom())
 }
 
+/// Finder-inspired file-tree typography, before shared density and UI zoom.
+/// Use `scaled_px(FILE_TREE_FONT_PX)` with `text_size` on dense file/ref labels.
+pub const FILE_TREE_FONT_PX: f32 = 13.;
+
 /// Dense toolbar count role, before the shared 0.9 density and UI zoom.
 /// 13px resolves to 11.7 logical points at 100%, above the 11pt minimum.
 pub const TOOLBAR_COUNT_TEXT: f32 = 13.0;

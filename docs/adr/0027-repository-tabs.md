@@ -55,3 +55,25 @@ name is `Close <repo>` / `<repo> を閉じる` (Home uses `Close Home` /
 `ホーム を閉じる`). Each repository close Button also describes its full path.
 Repository close callbacks resolve their frozen session identity,
 not a stale strip index; existing dirty-close guards and Cmd+W remain authoritative.
+
+## Amendment — 2026-10-13: active identity and contextual close (#1442 / #1443)
+
+`session_repos` still contains only local repository paths. `session_active`
+now stores the active local path, never its index in an array containing
+ephemeral SSH views. Restore resolves that identity in the surviving local set.
+Legacy numeric values first resolve against the saved paths, before failed
+opens are filtered. If the active repository is missing (or the active view
+was SSH), choose the first surviving local repository; with no survivors,
+remain on document-free Home. SSH descriptors are never reopened as local.
+
+The existing Cmd-W / CloseTab command is contextual: repository and explicit
+Home documents keep their existing close paths and dirty/busy protections.
+With no document it requests host closure through `hold_host_close`, exactly
+like Window > Close Window. Closing the last repository still returns to Home;
+a subsequent Cmd-W closes that window. A running/background clone or retained
+write lease continues to hold host closure.
+When the final repository closes while Home is retained in the strip, Home
+becomes window content rather than another document to close. The contextual
+Close command therefore uses the host path whenever repository tabs are empty,
+even if that retained Home descriptor still exists. One Cmd-W closes the idle
+host; busy host closure remains held.

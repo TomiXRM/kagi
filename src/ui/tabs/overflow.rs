@@ -100,7 +100,8 @@ pub(super) fn viewport(
             .flex()
             .flex_row()
             .items_center()
-            .flex_1()
+            .flex_shrink(1.)
+            .when(overflow, |viewport| viewport.flex_1())
             .min_w_0()
             .h_full()
             .overflow_x_scroll()
@@ -119,6 +120,7 @@ pub(super) fn probe(
     slots: usize,
     natural_layout: bool,
     overflow: bool,
+    reserved_space: gpui::Pixels,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
@@ -126,9 +128,10 @@ pub(super) fn probe(
     gpui::canvas(
         move |bounds, _, cx| {
             let changed = layout.update(cx, |state, _| {
-                // Measure the whole strip directly; the trigger's snapped
-                // width comes from the actual viewport, not an estimate.
-                let available = f32::from(bounds.size.width);
+                // The outer titlebar's budget follows window resizing; exclude
+                // native lights, + and the blank spacer's minimum, not the
+                // natural-width group's current (possibly compressed) width.
+                let available = (f32::from(bounds.size.width - reserved_space)).max(0.);
                 let reserved = if overflow {
                     (available - f32::from(state.scroll.bounds().size.width)).max(0.)
                 } else {
@@ -138,7 +141,8 @@ pub(super) fn probe(
                     .then(|| {
                         let first = state.scroll.bounds_for_item(0)?;
                         let last = state.scroll.bounds_for_item(slots.checked_sub(1)?)?;
-                        Some(f32::from(last.right() - first.left() + px(1.)).ceil())
+                        // Item bounds already include their snapped geometry.
+                        Some(f32::from(last.right() - first.left()))
                     })
                     .flatten();
                 let changed = (state.available - available).abs() >= 0.1

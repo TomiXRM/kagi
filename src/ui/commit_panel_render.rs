@@ -405,11 +405,21 @@ impl CommitPanelView {
             .map_or(3, |body| body.read(cx).wrap_row_count().clamp(3, 12));
         let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
             + gpui_component::Size::Medium.input_py() * 2.;
+        let body_min_height = theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.);
+        let message_min_height = body_min_height + px(theme::rem_size_px() * 2.5);
+        // py_2, gap_2 and Small Commit's h_6/mt_1 plus its fixed focus border.
+        // Optional status/warning lines each also own their gap.
+        let footer_min_height = message_min_height
+            + px(theme::rem_size_px() * 3.25 + 4.)
+            + px(theme::rem_size_px() * 1.75)
+                * (usize::from(smart_status.is_some()) + usize::from(has_unstaged_warning)) as f32;
         let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
             (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
-                .min_h(px(0.))
+                // Medium subject (h_8), gap_2 and the body's action-row floor
+                // must fit together before the message group yields height.
+                .min_h(message_min_height)
                 .flex_shrink(1.)
                 .overflow_hidden()
                 .gap_2()
@@ -438,7 +448,7 @@ impl CommitPanelView {
                             },
                         ))
                         // Icon, its p_1, row pb_1, and the body's two borders.
-                        .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
+                        .min_h(body_min_height)
                         .flex_shrink(1.)
                         // Same radius the `Input` gives itself, so the two boxes
                         // do not have visibly different corners.
@@ -455,6 +465,8 @@ impl CommitPanelView {
                                 .min_h(px(0.))
                                 .flex_shrink(1.)
                                 .overflow_hidden()
+                                .relative()
+                                .child(super::e2e::measure_inside("cp-body-input"))
                                 .child(
                                     Input::new(body)
                                         .aria_label(Msg::A11yCommitDescription.t())
@@ -544,8 +556,8 @@ impl CommitPanelView {
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    // Intrinsic section headers plus one complete keyboard row
-                    // per list set the minimum; the composer gives up space first.
+                    // Headers and a full compact row in each list remain visible;
+                    // shorter viewports yield list height before the composer.
                     .flex()
                     .flex_col()
                     .relative()
@@ -566,7 +578,7 @@ impl CommitPanelView {
                             })
                             .child(super::e2e::measure_inside("cp-us-viewport"))
                             .flex_1()
-                            .min_h(theme::scaled_px(26.) + px(4.))
+                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()
@@ -646,7 +658,7 @@ impl CommitPanelView {
                             })
                             .child(super::e2e::measure_inside("cp-st-viewport"))
                             .flex_1()
-                            .min_h(theme::scaled_px(26.) + px(4.))
+                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
                             .mx_1()
                             .mb_px()
                             .border_1()
@@ -718,7 +730,7 @@ impl CommitPanelView {
             .child(
                 div()
                     .flex_shrink(1.)
-                    .min_h(px(0.))
+                    .min_h(footer_min_height)
                     .overflow_hidden()
                     .flex()
                     .flex_col()

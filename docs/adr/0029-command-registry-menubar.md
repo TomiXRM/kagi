@@ -145,3 +145,22 @@ results behavior, with no new loading or error state. Geometry and spacing use
 the palette's theme tokens and scaled pixels. `palette_sections` covers heading
 bounds, Group/name inputs, row uniqueness, section-boundary keyboard navigation
 and filtered ranking. Real-window Tab, IME and native VoiceOver remain Tier B.
+
+## Amendment — 2026-10-13: reachable Keyboard Shortcuts help (#1441)
+
+Role: dense read-only help overlay, taking macOS help's pinned heading and
+independently scrollable content rather than changing command semantics.
+The card retains its existing visual chrome, capped to the actual viewport
+at high zoom. The header and named kit Dismiss button never scroll.
+The body reuses `modal_scroll_body`, the existing read-only body keyboard
+actions (arrows/Home/End/PageUp/PageDown), a retained focus/scroll owner and
+the system scrollbar. Opening focuses the body; Escape and Dismiss restore
+the initiating focus. The occluding help layer consumes wheel input without
+moving background panes or another overlay, including at scroll boundaries.
+Shortcut names, title and remap explanation follow EN/JA; raw command IDs
+and keybinding syntax are unchanged.
+
+The existing CloseTab command remains the single Cmd-W binding. Its handler
+is enabled on document-free Home and delegates to guarded host closure only
+when there is no tab/document to close; no parallel unguarded close route is
+introduced.

@@ -18,6 +18,8 @@ pub enum TagNameError {
     LeadingDash(String),
     /// A tag with this name already exists.
     Exists(String),
+    /// A parent or descendant ref occupies this tag namespace.
+    NamespaceCollision { name: String, existing: String },
 }
 
 impl TagNameError {
@@ -32,6 +34,9 @@ impl TagNameError {
                 format!(crate::advice_template_en!(TagNameErrorLeadingDash), name)
             }
             TagNameError::Exists(name) => format!("A tag named '{}' already exists.", name),
+            TagNameError::NamespaceCollision { name, existing } => {
+                format!("Tag '{}' conflicts with existing ref '{}'.", name, existing)
+            }
         }
     }
 }

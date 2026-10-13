@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Branch and Tag creation plans block existing names and parent/child ref namespace collisions, including packed refs, before confirmation. Existing invalid-name validation remains in place. (#1379)
+- Set Upstream blocks nonexistent remote-tracking branches and explains in English/Japanese that they must be fetched before setting upstream, rather than offering confirmation for an operation that cannot execute. (#1380)
 - Merge, Cherry-pick and Revert confirmation cards show the computed files to change with status glyphs, a localized count and bounded preview. Long paths use middle ellipsis with their full sanitized path in tooltips/accessibility names; the shared scrolling body keeps actions pinned at small-window/high-zoom sizes. Plan computations and confirmation policy are unchanged. (#1381)
   - Review: omit empty/uncomputed previews on Merge-into and blocked plans; reaching Merge's existing 200-entry producer cap uses a lower-bound `200+` heading and nonnumeric overflow. Reuse Changes' status badges and explicitly allowlist the 25-row preview as a #454 exception.
 - Restore native cherry-pick abort-sequence coverage: valid plans still require Tab-focused confirmation, while blocked plans assert their disabled reason and exercise the guarded application boundary for refusal receipts without expecting an inert button in the Tab order. Production focus and destructive Return behavior are unchanged. (#1398)

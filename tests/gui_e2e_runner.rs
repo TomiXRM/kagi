@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ref_validation.rs"]
+mod ref_validation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -1829,6 +1833,14 @@ mod macos {
                 Box::new(
                     crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
                 ),
+            ),
+            (
+                "create_ref_collision_blockers",
+                Box::new(crate::ref_validation::scenario_create_ref_collision_blockers),
+            ),
+            (
+                "set_upstream_missing_blocker",
+                Box::new(crate::ref_validation::scenario_set_upstream_missing_blocker),
             ),
             (
                 "create_branch_execution_failure_keeps_input",

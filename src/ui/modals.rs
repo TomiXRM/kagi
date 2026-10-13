@@ -699,6 +699,7 @@ pub enum ActiveModal {
     About(super::about::AboutModal),
     /// Read-only Analyze help; payload is the stable opener to restore.
     AnalyzeHelp(gpui::FocusHandle),
+    AnalyzeReset(super::settings_analyze::AnalyzeResetModal),
     Checkout(CheckoutPlanModal),
     QueuedCommit(QueuedCommitModal),
     Pull(PullPlanModal),
@@ -753,9 +754,12 @@ impl ActiveModal {
     pub fn is_repo_scoped(&self) -> bool {
         use ActiveModal as M;
         match self {
-            M::AppNotice(_) | M::About(_) | M::RemoteBrowse(_) | M::Clone(_) | M::Update(_) => {
-                false
-            }
+            M::AppNotice(_)
+            | M::About(_)
+            | M::AnalyzeReset(_)
+            | M::RemoteBrowse(_)
+            | M::Clone(_)
+            | M::Update(_) => false,
             M::SmartCommit(_)
             | M::AnalyzeHelp(_)
             | M::Checkout(_)

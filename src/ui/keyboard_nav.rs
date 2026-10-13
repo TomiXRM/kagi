@@ -149,6 +149,7 @@ pub(crate) fn switch(
     id: &'static str,
     focus: FocusHandle,
     label: SharedString,
+    help: SharedString,
     checked: bool,
     on_toggle: impl Fn(bool, &mut Window, &mut App) + 'static,
 ) -> gpui::AnyElement {
@@ -160,6 +161,8 @@ pub(crate) fn switch(
     // What assistive technology is given, for Tier A.
     #[cfg(feature = "gui-e2e")]
     record_switch(id, &label, toggled == gpui::Toggled::True);
+    #[cfg(feature = "gui-e2e")]
+    SWITCH_HELP.with(|m| m.borrow_mut().insert(id, help.to_string()));
     let on_toggle = Rc::new(on_toggle);
     let pointer = on_toggle.clone();
     let inner = gpui_component::switch::Switch::new(id)
@@ -174,6 +177,7 @@ pub(crate) fn switch(
     .rounded_full()
     .role(Role::Switch)
     .aria_label(label)
+    .aria_description(help)
     .aria_toggled(toggled)
     .on_key_down(stop_activation_keys)
     .on_click(move |event: &ClickEvent, window, cx| {
@@ -190,6 +194,8 @@ pub(crate) fn switch(
 thread_local! {
     static SWITCHES: RefCell<std::collections::HashMap<&'static str, (String, bool)>> =
         RefCell::new(Default::default());
+    static SWITCH_HELP: RefCell<std::collections::HashMap<&'static str, String>> =
+        RefCell::new(Default::default());
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -202,4 +208,8 @@ fn record_switch(id: &'static str, label: &str, checked: bool) {
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn recorded_switch(id: &str) -> Option<(String, bool)> {
     SWITCHES.with(|m| m.borrow().get(id).cloned())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn recorded_switch_help(id: &str) -> Option<String> {
+    SWITCH_HELP.with(|m| m.borrow().get(id).cloned())
 }

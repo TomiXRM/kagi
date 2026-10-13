@@ -93,3 +93,28 @@ after either pointer or keyboard dismissal.
 Settings host release also removes its own card handles from the shared stack,
 without dismissing any feedback or clearing another window's handles. Persistent
 error cards therefore cannot accumulate retired Settings windows' focus state.
+
+## Amendment — 2026-10-13: Analyze draft safety and visible form help (#1404 / #1415 / #1416)
+
+Analyze compares its retained InputState text with the last successfully saved
+baseline. Save is disabled when they match; localized Saved/Unsaved changes
+text makes this explicit. A failed write retains the draft and baseline, with
+the existing full inline error and bounded toast. Pane changes and host reopen
+retain the same editor.
+
+Reset keeps its explicit immediate-save meaning. When the draft differs from
+saved text, it first uses the originating KagiApp's single active_modal slot
+for a Settings-owned AlertDialog. The alert names both discarded unsaved
+patterns and the saved analyze_ignore file that defaults will replace. It
+traps focus inside the originating host, makes Return/Cancel safe, and only
+explicit Reset writes through settings::. It is not a second modal slot in
+the native host, and does not install a repository-window scrim. Closing its
+Settings host retires that host's pending approval without writing.
+
+Settings is an open-density form: important details are secondary text under
+the corresponding control, with the existing page scroll owner and no nested
+help scroller. Full tooltips remain available, and switch accessibility
+descriptions include the same localized detail. Analyze and custom-theme
+help follow the same visible-detail policy. This supersedes the tooltip-only
+detail presentation without changing live preference apply or storage.
+

@@ -150,6 +150,7 @@ mod render_wip;
 mod sidebar_a11y;
 pub use kagi_ui_core::settings; // ADR-0121: was a shim file
 mod overlay_focus;
+mod settings_analyze;
 mod settings_controls;
 mod settings_theme_folder;
 pub mod settings_view;
@@ -3060,6 +3061,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.confirm_app_notice(cx),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::AnalyzeReset(_) => self.finish_analyze_reset(true, window, cx),
             M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.confirm_remote_browse(cx),
             M::Clone(_) => self.start_clone(cx),
@@ -3149,6 +3151,7 @@ impl KagiApp {
         match modal {
             M::AppNotice(_) => self.cancel_app_notice(),
             M::AnalyzeHelp(_) => self.clear_analyze_help_modal(),
+            M::AnalyzeReset(_) => self.clear_analyze_reset_modal(),
             M::About(_) => self.clear_about_modal(),
             M::RemoteBrowse(_) => self.cancel_remote_browse(),
             M::Clone(_) => self.cancel_clone(),

@@ -110,19 +110,27 @@ pub(crate) fn render_create_branch_modal(
                 })
                 .map(|b| SharedString::from(plan_note_text(b))),
         ))
-        .child(
+        .child(super::e2e::measure_control(
+            "create-branch-checkout-after",
             div().flex_shrink_0().px_2().py_1().child(
                 Checkbox::new("create-branch-checkout-after")
                     .label(Msg::InputCheckoutAfterCreate.t())
                     .checked(modal.checkout_after)
                     .on_click(toggle_checkout),
             ),
-        );
+        ));
 
     if let Some(ref p) = plan {
         // Branch creation leaves HEAD and the working tree unchanged; show
         // both states using the same stacked comparison as every plan card.
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
+
+        if !p.warnings.is_empty() {
+            body = body.child(super::plan_card_rows::render_warnings_list(
+                "create-branch-warning",
+                &p.warnings,
+            ));
+        }
 
         // Field validation belongs beside the input; every other safety
         // blocker remains in the plan area and still blocks confirmation.
@@ -303,17 +311,10 @@ pub(crate) fn render_create_worktree_modal(
         body = body.child(div().flex_shrink_0().child(render_current_predicted(p)));
 
         if !p.warnings.is_empty() {
-            let mut warn_col = div().flex().flex_col().gap_1();
-            for w in &p.warnings {
-                warn_col = warn_col.child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().color_warning))
-                        .overflow_hidden()
-                        .child(SharedString::from(format!("! {}", plan_note_text(w)))),
-                );
-            }
-            body = body.child(warn_col.flex_shrink_0());
+            body = body.child(super::plan_card_rows::render_warnings_list(
+                "create-worktree-warning",
+                &p.warnings,
+            ));
         }
 
         let mut block_col = div().flex().flex_col().gap_1();

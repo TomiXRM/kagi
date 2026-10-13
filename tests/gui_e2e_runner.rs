@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ref_validation.rs"]
+mod ref_validation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -130,6 +134,10 @@ mod tab_strip;
 #[cfg(target_os = "macos")]
 #[path = "recovery/operations.rs"]
 mod recovery_operations;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/create_branch_warnings.rs"]
+mod create_branch_warnings;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/smart_picker.rs"]
@@ -492,6 +500,10 @@ mod recovery_modal_compact;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_card_994.rs"]
 mod recovery_plan_card_994;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_preview_files.rs"]
+mod recovery_plan_preview_files;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1350,6 +1362,14 @@ mod macos {
                 Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
             ),
             (
+                "plan_preview_files",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
+            ),
+            (
                 "plan_recovery_noop",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
             ),
@@ -1813,6 +1833,14 @@ mod macos {
                 Box::new(
                     crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
                 ),
+            ),
+            (
+                "create_ref_collision_blockers",
+                Box::new(crate::ref_validation::scenario_create_ref_collision_blockers),
+            ),
+            (
+                "set_upstream_missing_blocker",
+                Box::new(crate::ref_validation::scenario_set_upstream_missing_blocker),
             ),
             (
                 "create_branch_execution_failure_keeps_input",
@@ -2798,6 +2826,10 @@ mod macos {
             (
                 "create_branch_input_confirm_ime",
                 Box::new(crate::recovery_operations::scenario_create_branch_input_confirm_ime),
+            ),
+            (
+                "create_branch_warnings",
+                Box::new(crate::create_branch_warnings::scenario_create_branch_warnings),
             ),
             (
                 "stash_push_stacked_preview",

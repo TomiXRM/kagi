@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit Panel Staged/Unstaged file lists use Finder-inspired 22-reference-pixel slots (at least 20 logical pixels) and shared 13-reference-pixel file typography in both List and Tree. Directory labels are vertically centered instead of leaving uneven space below them, section-header padding is reduced, and Stage/Unstage retains its minimum target and existing keyboard/accessibility behavior. (#1463, #1467)
+  - Review: Stage/Unstage draws its keyboard-focus border inside the unchanged click target so adjacent dense rows cannot cover its lower edge. Shared diffstat typography also applies to Inspector.
 - Inspector changed-file rows use the sidebar's dense 20-reference-pixel height with Finder-inspired 13px labels and 16px status-badge columns, including directories, Generated and overflow notes. A shared UI-core file-tree font token replaces the initially requested extra-small text. Reduced top padding and metadata/Comparing spacing bring files upward without changing title line height, keyboard reveal, accessibility names or preferred pane widths. (#1464, Inspector portion of #1467)
   - Review: reuse the sidebar row-height constant and use 1.2em filename leading so Inter descenders remain inside truncation's content mask; native glyph containment now covers `package-000.json`.
 - All five Graph sidebar panes collapse from their roving keyboard row with Left, returning focus to the header; Enter/Space now toggle empty headers like pointer clicks without changing saved weights. Filtered group disclosures explain in English/Japanese why matching groups stay expanded and never silently change the normal collapse choices. (#1449, #1450)

@@ -68,7 +68,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         return base
             .child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(rgb(t.text_muted))
                     .child(SharedString::from("BIN")),
             )
@@ -91,7 +92,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         if additions > 0 {
             numbers = numbers.child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(rgb(t.change_added))
                     .child(SharedString::from(format!("+{additions}"))),
             );
@@ -99,7 +101,8 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
         if deletions > 0 {
             numbers = numbers.child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(rgb(t.change_deleted))
                     .child(SharedString::from(format!("-{deletions}"))),
             );

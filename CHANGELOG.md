@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR swimlane commits share retained keyboard row navigation and complete subject/SHA/PR accessibility names. Selected commits retain the shared active/inactive selection fill, including on hover; inert context rows remain read-only. Headings use an authoritative PR commit total when supplied, otherwise explicitly say how many commits are loaded in English and Japanese. (#1409, #1410, #1412)
 - Branch drag-over highlights only distinct resolved destinations. Self and remote-target alias drops show a prohibited cursor and do nothing instead of opening a merge plan or reporting a late refusal; sidebar rows and graph chips share the same read-only identity rule as merge-into planning. (#1421)
   - Review: drag predicates reuse the session's local-tip map and snapshot-built remote-name set for allocation-free constant-time lookups. Unknown destinations retain their existing planning path, including the detached HEAD chip's explanatory blocker.
 - Terminal clipboard paste respects the shell's bracketed-paste mode. Without it, multi-line text requires explicit approval and Cancel sends nothing. Control-Shift-Tab / Command-Shift-J return to the bottom-panel tabs without disrupting shell completion, and hiding Terminal returns focus to the visible graph while retaining its PTY. (#1403, #1406, #1407)

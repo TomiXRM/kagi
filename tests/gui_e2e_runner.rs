@@ -69,6 +69,9 @@ mod gui_isolation;
 #[path = "recovery/pr_detail_a11y.rs"]
 mod pr_detail_a11y;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_lane_keys.rs"]
+mod pr_lane_keys;
+#[cfg(target_os = "macos")]
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
@@ -2707,6 +2710,9 @@ mod macos {
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            ("pr_lane_keyboard", Box::new(crate::pr_lane_keys::scenario_pr_lane_keyboard)),
+            ("pr_lane_selected", Box::new(crate::pr_lane_keys::scenario_pr_lane_selected)),
+            ("pr_lane_count", Box::new(crate::pr_lane_keys::scenario_pr_lane_count)),
             (
                 "pr_detail_adaptive",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),

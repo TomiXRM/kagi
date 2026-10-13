@@ -409,6 +409,8 @@ pub(crate) fn render_badges_column(
         };
         let chip = if badge.kind == BadgeKind::Remote {
             super::e2e::measure_control(format!("graph-remote-{}", badge.label), chip)
+        } else if cfg!(feature = "gui-e2e") && badge.kind == BadgeKind::HeadBranch {
+            super::e2e::measure_control(format!("graph-head-{}", badge.label), chip)
         } else {
             chip.into_any_element()
         };

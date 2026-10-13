@@ -198,3 +198,38 @@ pub fn scenario_branch_drag_self_target(cx: &mut VisualTestAppContext) {
     i18n::set_lang(previous_lang);
     eprintln!("[gui-e2e] PASS branch_drag_self_target");
 }
+
+pub fn scenario_branch_drag_detached_target(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "source", "HEAD~1"]);
+    git(fixture.path(), &["checkout", "--detach", "-q", "HEAD"]);
+    let before = repo_fingerprint(fixture.path());
+    let (app, window) = mount_at(cx, fixture.path(), 940., 660.);
+    paint(cx, window);
+    let neutral = fill(cx, window, "graph-head-HEAD");
+    let target = drag_over(cx, window, "sidebar-local-source", "graph-head-HEAD");
+    assert_ne!(
+        fill(cx, window, "graph-head-HEAD"),
+        neutral,
+        "detached HEAD retains its plan-trigger highlight"
+    );
+    cx.simulate_mouse_up(window, target, MouseButton::Left, Modifiers::none());
+    wait_idle(cx, &app);
+    cx.read(|cx| {
+        let modal = app
+            .read(cx)
+            .merge_modal()
+            .expect("detached destination explains its refusal in a plan");
+        assert!(!modal.off_branch);
+        assert_eq!(modal.target, "source");
+        assert!(modal.plan.blockers.iter().any(|note| matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::HeadDetached { .. }
+            )
+        )));
+    });
+    assert_eq!(repo_fingerprint(fixture.path()), before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS branch_drag_detached_target");
+}

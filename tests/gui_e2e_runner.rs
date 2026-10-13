@@ -3358,6 +3358,10 @@ mod macos {
                 Box::new(crate::dnd_self::scenario_branch_drag_self_target),
             ),
             (
+                "branch_drag_detached_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_detached_target),
+            ),
+            (
                 "cross_worktree_merge",
                 Box::new(crate::worktree_graph::scenario_cross_worktree_merge),
             ),

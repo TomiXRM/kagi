@@ -8,22 +8,14 @@ impl KagiApp {
     /// are still distinct destinations whose merge plan may explain containment.
     pub(crate) fn merge_drag_target_valid(&self, source: &str, target: &str) -> bool {
         let view = self.view();
-        let local = |name: &str| view.branches.iter().any(|(branch, _)| branch == name);
-        let remote = |name: &str| {
-            name.split_once('/').is_some_and(|(remote, branch)| {
-                view.remote_branches
-                    .iter()
-                    .any(|item| item.remote == remote && item.name == branch)
-            })
-        };
-        let target_local = local(target);
-        let target_remote = !target_local && remote(target);
-        let resolved =
-            kagi_domain::refs::merge_into_target_name(target, target_local, target_remote);
-        (local(source) || remote(source))
-            && (target_local || target_remote)
-            && source != target
-            && source != resolved
+        let resolved = kagi_domain::refs::merge_into_target_name(
+            target,
+            view.branch_targets.contains_key(target),
+            view.remote_branch_names.contains(target),
+        );
+        // Unknown destinations (notably detached HEAD's graph chip) still
+        // reach planning, where the existing blocker explains the refusal.
+        source != target && source != resolved
     }
 }
 

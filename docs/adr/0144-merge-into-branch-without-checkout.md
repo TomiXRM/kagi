@@ -147,6 +147,20 @@ not collapsed: containment, conflicts and freshness remain plan/preflight
 decisions. Leaving a target restores the drag cursor, and valid drops retain
 the existing plan → confirm → preflight → execute → verify → oplog path.
 
+The predicate reuses `TabViewState::branch_targets` for local membership and
+a `remote_branch_names` HashSet built once alongside every session inventory.
+Frame-time lookup borrows the operand strings: no name formatting, allocation
+or branch-vector scans. Publishing/replacing a read replaces its index too;
+other sessions retain their own inventory and index.
+
+Only proven self/alias identity is an early no-op. A destination absent from
+the inventory is not prohibited merely because it is absent. In particular,
+the detached `HEAD` graph chip retains the normal merge-plan trigger so its
+`HeadDetached` blocker explains the refusal; it never becomes executable.
+`branch_drag_detached_target` sends a real drop to that chip and asserts both
+its highlight and the blocked plan. The read-model integration regression
+checks remote-name additions/removals and session-owner isolation.
+
 `branch_drag_self_target` sends real native drag events and compares target
 fill pixels, cursor state and modal/toast outcomes for self, remote alias and
 distinct targets in EN/JA, Apple Light/Dark, 100%/167%, 940×660 and 1392×883.

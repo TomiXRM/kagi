@@ -117,6 +117,7 @@ mod modal_command;
 mod modal_copy;
 mod modal_key_routing;
 pub mod modal_plan;
+mod modal_preview_files;
 mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;
@@ -126,6 +127,8 @@ mod modal_renderers_input;
 mod modal_renderers_misc;
 mod modal_renderers_plan;
 mod modal_renderers_stash;
+#[cfg(feature = "gui-e2e")]
+pub use modal_renderers_stash::{take_stash_entry_label_for_e2e, take_stash_warning_glyph_for_e2e};
 mod modal_shell;
 pub mod modals;
 mod op_queue;
@@ -3326,6 +3329,7 @@ pub fn run_app(app_state: KagiApp) {
 
     application.run(move |cx: &mut App| {
         fonts::load_bundled_fonts(cx);
+        crate::system_accessibility::install(cx);
 
         // #491: flush trailing settings-store writes on every exit path.
         cx.on_app_quit(|_cx| async move { settings::flush() })

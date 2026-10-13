@@ -75,6 +75,11 @@ serde_json = "1"
 # soundness-safe local UTC offset (no localtime_r footgun in this MT app).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+# Shell-only macOS accessibility notifications; already pinned transitively by GPUI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+
 # Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
 # build.rs. No-op (unused) on other targets.
 [target.'cfg(windows)'.build-dependencies]

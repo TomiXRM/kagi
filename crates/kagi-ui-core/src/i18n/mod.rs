@@ -240,6 +240,7 @@ pub enum Msg {
     MenuHideOthers,
     MenuShowAll,
     MenuServices,
+    ShortcutsRemapHelp,
     MenuUndo,
     MenuRedo,
     MenuCut,
@@ -284,7 +285,6 @@ pub enum Msg {
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
-    NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
     /// ADR-0124: diff-header selected mode segments.
@@ -2398,6 +2398,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
+            (En, ShortcutsRemapHelp) => "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\": \"secondary-shift-b\" で変更できます（\"\" は割り当て解除）。再起動すると反映されます。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",
@@ -2455,8 +2457,6 @@ impl Msg {
             (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
-            (En, NoTabsOpen) => "no open tabs",
-            (Ja, NoTabsOpen) => "開いているタブがありません",
             (En, NoCommitSelected) => "no commit selected",
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",

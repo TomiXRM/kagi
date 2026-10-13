@@ -17,6 +17,7 @@ mod editor;
 mod oplog_restore;
 mod repo_health;
 mod smart;
+mod terminal;
 mod window;
 mod worktree;
 
@@ -104,6 +105,7 @@ impl KagiApp {
                 | M::EditorDirtyGuard(_)
                 | M::EditorFsPrompt(_)
                 | M::EditorDeleteConfirm(_)
+                | M::TerminalPaste(_)
                 | M::TrustRepo(_),
             ) => true,
         }
@@ -178,6 +180,7 @@ impl KagiApp {
                 | M::ConflictAbort(_)
                 | M::EditorDirtyGuard(_)
                 | M::EditorDeleteConfirm(_)
+                | M::TerminalPaste(_)
                 | M::TrustRepo(_),
             ) => false,
         }

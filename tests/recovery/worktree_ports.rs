@@ -323,7 +323,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     cx.read(|cx| {
         let session = app.read(cx).ui().terminal_session.as_ref().unwrap();
-        session.paste_writer.as_ref().unwrap().paste_text("\u{4}");
+        session.paste_writer.as_ref().unwrap().write_input("\u{4}");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while shell_live(cx, &app) {
@@ -347,7 +347,7 @@ pub fn scenario_worktree_nonconcurrent(cx: &mut VisualTestAppContext) {
     // refused, until it exits.
     cx.read(|cx| {
         let session = app.read(cx).ui().terminal_session.as_ref().unwrap();
-        session.paste_writer.as_ref().unwrap().paste_text("\u{4}");
+        session.paste_writer.as_ref().unwrap().write_input("\u{4}");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     while shell_live(cx, &app) {

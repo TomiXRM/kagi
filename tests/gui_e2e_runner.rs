@@ -176,6 +176,10 @@ mod activity_a11y;
 mod recovery_terminal_states;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/terminal_keys.rs"]
+mod recovery_terminal_keys;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/unborn_empty.rs"]
 mod recovery_unborn_empty;
 
@@ -1317,6 +1321,9 @@ mod macos {
                 "unborn_empty_state",
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
+            ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
+            ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),

@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Terminal clipboard paste respects the shell's bracketed-paste mode. Without it, multi-line text requires explicit approval and Cancel sends nothing. Control-Shift-Tab / Command-Shift-J return to the bottom-panel tabs without disrupting shell completion, and hiding Terminal returns focus to the visible graph while retaining its PTY. (#1403, #1406, #1407)
+  - Review: bracketed payloads remove ESC and ETX without changing CR/LF, preventing an embedded end marker from escaping paste protection. A real PTY respawn regression confirms approval for the exited shell cannot reach its replacement; Terminal's accessibility name uses the localized toolbar label.
 - macOS Reduce Motion is read at startup and refreshed on display-accessibility notifications; system or app opt-in skips decorative animations. Reduce Transparency selects an opaque equivalent for dark PR tiles without changing their normal appearance. (#1417, #1418; refs #354)
 - Stash Apply, Pop and Drop confirmations show the approved entry's sanitized message beside its index, with middle ellipsis and full tooltip/accessibility text. Existing full-OID/order preflight guards reject a replaced stash even when stack depth is unchanged. Apply also shows its plan warnings outside the recovery disclosure. (#1384, #652)
   - Review: Apply warnings reuse the shared `Note` row and visible ⚠ cue; a missing stash index displays only the index rather than inventing a repeated message.

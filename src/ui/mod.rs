@@ -249,7 +249,9 @@ actions!(
         // wins in gpui's keymap), and their handlers write the terminal
         // bytes straight to the PTY.
         TerminalSendTab,
-        TerminalSendShiftTab
+        TerminalSendShiftTab,
+        /// Leave terminal input and focus the bottom-panel tab selector.
+        TerminalExitFocus
     ]
 );
 
@@ -3118,6 +3120,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
             M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
+            M::TerminalPaste(_) => self.confirm_terminal_paste(cx),
             M::TrustRepo(_) => self.confirm_trust_repo(cx),
         }
     }
@@ -3202,6 +3205,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
             M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),
+            M::TerminalPaste(_) => self.clear_terminal_paste_modal(),
             M::TrustRepo(_) => self.cancel_trust_repo_modal(),
         }
     }

@@ -27,6 +27,9 @@ pub fn scenario_relative_time_ja(cx: &mut VisualTestAppContext) {
             theme::set_zoom(zoom);
             crate::pr_detail_adaptive::resize(cx, window, dimensions);
             cx.run_until_parked();
+            app.update(cx, |app, _| {
+                app.view_mut().rows[0].author_secs = time::now_unix_secs() - (86_400 * 365 - 60);
+            });
             let identity = cx.read(|cx| app.read(cx).view().rows.as_ptr());
             for language in [Lang::En, Lang::Ja, Lang::En] {
                 app.update(cx, |app, cx| app.set_lang(language, cx));
@@ -40,6 +43,9 @@ pub fn scenario_relative_time_ja(cx: &mut VisualTestAppContext) {
                     identity,
                     "language switch must not reload the read model"
                 );
+                if language == Lang::Ja && zoom > 1. {
+                    assert_graph_age_fit(cx, window);
+                }
                 for (seconds, japanese, english, spoken) in AGES {
                     let age = time::relative_time(0, seconds);
                     let description = time::relative_time_description(0, seconds);
@@ -71,7 +77,12 @@ pub fn scenario_relative_time_ja(cx: &mut VisualTestAppContext) {
                     );
                     assert!(label.contains(&description));
                     if language == Lang::Ja {
-                        assert_eq!(time::relative_time_short(0, seconds), japanese);
+                        let short = if seconds < 60 {
+                            "今"
+                        } else {
+                            japanese.strip_suffix('前').unwrap()
+                        };
+                        assert_eq!(time::relative_time_short(0, seconds), short);
                         assert!(!label.contains("ago") && !label.contains("just now"));
                     }
                 }
@@ -84,6 +95,36 @@ pub fn scenario_relative_time_ja(cx: &mut VisualTestAppContext) {
     theme::set_zoom(original.1);
     cx.update(theme::sync_gpui_component_theme);
     eprintln!("[gui-e2e] PASS relative_time_ja");
+}
+
+fn assert_graph_age_fit(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) {
+    let text = kagi::ui::e2e::take_graph_age_text().expect("actual rendered Graph age");
+    let cell = kagi::ui::e2e::control_bounds(window.window_id(), "graph-commit-time").unwrap();
+    let natural = cx
+        .update_window(window, |_, window, _| {
+            window
+                .text_system()
+                .shape_line(
+                    text.clone().into(),
+                    gpui::px(theme::rem_size_px() * 0.75),
+                    &[gpui::TextRun {
+                        len: text.len(),
+                        font: gpui::Font {
+                            family: theme::MONO_FONT.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }],
+                    None,
+                )
+                .width
+        })
+        .unwrap();
+    assert!(
+        natural <= cell.size.width,
+        "JA Graph age {text:?} natural width {natural:?} exceeds fixed column {:?}",
+        cell.size.width
+    );
 }
 
 struct TimeZoneGuard(Option<std::ffi::OsString>);

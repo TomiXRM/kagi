@@ -20,6 +20,7 @@ pub enum AgeStyle {
 pub fn relative_age(language: Lang, parts: Option<(i64, AgeUnit)>, style: AgeStyle) -> String {
     let Some((count, unit)) = parts else {
         return match (language, style) {
+            (Lang::Ja, AgeStyle::Short) => "今",
             (Lang::Ja, _) => "たった今",
             (Lang::En, AgeStyle::Short) => "now",
             (Lang::En, _) => "just now",
@@ -34,6 +35,7 @@ pub fn relative_age(language: Lang, parts: Option<(i64, AgeUnit)>, style: AgeSty
         AgeUnit::Year => ("y", "year", "年"),
     };
     match (language, style) {
+        (Lang::Ja, AgeStyle::Short) => format!("{count}{japanese}"),
         (Lang::Ja, _) => format!("{count}{japanese}前"),
         (Lang::En, AgeStyle::Short) => format!("{count}{abbreviation}"),
         (Lang::En, AgeStyle::Compact) => format!("{count}{abbreviation} ago"),

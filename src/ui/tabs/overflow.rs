@@ -141,7 +141,8 @@ pub(super) fn probe(
                     .then(|| {
                         let first = state.scroll.bounds_for_item(0)?;
                         let last = state.scroll.bounds_for_item(slots.checked_sub(1)?)?;
-                        Some(f32::from(last.right() - first.left() + px(1.)).ceil())
+                        // Item bounds already include their snapped geometry.
+                        Some(f32::from(last.right() - first.left()))
                     })
                     .flatten();
                 let changed = (state.available - available).abs() >= 0.1

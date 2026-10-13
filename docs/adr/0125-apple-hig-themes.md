@@ -1105,15 +1105,18 @@ supersedes that reservation: the separate toolbar has no traffic-light exclusion
 and Home alike. This supersedes #1179's unified frame and single-document hiding;
 it is an explicit layout reversal, not a theme-specific exception.
 
-The first row starts at y=0 and is a 36-reference-px titlebar. Native macOS traffic
-lights retain their GPUI owner and return to the pre-#1179 (9,9) logical-px
-position, centering them in the 100% titlebar, with an unscaled 80px exclusion
+The main repository/Home window's first row starts at y=0 and is a
+36-reference-px titlebar. Its native macOS traffic lights retain their GPUI owner
+and return to the pre-#1179 (9,9) logical-px position, centering them in the 100%
+titlebar, with an unscaled 80px exclusion
 in this row only. Repository and Home document tabs are always visible, including
 a single repository or Home-only document. The titlebar owns trailing + and tab
 overflow; Home-only windows without a remote repository omit the inert +.
 Home-only windows omit the inert × because there is no document behind Home.
 The old #1180 40px strip geometry is superseded by this 36px titlebar, while its
 always-visible single-document policy is restored.
+Settings retains its independent 46-logical-px titlebar and #1198's native-light
+position (9,16); the main-window reversal does not change Settings geometry.
 
 The second row is the toolbar: Icon Only remains 52 reference px (46.8 logical
 px at 100%); Icon and Text remains 60 reference px (54 logical px at 100%).
@@ -1145,6 +1148,10 @@ the available + and the 8-reference-px blank-spacer minimum. Only while overflow
 is needed does the tab group/viewport grow to that budget; the spacer stays at
 its minimum. Widening the same window retires » and returns to intrinsic tab
 widths without opening/closing documents or changing their cache signature.
+Reservations snap the native-light exclusion, + and spacer widths separately to
+GPUI's device-pixel grid (`round(width × scale_factor) / scale_factor`). Natural content
+uses the already-snapped item span, without an extra pixel or integer ceiling;
+contents that exactly fit the measured budget must not create ».
 Chrome hairline oracles sample toolbar fill below the titlebar and body fill
 below the toolbar/Home frame, matching the restored row order.
 

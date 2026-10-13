@@ -155,10 +155,39 @@ pub fn scenario_titlebar_tabs_resize(cx: &mut VisualTestAppContext) {
                     "restore natural tab width"
                 );
                 assert_eq!(wide.size.width, natural.size.width);
+                check_exact_fit(cx, win);
                 unmount(cx, app, win);
             }
         }
     }
+}
+
+fn check_exact_fit(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
+    let scroll = e2e::tab_strip::scroll().unwrap();
+    let first = scroll.bounds_for_item(0).unwrap();
+    let last = scroll.bounds_for_item(1).unwrap();
+    let content = last.right() - first.left();
+    let add = e2e::control_bounds(win.window_id(), "tab-add").unwrap();
+    let scale = cx
+        .update_window(win, |_, window, _| window.scale_factor())
+        .unwrap();
+    let spacer = px((f32::from(theme::scaled_px(8.)) * scale).round() / scale);
+    // AppKit's whole-logical-pixel frame rounds an exact device-grid fit up
+    // by at most half a logical pixel on this Retina display.
+    let width = f32::from(content + add.size.width + spacer + px(80.)).ceil();
+    let budget = px(width) - add.size.width - spacer - px(80.);
+    assert!(budget >= content && budget - content < px(1.));
+    crate::toolbar_overflow::resize_overflow_window(cx, win, width);
+    e2e::clear_control_bounds(win.window_id(), "tab-overflow");
+    settle(cx, win);
+    assert!(
+        e2e::control_bounds(win.window_id(), "tab-overflow").is_none(),
+        "natural titlebar contents fit the device-grid budget: content={content:?}, budget={budget:?}"
+    );
+    let first_after = e2e::control_bounds(win.window_id(), "repo-tab-0").unwrap();
+    let last_after = e2e::control_bounds(win.window_id(), "repo-tab-1").unwrap();
+    contained(scroll.bounds(), first_after, "exact-fit first document");
+    contained(scroll.bounds(), last_after, "exact-fit last document");
 }
 
 fn settle(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {

@@ -22,8 +22,16 @@ impl KagiApp {
         };
         let list = self.document_tab_list(keys, selected, repos, cx);
         let has_add = !self.tabs.is_empty() || self.remote_view.is_some();
-        let reserved_space = theme::scaled_px(if has_add { 36. } else { 8. })
-            + gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. });
+        let scale = window.scale_factor();
+        let snap = |value: gpui::Pixels| gpui::px((f32::from(value) * scale).round() / scale);
+        // GPUI snaps each control separately, not their combined reference width.
+        let reserved_space = snap(theme::scaled_px(8.))
+            + if has_add {
+                snap(theme::scaled_px(28.))
+            } else {
+                gpui::px(0.)
+            }
+            + snap(gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. }));
         self.tab_strip_focus
             .release_closed(self.root_focus.as_ref(), window, cx);
         let focused = self.tab_strip_focus.focused(window);

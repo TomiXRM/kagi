@@ -92,6 +92,9 @@ class Rule:
     # or YAML, where the words being banned also appear in prose explaining
     # why they are banned (this file's own workflow comment did exactly that).
     skip_comments: bool = False
+    # A source selector may mask non-candidates while preserving offsets, so
+    # diagnostics and selftest still use the same pattern and original lines.
+    select_source: Callable[[str], str] | None = None
 
     def compiled(self) -> re.Pattern[str]:
         return re.compile(self.pattern, self.flags)
@@ -101,7 +104,8 @@ class Rule:
         rx = self.compiled()
         lines = text.splitlines()
         out: list[tuple[int, str]] = []
-        for match in rx.finditer(text):
+        source = self.select_source(text) if self.select_source is not None else text
+        for match in rx.finditer(source):
             line_no = text.count("\n", 0, match.start()) + 1
             line = lines[line_no - 1].strip() if lines else ""
             if self.skip_comments and line.startswith("#"):
@@ -137,7 +141,323 @@ RUST_SOURCES = (
     "xtask/**/*.rs",
 )
 
+
+def _rust_literal_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Mask strings/comments for structural scanning; retain string spans.
+
+    Rust block comments nest; raw strings can contain quotes, comment markers
+    and braces. Neither may accidentally create a locale arm or end its body.
+    Character literals are masked too, but lifetimes such as `'static` are not.
+    """
+    code = list(text)
+    literals: list[tuple[int, int]] = []
+    token = re.compile(r'//|/\*|\br(#+)?"|"(?:\\[\s\S]|[^"\\])*"|\'(?:\\.|[^\'\\])\'')
+    comment = re.compile(r"/\*|\*/")
+    cursor = 0
+    while match := token.search(text, cursor):
+        start, end = match.span()
+        value = match.group()
+        if value == "//":
+            end = text.find("\n", end)
+            if end < 0:
+                end = len(text)
+        elif value == "/*":
+            depth = 1
+            while depth and (marker := comment.search(text, end)):
+                depth += 1 if marker.group() == "/*" else -1
+                end = marker.end()
+            if depth:
+                end = len(text)
+        elif value.startswith("r"):
+            closing = '"' + (match.group(1) or "")
+            close = text.find(closing, end)
+            end = len(text) if close < 0 else close + len(closing)
+            literals.append((start, end))
+        elif value.startswith('"'):
+            literals.append((start, end))
+        code[start:end] = ["\n" if c == "\n" else " " for c in text[start:end]]
+        cursor = end
+    return "".join(code), literals
+
+
+def _rust_expression_end(code: str, start: int, *, delimited: bool = False) -> int:
+    """End an arm/initializer without crossing its balanced delimiters."""
+    stack: list[str] = []
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    first = start
+    while first < len(code) and code[first].isspace():
+        first += 1
+    for pos in range(start, len(code)):
+        char = code[pos]
+        if char in pairs:
+            stack.append(pairs[char])
+        elif char in ")]}":
+            if not stack:
+                return pos
+            if char == stack[-1]:
+                stack.pop()
+                # Blocks may omit the arm comma; tuple patterns end here too
+                # when the caller explicitly requests a delimited region.
+                if not stack and (delimited or code[first:first + 1] == "{"):
+                    return pos + 1
+        elif char in ",;" and not stack:
+            return pos
+    return len(code)
+
+
+def _ja_tuple_members(
+    code: str, literals: list[tuple[int, int]], start: int, end: int, arity: int
+) -> list[tuple[int, int]]:
+    """Select JA (last) members of an explicitly bilingual tuple owner."""
+    regions: list[tuple[int, int]] = []
+    cursor = start
+    while (opening := code.find("(", cursor, end)) >= 0:
+        closing = _rust_expression_end(code, opening, delimited=True)
+        if closing > end:
+            break
+        # Consume the whole tuple so nested tuples/calls in its EN member
+        # cannot become independent JA candidates.
+        cursor = closing
+        members: list[tuple[int, int]] = []
+        member_start = opening + 1
+        depth = 0
+        for pos in range(member_start, closing - 1):
+            char = code[pos]
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif char == "," and depth == 0:
+                members.append((member_start, pos))
+                member_start = pos + 1
+        tail_end = closing - 1
+        # String contents were masked; a whitespace-only member can still
+        # contain a literal. An actual trailing comma contributes no member.
+        if code[member_start:tail_end].strip() or any(
+            member_start <= left < tail_end for left, _ in literals
+        ):
+            members.append((member_start, tail_end))
+        if len(members) == arity:
+            regions.append(members[-1])
+    return regions
+
+
+def _ja_git_literals(text: str) -> str:
+    """Select JA translation literals, not EN, comments or assertion data.
+
+    ADR-0048 uses locale arms and bilingual label tables/renderers; ADR-0129
+    also uses `*_ja` renderers and `ADVICE_*` constants. Only explicit translation
+    owners are candidates: passing Lang::Ja or storing a name is not localization.
+    """
+    code, literals = _rust_literal_spans(text)
+    regions: list[tuple[int, int]] = []
+    ignored: list[tuple[int, int]] = []
+    arrow = re.compile(r"\s*(?:if\b[^;]*?)?=>")
+    for locale, destinations in (("Ja", regions), ("En", ignored)):
+        locale_token = re.compile(rf"\b(?:Lang\s*::\s*)?{locale}\b")
+        arms = re.compile(rf"\(|{locale_token.pattern}")
+        for arm in arms.finditer(code):
+            pattern_end = arm.end()
+            if code[arm.start()] == "(":
+                pattern_end = _rust_expression_end(code, arm.start(), delimited=True)
+                if not locale_token.search(code, arm.start(), pattern_end):
+                    continue
+            if body := arrow.match(code, pattern_end):
+                destinations.append((body.end(), _rust_expression_end(code, body.end())))
+    owners = re.compile(
+        r"\bfn\s+\w+_ja(?:_\w+)?\s*\([^;{}]*\)[^;{}]*\{"
+        r"|\bconst\s+(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)\s*:[^;=]*="
+    )
+    for owner in owners.finditer(code):
+        start = owner.end() - 1 if owner.group().endswith("{") else owner.end()
+        regions.append((start, _rust_expression_end(code, start)))
+    # busy.rs declares (internal tag, EN, JA) LABELS; Op::label returns
+    # (EN, JA) pairs. Restrict this to translation/label owners, not arbitrary
+    # repository-data tuples, and never select their EN or internal-tag members.
+    table_owners = re.compile(
+        r"\bconst\s+(?:LABELS|TRANSLATIONS|\w+_(?:LABELS|TRANSLATIONS))\s*:"
+        r"\s*&\s*\[\s*\((?P<types>[^()]*)\)\s*\]\s*=\s*&\s*\["
+    )
+    for table in table_owners.finditer(code):
+        types = [item.strip() for item in table.group("types").split(",") if item.strip()]
+        if len(types) not in (2, 3) or not all(
+            re.fullmatch(r"&(?:'\w+\s+)?str", item) for item in types
+        ):
+            continue
+        start = table.end() - 1
+        end = _rust_expression_end(code, start, delimited=True)
+        regions.extend(_ja_tuple_members(code, literals, start, end, len(types)))
+    pair_owners = re.compile(
+        r"\bfn\s+(?:label|\w+_label)\s*\([^;{}]*\)\s*->\s*\("
+        r"\s*&(?:'\w+\s+)?str\s*,\s*&(?:'\w+\s+)?str\s*,?\s*\)\s*\{"
+    )
+    for pair in pair_owners.finditer(code):
+        start = pair.end() - 1
+        regions.extend(
+            _ja_tuple_members(code, literals, start, _rust_expression_end(code, start), 2)
+        )
+    # Test fixtures and assertions may deliberately quote the banned words.
+    # Mask only test bodies, never the containing production file.
+    test_bodies = re.compile(r"#\[\s*(?:test|cfg\s*\(\s*test\s*\))\s*\][^{;]*\{")
+    for test in test_bodies.finditer(code):
+        start = test.end() - 1
+        ignored.append((start, _rust_expression_end(code, start)))
+    selected = ["\n" if c == "\n" else " " for c in text]
+    for start, end in literals:
+        if not any(left <= start < right for left, right in regions):
+            continue
+        if any(left <= start < right for left, right in ignored):
+            continue
+        literal = text[start:end]
+        # Only the name-collision occurrence is exempt, not every conflict in
+        # a string that happens to mention refs or a namespace.
+        literal = re.sub(
+            r"(?:名前空間|ref\s+namespace)\s*(?:が|の|で|と)?\s*競合",
+            lambda match: match.group().replace("競合", "  "),
+            literal,
+        )
+        selected[start:end] = literal
+    return "".join(selected)
+
+
+JA_GIT_TERMS = (
+    "退避",
+    "作業ツリー",
+    "コミット",
+    "コミッター",
+    "サブモジュール",
+    "ブランチ",
+    "リモート",
+    "マージ",
+    "取り込み",
+    "ステージ",
+    "チェックアウト",
+    "フェッチ",
+    "プッシュ",
+    "タグ",
+    "リベース",
+    "チェリーピック",
+    "リバート",
+    "アメンド",
+    "スカッシュ",
+    "インデックス",
+    "ヘッド",
+    "アップストリーム",
+    "衝突",
+    "競合",
+)
+
+
 RULES: tuple[Rule, ...] = (
+    Rule(
+        name="ja-git-terms",
+        summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",
+        pattern="|".join(JA_GIT_TERMS) + r"|(?<![ァ-ヶー])プル",
+        globs=("crates/kagi-ui-core/src/i18n/**/*.rs",),
+        select_source=_ja_git_literals,
+        message=(
+            "JA Git domain terms must stay English (ADR-0048 / #1465); "
+            "keep Japanese grammar, not translated Git vocabulary."
+        ),
+        samples=(
+            *(
+                sample
+                for term in (*JA_GIT_TERMS, "プル", "プルリクエスト")
+                for sample in (
+                    f'(Ja, GitAction) => "{term} する",',
+                    f'(Lang::Ja,\n GitAction) => format!(\n "{term}: {{name}}"\n),',
+                    f'pub(crate) const ADVICE_ACTION: &str =\n "{term} してください";',
+                )
+            ),
+            'Lang::Ja => {\n let label = "commit";\n format!("{} をコミット", label)\n}',
+            'Lang::Ja => match state { Some(_) => "ブランチ", None => "なし" },',
+            'fn note_ja(note: &Note) -> String {\n format!("未コミット: {}", note)\n}',
+            'fn note_ja_any(note: &Note) -> String { format!("作業ツリー: {}", note) }',
+            'const ACTION_JA: &str = r##"リモート "origin" の\nブランチ"##;',
+            'const JA_ACTION: &str = concat!("未",\n "コミット");',
+            '(Ja, Action { state: Some((left, right)) }) => "コミット",',
+            '(HealthFinding::Missing, Lang::Ja) => "コミット",',
+            '(Action { state: Some((left, right)) }, Ja) => "ブランチ",',
+            '(Ja, Action) if count > 0 => "ブランチ",',
+            'const ADVICE_ACTION: &str = "コミット";',
+            'Lang::Ja /* wrapped */ =>\n format!("コミット\\n\\\nしてください"),',
+            'Lang::Ja => "名前空間が競合。ファイルの競合を解決してください",',
+            'Lang::Ja => "ref を変更する前に競合を解決してください",',
+            'Lang::Ja => { "commit" }\n Lang::En => "コミット",\n'
+            'Lang::Ja => "ブランチ",',
+            'Lang::Ja => format!("{}", Msg::Title.t_for(Lang::En)),\n'
+            'Lang::Ja => "コミット",',
+            '/* outer /* nested */ Lang::En => "safe" */ Lang::Ja => "コミット",',
+            '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "コミット"; }\n'
+            'const ADVICE_ACTION: &str = "ブランチ";',
+            'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merging", "マージ")];',
+            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            '("merge",\n "Merging",\n r#"競合を解決"#,\n),\n];',
+            'const ACTION_LABELS: &[(&str, &str)] = &[("Commit", "コミット")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Branch",\n "ブランチ",)];',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => ("Commit", "コミット"), }\n}',
+            "fn action_label(self) -> (&'static str, &'static str) {\n"
+            'match self { Merge => (\n "Merge",\n r##"競合 "file""##,\n), }\n}',
+            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            '("commit", /* EN */ "Commit", /* JA */ "コミット"),\n];',
+        ),
+        samples_ok=(
+            '(Ja, Action) => "stash / working tree / commit / branch / conflict",',
+            'Lang::En => "User branch name: コミット",',
+            '(En,\n Action) => format!(\n "User message: マージ\\nブランチ"\n),',
+            '(HealthFinding::Missing, Lang::En) => "Quoted コミット",',
+            'const ADVICE_ACTION_EN: &str = "Quoted コミット";',
+            'const USER_BRANCH_NAME: &str = "ブランチ";',
+            'let user_message = "マージ"; render(user_message);',
+            'Lang::Ja => format!("{user_message}: {branch}"),',
+            '// (Ja, Action) => "コミット",\nLang::Ja => "commit",',
+            '/* Lang::Ja => "ブランチ" */ Lang::Ja => "branch",',
+            '/* outer /* nested */ const ADVICE_ACTION: &str = "マージ"; */',
+            'Lang::Ja => {\n // コミット\n /* ブランチ */ "commit"\n}',
+            'Lang::Ja => r##"comment syntax /* and */ is data, not code"##,',
+            'let quoted_source = r#"Lang::Ja => "コミット""#;',
+            'Lang::Ja => "パープル",',
+            'Lang::Ja => "サンプル",',
+            'Lang::Ja => "既存の ref `{}` と名前空間が競合しています。",',
+            'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
+            'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',
+            'assert!(!Msg::Merge.t_for(Lang::Ja).contains("マージ"));',
+            'assert!(!m.t().contains(\'衝\'), "{:?} still contains 衝突", m);',
+            'assert_eq!(render(Lang::Ja, "コミット"), "commit");',
+            'Lang::En => format!("{}", Msg::Title.t_for(Lang::Ja)),\n'
+            '(En, Action) => "Quoted コミット",',
+            'const ADVICE_EN_ACTION: &str = "Quoted コミット";',
+            '// Lang::Ja => "競合"\n'
+            '(En, Action) => r##"Quoted リモート "origin" のブランチ"##,',
+            'Lang::Ja => { "commit" }\nLang::En => "コミット",',
+            '(Ja, Action) => format!("commit: {value}"), (En, Action) => "コミット",',
+            'const ADVICE_ACTION: &str = "commit";\n'
+            'fn note_en() -> String { "コミット".into() }',
+            'fn note_ja() -> String { match lang() {\n'
+            'Lang::En => "コミット".into(), Lang::Ja => "commit".into(),\n} }',
+            '#[test]\n fn terms_ja_are_english() {\n'
+            'assert!(!m.t().contains("コミット"));\n'
+            'let expected = match lang() { Ja => "マージ", En => "merge" };\n}',
+            '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "ブランチ"; }',
+            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            '("コミット", "Quoted マージ", "commit"),\n];',
+            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            '("colour", "Purple", "パープル"),\n'
+            '("name", "Name", "ref の名前空間が競合しています"),\n];',
+            'const ACTION_LABELS: &[(&str, &str)] = &[("Quoted コミット", "commit")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Quoted ブランチ", "branch")];',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => (r##"User wrote "コミット""##, "commit"), }\n}',
+            "fn label(self) -> (&'static str, &'static str) {\n"
+            'match self { Commit => (choose(("コミット", "ブランチ")), "commit"), }\n}',
+            'const USER_DATA: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
+            'const LABELS: &[(&str, Msg)] = &[("コミット", Msg::Commit)];',
+            '// const LABELS: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
+            '#[cfg(test)] mod tests {\n'
+            'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merge", "マージ")];\n}',
+        ),
+    ),
     Rule(
         name="app-layering",
         summary="application layer has no UI or direct I/O dependencies (#484)",

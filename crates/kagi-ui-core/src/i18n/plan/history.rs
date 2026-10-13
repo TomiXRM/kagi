@@ -25,7 +25,7 @@ pub(crate) const ADVICE_HISTORY_ENTRY_STALE_BRANCH_MOVED: &str =
 pub(crate) const ADVICE_HISTORY_ENTRY_STALE_UNREACHABLE: &str =
     "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`";
 pub(crate) const ADVICE_HISTORY_SOFT_MOVE_PRESERVES_CHANGES: &str =
-    "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と作業ツリーは変更なし)。";
+    "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と working tree は変更なし)。";
 
 /// JA rendering of the undo/redo verb used by the ref-move title and recovery
 /// text. Exhaustive on [`HistoryMoveDir`] — no `_` fallback to drop meaning.
@@ -134,8 +134,8 @@ pub fn title_ja(title: &HistoryTitle) -> String {
             } else {
                 let mode_label = match mode {
                     AmendMode::MessageOnly => "メッセージのみ",
-                    AmendMode::Staged => "stage 済みを取り込み",
-                    AmendMode::Both => "stage 済みを取り込み + メッセージ",
+                    AmendMode::Staged => "stage 済みの変更を含める",
+                    AmendMode::Both => "stage 済みの変更を含める + メッセージ",
                 };
                 format!(
                     "commit `{}` \"{}\" を amend({}、SHA が変わります)",
@@ -178,8 +178,8 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
         }
         HistoryRecovery::Amend { sha, blocked: false } => format!(
             "amend は履歴を書き換えます。新しい SHA が付き、元の commit `{}` は branch から到達不能になります(reflog には残ります)。\n\
-             作業ツリーと index を変えずに元に戻すには:\n  git reset --soft {}\n\
-             HEAD 移動は reflog に残ります:\n  git reflog",
+                         working tree と index を変えずに元に戻すには:\n  git reset --soft {}\n\
+                         HEAD 移動は reflog に残ります:\n  git reflog",
             sha, sha
         ),
         HistoryRecovery::HistoryMove {

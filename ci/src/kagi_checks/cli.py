@@ -186,6 +186,10 @@ def check_plan_verbatim() -> int:
     return _run_rule(_rule("plan-verbatim"))
 
 
+def check_ja_git_terms() -> int:
+    return _run_rule(_rule("ja-git-terms"))
+
+
 def check_recovery_safe_advice() -> int:
     return _run_rule(_rule("recovery-safe-advice"))
 

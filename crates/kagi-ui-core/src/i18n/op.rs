@@ -154,9 +154,9 @@ impl Op {
             Unstage => ("Unstage", "unstage"),
             RecordOperation => ("Record operation", "操作ログの記録"),
             StageAll => ("Stage all", "全ファイルの stage"),
-            Stash => ("Stash", "stash"),
-            StashApply => ("Stash apply", "stash apply"),
-            StashPush => ("Stash push", "stash push"),
+            Stash => ("Stash", "Stash"),
+            StashApply => ("Stash apply", "Stash Apply"),
+            StashPush => ("Stash push", "Stash Push"),
             SwitchToLatest => ("Switch to latest", "最新への切り替え"),
             UnlockWorktree => ("Unlock worktree", "worktree の unlock"),
             RemoveWorktree => ("Remove worktree", "worktree の削除"),
@@ -405,10 +405,10 @@ mod tests {
         );
         super::super::set_lang_no_persist(Lang::Ja);
         assert_eq!(
-            op_refused("checkout", "未コミット", 0),
-            "checkout は拒否されました: 未コミット"
+            op_refused("checkout", "未 commit", 0),
+            "checkout は拒否されました: 未 commit"
         );
-        assert!(op_refused("checkout", "未コミット", 1).ends_with("（ほか 1 件は Operation Log）"));
+        assert!(op_refused("checkout", "未 commit", 1).ends_with("（ほか 1 件は Operation Log）"));
         super::super::set_lang_no_persist(Lang::En);
     }
 }

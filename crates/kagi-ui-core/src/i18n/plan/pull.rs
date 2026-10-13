@@ -9,10 +9,10 @@ use crate::i18n::Msg;
 /// JA template for `Msg::AdvicePullAutoStash`. The single `{}` takes the
 /// assembled changes fragment (`stage 済み 2 件、未追跡 1 件` …).
 pub(crate) const ADVICE_AUTO_STASH: &str =
-    "作業ツリーに{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
+    "working tree に{}があります。Kagi は変更を stash してから pull し、その後に復元します。復元が conflict した場合、stash は保持されます。";
 
 pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
-    "作業ツリーに{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
+    "working tree に{}があります。取得した変更が同じパスに触れない場合のみ pull を続行します。";
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
@@ -23,17 +23,17 @@ pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
 pub(crate) const ADVICE_PULL_CONFLICTED_REF_ONLY: &str =
-    "conflict ファイルが {} 件あります。この ref-only pull は作業ツリーに影響しません。";
+    "conflict ファイルが {} 件あります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_DIRTY_REF_ONLY: &str =
-    "作業ツリーに変更があります。この ref-only pull は作業ツリーに影響しません。";
+    "working tree に変更があります。この ref-only pull は working tree に影響しません。";
 pub(crate) const ADVICE_PULL_CANNOT_FAST_FORWARD: &str =
     "branch `{}` は upstream に fast-forward できません。checkout 状態で pull すると merge されます。";
 pub(crate) const ADVICE_PULL_REMOTE_DIVERGED: &str =
     "`{}` は upstream から乖離しています(ahead {}、behind {})。pull はremote上で merge commit を作成します。";
 pub(crate) const ADVICE_PULL_REMOTE_DIRTY: &str =
-    "remoteの作業ツリーに未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
+    "remote の working tree に未 commit の変更があります。pull が失敗するか、ホスト側での conflict 解決が必要になる場合があります。";
 pub(crate) const ADVICE_PULL_REMOTE_PREVIEW_STALE: &str =
-    "remote pull の確認内容とホストの現在の branch・upstream・HEAD commit・作業ツリーの変更状態が一致しません。remote の表示を更新してから、もう一度お試しください。";
+    "remote pull の確認内容とホストの現在の branch・upstream・HEAD commit・working tree の変更状態が一致しません。remote の表示を更新してから、もう一度お試しください。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; pull has its own module so it stays
@@ -185,15 +185,15 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
                 .to_string()
         }
         PullRecovery::PullCurrentFf { branch } => format!(
-            "refs/heads/{} を fast-forward し、この checkout の index と作業ツリーを安全に更新します。\
-             履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
-             Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
-             以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
+            "refs/heads/{} を fast-forward し、この checkout の index と working tree を安全に更新します。\
+                         履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
+                         Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
+                         以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
             branch, branch
         ),
         PullRecovery::PullBranchFf { branch } => format!(
-            "fast-forward を確認後、refs/heads/{} のみを更新します。作業ツリーは変更されません。\n\
-             以前の先端に戻すには:\n  git branch -f {} <old-sha>",
+            "fast-forward を確認後、refs/heads/{} のみを更新します。working tree は変更されません。\n\
+                         以前の先端に戻すには:\n  git branch -f {} <old-sha>",
             branch, branch
         ),
     }
@@ -249,7 +249,7 @@ mod tests {
         let text = recovery_ja(&PullRecovery::PullCurrentFf {
             branch: "main".into(),
         });
-        assert!(text.contains("index と作業ツリー"));
+        assert!(text.contains("index と working tree"));
         assert!(text.contains("merge commit は作成しません"));
         assert!(text.contains("git reflog show refs/heads/main"));
         assert!(text.contains("Partial"));

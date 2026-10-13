@@ -11,7 +11,7 @@ pub(crate) const ADVICE_COMMIT_NOTHING_STAGED: &str =
 
 /// JA text for `Msg::AdviceCommitStagedContentChanged`.
 pub(crate) const ADVICE_COMMIT_STAGED_CONTENT_CHANGED: &str =
-    "確認後にステージ済みの内容が変わりました。commit は行っていません。ステージ済みの変更を見直し、新しい計画を確認してください。";
+    "確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。";
 
 /// JA template for `Msg::AdviceCommitConflictedFiles`.
 pub(crate) const ADVICE_COMMIT_CONFLICTED_FILES: &str =

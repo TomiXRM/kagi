@@ -43,7 +43,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
                 .map(|p| format!("{p} の worktree で"))
                 .unwrap_or_default();
             format!(
-                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は local branch と tag だけを動かし、HEAD は動かしません(作業ツリーが変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
+                "操作 #{id}({op})で{place} HEAD が {} から {} に切り替わっているので、この範囲は restore できません。restore は local branch と tag だけを動かし、HEAD は動かしません(working tree が変わるため)。{place} {} を自分で checkout してから、#{id} 以降の時点へ restore してください。それより複雑な場合(複数回の切り替え、その操作が作成・削除した branch など)は手で戻してください。",
                 head_ja(from),
                 head_ja(to),
                 head_ja(from)
@@ -76,7 +76,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
             "{refname} はその時点の後に、記録された操作の外で作られたか動いています。復元してもそのまま残ります。"
         ),
         OplogRestoreNote::CheckedOutDirty { branch, path } => format!(
-            "`{branch}` は {path} で checkout 中で、未コミットの変更があります。変更はそのまま残り、移動後は戻した先端との差分と一緒に表示されます。"
+            "`{branch}` は {path} で checkout 中で、未 commit の変更があります。変更はそのまま残り、移動後は戻した先端との差分と一緒に表示されます。"
         ),
         OplogRestoreNote::DeletesCheckedOutBranch { branch, path } => {
             format!("`{branch}` を削除することになりますが、{path} で checkout 中です。")
@@ -94,7 +94,7 @@ pub fn note_ja(note: &OplogRestoreNote) -> String {
         OplogRestoreNote::MovesCheckedOutBranch { branch, path } => format!(
             "`{branch}` は {path} で checkout 中です。動くのは branch だけで、その worktree の index とファイルはそのままです。"
         ),
-        OplogRestoreNote::RefsOnly => "変更なし: 作業ツリー・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
+        OplogRestoreNote::RefsOnly => "変更なし: working tree・index・untracked・stash・remote branch・Kagi 外での tag の変更".to_string(),
     }
 }
 

@@ -27,7 +27,7 @@ fn description_for(language: Lang, chip: Chip, upstream: &str) -> String {
         (Lang::En, Chip::Unstaged(n)) => format!("{n} unstaged file{}", plural(n)),
         (Lang::Ja, Chip::Unstaged(n)) => format!("未 stage のファイル {n} 件"),
         (Lang::En, Chip::Conflict(n)) => format!("{n} conflicted file{}", plural(n)),
-        (Lang::Ja, Chip::Conflict(n)) => format!("競合ファイル {n} 件"),
+        (Lang::Ja, Chip::Conflict(n)) => format!("conflict ファイル {n} 件"),
         (Lang::En, Chip::Stash(n)) => format!("{n} stash entr{}", if n == 1 { "y" } else { "ies" }),
         (Lang::Ja, Chip::Stash(n)) => format!("stash {n} 件"),
         (Lang::En, Chip::AheadBehind(Some((a, b)))) => {

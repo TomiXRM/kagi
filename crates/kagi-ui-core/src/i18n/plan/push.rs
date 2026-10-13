@@ -81,8 +81,8 @@ pub fn recovery_ja(recovery: &PushRecovery) -> String {
             "push には branch が必要です。\n  git checkout <branch>".to_string()
         }
         PushRecovery::PushBranch => {
-            "push は remote へ commit を送るだけで、作業ツリーは変更しません。\
-             拒否された場合は先に fetch か pull してから再度プランしてください。"
+            "push は remote へ commit を送るだけで、working tree は変更しません。\
+                         拒否された場合は先に fetch か pull してから再度プランしてください。"
                 .to_string()
         }
         PushRecovery::SetUpstream { branch } => format!(

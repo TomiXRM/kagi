@@ -160,3 +160,32 @@ formatters. The short text is moved directly into SharedString, without cloning.
 Native font shaping checks the actual drawn 12-month label against the fixed
 column at Japanese high zoom.
 
+
+## Amendment — 2026-10-13: English Git terminology throughout JA (#1465)
+
+- Git terms are English in **all** Japanese UI strings: `Msg`, plan templates,
+  menus, toolbar captions, tooltips, accessibility names, notifications and
+  modal explanations. This includes commit / branch / remote / merge / stash /
+  worktree / working tree / fetch / pull / push / tag / checkout / rebase /
+  cherry-pick / revert / amend / squash / stage / index / HEAD / upstream /
+  conflict / submodule / committer. English translations remain byte-identical.
+- Verbs retain Japanese grammar and ASCII spacing: 「commit する」
+  「stash する」「未 commit の変更」「stage 済み」. Operation and feature
+  captions retain their established capitalization: `Stash`, `Branch`, `Pop`,
+  `Worktrees`, `Stash Apply`, `Commit Panel`.
+- `worktree` names a checkout (including a linked checkout), while
+  `working tree` describes on-disk files, dirty status and preservation versus
+  index/ref-only changes. Replay's warning about leaving a checkout behind
+  therefore uses `worktree`; dirty/create/stash/restore guidance uses
+  `working tree` even when rendered for a linked checkout.
+- 「取り込み」is interpreted by operation, never blindly changed to `fetch`:
+  squash-merged branch advice says 「変更は merge 先に反映済み」; amend modes
+  say 「stage 済みの変更を含める」. Neither performs a fetch or pull.
+- Git file conflicts use `conflict`; ref namespace 「競合」 remains ordinary
+  name-collision prose. SSH 「リモート」 uses `remote`, but repository-owned
+  names/messages, historical user quotations and the colour 「パープル」
+  remain untouched.
+- `check-ja-git-terms` runs in CI with positive/negative selftest samples and
+  rejects translated Git vocabulary inside JA localization string literals.
+  Comments, EN arms, negative assertions and ordinary namespace collisions
+  are not translation candidates.

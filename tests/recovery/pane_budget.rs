@@ -9,6 +9,9 @@ use crate::macos::{build_fixture, mount, unmount};
 use crate::recovery_layout::contained;
 
 fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle, width: f32, height: f32) {
+    for name in ["sidebar-clip", "right-pane-clip", "compact-rail"] {
+        e2e::clear_control_bounds(window.window_id(), name);
+    }
     let wanted = gpui::size(px(width), px(height));
     cx.update_window(window, |_, window, _| window.resize(wanted))
         .unwrap();
@@ -75,7 +78,7 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str, dx: 
             MouseButton::Left,
             Modifiers::none(),
         );
-        settle(cx, window, 940., 660.);
+        settle(cx, window, 1000., 660.);
     }
     cx.simulate_mouse_up(
         window,
@@ -83,7 +86,7 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, name: &str, dx: 
         MouseButton::Left,
         Modifiers::none(),
     );
-    settle(cx, window, 940., 660.);
+    settle(cx, window, 1000., 660.);
 }
 
 pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
@@ -107,8 +110,9 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
         i18n::set_lang(lang);
         theme::set_zoom(1.67);
-        settle(cx, window, 940., 660.);
-        assert_diff(cx, &app, 940.);
+        // The pane budget applies at and above the compact breakpoint.
+        settle(cx, window, 1000., 660.);
+        assert_diff(cx, &app, 1000.);
         let left = bounds(window, "sidebar-clip");
         let right = bounds(window, "right-pane-clip");
         assert!(left.size.width < theme::scaled_px(244.));
@@ -122,7 +126,7 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
                 prefs,
                 "{name}: capped expansion must not overwrite preferences"
             );
-            assert_diff(cx, &app, 940.);
+            assert_diff(cx, &app, 1000.);
         }
         theme::set_zoom(1.);
         settle(cx, window, 1392., 883.);
@@ -137,8 +141,17 @@ pub fn scenario_pane_budget_fit(cx: &mut VisualTestAppContext) {
     }
     theme::set_zoom(1.67);
     settle(cx, window, 700., 500.);
-    assert!(bounds(window, "sidebar-clip").size.width > px(0.));
-    assert!(bounds(window, "right-pane-clip").size.width > px(0.));
+    contained(
+        Bounds::new(point(px(0.), px(0.)), gpui::size(px(700.), px(500.))),
+        bounds(window, "compact-rail"),
+        "sub-breakpoint compact rail",
+    );
+    assert!(e2e::control_bounds(window.window_id(), "sidebar-clip").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "right-pane-clip").is_none());
+    assert_eq!(
+        cx.read(|cx| (app.read(cx).sidebar.width, app.read(cx).panel_width)),
+        (240., 360.)
+    );
     theme::set_reduce_motion(previous_motion);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS pane_budget_fit");
@@ -172,7 +185,7 @@ fn check_sidebar_anchor(cx: &mut VisualTestAppContext, worktree: bool) {
         cx.notify();
     });
     theme::set_zoom(1.67);
-    settle(cx, window, 940., 660.);
+    settle(cx, window, 1000., 660.);
     let pane = if worktree { 2 } else { 0 };
     let key = if worktree {
         app.read_with(cx, |app, _| {
@@ -190,9 +203,9 @@ fn check_sidebar_anchor(cx: &mut VisualTestAppContext, worktree: bool) {
         });
     })
     .unwrap();
-    settle(cx, window, 940., 660.);
+    settle(cx, window, 1000., 660.);
     crate::keyboard_nav::keys(cx, window, if worktree { "enter" } else { "shift-f10" });
-    settle(cx, window, 940., 660.);
+    settle(cx, window, 1000., 660.);
     let name = if worktree {
         "sidebar-worktree-keyboard-card"
     } else {

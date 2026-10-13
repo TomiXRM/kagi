@@ -141,6 +141,14 @@ pub(super) fn pr_list_order(app: &KagiApp) -> Vec<PullRequest> {
 // is the page on screen or the neighbour a gesture is sliding toward, so it
 // must stay a pure read of `ui().pr_list_rows()`.
 pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    render_list(app, false, cx)
+}
+
+pub(super) fn render_compact_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+    render_list(app, true, cx)
+}
+
+fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let focused = app.pr_mode().map(|m| m.focus) == Some(PrFocus::List);
     let focus_click = cx.listener(|this: &mut KagiApp, _: &gpui::MouseDownEvent, _w, cx| {
         this.pr_mode_focus(PrFocus::List, cx);
@@ -193,6 +201,7 @@ pub(super) fn render_pr_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::
                 stacked,
                 active_pr.as_ref(),
                 app.window_active,
+                compact.then_some(section),
                 cx,
             ));
         }
@@ -241,6 +250,7 @@ fn render_pr_card(
     stacked: bool,
     active_pr: Option<&kagi_domain::github::PrKey>,
     window_active: bool,
+    compact: Option<PrSection>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let is_active = active_pr.is_some_and(|key| pr.is(key));
@@ -426,6 +436,23 @@ fn render_pr_card(
         .when(pr.is_draft && !on_accent, |el| el.opacity(0.7))
         .child(edge)
         .child(card);
+    let row = if let Some(section) = compact {
+        super::compact_sidebar::Leaf {
+            id: format!(
+                "compact-pr-row-{}-{}-{}",
+                section.index(),
+                pr.base_repo,
+                pr.number
+            )
+            .into(),
+            label: format!("#{} {}", pr.number, safe_text(&pr.title)),
+            row,
+            app: cx.weak_entity(),
+        }
+        .into_any_element()
+    } else {
+        row.into_any_element()
+    };
     super::e2e::measure_control(format!("pr-mode-card-{}", pr.number), row)
 }
 

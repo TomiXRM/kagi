@@ -323,6 +323,7 @@ impl KagiApp {
         } else {
             row.bg(row_wash)
         };
+        row = self.render_compact_wip(row, &click, cx);
         // Both row kinds are clickable and open the commit panel: the open
         // repo's row against the tab's repository, a linked worktree's row
         // against that worktree (#473 — read-only, no tab, no snapshot). The
@@ -501,12 +502,23 @@ impl KagiApp {
                             .truncate()
                             .child(SharedString::from(note)),
                     )
+                    .children(self.render_compact_wip_affordance(is_commit_panel))
                     .when_some(diffstat, |el, stat| {
-                        el.child(render_wip_diffstat(
+                        let stat = render_wip_diffstat(
                             stat,
                             uses_on_accent
                                 .then(|| theme().selection_foreground(self.window_active)),
-                        ))
+                        );
+                        if self.compact.enabled && is_commit_panel {
+                            el.child(
+                                div().flex_shrink_0().child(super::e2e::measure_control(
+                                    "compact-wip-diffstat",
+                                    stat,
+                                )),
+                            )
+                        } else {
+                            el.child(stat)
+                        }
                     }),
             )
             .into_any_element()

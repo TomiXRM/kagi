@@ -6,6 +6,26 @@ use super::*;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::IconName;
 
+/// The same presented body limit governs fitting and pointer resizing.
+pub(super) fn max_body_height(window: &Window, editor: bool) -> f32 {
+    let viewport_height = f32::from(window.viewport_size().height);
+    let scale = theme::scaled(1.);
+    let mut max_height = (viewport_height * BOTTOM_PANEL_MAX_FRAC / scale).max(BOTTOM_PANEL_MIN_H);
+    if editor {
+        // Workspace header, file tabs, history selector, snapshot identity,
+        // and two source lines must fit together, even after a desktop resize.
+        const EDITOR_MIN_BODY_H: f32 = 200.;
+        let shell_height = f32::from(super::render_header::chrome_frame_height())
+            + theme::scaled(super::tabs::TAB_STRIP_H + STATUS_BAR_H);
+        let editor_cap = (viewport_height - shell_height) / scale
+            - EDITOR_MIN_BODY_H
+            - BOTTOM_PANEL_DIVIDER_H
+            - BOTTOM_PANEL_TAB_H;
+        max_height = max_height.min(editor_cap.max(BOTTOM_PANEL_MIN_H));
+    }
+    max_height
+}
+
 impl KagiApp {
     #[cfg(feature = "gui-e2e")]
     pub fn bottom_tab_focused_for_e2e(&self, window: &Window) -> Option<usize> {
@@ -49,6 +69,7 @@ impl KagiApp {
                 .yield_focus(self.root_focus.as_ref(), window, cx);
             return None;
         }
+        let compact = self.compact.enabled;
 
         // ── Horizontal resize divider at top of panel ──
         let h_divider = div()
@@ -107,16 +128,21 @@ impl KagiApp {
             );
 
         // Manual activation: focusing Terminal must never start its process.
-        const TABS: [BottomTab; 3] = [
+        const TABS: [BottomTab; 4] = [
             BottomTab::OperationLog,
             BottomTab::Terminal,
             BottomTab::Activity,
+            BottomTab::Changes,
         ];
         let entity = cx.weak_entity();
         let tabs = keyboard_nav::TabList::new(
             &self.bottom_tab_focus,
-            keyboard_nav::slot_keys(TABS.len()),
-            vec![0, 1, 2],
+            keyboard_nav::slot_keys(if compact { 4 } else { 3 }),
+            if compact {
+                vec![3, 0, 1, 2]
+            } else {
+                vec![0, 1, 2]
+            },
             TABS.iter().position(|&tab| tab == active_tab),
             keyboard_nav::Activation::Manual,
             // This selector routes pointer focus itself: Terminal receives
@@ -130,6 +156,9 @@ impl KagiApp {
                     this.bottom_tab = TABS[slot];
                     if this.bottom_tab == BottomTab::Terminal {
                         this.activate_terminal(window, cx);
+                    }
+                    if this.bottom_tab == BottomTab::Changes {
+                        this.open_compact_changes(window, cx);
                     }
                     // Lazy startup focuses the terminal; keyboard activation
                     // must keep the selector's focus until Tab leaves it.
@@ -146,6 +175,8 @@ impl KagiApp {
             },
             cx,
         );
+        self.bottom_tab_focus
+            .release_closed(self.root_focus.as_ref(), window, cx);
         let cell = |slot: usize, id: &'static str| {
             let tab = TABS[slot];
             let selected = tab == active_tab;
@@ -176,7 +207,8 @@ impl KagiApp {
                     match slot {
                         0 => "tab-oplog-label",
                         1 => "tab-terminal-label",
-                        _ => "tab-activity-label",
+                        2 => "tab-activity-label",
+                        _ => "compact-tab-changes-label",
                     },
                     SharedString::from(tab.label()),
                 ))
@@ -204,6 +236,7 @@ impl KagiApp {
                     .mx_2()
                     .gap_1()
                     .rounded(theme::scaled_px(4.))
+                    .when(compact, |el| el.child(cell(3, "compact-tab-changes")))
                     .child(cell(0, "tab-oplog"))
                     .child(cell(1, "tab-terminal"))
                     .child(cell(2, "tab-activity")),
@@ -220,6 +253,20 @@ impl KagiApp {
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
             BottomTab::Activity => self.render_activity_body(window, cx),
+            BottomTab::Changes => self
+                .compact_surface(false, cx)
+                .map(IntoElement::into_any_element)
+                .unwrap_or_else(|| {
+                    div()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(rgb(theme().text_muted))
+                        .child(Msg::HomeWorkLoading.t())
+                        .into_any_element()
+                }),
         };
 
         // ── Panel container (height = fixed, flex_shrink_0) ──

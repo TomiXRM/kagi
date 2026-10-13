@@ -679,10 +679,16 @@ impl KagiApp {
     }
 
     pub(super) fn editor_save_available(&self, cx: &gpui::App) -> bool {
+        !self.has_active_modal() && !self.op_latched() && self.editor_save_target_available(cx)
+    }
+
+    pub(super) fn editor_save_dispatch_available(&self, cx: &gpui::App) -> bool {
+        self.editor_save_target_available(cx) && (!self.has_active_modal() || self.op_latched())
+    }
+
+    fn editor_save_target_available(&self, cx: &gpui::App) -> bool {
         self.workspace_mode() == WorkspaceMode::Editor
             && !self.home_in_front()
-            && !self.has_active_modal()
-            && !self.op_latched()
             && self.ui().editor_workspace.as_ref().is_some_and(|editor| {
                 let view = editor.read(cx);
                 view.dirty
@@ -697,7 +703,9 @@ impl KagiApp {
     /// buffer if it's open and dirty; no-op otherwise (closed workspace,
     /// clean buffer, or the "Save" keystroke firing on the wrong tab).
     pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
-        if !self.editor_save_available(cx) {
+        // Availability disables native menus, but a dispatched request must
+        // still reach writer admission and explain a competing lease.
+        if !self.editor_save_dispatch_available(cx) {
             return;
         }
         let Some(ev) = self.ui().editor_workspace.clone() else {

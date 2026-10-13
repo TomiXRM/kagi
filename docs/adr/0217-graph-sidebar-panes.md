@@ -87,13 +87,14 @@ Git, modal, keyboard and accessibility behavior are otherwise unchanged.
 
 This is the fit for the non-collapsed (≥1000px) layout. #1225 on
 `feature/compact-layout` handles <1000px by collapsing auxiliary panes; it is
-complementary, not another breakpoint in this change. The current non-collapsed
-940px regression exercises the fit before that separate branch is integrated.
+complementary, not another breakpoint in this change.
 
-Native Tier A `pane_budget_fit` covers EN/JA defaults at 940×660 / 167%,
-diff-header containment, exact unchanged wide-window edges at 1392×883 / 100%,
-capped divider drags, preference restoration after widening and sub-minimum
-fallback. Neighbor scenarios are `diff_`, `graph_`, `sidebar_panes`, `inspector_`.
+After integration, native Tier A `pane_budget_fit` covers EN/JA defaults at the
+exact 1000×660 / 167% desktop breakpoint, diff-header containment, exact unchanged
+wide-window edges at 1392×883 / 100%, capped divider drags, preference restoration
+after widening and the sub-breakpoint compact rail. Pure unit coverage retains
+the non-collapsed sub-minimum fitting fallback.
+Neighbor scenarios are `diff_`, `graph_`, `sidebar_panes`, `inspector_`.
 These geometry/input assertions are not native VoiceOver or Tier B evidence.
 
 Inspector's complete-message regression retains simultaneous containment for

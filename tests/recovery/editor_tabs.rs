@@ -267,6 +267,7 @@ fn assert_extra_tab_counts(
                     assert_eq!(view.open_tabs.len(), count);
                     assert_eq!(view.open_path.as_deref(), Some(Path::new(&retained[index])));
                     let strip = view.tab_strip_bounds_for_e2e().expect("actual tab viewport");
+                    assert!(strip.size.width >= theme::scaled_px(180.) - px(1.), "Editor fitting must reserve its full maximum-width tab, including beside a compact rail: {strip:?}");
                     let probes = view.tab_probes_for_e2e();
                     assert_eq!(probes.len(), count);
                     for (probe, path) in probes.iter().zip(retained) {
@@ -359,12 +360,15 @@ fn assert_compact_divider_drags(
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
 ) {
-    let available = cx
+    let window_width = cx
         .update_window(window, |_, window, _| window.viewport_size().width)
         .unwrap();
-    if available != px(940.) || (theme::zoom() - 1.67).abs() > 0.001 {
+    if window_width != px(940.) || (theme::zoom() - 1.67).abs() > 0.001 {
         return;
     }
+    let left =
+        e2e::control_bounds(window.window_id(), "compact-rail").map_or(px(0.), |rail| rail.right());
+    let available = window_width - left;
     let widths = cx.read(|cx| {
         let view = editor.read(cx);
         assert!(view.show_tree);
@@ -375,7 +379,7 @@ fn assert_compact_divider_drags(
         (view.tree_w, view.hunks_w)
     });
     for tree in [true, false] {
-        assert_one_pixel_divider_drag(cx, editor, window, available, tree);
+        assert_one_pixel_divider_drag(cx, editor, window, left, available, tree);
         editor.update(cx, |view, cx| {
             (view.tree_w, view.hunks_w) = widths;
             cx.notify();
@@ -388,6 +392,7 @@ fn assert_one_pixel_divider_drag(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
     window: AnyWindowHandle,
+    left: Pixels,
     available: Pixels,
     tree: bool,
 ) {
@@ -397,7 +402,8 @@ fn assert_one_pixel_divider_drag(
             view.divider_bounds_for_e2e(tree)
                 .expect("actual native Editor divider"),
             (view.tree_w, view.hunks_w),
-            view.pane_width_fraction(available),
+            f32::from(available - theme::scaled_px(180. + 8.))
+                / theme::scaled(view.tree_w + view.hunks_w),
         )
     });
     let start = bounds.center();
@@ -431,14 +437,26 @@ fn assert_one_pixel_divider_drag(
         !cx.read(|cx| cx.has_active_drag()),
         "native mouse-up ends divider drag"
     );
-    let delta = 1. / (theme::scaled(1.) * fraction);
+    // Convert the actual cursor independently, including the measured rail.
+    // Native divider bounds can round to half pixels: adding an idealized
+    // delta to the preference would ignore that real press-coordinate rounding.
+    let scale = theme::scaled(1.);
+    let requested = if tree {
+        f32::from(end.x - left) - 2. * scale
+    } else {
+        f32::from(left + available - end.x) - 2. * scale
+    } / (scale * fraction);
     cx.read(|cx| {
         let view = editor.read(cx);
         let expected = if tree {
-            (before.0 + delta, before.1)
+            (requested, before.1)
         } else {
-            (before.0, before.1 - delta)
+            (before.0, requested)
         };
+        assert!(
+            if tree { view.tree_w > before.0 } else { view.hunks_w < before.1 },
+            "the real one-pixel pointer move must change its pane preference"
+        );
         assert!(
             (view.tree_w - expected.0).abs() < 0.05
                 && (view.hunks_w - expected.1).abs() < 0.05,

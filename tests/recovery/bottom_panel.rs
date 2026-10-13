@@ -144,6 +144,7 @@ pub fn scenario_bottom_panel_nested(cx: &mut VisualTestAppContext) {
 /// #1205 / #1206: manual keyboard activation and persistent selection paint.
 pub fn scenario_bottom_panel_tab_hover(cx: &mut VisualTestAppContext) {
     use kagi::ui::{i18n::Lang, BottomTab};
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
     let restore_globals = crate::recovery_layout::GlobalSettings::capture();
     struct RestoreTheme(String);

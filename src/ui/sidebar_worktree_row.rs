@@ -369,7 +369,8 @@ pub(super) fn build_worktree_row(
         .flex_row()
         .items_center()
         .px_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(text_color))
         .overflow_hidden()
         // #855: the name identifies the row and does not shrink. The tree

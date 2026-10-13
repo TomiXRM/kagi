@@ -145,6 +145,30 @@ fn copy_all_equivalent_command_heading_is_localized() {
 }
 
 #[test]
+fn compact_composer_localizes_prose_and_keeps_git_controls_english() {
+    assert_eq!(Msg::BottomTabChanges.t_for(Lang::En), "Changes");
+    assert_eq!(Msg::BottomTabChanges.t_for(Lang::Ja), "変更");
+    assert_eq!(
+        Msg::CompactCommitComposer.t_for(Lang::Ja),
+        "Commit メッセージ"
+    );
+    assert_eq!(
+        Msg::CompactCommitClose.t_for(Lang::Ja),
+        "Commit の入力を閉じる"
+    );
+    assert_eq!(
+        Msg::CommitPanelNothingUnstaged.t_for(Lang::En),
+        "No unstaged changes"
+    );
+    assert_eq!(
+        Msg::CommitPanelNothingUnstaged.t_for(Lang::Ja),
+        "未 stage の変更がありません"
+    );
+    assert_eq!(Msg::CompactCommitAffordance.t_for(Lang::En), "Commit…");
+    assert_eq!(Msg::CompactCommitAffordance.t_for(Lang::Ja), "Commit…");
+}
+
+#[test]
 fn commit_panel_chrome_has_japanese_without_english_fallbacks() {
     for (message, japanese) in [
         (Msg::CommitPanelTitle, "Commit Panel"),

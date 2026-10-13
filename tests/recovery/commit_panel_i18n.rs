@@ -96,6 +96,26 @@ fn check_languages(
                 .as_deref(),
             Some(TEMPLATE)
         );
+        // Compact captions include the pinned composer, but its Popover covers
+        // the separate Changes headers. Dismiss through the real close button
+        // before exercising the real List/Tree pointer target.
+        if dimensions.0 < 1000. {
+            let close = e2e::control_bounds(window.window_id(), "compact-popup-close").unwrap();
+            cx.simulate_mouse_down(
+                window,
+                close.center(),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::none(),
+            );
+            cx.simulate_mouse_up(
+                window,
+                close.center(),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::none(),
+            );
+            cx.run_until_parked();
+            draw(cx, window, dimensions);
+        }
         let tree = e2e::control_bounds(window.window_id(), "cp-view-tree").unwrap();
         cx.simulate_mouse_down(
             window,
@@ -119,6 +139,15 @@ fn check_languages(
             e2e::commit_panel_labels::accessible_selected("cp-view-list"),
             Some(false)
         );
+        if dimensions.0 < 1000. {
+            // Real staged/unstaged fixture data keeps the WIP anchor reachable;
+            // reopen the same owner for the next locale's composer captions.
+            cx.simulate_keystrokes(window, "cmd-enter");
+            for _ in 0..4 {
+                cx.run_until_parked();
+                draw(cx, window, dimensions);
+            }
+        }
         drop(panel);
     }
 }

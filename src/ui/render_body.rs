@@ -107,6 +107,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let compact = self.compact.enabled;
         // ADR-0120: rendering and keyboard routing resolve the same center
         // from the same gates; precedence lives only in `resolve_workspace`.
         let layout = workspace::resolve_workspace(&self.workspace_inputs(
@@ -114,6 +115,15 @@ impl KagiApp {
             commit_panel.is_some(),
             detail.is_some(),
         ));
+        if compact {
+            if self.bottom_tab == BottomTab::Changes || self.compact.popup_owner.is_some() {
+                let _ = self.prepare_commit_panel_presentation(window, cx);
+            }
+            if layout.center != workspace::CenterPane::CommitList {
+                self.close_compact_composer(window, cx);
+                self.compact.wip_bounds.set(None);
+            }
+        }
 
         // The sidebar follows its toggle (#955); the right slot follows
         // resolved visibility (#1001). Whole-workspace takeovers stay instant.
@@ -124,7 +134,7 @@ impl KagiApp {
             sidebar_shown,
             self.sidebar.visible,
             motion_now,
-            motion_instant,
+            motion_instant || compact,
         );
         let right_shown = matches!(
             layout.right,
@@ -143,11 +153,21 @@ impl KagiApp {
             selected,
             graph_body,
             motion_now,
-            motion_instant,
+            motion_instant || compact,
         );
-        let sidebar_fraction = self.panel_motion.sidebar.visible(motion_now);
-        let right_fraction = self.panel_motion.right.visible(motion_now);
-        let right_pane = if right_shown {
+        let sidebar_fraction = if compact {
+            0.
+        } else {
+            self.panel_motion.sidebar.visible(motion_now)
+        };
+        let right_fraction = if compact {
+            0.
+        } else {
+            self.panel_motion.right.visible(motion_now)
+        };
+        let right_pane = if compact {
+            None
+        } else if right_shown {
             Some(layout.right)
         } else {
             self.panel_motion.right_pane.filter(|_| right_fraction > 0.)
@@ -161,13 +181,18 @@ impl KagiApp {
             self.sidebar.width,
             right_width,
             f32::from(window.viewport_size().width),
-            sidebar_shown || sidebar_fraction > 0.,
-            right_shown || right_fraction > 0.,
+            !compact && (sidebar_shown || sidebar_fraction > 0.),
+            !compact && (right_shown || right_fraction > 0.),
             right_pane != Some(workspace::RightPane::CommitPanel),
         );
         let sidebar_width = self.pane_fit.sidebar;
         let right_width = self.pane_fit.right;
         let center_width = (f32::from(window.viewport_size().width)
+            - if compact {
+                theme::scaled(super::compact::RAIL_WIDTH)
+            } else {
+                0.
+            }
             - theme::scaled(sidebar_width + 4.) * sidebar_fraction
             - theme::scaled(right_width + 4.) * right_fraction)
             .max(0.);
@@ -317,6 +342,17 @@ impl KagiApp {
             let wip_anchors = graph_wip::lanes_for_rows(&self.view().wip_lanes, &row_targets);
             (params, wip_anchors)
         };
+        let composer_row = if self.compact.enabled {
+            wip_params
+                .iter()
+                .position(|params| self.compact_wip_anchor(&params.5, cx))
+        } else {
+            None
+        };
+        if self.compact.enabled && self.compact.popup_owner.is_some() && composer_row.is_none() {
+            self.close_compact_composer(window, cx);
+            self.compact.wip_bounds.set(None);
+        }
         let mut wip_passing_lanes = Vec::new();
         for anchor in wip_anchors.iter().flatten() {
             let trace = (anchor.lane, anchor.color);
@@ -517,6 +553,11 @@ impl KagiApp {
             .h_full()
             .flex()
             .flex_col()
+            .when(compact, |column| {
+                column
+                    .relative()
+                    .child(e2e::measure_inside("compact-graph"))
+            })
             // ── Column header row (T030) ──────────────
             .child(col_header)
             // WIP, stash and commit rows share one scroll origin.
@@ -543,6 +584,15 @@ impl KagiApp {
                                 prefix_count + row_count,
                                 cx.processor(
                                     move |this, range: std::ops::Range<usize>, _window, cx| {
+                                        if this.compact.enabled
+                                            && this.compact.popup_owner.is_some()
+                                            && composer_row
+                                                .is_some_and(|row| !this.compact_wip_visible(row))
+                                        {
+                                            this.close_compact_composer(_window, cx);
+                                            this.compact.wip_bounds.set(None);
+                                            cx.notify();
+                                        }
                                         let rows_len = this.view().rows.len();
                                         let compact = this.graph_compact;
                                         let mut els = Vec::with_capacity(range.len());
@@ -674,7 +724,8 @@ impl KagiApp {
                 mode,
                 workspace_mode::WorkspaceMode::Prs | workspace_mode::WorkspaceMode::Issues
             );
-        self.sync_sidebar_focus(panes_front, window, cx);
+        let rail_front = compact && super::compact_sidebar::is_open(window, cx);
+        self.sync_sidebar_focus(panes_front || rail_front, window, cx);
 
         let mut body_row = div()
             .id("repo-tab-panel")
@@ -687,7 +738,9 @@ impl KagiApp {
         // ── Left slot (W5-MENU: hidden when toggled off) ──
         // Drawn while it is shown or still closing; the divider travels with
         // the sidebar's edge inside the clip, which hangs it from the right.
-        if sidebar_fraction > 0. {
+        if compact {
+            body_row = body_row.child(super::compact_sidebar::render(self, window, cx));
+        } else if sidebar_fraction > 0. {
             // `mode` is this frame's, read above.
             let sidebar = div()
                 .flex()
@@ -726,9 +779,10 @@ impl KagiApp {
         let panel_visible = self.panel_motion.bottom.visible(motion_now);
         // Fit only the presentation; shrinking a window or increasing zoom
         // must not replace the larger preferred height.
-        let max_height = (f32::from(window.viewport_size().height) * BOTTOM_PANEL_MAX_FRAC
-            / theme::scaled(1.))
-        .max(BOTTOM_PANEL_MIN_H);
+        let max_height = super::render_bottom::max_body_height(
+            window,
+            matches!(layout.center, workspace::CenterPane::Editor),
+        );
         let panel_height = self
             .bottom_panel_height
             .clamp(BOTTOM_PANEL_MIN_H, max_height);
@@ -846,6 +900,7 @@ impl KagiApp {
         // nothing, exactly as the old per-field arms did.
         // Drawn while shown or still closing (then the pane last shown); the
         // divider travels with the pane's edge inside the clip.
+
         let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
             self.panel_motion.inspector_row.and_then(|row| {
                 self.ui_mut()?.sync_inspector_commit_files(row);

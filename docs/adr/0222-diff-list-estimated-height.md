@@ -39,7 +39,7 @@ genuine Before FAIL は GPUI regression
 geometry oracle は収まらない行や card に全体包含を要求しない：
 
 - 通常 tail は全体が viewport 内。oversized tail は下端差 ≤ 1px かつ上端が viewport 上端より上。
-- oversized first content row は native item 0 / offset 0 に戻り、hunk header 上端と viewport 上端、first row 上端と header 下端の差が各 ≤ 1px、first row 下端が viewport 下端より下。収まる行は全体包含。
+- first content row と先行 hunk header の合計高さが viewport を超える場合、native item 0 / offset 0 に戻り、hunk header 上端と viewport 上端、first row 上端と header 下端の差が各 ≤ 1px、first row 下端が viewport 下端より下。header と first row が一緒に収まる場合は first row の全体包含を要求する。
 - thread card が `viewport.height − badge.height` より高ければ badge は全体包含、card 上端は badge 下端 − 1px 以降、body 上端は viewport 内、body は card 内。収まる card と badge は両方全体包含。
 - collapse は item count を 1 減らし、item 9 を code row に戻す（row 8 の高さとの差 ≤ 1px）。`pre.extent − collapsed.extent` は正で、少なくとも `expansion.height − viewport.height`。新しく露出する行の実測を許す。
 

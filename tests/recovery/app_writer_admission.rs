@@ -48,6 +48,20 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
             .to_string()
     });
     assert_ne!(edited.as_bytes(), before.as_slice());
+    // The root must keep Cmd-S registered while a writer owns this repository.
+    // A disabled native menu item must not silently disable the shortcut.
+    cx.update_window(window, |_, window, cx| window.draw(cx).clear())
+        .unwrap();
+    cx.simulate_keystrokes(window, "cmd-s");
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| matches!(&app.read(cx).status_footer,
+            FooterStatus::Failed(message) if message.as_ref() == Msg::OpInProgress.t())),
+        "busy Cmd-S must visibly refuse with OpInProgress"
+    );
+    assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases() && editor.read(cx).dirty));
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
 
     // Exercise save_editor_file → SaveRequested → reserve_write, not a direct
     // invocation of the pane executor or a manually raised Busy notification.
@@ -84,6 +98,13 @@ pub fn scenario_editor_save_admission(cx: &mut VisualTestAppContext) {
 
     guard.complete();
     assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+    // The visible Busy refusal remains a modal until the user dismisses it.
+    // Releasing the lease alone must not make Save operate behind that modal.
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    assert_eq!(std::fs::read(repo.join("README.md")).unwrap(), before);
+    app.update(cx, |app, cx| app.confirm_app_notice(cx));
     app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

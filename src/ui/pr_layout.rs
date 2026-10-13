@@ -25,16 +25,23 @@ pub(super) struct Layout {
 }
 impl Layout {
     pub fn for_window(app: &KagiApp, window: &Window) -> Self {
-        let width = window.viewport_size().width;
+        let compact = super::compact::for_window(window);
+        let width = window.viewport_size().width
+            - if compact {
+                theme::scaled_px(super::compact::RAIL_WIDTH)
+            } else {
+                px(0.)
+            };
         let center = theme::scaled_px(CENTER_MIN);
         let navigator_width = theme::scaled_px(app.sidebar.width + 4.);
         let lane_width = theme::scaled_px(super::pr_lane::MAX_PANE_WIDTH + 4.);
         let has_tab = app.pr_mode().is_some_and(|m| m.active.is_some());
-        let navigator = app.sidebar.visible && (!has_tab || width >= center + navigator_width);
+        let navigator =
+            !compact && app.sidebar.visible && (!has_tab || width >= center + navigator_width);
         let lane_fits = width
             >= center
                 + lane_width
-                + if app.sidebar.visible {
+                + if app.sidebar.visible && !compact {
                     navigator_width
                 } else {
                     px(0.)
@@ -46,7 +53,7 @@ impl Layout {
         let drawer = app.pr_mode().and_then(|m| m.companion).filter(|pane| {
             has_tab
                 && match pane {
-                    Companion::Navigator => app.sidebar.visible && !navigator,
+                    Companion::Navigator => !compact && app.sidebar.visible && !navigator,
                     Companion::Swimlane => !lane_fits,
                 }
         });

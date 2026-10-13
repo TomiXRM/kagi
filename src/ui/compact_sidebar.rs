@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use gpui::{
     div, prelude::*, px, rgb, svg, Anchor, AnyElement, App, Context, Div, Entity, FocusHandle,
-    Focusable, IntoElement, RenderOnce, Role, Stateful, WeakEntity, Window,
+    Focusable, IntoElement, RenderOnce, Role, ScrollHandle, Stateful, WeakEntity, Window,
 };
 use gpui_component::{
     popover::{Popover, PopoverState},
@@ -55,6 +55,8 @@ struct RailState {
     root: Option<FocusHandle>,
     reset: bool,
     focus_pending: bool,
+    filter_pending: bool,
+    scroll: ScrollHandle,
 }
 
 #[derive(Default)]
@@ -79,6 +81,8 @@ fn render_state(window: &mut Window, cx: &mut App) -> Entity<RailState> {
         root: None,
         reset: false,
         focus_pending: false,
+        filter_pending: false,
+        scroll: ScrollHandle::new(),
     });
     let cache = cx.default_global::<RailCache>();
     cache.0.retain(|_, state| state.upgrade().is_some());
@@ -101,6 +105,33 @@ impl RailState {
 
 pub(super) fn is_open(window: &mut Window, cx: &mut Context<KagiApp>) -> bool {
     state(window, cx).is_some_and(|state| state.read(cx).active.is_some())
+}
+
+/// GitHub navigator filters exclusively own the shared chips over the dashboard.
+pub(super) fn owns_list_filter(window: &Window, cx: &App) -> bool {
+    state(window, cx).is_some_and(|state| matches!(state.read(cx).active, Some(5 | 6)))
+}
+
+/// Cmd-F opens the existing Graph pane, then focuses its rendered shared Input.
+pub(super) fn focus_filter(window: &mut Window, cx: &mut Context<KagiApp>) {
+    let Some(cached) = state(window, cx) else {
+        return;
+    };
+    let index = cached
+        .read(cx)
+        .active
+        .filter(|index| *index < 5)
+        .unwrap_or(0);
+    open_changed(
+        &cached.downgrade(),
+        &cx.weak_entity(),
+        index,
+        true,
+        window,
+        cx,
+    );
+    cached.update(cx, |state, _| state.filter_pending = true);
+    cx.notify();
 }
 
 /// Used by the shared sidebar focus owner: only the visible tree owns rows.
@@ -129,6 +160,7 @@ pub(super) fn dismiss(window: &mut Window, cx: &mut Context<KagiApp>) {
         state.active = None;
         state.previous = None;
         state.focus_pending = false;
+        state.filter_pending = false;
     });
     for popover in popovers.into_iter().flatten() {
         popover.update(cx, |state, cx| state.dismiss(window, cx));
@@ -181,7 +213,12 @@ pub(super) fn render(app: &KagiApp, window: &mut Window, cx: &mut Context<KagiAp
         state.root = app.root_focus.clone();
         state.owner = app.active_session();
     });
-    let mut rail = div()
+    let scroll = cached.read(cx).scroll.clone();
+    if let Some(index) = cached.read(cx).triggers.focused(window) {
+        // The sixth child is the tall-window flexible separator.
+        scroll.scroll_to_item(index + usize::from(index >= 5));
+    }
+    let rail = div()
         .id("compact-rail")
         .relative()
         .w(theme::scaled_px(super::compact::RAIL_WIDTH))
@@ -191,10 +228,8 @@ pub(super) fn render(app: &KagiApp, window: &mut Window, cx: &mut Context<KagiAp
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .items_center()
-        .py(theme::scaled_px(4.))
-        .gap(theme::scaled_px(4.))
         .bg(rgb(theme().sidebar))
+        .overflow_hidden()
         .child(super::e2e::measure_inside("compact-rail"))
         .child(
             div()
@@ -205,14 +240,27 @@ pub(super) fn render(app: &KagiApp, window: &mut Window, cx: &mut Context<KagiAp
                 .h_full()
                 .bg(rgb(theme().surface)),
         );
+    let mut controls = div()
+        .id("compact-rail-scroll")
+        .w_full()
+        .h_full()
+        .flex_1()
+        .min_h(px(0.))
+        .overflow_y_scroll()
+        .track_scroll(&scroll)
+        .flex()
+        .flex_col()
+        .items_center()
+        .py(theme::scaled_px(4.))
+        .gap(theme::scaled_px(4.));
     for index in 0..5 {
-        rail = rail.child(control(app, index, &cached, window, cx));
+        controls = controls.child(control(app, index, &cached, window, cx));
     }
-    rail = rail.child(div().flex_1().min_h(px(0.)));
+    controls = controls.child(div().flex_1().min_h(px(0.)));
     for index in 5..7 {
-        rail = rail.child(control(app, index, &cached, window, cx));
+        controls = controls.child(control(app, index, &cached, window, cx));
     }
-    rail.into_any_element()
+    rail.child(controls).into_any_element()
 }
 
 fn content(app: &KagiApp, index: usize, window: &Window, cx: &mut Context<KagiApp>) -> AnyElement {
@@ -246,6 +294,15 @@ fn content(app: &KagiApp, index: usize, window: &Window, cx: &mut Context<KagiAp
             app.ui().issue_view(app.issue_host_login()).order.len()
         };
         panel = panel.child(super::list_filter_strip::render_strip(app, kind, count, cx));
+        #[cfg(feature = "gui-e2e")]
+        if index == 5 {
+            if let Some(mode) = app.pr_mode() {
+                super::e2e::compact_rail::record_pr_scroll(
+                    window.window_handle().window_id(),
+                    &mode.navigator_scroll,
+                );
+            }
+        }
         panel = panel.child(if index == 5 {
             super::pr_nav::render_compact_pr_list(app, cx)
         } else {
@@ -274,6 +331,14 @@ fn control(
         None
     };
     let first_header = (index < 5).then(|| app.sidebar.focus.headers.get(index, cx));
+    let filter = (index < 5)
+        .then(|| {
+            app.sidebar
+                .filter
+                .as_ref()
+                .map(|input| input.focus_handle(cx))
+        })
+        .flatten();
     Popover::new(("compact-sidebar-popover", index))
         .appearance(false)
         .overlay_closable(true)
@@ -287,18 +352,24 @@ fn control(
             index,
             selected: open,
             state: cached.downgrade(),
-            app: cx.weak_entity(),
             focus: cached.read(cx).triggers.get(index, cx),
         })
         .content(move |popover_state, window, cx| {
             let popover = cx.entity();
             let focus = popover_state.focus_handle(cx);
-            let take_focus = retained.update(cx, |state, _| {
+            let (take_focus, take_filter) = retained.update(cx, |state, _| {
                 state.popovers[index] = Some(popover);
                 state.content_focus[index] = Some(focus.clone());
-                std::mem::take(&mut state.focus_pending)
+                (
+                    std::mem::take(&mut state.focus_pending),
+                    std::mem::take(&mut state.filter_pending),
+                )
             });
-            if take_focus {
+            if take_filter {
+                if let Some(filter) = &filter {
+                    filter.focus(window, cx);
+                }
+            } else if take_focus {
                 focus.focus(window, cx);
                 if let Some(rows) = first_rows.as_ref().filter(|rows| rows.has_stop()) {
                     rows.focus_stop(window, cx);
@@ -377,6 +448,7 @@ fn open_changed(
                 let restore = !state.reset && (state.owns_focus(window, cx) || focused.is_none());
                 state.active = None;
                 state.focus_pending = false;
+                state.filter_pending = false;
                 state.previous.take().filter(|_| restore)
             } else {
                 None
@@ -444,7 +516,6 @@ struct RailTrigger {
     index: usize,
     selected: bool,
     state: WeakEntity<RailState>,
-    app: WeakEntity<KagiApp>,
     focus: FocusHandle,
 }
 
@@ -465,6 +536,7 @@ impl RenderOnce for RailTrigger {
         keyboard_nav::focusable(div().id(IDS[index]))
             .role(Role::Button)
             .aria_label(LABELS[index].t())
+            .aria_expanded(self.selected)
             .track_focus(&self.focus.tab_index(0).tab_stop(true))
             .w(theme::scaled_px(36.))
             .h(theme::scaled_px(32.))
@@ -497,7 +569,25 @@ impl RenderOnce for RailTrigger {
             })
             .on_click(move |event, window, cx| {
                 if event.is_keyboard() {
-                    open_changed(&self.state, &self.app, index, true, window, cx);
+                    let focused = window.focused(cx);
+                    let _ = self.state.update(cx, |state, _| {
+                        if state.active.is_none() {
+                            state.previous = focused;
+                        }
+                    });
+                    let popover = self
+                        .state
+                        .upgrade()
+                        .and_then(|state| state.read(cx).popovers[index].clone());
+                    if let Some(popover) = popover {
+                        popover.update(cx, |state, cx| {
+                            if state.is_open() {
+                                state.dismiss(window, cx);
+                            } else {
+                                state.show(window, cx);
+                            }
+                        });
+                    }
                 }
             })
     }

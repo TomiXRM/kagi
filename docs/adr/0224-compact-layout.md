@@ -389,3 +389,37 @@ Narrow windows gain graph space without changing toolbar or graph geometry.
 Commit state survives relocation because ownership does not move or duplicate.
 The compact surfaces add placement and dismissal responsibilities, but no second
 commit workflow, new read store, persisted layout mode, or wide-layout redesign.
+
+## Amendment — 2026-10-14: compact navigator reachability (#1491–#1494, #1502)
+
+The rail remains a dense Finder-inspired navigator, using the existing named
+controls and kit Popover rather than a parallel overflow navigation model.
+Its seven controls retain their natural heights; the rail scrolls when the
+workspace is short and reveals the actual keyboard-focused trigger. Tall-window
+spacing, the 1000-logical-pixel breakpoint and restored window-size policy stay
+unchanged.
+
+Cmd-F in compact Graph opens the current Graph navigator through the same rail
+owner and focuses the existing sidebar Input only once its Popover is rendered.
+The Input entity and filter value remain shared with wide Graph. Dismissal and
+width/session/modal transitions use the existing focus return and owner guards,
+never leaving focus on hidden input content.
+
+Triggers publish the current single-open owner's expanded state. Enter/Space
+toggle that same state, including closing a Popover on reactivation. Shared
+PR/Issue section headings use retained keyboard focus, localized names and
+expanded state; Issue category selection also publishes selected state.
+Activation retains the original sections_open/github_issue_tab callbacks and
+does not dismiss the enclosing navigator.
+
+The compact PR navigator tracks its natural-height body with a ScrollHandle
+owned by the session's existing PrModeState and uses the same system-policy
+vertical scrollbar wrapper as Graph. No forced Always policy, permanent
+automatic-mode lane, copied PR state or cross-repository scroll owner is added.
+
+While a GitHub navigator is open, it is the sole rendered projection of the
+shared filter Input and chip focus slots. The PR dashboard and Issue feed
+suspend their duplicate strips until dismissal; otherwise one focused handle
+would produce two real AX nodes and simultaneous Input projections. The filter
+value is never copied.
+

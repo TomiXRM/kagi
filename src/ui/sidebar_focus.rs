@@ -211,6 +211,19 @@ impl KagiApp {
             return;
         }
         self.sidebar.visible = true;
+        if self.sidebar.filter.is_none() {
+            let input = cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .placeholder(super::i18n::Msg::HomeGithubFilter.t())
+            });
+            cx.observe(&input, |_, _, cx| cx.notify()).detach();
+            self.sidebar.filter = Some(input);
+            self.sidebar.filter_placeholder_lang = Some(super::i18n::lang());
+        }
+        if super::compact::for_window(window) {
+            super::compact_sidebar::focus_filter(window, cx);
+            return;
+        }
         if let Some(input) = &self.sidebar.filter {
             input.update(cx, |input, cx| input.focus(window, cx));
         }

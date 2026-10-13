@@ -87,6 +87,11 @@ pub(super) fn render_main_issue_list(
         }
         match index {
             0 => issues_composer::render_composer(app, None, window, cx),
+            1 if crate::ui::compact_sidebar::owns_list_filter(window, cx) => {
+                // The navigator is the sole projection of these shared Input
+                // and chip focus owners until its Popover is dismissed.
+                div().into_any_element()
+            }
             1 => list_filter_strip::render_strip(
                 app,
                 list_filter_strip::ListKind::Issues,

@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/time_locale.rs"]
+mod time_locale;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/open_picker.rs"]
 mod open_picker;
 
@@ -389,6 +393,9 @@ mod overlay_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
+#[cfg(target_os = "macos")]
+#[path = "recovery/settings_analyze.rs"]
+mod settings_analyze;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_appearance_ax.rs"]
 mod settings_appearance_ax;
@@ -1346,6 +1353,7 @@ mod macos {
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
             ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_paste_control", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_control)),
             ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
             ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
@@ -1475,6 +1483,14 @@ mod macos {
             (
                 "pr_filter_strip_keyboard",
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
+            ),
+            (
+                "relative_time_ja",
+                Box::new(crate::time_locale::scenario_relative_time_ja),
+            ),
+            (
+                "cleanup_local_date",
+                Box::new(crate::time_locale::scenario_cleanup_local_date),
             ),
             (
                 "pr_dashboard_responsive",
@@ -2589,6 +2605,26 @@ mod macos {
             (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
+            ),
+            (
+                "settings_analyze_reset_confirm",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_confirm),
+            ),
+            (
+                "settings_analyze_portable_reset",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_portable_reset),
+            ),
+            (
+                "settings_analyze_reset_preserves_plan",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_preserves_plan),
+            ),
+            (
+                "settings_help_text",
+                Box::new(crate::settings_analyze::scenario_settings_help_text),
+            ),
+            (
+                "settings_analyze_save_state",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_save_state),
             ),
             (
                 "settings_switches",

@@ -76,6 +76,8 @@ pub(crate) fn render_rows(
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
+    // One reference instant for visible ages and their accessibility descriptions.
+    let now = kagi_ui_core::time::now_unix_secs();
 
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
@@ -206,7 +208,7 @@ pub(crate) fn render_rows(
                 div().id(ix),
                 a11y_offset_size.0 + ix,
                 a11y_offset_size.1,
-                super::list_a11y::commit_label(row),
+                super::list_a11y::commit_label(row, now),
                 is_selected,
             )
             .relative()
@@ -459,7 +461,7 @@ pub(crate) fn render_rows(
                 el.child(badges::render_provenance_badge(prov, ix))
             })
             .child(metadata::author(row, ix))
-            .child(metadata::age(row, ix))
+            .child(metadata::age(row, ix, now))
         })
         .collect()
 }

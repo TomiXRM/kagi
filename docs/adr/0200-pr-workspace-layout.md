@@ -765,6 +765,30 @@ and active/inactive presentation. Theme-token assertions alone do not prove
 composited text contrast. Keyboard/VoiceOver delivery remains separate Tier B
 evidence, not a claim from the ListItem recorder.
 
+## Amendment — 2026-10-13: dashboard keyboard ownership (#1408, #1413, #1414)
+
+The dense dashboard uses the existing RowFocus/RowList rather than a second
+keyboard abstraction. PR numbers are stable keys within the session-owned
+repository list; a single roving Tab stop supports arrows, Home/End and
+viewport-sized PageUp/PageDown. The uniform list reveals the destination,
+including a retained focused identity after refresh/reorder. Enter/Space reuse
+the exact existing PR-open listener; paging remains outside the row owner.
+
+This supersedes the prior amendment's action-only List/ListItem semantics:
+ListBox/options now expose the keyboard-focused PR as selected, with a quiet
+selection fill and the shared keyboard-only ring. Pointer opening is unchanged.
+Filter/sort/direction/Clear/Refresh and detail All PRs/Refresh keep their dense
+geometry and existing EN/JA labels, adding Button role, retained focus and
+Space/Enter activation. Filter popovers use the existing MenuKeys lifecycle:
+choices take focus, arrows/Home/End navigate, activation applies the choice,
+and dismissal restores trigger focus; the label chooser retains multi-select.
+No new design system or Git mutation path is introduced. Empty/failed Refresh
+starts one read and yields focus when its button disappears on successful load.
+
+Tier A `pr_dashboard_keyboard` and `pr_filter_strip_keyboard` cover both
+940×660 and 1392×883, EN/JA and 100%/167%. Native VoiceOver delivery and
+Full Keyboard Access remain real-window checks, not renderer-record evidence.
+
 ## Amendment — 2026-10-13: PR lane keyboard, selection and count (#1409, #1410, #1412)
 
 The dense companion lane retains its graph geometry and uses shared

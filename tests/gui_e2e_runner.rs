@@ -496,6 +496,10 @@ mod file_history_open;
 mod inspector_history_keyboard;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_density.rs"]
+mod commit_panel_density;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
 mod editor_snapshot_readonly;
 
@@ -3061,6 +3065,7 @@ mod macos {
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
             ),
+            ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             (
                 "inspector_files_keyboard",
                 Box::new(crate::inspector_history_keyboard::inspector),

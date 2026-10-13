@@ -1571,20 +1571,16 @@ where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
     let seg = |label: &str, active: bool| {
-        let accent = if active {
-            if !window_active {
-                theme().text_main
-            } else {
-                theme().accent_text_on(theme().ui_selected())
-            }
+        let foreground = if active {
+            theme().selection_foreground(window_active)
         } else {
-            theme().text_sub
+            rgb(theme().text_sub).into()
         };
         div()
             .px(theme::scaled_px(7.))
             .py(theme::scaled_px(2.))
             .text_size(theme::scaled_px(10.))
-            .text_color(rgb(accent))
+            .text_color(foreground)
             .when(active, |s| s.bg(theme().selected_for_window(window_active)))
             .child(SharedString::from(label.to_string()))
     };

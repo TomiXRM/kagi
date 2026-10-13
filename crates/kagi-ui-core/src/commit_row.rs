@@ -18,7 +18,7 @@
 //! uses.
 
 use gpui::prelude::*;
-use gpui::{div, px, rgb, Div, SharedString, Stateful};
+use gpui::{div, px, rgb, Div, Hsla, SharedString, Stateful};
 
 use kagi_domain::file_history::{FileHistoryEntry, FileHistoryEntryKind};
 
@@ -123,13 +123,13 @@ pub fn commit_row_model(entry: &FileHistoryEntry, now: i64) -> CommitRowModel {
 }
 
 /// Row background: selection wins, then zebra striping by visible position.
-pub fn row_background(is_selected: bool, ix: usize) -> u32 {
+pub fn row_background(is_selected: bool, ix: usize, window_active: bool) -> Hsla {
     if is_selected {
-        theme().selected
+        theme().selected_for_window(window_active)
     } else if ix % 2 == 1 {
-        theme().bg_row_alt
+        rgb(theme().bg_row_alt).into()
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     }
 }
 
@@ -144,11 +144,32 @@ pub fn render_commit_row(
     model: &CommitRowModel,
     layout: CommitRowLayout,
     is_selected: bool,
+    window_active: bool,
 ) -> Stateful<Div> {
+    let foreground = if is_selected {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(theme().text_main).into()
+    };
+    let secondary_foreground = if is_selected {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_sub).into()
+    };
+    let muted_foreground = if is_selected {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_muted).into()
+    };
+    let badge_foreground = if is_selected {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(model.badge_color).into()
+    };
     let base = div()
         .id((id, ix))
         .w_full()
-        .bg(rgb(row_background(is_selected, ix)))
+        .bg(row_background(is_selected, ix, window_active))
         .cursor_pointer()
         // Hover uses the subtle `surface` tint (like the commit panel / branch
         // list), NOT `selected` — using the selection colour made a hovered row
@@ -166,35 +187,35 @@ pub fn render_commit_row(
             .py_px()
             .h(px(row_height))
             .flex_shrink_0()
-            .child(fixed_col(18., model.badge_color, true, model.badge.into()))
+            .child(fixed_col(18., badge_foreground, true, model.badge.into()))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(0.))
                     .text_sm()
-                    .text_color(rgb(theme().text_main))
+                    .text_color(foreground)
                     .truncate()
                     .child(model.subject.clone()),
             )
             .child(
-                fixed_col(90., theme().text_sub, false, model.author.clone())
+                fixed_col(90., secondary_foreground, false, model.author.clone())
                     .min_w(px(0.))
                     .flex_shrink(1.),
             )
             .child(fixed_col(
                 64.,
-                theme().text_muted,
+                muted_foreground,
                 false,
                 model.date_relative.clone(),
             ))
             .child(
-                fixed_col(72., theme().text_sub, false, model.stat.clone())
+                fixed_col(72., secondary_foreground, false, model.stat.clone())
                     .min_w(px(0.))
                     .flex_shrink(1.),
             )
             .child(fixed_col(
                 64.,
-                theme().text_muted,
+                muted_foreground,
                 false,
                 model.short_hash.clone(),
             )),
@@ -205,7 +226,7 @@ pub fn render_commit_row(
             .px_2()
             .py_1()
             .gap_1()
-            .child(fixed_col(14., model.badge_color, true, model.badge.into()))
+            .child(fixed_col(14., badge_foreground, true, model.badge.into()))
             .child(
                 div()
                     .flex_1()
@@ -216,7 +237,7 @@ pub fn render_commit_row(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(theme().text_main))
+                            .text_color(foreground)
                             .truncate()
                             .child(model.subject.clone()),
                     )
@@ -226,7 +247,7 @@ pub fn render_commit_row(
                             .flex_row()
                             .gap_2()
                             .text_xs()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(muted_foreground)
                             .child(model.short_hash.clone())
                             .child(model.author.clone())
                             .child(model.date_ymd.clone()),
@@ -236,11 +257,11 @@ pub fn render_commit_row(
 }
 
 /// One fixed-width, non-shrinking, truncating column.
-fn fixed_col(width: f32, color: u32, large: bool, text: SharedString) -> Div {
+fn fixed_col(width: f32, color: Hsla, large: bool, text: SharedString) -> Div {
     let col = div()
         .w(theme::scaled_px(width))
         .flex_shrink_0()
-        .text_color(rgb(color))
+        .text_color(color)
         .truncate();
     if large {
         col.text_sm().child(text)

@@ -314,6 +314,9 @@ fn tab_cell(
         .bg(bg)
         .text_sm()
         .text_color(rgb(fg))
+        .when(selected && tab_has_rail(&theme()), |cell| {
+            cell.text_color(theme().selection_foreground(window_active))
+        })
         .mr(px(1.))
         .when(selected && tab_has_rail(&theme()), |cell| {
             cell.child(tab_rail(&theme(), window_active))

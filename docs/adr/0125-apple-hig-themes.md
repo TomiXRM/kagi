@@ -1090,3 +1090,48 @@ The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusio
 from its non-macOS available width, preserving the same effective content budget
 and collapse expectation rather than assuming macOS geometry on Linux.
 
+
+## Amendment — 2026-10-13: Finder-style on-accent labels (#1468)
+
+Apple Light and Apple Dark's active row selection now uses `ui_accent()` as
+an opaque fill, superseding the Light 15% wash and Dark neutral active fill
+above. The existing System/Theme accent-source choice remains authoritative;
+Dark's Theme default still uses its yellow accent. Non-key selection retains
+the independent neutral `inactive_selected` token and ordinary foregrounds.
+Selection identity, focus ownership, input behavior and row geometry do not change.
+
+`Theme::on_accent` and the existing primary-button bridge share one
+`on_accent_foreground` derivation for Apple accents: prefer white when its
+contrast is at least **3.0:1**, otherwise black. **Owner decision: Finder
+準拠で WCAG AA 4.5 ではなく 3.0 を採用** for these accent-filled labels.
+System blue `#007aff` / `#0a84ff` therefore remains white, rather than changing
+the exact accent fill or substituting black just to satisfy the previous AA
+oracle. Light yellow, green and orange require black. This does not claim
+WCAG AA compliance for normal-sized white accent text. Other presets and
+custom themes retain their existing contrast-preserving on-accent choices.
+Resolved Apple RGB/foreground pairs are cached, with no row-time native query
+or repeated luminance calculation for an unchanged accent.
+
+`selection_foreground(active)` and `selection_secondary_foreground(active)`
+pair the foreground with the existing selected fill resolver. Apple key
+secondary labels use 70% of the chosen on-accent foreground; non-key labels
+return their normal theme roles. Actual selected-row text/glyphs and unfilled
+badges switch together in Graph, navigation, files, PR and shared history
+rows. Translucent Graph ref chips also switch their labels/glyphs because the
+accent row shows through their semantic tint. Independently opaque status
+chips retain their own fills and contrast labels. Selected segments/modes
+preserve selected fill under hover; primary buttons reuse the same bridge.
+Neutral Apple document tabs, structural expanded fills and text-selection
+overlays remain separate. Radio/checkbox indicator glyphs keep the existing
+4.5:1 generic-input foreground. Within the component bridge, Finder's
+text-label policy changes only the filled-button foreground tokens.
+
+Regression-first native `selection_on_accent` fails the previous Light fill
+at painted `#d9ebff` versus required `#007aff`. It checks exact active/inactive
+Metal fills, renderer-inherited and painted summary-label foregrounds,
+retained selection/geometry, primary-button pixels and all-preset contrast.
+Existing activation and selected-hover oracles remain alongside it; their
+active selection expectations now deliberately follow the opaque accent,
+not the former wash. Tier B compares the plain app and Finder separately;
+native test recorders alone are not evidence of Finder's material or AX delivery.
+

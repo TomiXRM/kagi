@@ -204,6 +204,8 @@ fn render_option(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
+    let is_selected = selected == Some(index);
+    let window_active = window.is_window_active();
     if selected == Some(index) {
         if let Some(handle) = window.focused(cx) {
             labels::focus(&row.id, &handle);
@@ -232,8 +234,12 @@ fn render_option(
         .px(keyboard_nav::inset(8.))
         .py(keyboard_nav::inset(4.))
         .overflow_hidden()
-        .when(selected == Some(index), |row| row.bg(rgb(theme().selected)))
-        .hover(|style| style.bg(rgb(theme().selected)).cursor_default())
+        .when(is_selected, |row| {
+            row.bg(theme().selected_for_window(window_active))
+        })
+        .when(!is_selected, |row| {
+            row.hover(|style| style.bg(rgb(theme().surface)).cursor_default())
+        })
         .on_click(move |_, window, cx| {
             entity.update(cx, |view, cx| view.activate_coauthor(index, window, cx));
         })
@@ -242,7 +248,11 @@ fn render_option(
                 .w_full()
                 .truncate()
                 .text_xs()
-                .text_color(rgb(theme().text_main))
+                .text_color(if is_selected {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
                 .child(row.name.clone()),
         )
         .child(
@@ -250,7 +260,11 @@ fn render_option(
                 .w_full()
                 .truncate()
                 .text_xs()
-                .text_color(rgb(theme().text_muted))
+                .text_color(if is_selected {
+                    theme().selection_secondary_foreground(window_active)
+                } else {
+                    rgb(theme().text_muted).into()
+                })
                 .child(row.email.clone()),
         );
     super::e2e::measure_control(&*row.id, option)

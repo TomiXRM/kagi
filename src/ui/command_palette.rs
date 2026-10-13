@@ -611,12 +611,23 @@ impl KagiApp {
             }),
         );
         if is_selected {
-            r = r.bg(rgb(theme().selected));
+            r = r.bg(theme().selected_for_window(self.window_active));
         }
-        r = r.child(palette_row_label(index, row, label));
+        r = r.child(palette_row_label(
+            index,
+            row,
+            label,
+            is_selected,
+            self.window_active,
+        ));
 
         if let Some(ks) = &row.keystroke {
-            r = r.child(palette_row_shortcut(index, ks));
+            r = r.child(palette_row_shortcut(
+                index,
+                ks,
+                is_selected,
+                self.window_active,
+            ));
         }
         let row = r.into_any_element();
         match &self.command_palette_scroll {
@@ -695,7 +706,12 @@ fn palette_section(
     )
 }
 
-fn palette_row_shortcut(index: usize, keystroke: &str) -> gpui::Div {
+fn palette_row_shortcut(
+    index: usize,
+    keystroke: &str,
+    is_selected: bool,
+    window_active: bool,
+) -> gpui::Div {
     div()
         .flex_shrink_0()
         .text_right()
@@ -705,15 +721,30 @@ fn palette_row_shortcut(index: usize, keystroke: &str) -> gpui::Div {
             )))
         })
         .text_xs()
-        .text_color(rgb(theme().text_muted))
+        .text_color(if is_selected {
+            theme().selection_secondary_foreground(window_active)
+        } else {
+            rgb(theme().text_muted).into()
+        })
         .child(super::e2e::palette::shortcut(index, keystroke.to_string()))
 }
 
-fn palette_row_label(index: usize, row: &PaletteRow, text: SharedString) -> gpui::Div {
-    let label_color = if row.enabled {
-        theme().text_main
+fn palette_row_label(
+    index: usize,
+    row: &PaletteRow,
+    text: SharedString,
+    is_selected: bool,
+    window_active: bool,
+) -> gpui::Div {
+    let label_color = if is_selected {
+        theme().selection_foreground(window_active)
     } else {
-        theme().text_muted
+        rgb(if row.enabled {
+            theme().text_main
+        } else {
+            theme().text_muted
+        })
+        .into()
     };
     let mut label = div().flex_1().min_w(gpui::px(0.)).flex().flex_col().child(
         div()
@@ -723,14 +754,18 @@ fn palette_row_label(index: usize, row: &PaletteRow, text: SharedString) -> gpui
                     .child(super::e2e::measure_inside(format!("palette-label-{index}")))
             })
             .text_sm()
-            .text_color(rgb(label_color))
+            .text_color(label_color)
             .child(text),
     );
     if let Some(reason) = &row.disabled_reason {
         label = label.child(
             div()
                 .text_xs()
-                .text_color(rgb(theme().text_muted))
+                .text_color(if is_selected {
+                    theme().selection_secondary_foreground(window_active)
+                } else {
+                    rgb(theme().text_muted).into()
+                })
                 .child(SharedString::from(reason.clone())),
         );
     }

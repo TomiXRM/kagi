@@ -471,12 +471,10 @@ fn pane_cell(
         Some(count) => format!("{label} {count}"),
         None => label.to_string(),
     };
-    let fg = if active && window_active {
-        theme().accent_text_on(theme().surface)
-    } else if active {
-        theme().text_main
+    let fg = if active {
+        theme().selection_foreground(window_active)
     } else {
-        theme().text_muted
+        rgb(theme().text_muted).into()
     };
     let badge = match count {
         Some(count) => Some(
@@ -489,11 +487,11 @@ fn pane_cell(
                 } else {
                     rgb(theme().surface).into()
                 })
-                .text_color(rgb(if active && !window_active {
-                    theme().text_main
+                .text_color(if active {
+                    theme().selection_secondary_foreground(window_active)
                 } else {
-                    theme().text_sub
-                }))
+                    rgb(theme().text_sub).into()
+                })
                 .child(SharedString::from(count.to_string()))
                 .into_any_element(),
         ),
@@ -501,7 +499,11 @@ fn pane_cell(
             format!("{id}-spinner"),
             super::render_overlay::sync_spinner(
                 12.,
-                theme().text_muted,
+                if active {
+                    u32::from(theme().selection_foreground(window_active).to_rgb()) >> 8
+                } else {
+                    theme().text_muted
+                },
                 SharedString::from(format!("{id}-spinner")),
             ),
         )),
@@ -519,7 +521,7 @@ fn pane_cell(
         .rounded_md()
         .cursor_pointer()
         .text_sm()
-        .text_color(rgb(fg))
+        .text_color(fg)
         .when(active, |el| {
             el.bg(theme().selected_for_window(window_active))
                 .font_weight(gpui::FontWeight::MEDIUM)

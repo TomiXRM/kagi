@@ -197,13 +197,15 @@ fn chip(
         el.bg(theme().selected_for_window(window_active))
     })
     .text_xs()
-    .text_color(rgb(if active {
-        theme().text_main
+    .text_color(if active {
+        theme().selection_foreground(window_active)
     } else {
-        theme().text_sub
-    }))
+        rgb(theme().text_sub).into()
+    })
     .cursor_pointer()
-    .hover(|style| style.bg(rgb(theme().surface)))
+    .when(!active, |el| {
+        el.hover(|style| style.bg(rgb(theme().surface)))
+    })
 }
 
 fn menu_chip(

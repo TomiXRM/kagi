@@ -306,6 +306,7 @@ enum SaveOutcome {
 pub struct EditorWorkspaceView {
     /// Host hooks (ADR-0121 C4) — see [`EditorHooks`].
     hooks: EditorHooks,
+    window_activation_subscription: Option<gpui::Subscription>,
     /// Repo root. Constant for the entity's life; the owning `TabUiState`
     /// retains it across activation changes and drops it on tab close.
     pub repo_path: PathBuf,
@@ -576,6 +577,7 @@ impl EditorWorkspaceView {
     pub fn new(repo_path: PathBuf, hooks: EditorHooks, root_focus: gpui::FocusHandle) -> Self {
         Self {
             hooks,
+            window_activation_subscription: None,
             repo_path,
             root_focus,
             source: TreeSource::default(),
@@ -2288,6 +2290,10 @@ impl EditorWorkspaceView {
 
 impl Render for EditorWorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
         self.sync_editor(window, cx);
         self.sync_snapshot_text(cx);
         self.hooks.pane_selectors.release_hidden(self, window, cx);
@@ -2470,8 +2476,13 @@ fn render_editor_workspace(
         .flex_1()
         .min_h(px(0.))
         .when(view.show_tree, |el| {
-            el.child(render_tree_pane(view, tree_width, cx))
-                .child(tree_divider)
+            el.child(render_tree_pane(
+                view,
+                tree_width,
+                window.is_window_active(),
+                cx,
+            ))
+            .child(tree_divider)
         })
         .child(
             div()
@@ -2505,6 +2516,7 @@ fn render_source_chip(
     label: &'static str,
     active: bool,
     source: TreeSource,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
@@ -2520,16 +2532,16 @@ fn render_source_chip(
         .rounded_sm()
         .cursor_pointer()
         .text_xs()
-        .text_color(rgb(if active {
-            theme().text_main
+        .text_color(if active {
+            theme().selection_foreground(window_active)
         } else {
-            theme().text_muted
-        }))
-        .bg(rgb(if active {
-            theme().selected
+            rgb(theme().text_muted).into()
+        })
+        .bg(if active {
+            theme().selected_for_window(window_active)
         } else {
-            theme().panel
-        }))
+            rgb(theme().panel).into()
+        })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))
         .on_click(click)
         .child(SharedString::from(label))
@@ -2572,6 +2584,7 @@ fn render_fold_button(
 /// pinned above the tree list (T-WS-EDITOR-004 user feedback #1).
 fn render_source_chips(
     view: &EditorWorkspaceView,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     div()
@@ -2589,6 +2602,7 @@ fn render_source_chips(
             Msg::EditorWorkspaceSourceChanges.t(),
             view.source == TreeSource::Changes,
             TreeSource::Changes,
+            window_active,
             cx,
         ))
         .child(render_source_chip(
@@ -2596,6 +2610,7 @@ fn render_source_chips(
             Msg::EditorWorkspaceSourceAll.t(),
             view.source == TreeSource::All,
             TreeSource::All,
+            window_active,
             cx,
         ))
         // Expand-all (⌄⌄) / collapse-all (⌃⌃), lucide unfold/fold glyphs.
@@ -2619,6 +2634,7 @@ fn render_source_chips(
 fn render_tree_pane(
     view: &EditorWorkspaceView,
     width: gpui::Pixels,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
@@ -2636,7 +2652,7 @@ fn render_tree_pane(
         .flex_col()
         .bg(rgb(theme().panel))
         .on_mouse_down(MouseButton::Right, root_menu)
-        .child(render_source_chips(view, cx));
+        .child(render_source_chips(view, window_active, cx));
 
     if view.loading {
         return pane
@@ -2676,14 +2692,21 @@ fn render_tree_pane(
             uniform_list(
                 "ews-tree-list",
                 row_count,
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                     // `i` is the visible/uniform_list position — passed through
                     // for zebra striping (T-WS-EDITOR-005 finding #8), which must
                     // key on visible position, not the base `tree` index.
                     range
                         .filter_map(|i| {
                             let a11y = *this.tree_layout.a11y.get(i)?;
-                            render_tree_row(this, i, *this.tree_layout.visible.get(i)?, a11y, cx)
+                            render_tree_row(
+                                this,
+                                i,
+                                *this.tree_layout.visible.get(i)?,
+                                a11y,
+                                window.is_window_active(),
+                                cx,
+                            )
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -2718,6 +2741,7 @@ fn render_tree_row(
     visible_pos: usize,
     index: usize,
     a11y: TreeRowA11y,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<gpui::AnyElement> {
     let row = view.tree.get(index)?.clone();
@@ -2794,11 +2818,11 @@ fn render_tree_row(
             // base tree index — collapsing a directory must not leave the
             // remaining visible rows with a broken (skip-a-beat) checkerboard.
             let row_bg = if is_selected {
-                theme().selected
+                theme().selected_for_window(window_active)
             } else if visible_pos % 2 == 1 {
-                theme().bg_row_alt
+                rgb(theme().bg_row_alt).into()
             } else {
-                theme().panel
+                rgb(theme().panel).into()
             };
             // T-WS-EDITOR-002 §2 + editor tabs: any row whose file is open
             // in a tab with unsaved edits gets the dot, active or not.
@@ -2837,7 +2861,7 @@ fn render_tree_row(
                 .pl(theme::scaled_px(8.0 + indent))
                 .pr(theme::scaled_px(4.0))
                 .py_px()
-                .bg(rgb(row_bg))
+                .bg(row_bg)
                 .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                 .on_click(click)
                 .on_mouse_down(MouseButton::Right, right_click)
@@ -2847,7 +2871,11 @@ fn render_tree_row(
                         .w(theme::scaled_px(12.))
                         .flex_shrink_0()
                         .text_xs()
-                        .text_color(rgb(badge_color))
+                        .text_color(if is_selected {
+                            theme().selection_foreground(window_active)
+                        } else {
+                            rgb(badge_color).into()
+                        })
                         .child(SharedString::from(badge)),
                 )
                 .child(
@@ -2855,7 +2883,11 @@ fn render_tree_row(
                         .flex_1()
                         .min_w(px(0.))
                         .text_xs()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if is_selected {
+                            theme().selection_foreground(window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .truncate()
                         .child(name),
                 )
@@ -2865,7 +2897,11 @@ fn render_tree_row(
                             .flex_shrink_0()
                             .pl(theme::scaled_px(4.))
                             .text_xs()
-                            .text_color(rgb(theme().color_warning))
+                            .text_color(if is_selected {
+                                theme().selection_foreground(window_active)
+                            } else {
+                                rgb(theme().color_warning).into()
+                            })
                             .child(SharedString::from("\u{25cf}")),
                     )
                 });

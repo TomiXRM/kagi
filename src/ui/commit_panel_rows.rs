@@ -148,6 +148,7 @@ fn render_cp_file_row(
         view.defer_select_file(file_ref.clone(), window, cx);
     });
     // Row background: conflicted files get red tint
+    let selected = (is_sel || wip_hit) && !is_conflicted;
     let row_bg = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else if is_sel || wip_hit {
@@ -196,7 +197,11 @@ fn render_cp_file_row(
                 .w(theme::scaled_px(12.))
                 .flex_shrink_0()
                 .text_xs()
-                .text_color(rgb(badge_color))
+                .text_color(if selected && window_active {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(badge_color).into()
+                })
                 .child(SharedString::from(badge)),
         )
         .child(
@@ -209,7 +214,18 @@ fn render_cp_file_row(
                     gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
                 })
                 .text_xs()
-                .text_color(rgb(theme().text_main))
+                .when(cfg!(feature = "gui-e2e") && selected, |el| {
+                    el.relative().child(super::e2e::measure_inside(if staged {
+                        "cp-selected-staged-label"
+                    } else {
+                        "cp-selected-unstaged-label"
+                    }))
+                })
+                .text_color(if selected {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
                 .overflow_hidden()
                 .truncate()
                 .child(name),
@@ -235,6 +251,8 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
+            (selected && window_active)
+                .then(|| theme().selection_secondary_foreground(window_active)),
         ));
     file_row = super::super::commit_panel_navigation::file_row(
         view,

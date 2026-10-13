@@ -368,7 +368,7 @@ fn file_row(
     .gap_1()
     .pl(theme::scaled_px(*depth as f32 * 12.))
     .mb_px()
-    .hover(|s| s.bg(rgb(theme().surface)))
+    .when(!selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
     .when(selected, |el| {
         el.bg(theme().selected_for_window(presentation.active))
             .rounded_sm()
@@ -391,7 +391,11 @@ fn file_row(
             .w(theme::scaled_px(14.))
             .flex_shrink_0()
             .text_sm()
-            .text_color(rgb(color))
+            .text_color(if selected && presentation.active {
+                theme().selection_foreground(presentation.active)
+            } else {
+                rgb(color).into()
+            })
             .child(SharedString::from(badge)),
     )
     .child(
@@ -399,13 +403,19 @@ fn file_row(
             .flex_1()
             .min_w(px(0.))
             .text_sm()
-            .text_color(rgb(theme().text_main))
+            .text_color(if selected {
+                theme().selection_foreground(presentation.active)
+            } else {
+                rgb(theme().text_main).into()
+            })
             .truncate()
             .child(row.name.clone()),
     )
     .child(super::diffstat_bar::diffstat_unit(
         index,
         file.stat.as_ref(),
+        (selected && presentation.active)
+            .then(|| theme().selection_secondary_foreground(presentation.active)),
     ));
     super::e2e::measure_control(format!("inspector-file-{index}"), row)
 }

@@ -41,11 +41,17 @@ const SEG_GAP: f32 = 1.0;
 ///
 /// `id_seed` must be unique within the parent list (e.g. the file index) so the
 /// tooltip's stateful element id does not collide.
+/// `selected_foreground` overrides only labels on a selected row; the bar
+/// segments retain their Git semantic fills.
 ///
 /// Returns a right-aligned, `flex_shrink_0` row element.  When `stat` is `None`
 /// (diffstat unavailable for this file), an empty spacer of the same width is
 /// returned so column alignment is preserved.
-pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoElement {
+pub fn diffstat_unit(
+    id_seed: usize,
+    stat: Option<&FileDiffStat>,
+    selected_foreground: Option<gpui::Hsla>,
+) -> impl IntoElement {
     let t = theme();
     let base = gpui::div()
         .flex()
@@ -69,7 +75,7 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
             .child(
                 gpui::div()
                     .text_xs()
-                    .text_color(rgb(t.text_muted))
+                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.text_muted).into()))
                     .child(SharedString::from("BIN")),
             )
             .into_any_element();
@@ -92,7 +98,7 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
             numbers = numbers.child(
                 gpui::div()
                     .text_xs()
-                    .text_color(rgb(t.change_added))
+                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_added).into()))
                     .child(SharedString::from(format!("+{additions}"))),
             );
         }
@@ -100,7 +106,7 @@ pub fn diffstat_unit(id_seed: usize, stat: Option<&FileDiffStat>) -> impl IntoEl
             numbers = numbers.child(
                 gpui::div()
                     .text_xs()
-                    .text_color(rgb(t.change_deleted))
+                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_deleted).into()))
                     .child(SharedString::from(format!("-{deletions}"))),
             );
         }

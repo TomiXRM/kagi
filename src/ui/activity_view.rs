@@ -573,11 +573,11 @@ fn period_cell(
         .rounded(theme::scaled_px(4.))
         .text_xs()
         .cursor_default()
-        .text_color(rgb(if selected {
-            theme().text_main
+        .text_color(if selected {
+            theme().selection_foreground(window_active)
         } else {
-            theme().text_muted
-        }))
+            rgb(theme().text_muted).into()
+        })
         .when(selected, |cell| {
             cell.bg(theme().selected_for_window(window_active))
         })

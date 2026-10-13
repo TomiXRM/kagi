@@ -116,14 +116,14 @@ pub(super) fn render_inspector(
         rgb(theme().surface).into()
     };
     let path_col = if path_active {
-        theme().text_main
+        theme().selection_foreground(window_active)
     } else {
-        theme().text_sub
+        rgb(theme().text_sub).into()
     };
     let tree_col = if tree_active {
-        theme().text_main
+        theme().selection_foreground(window_active)
     } else {
-        theme().text_sub
+        rgb(theme().text_sub).into()
     };
 
     let toggle_row = div()
@@ -140,7 +140,7 @@ pub(super) fn render_inspector(
                 .rounded_sm()
                 .bg(path_bg)
                 .text_xs()
-                .text_color(rgb(path_col))
+                .text_color(path_col)
                 .on_click(toggle_click_a)
                 .child(SharedString::from("Path")),
         )
@@ -152,7 +152,7 @@ pub(super) fn render_inspector(
                 .rounded_sm()
                 .bg(tree_bg)
                 .text_xs()
-                .text_color(rgb(tree_col))
+                .text_color(tree_col)
                 .on_click(toggle_click_b)
                 .child(SharedString::from("Tree")),
         );

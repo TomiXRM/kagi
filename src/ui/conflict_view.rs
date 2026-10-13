@@ -1452,10 +1452,16 @@ fn card_icon<H>(
     icon: gpui_component::IconName,
     tip: &'static str,
     on_down: H,
+    selected_active: Option<bool>,
 ) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    let foreground = if selected_active == Some(true) {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_sub).into()
+    };
     div()
         .id(SharedString::from(id))
         .flex()
@@ -1464,11 +1470,13 @@ where
         .w(theme::scaled_px(22.))
         .h(theme::scaled_px(22.))
         .rounded_md()
-        .text_color(rgb(theme().text_sub))
-        .hover(|s| {
-            s.bg(rgb(theme().bg_row_alt))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
+        .text_color(foreground)
+        .cursor_pointer()
+        .when(selected_active.is_none(), |el| {
+            el.hover(|s| {
+                s.bg(rgb(theme().bg_row_alt))
+                    .text_color(rgb(theme().text_main))
+            })
         })
         .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         .on_mouse_down(MouseButton::Left, on_down)
@@ -1736,7 +1744,7 @@ fn section(
             .cursor_pointer()
             .when(selected, |s| {
                 s.bg(theme().selected_for_window(window_active))
-                    .text_color(rgb(theme().text_main))
+                    .text_color(theme().selection_foreground(window_active))
             })
             .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
@@ -1751,7 +1759,11 @@ fn section(
                     .child(
                         div()
                             .text_size(theme::scaled_px(12.))
-                            .text_color(rgb(theme().text_main))
+                            .text_color(if selected {
+                                theme().selection_foreground(window_active)
+                            } else {
+                                rgb(theme().text_main).into()
+                            })
                             .truncate()
                             .child(path_str.clone()),
                     )
@@ -1764,10 +1776,14 @@ fn section(
                             .child(
                                 div()
                                     .text_size(theme::scaled_px(10.))
-                                    .text_color(rgb(status_color))
+                                    .text_color(if selected && window_active {
+                                        theme().selection_secondary_foreground(window_active)
+                                    } else {
+                                        rgb(status_color).into()
+                                    })
                                     .child(SharedString::from(status_text)),
                             )
-                            .child(kind_badge(kind)),
+                            .child(kind_badge(kind, selected.then_some(window_active))),
                     ),
             )
             // Right: Keynote-style icon group — "…" / open externally / copy path.
@@ -1785,6 +1801,7 @@ fn section(
                         gpui_component::IconName::Ellipsis,
                         Msg::ConflictMore.t(),
                         more,
+                        selected.then_some(window_active),
                     )),
             );
         let row_el = super::list_a11y::list_option(
@@ -1807,15 +1824,20 @@ fn section(
 }
 
 /// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
-fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
+fn kind_badge(kind: ConflictKind, selected_active: Option<bool>) -> gpui::AnyElement {
+    let foreground = if selected_active == Some(true) {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_muted).into()
+    };
     div()
         .px(theme::scaled_px(5.))
         .py(px(1.))
         .rounded_md()
         .border_1()
-        .border_color(rgb(theme().text_muted))
+        .border_color(foreground)
         .text_size(theme::scaled_px(9.))
-        .text_color(rgb(theme().text_muted))
+        .text_color(foreground)
         .child(SharedString::from(kind_tag(kind)))
         .into_any_element()
 }

@@ -45,17 +45,9 @@ fn sidebar_mode_nav_cell(
         .rounded(theme::scaled_px(4.))
         .cursor_pointer()
         .when(active, |el| {
-            el.bg(rgb(if window_active {
-                theme::theme().surface
-            } else {
-                theme::theme().inactive_selected
-            }))
-            .text_color(rgb(if window_active {
-                theme::theme().accent_text_on(theme::theme().surface)
-            } else {
-                theme::theme().text_main
-            }))
-            .font_weight(gpui::FontWeight::MEDIUM)
+            el.bg(theme::theme().selected_for_window(window_active))
+                .text_color(theme::theme().selection_foreground(window_active))
+                .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
         // Measured (GUI E2E) so a scenario can check the padding the ring
@@ -176,9 +168,11 @@ pub(super) fn sidebar_list_row(active: bool, window_active: bool) -> gpui::Div {
         .border_color(rgb(theme::theme().surface))
         .when(active, |el| {
             el.bg(theme::theme().selected_for_window(window_active))
-                .text_color(rgb(theme::theme().text_main))
+                .text_color(theme::theme().selection_foreground(window_active))
         })
-        .hover(|s| s.bg(rgb(theme::theme().surface)))
+        .when(!active, |el| {
+            el.hover(|s| s.bg(rgb(theme::theme().surface)))
+        })
 }
 
 /// Graph / PRs / Issues navigation, rendered in the sidebar but owned by

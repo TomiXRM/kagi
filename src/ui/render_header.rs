@@ -313,22 +313,7 @@ impl KagiApp {
             this.activate_toolbar(9, None, window, cx);
         });
 
-        // Active-mode highlight for the Graph/PRs/Editor group: a wash in the
-        // theme's primary colour, distinct from the neutral `selected` hover
-        // so "hovered" never reads as "current mode". `ui_accent()` is the same
-        // chrome role as the toolbar's count chips, following the Mac accent for
-        // Apple themes without recolouring Git ref chips or lanes.
         let window_active = self.window_active_for_render(window);
-        let mode_on = |el: gpui::Stateful<gpui::Div>| {
-            if !window_active {
-                return el
-                    .bg(rgb(theme().inactive_selected))
-                    .text_color(rgb(theme().text_main));
-            }
-            let mut c: gpui::Hsla = rgb(theme().ui_accent()).into();
-            c.a = if theme().dark { 0.26 } else { 0.18 };
-            el.bg(c)
-        };
 
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
@@ -460,6 +445,7 @@ impl KagiApp {
                 .iter()
                 .position(|candidate| *candidate == id)
                 .unwrap();
+            let mode_selected = index == selected;
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
             let (enabled, unavailable) = button_flags(state);
@@ -495,10 +481,15 @@ impl KagiApp {
             // for the GUI E2E oracle (the AccessKit tree itself is only built
             // once assistive technology connects, which a test cannot force).
             toolbar_a11y::record_unavailable(id, unavailable);
-            let text_color = if enabled {
-                theme().text_main
+            let text_color = if mode_selected {
+                theme().selection_foreground(window_active)
             } else {
-                theme().text_muted
+                rgb(if enabled {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                })
+                .into()
             };
             let chip_bg = theme().ui_accent();
 
@@ -506,7 +497,7 @@ impl KagiApp {
             // inside that cell so they do not change the toolbar's layout.
             let glyph = icon
                 .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
-                .text_color(rgb(text_color));
+                .text_color(text_color);
             #[cfg(feature = "gui-e2e")]
             let glyph = super::e2e::measure_control(format!("{id}-glyph"), glyph);
             let mut icon_cell = div()
@@ -598,12 +589,18 @@ impl KagiApp {
                 // place while the extra fraction belongs to the ring.
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
-                .hover(|style| {
-                    style.bg(rgb(if window_active {
-                        theme().selected
-                    } else {
-                        theme().surface
-                    }))
+                .when(mode_selected, |el| {
+                    el.bg(theme().selected_for_window(window_active))
+                        .text_color(text_color)
+                })
+                .when(!mode_selected, |el| {
+                    el.hover(|style| {
+                        style.bg(rgb(if window_active {
+                            theme().selected
+                        } else {
+                            theme().surface
+                        }))
+                    })
                 })
                 .cursor(gpui::CursorStyle::Arrow)
                 .child(icon_cell)
@@ -613,7 +610,7 @@ impl KagiApp {
                     el.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(text_color))
+                            .text_color(text_color)
                             .child(SharedString::from(accessible_label)),
                     )
                 })
@@ -1103,7 +1100,6 @@ impl KagiApp {
                             None,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Graph, mode_on)
                         .on_click(graph_click),
                     )
                     .when(gap(0x100, 0xe00), |el| {
@@ -1120,7 +1116,6 @@ impl KagiApp {
                                 None,
                                 0,
                             )
-                            .when(mode == WorkspaceMode::Prs, mode_on)
                             .on_click(pr_mode_click),
                         )
                         .when(gap(0x200, 0xc00), |el| {
@@ -1137,7 +1132,6 @@ impl KagiApp {
                             no_repo_reason,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Editor, mode_on)
                         .on_click(editor_ws_click),
                     )
                     .when(gap(0x400, 0x800), |el| {

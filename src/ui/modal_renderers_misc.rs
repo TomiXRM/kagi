@@ -121,6 +121,7 @@ pub(crate) fn render_smart_commit_modal(
                     .focused(window)
                     .and_then(|key| models.iter().position(|model| model == key));
                 let size = models.len();
+                let window_active = app.window_active;
                 let entity = cx.entity();
                 let wrapper = rows.list(super::list_a11y::list_box(
                     "smart-model-list",
@@ -148,22 +149,29 @@ pub(crate) fn render_smart_commit_modal(
                     .px(super::keyboard_nav::inset(12.))
                     .py_0()
                     .rounded_sm()
-                    .bg(rgb(if selected == Some(i) {
-                        current_theme().selected
+                    .bg(if selected == Some(i) {
+                        current_theme().selected_for_window(window_active)
                     } else {
-                        current_theme().surface
-                    }))
+                        rgb(current_theme().surface).into()
+                    })
                     .text_xs()
                     .line_height(
                         theme::scaled_px(MODAL_LIST_ROW_H) - px(2. * super::keyboard_nav::RING),
                     )
-                    .text_color(rgb(current_theme().text_main))
+                    .text_color(if selected == Some(i) {
+                        current_theme().selection_foreground(window_active)
+                    } else {
+                        rgb(current_theme().text_main).into()
+                    })
                     .on_click(move |_, window, cx| {
                         entity.update(cx, |app, cx| {
                             app.choose_smart_model(model.clone(), window, cx)
                         });
                     })
-                    .hover(|s| s.bg(rgb(current_theme().selected)).cursor_pointer())
+                    .cursor_pointer()
+                    .when(selected != Some(i), |row| {
+                        row.hover(|s| s.bg(rgb(current_theme().surface)))
+                    })
                     .child(
                         div()
                             .w_full()

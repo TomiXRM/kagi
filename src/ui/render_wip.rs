@@ -290,13 +290,14 @@ impl KagiApp {
         let glyph = if is_worktree { "🌲" } else { "✏️" };
         let chip_label = SharedString::from(format!("{glyph} {label}"));
 
+        let is_selected = is_commit_panel && commit_panel_open;
         let mut row = super::list_a11y::list_option(
             "commit-list",
             div().id(SharedString::from(format!("wip-row-{label}"))),
             a11y_position,
             a11y_size,
             super::list_a11y::wip_row_label(&label, &note),
-            is_commit_panel && commit_panel_open,
+            is_selected,
         )
         .flex()
         .flex_row()
@@ -314,7 +315,7 @@ impl KagiApp {
                 .bg(color),
         )
         .h(px(row_height(self.graph_compact)));
-        row = if is_commit_panel && commit_panel_open {
+        row = if is_selected {
             row.bg(theme().selected_for_window(self.window_active))
         } else {
             row.bg(row_wash)
@@ -362,7 +363,11 @@ impl KagiApp {
                 )
             }
         };
-        row = row.hover(|s| s.bg(rgb(theme().selected))).cursor_pointer();
+        row = row
+            .when(!is_selected, |row| {
+                row.hover(|s| s.bg(rgb(theme().selected)))
+            })
+            .cursor_pointer();
 
         row
             // Badges column: worktree-coloured chip carrying the glyph + the branch
@@ -484,12 +489,21 @@ impl KagiApp {
                     .child(
                         div()
                             .flex_1()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(if is_selected {
+                                theme().selection_secondary_foreground(self.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            })
                             .overflow_hidden()
                             .truncate()
                             .child(SharedString::from(note)),
                     )
-                    .when_some(diffstat, |el, stat| el.child(render_wip_diffstat(stat))),
+                    .when_some(diffstat, |el, stat| {
+                        el.child(render_wip_diffstat(
+                            stat,
+                            is_selected.then(|| theme().selection_foreground(self.window_active)),
+                        ))
+                    }),
             )
             .into_any_element()
     }

@@ -471,7 +471,8 @@ fn render_directory_list(
     } else {
         current_theme().surface
     };
-    let list = gpui::list(modal.row_scroll.clone(), move |ix, _window, _cx| {
+    let list = gpui::list(modal.row_scroll.clone(), move |ix, window, _cx| {
+        let window_active = window.is_window_active();
         let (label, text, target) = if ix == 0 && parent.is_some() {
             (
                 Msg::RemoteParentDirectory.t().to_string(),
@@ -515,12 +516,19 @@ fn render_directory_list(
             .rounded_sm()
             .text_sm()
             .overflow_hidden()
-            .text_color(rgb(if navigable {
-                current_theme().text_main
+            .text_color(if selected == Some(ix) {
+                current_theme().selection_foreground(window_active)
             } else {
-                current_theme().text_muted
-            }))
-            .when(selected == Some(ix), |row| row.bg(rgb(row_fill)))
+                rgb(if navigable {
+                    current_theme().text_main
+                } else {
+                    current_theme().text_muted
+                })
+                .into()
+            })
+            .when(selected == Some(ix), |row| {
+                row.bg(current_theme().selected_for_window(window_active))
+            })
             .when(busy, |row| {
                 row.aria_description(SharedString::from(Msg::RemoteRequestBusy.t()))
                     .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
@@ -528,8 +536,9 @@ fn render_directory_list(
                     })
             })
             .when(!busy && navigable, |row| {
-                row.cursor_pointer()
-                    .hover(move |style| style.bg(rgb(row_fill)))
+                row.cursor_pointer().when(selected != Some(ix), |row| {
+                    row.hover(move |style| style.bg(rgb(row_fill)))
+                })
             })
             .on_click(move |_, window, cx| {
                 app.update(cx, |app, cx| {

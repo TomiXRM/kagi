@@ -76,6 +76,16 @@ pub fn scenario_inactive_selection(cx: &mut VisualTestAppContext) {
                 "selected tab content surface"
             );
         } else {
+            let expected = theme::theme().ui_accent();
+            assert_eq!(
+                &active[..3],
+                &[
+                    (expected >> 16) as u8,
+                    (expected >> 8) as u8,
+                    expected as u8
+                ],
+                "active conflict selection paints opaque accent (#1468)"
+            );
             assert_ne!(
                 active, inactive,
                 "{name}: non-key selection must lose its blue tint"

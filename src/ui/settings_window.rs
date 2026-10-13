@@ -218,7 +218,12 @@ impl SettingsWindow {
         }))
     }
 
-    fn page(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::AnyElement {
+    fn page(
+        &self,
+        owner: &Entity<KagiApp>,
+        window_active: bool,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         let app = owner.read(cx);
         match self.pane {
             0 => settings_view::appearance_section(
@@ -235,6 +240,7 @@ impl SettingsWindow {
                 &app.settings_switches,
                 &app.settings_controls,
                 Some(self.focus.clone()),
+                window_active,
                 cx,
             )
             .into_any_element(),
@@ -248,7 +254,12 @@ impl SettingsWindow {
         }
     }
 
-    fn page_body(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::Div {
+    fn page_body(
+        &self,
+        owner: &Entity<KagiApp>,
+        window_active: bool,
+        cx: &Context<Self>,
+    ) -> gpui::Div {
         let chrome = 46. + f32::from(theme::scaled_px(48.));
         div()
             .relative()
@@ -257,7 +268,7 @@ impl SettingsWindow {
             .flex_shrink_0()
             .px_5()
             .py_4()
-            .child(self.page(owner, cx))
+            .child(self.page(owner, window_active, cx))
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -288,7 +299,7 @@ impl Render for SettingsWindow {
         window.set_window_title(Msg::SettingsTitle.t());
         window.set_rem_size(theme::scaled_px(16.));
         let tabs = self.pane_tabs(cx);
-        let body = self.page_body(&owner, cx);
+        let body = self.page_body(&owner, window.is_window_active(), cx);
         owner.update(cx, |app, cx| {
             let models_shown = self.pane == 2
                 && matches!(

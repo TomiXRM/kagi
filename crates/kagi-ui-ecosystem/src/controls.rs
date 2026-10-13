@@ -162,12 +162,12 @@ fn tab_paint(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
         .min_h(theme::scaled_px(24.))
         .rounded(theme::scaled_px(4.))
         .bg(rgb(if selected {
-            theme().accent
+            theme().ui_accent()
         } else {
             theme().surface
         }))
         .text_color(rgb(if selected {
-            theme().bg_base
+            theme().on_accent()
         } else {
             theme().text_sub
         }))

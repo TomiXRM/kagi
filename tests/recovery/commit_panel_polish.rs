@@ -17,7 +17,11 @@ fn pixel(
         let bounds = e2e::control_bounds(window.window_handle().window_id(), name).unwrap();
         let image = window.render_to_image().expect("native composer paint");
         let scale = window.scale_factor();
-        let x = (f32::from(bounds.right()) + if border { 0.5 } else { -8. }) * scale;
+        let x = (if border {
+            f32::from(bounds.right()) + 0.5
+        } else {
+            f32::from(bounds.left()) + 2.
+        }) * scale;
         let y = f32::from(bounds.center().y) * scale;
         image.get_pixel(x as u32, y as u32).0
     })
@@ -25,29 +29,85 @@ fn pixel(
 }
 
 pub fn scenario_commit_panel_selection_hover(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "accent_source", "accent"]);
     let fixture = build_fixture();
     std::fs::write(fixture.path().join("polish.txt"), "staged\n").unwrap();
     git(fixture.path(), &["add", "polish.txt"]);
+    std::fs::write(fixture.path().join("unstaged.txt"), "unstaged\n").unwrap();
     let (app, window) = mount(cx, fixture.path());
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.open_commit_panel(window, cx))
     })
     .unwrap();
     cx.run_until_parked();
-    draw(cx, window, (1440., 900.));
-    let bounds = e2e::control_bounds(window.window_id(), "cp-selected-staged-row").unwrap();
-    let position = point(bounds.left() + px(80.), bounds.center().y);
-    cx.simulate_mouse_down(window, position, MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_up(window, position, MouseButton::Left, Modifiers::none());
-    cx.run_until_parked();
-    cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, Modifiers::none());
-    let rest = pixel(cx, window, "cp-selected-staged-row", false);
-    cx.simulate_mouse_move(window, position, None, Modifiers::none());
-    let hover = pixel(cx, window, "cp-selected-staged-row", false);
-    assert_eq!(
-        hover, rest,
-        "selected file hover must preserve selection fill"
-    );
+    let panel = cx
+        .read(|cx| app.read(cx).ui().commit_panel.clone())
+        .unwrap();
+    for slug in ["apple-light", "apple-dark"] {
+        let _accent = kagi_ui_core::theme::AccentInjection::new(
+            kagi_ui_core::theme::SystemAccent::Blue,
+            Some(true),
+        );
+        app.update(cx, |app, cx| app.set_theme(slug, cx));
+        for (row, label) in [
+            ("cp-selected-staged-row", "cp-selected-staged-label"),
+            ("cp-selected-unstaged-row", "cp-selected-unstaged-label"),
+        ] {
+            draw(cx, window, (1440., 900.));
+            let bounds = e2e::control_bounds(window.window_id(), row).unwrap();
+            let position = point(bounds.left() + px(80.), bounds.center().y);
+            cx.simulate_mouse_down(window, position, MouseButton::Left, Modifiers::none());
+            cx.simulate_mouse_up(window, position, MouseButton::Left, Modifiers::none());
+            cx.run_until_parked();
+            draw(cx, window, (1440., 900.));
+            let bounds = e2e::control_bounds(window.window_id(), row).unwrap();
+            let position = point(bounds.left() + px(80.), bounds.center().y);
+            let selected = cx.read(|cx| panel.read(cx).state.selected_file.clone());
+            for active in [true, false] {
+                app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+                cx.simulate_mouse_move(window, point(px(0.), px(0.)), None, Modifiers::none());
+                let rest = pixel(cx, window, row, false);
+                let theme = kagi_ui_core::theme::theme();
+                let expected = if active {
+                    theme.ui_accent()
+                } else {
+                    theme.inactive_selected
+                };
+                assert_eq!(
+                    &rest[..3],
+                    &[
+                        (expected >> 16) as u8,
+                        (expected >> 8) as u8,
+                        expected as u8
+                    ]
+                );
+                assert_eq!(
+                    e2e::control_paint(window.window_id(), label)
+                        .unwrap()
+                        .text_color,
+                    if active {
+                        gpui::rgb(0xffffff).into()
+                    } else {
+                        gpui::rgb(theme.text_main).into()
+                    },
+                    "selected file's actual label follows activation"
+                );
+                cx.simulate_mouse_move(window, position, None, Modifiers::none());
+                let hover = pixel(cx, window, row, false);
+                assert_eq!(
+                    hover, rest,
+                    "selected file hover preserves opaque selection fill"
+                );
+                assert_eq!(
+                    e2e::control_bounds(window.window_id(), row).unwrap(),
+                    bounds
+                );
+                cx.read(|cx| assert_eq!(&panel.read(cx).state.selected_file, &selected));
+            }
+        }
+    }
+    drop(panel);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS commit_panel_selection_hover");
 }

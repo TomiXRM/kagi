@@ -44,9 +44,8 @@ fn graph(
 
 pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
     let _restore = crate::recovery_layout::GlobalSettings::capture();
-    // #1458: 90% makes the nominal 26.1px row round to 26 device-aligned
-    // logical pixels, exposing cumulative-height oracles at the final row.
-    kagi::ui::theme::set_zoom(0.9);
+    // #1458: retain the default zoom and exercise fractional scales whose
+    // nominal row heights differ from device-pixel-rounded list geometry.
     let fixture = build_fixture();
     for n in 0..EXTRA {
         git(
@@ -54,7 +53,14 @@ pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
             &["commit", "-q", "--allow-empty", "-m", &format!("extra {n}")],
         );
     }
-    let (app, window) = mount(cx, fixture.path());
+    for zoom in [1.0, 0.9, 1.67] {
+        kagi::ui::theme::set_zoom(zoom);
+        check_commit_paging(cx, fixture.path());
+    }
+}
+
+fn check_commit_paging(cx: &mut VisualTestAppContext, repo: &std::path::Path) {
+    let (app, window) = mount(cx, repo);
     cx.update_window(window, |_, window, cx| {
         window.draw(cx).clear();
         let root = app.read(cx).root_focus.clone().expect("root focus");

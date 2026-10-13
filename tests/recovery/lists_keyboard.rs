@@ -130,7 +130,7 @@ fn configure(
     crate::pr_detail_adaptive::resize(cx, window, size);
     draw(cx, window);
 }
-fn page() -> IssueListSnapshot {
+pub(crate) fn page() -> IssueListSnapshot {
     IssueListSnapshot {
         issues: (1..=30)
             .map(|number| Issue {

@@ -341,22 +341,46 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> AnyEl
                                 .items_center()
                                 .gap_1()
                                 .w_full()
-                                .text_size(theme::scaled_px(10.))
+                                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                                 .line_height(theme::scaled_px(13.))
                                 .text_color(if on_accent {
                                     theme().selection_secondary_foreground(app.window_active)
                                 } else {
                                     rgb(theme().text_muted).into()
                                 })
-                                .child(div().flex_shrink_0().child(safe_text(&format!(
-                                    "{age} · {}",
-                                    super::i18n::issue_comments(issue.comment_count)
-                                ))))
+                                .when(cfg!(feature = "gui-e2e"), |label| {
+                                    label.child(super::e2e::measure_inside(format!(
+                                        "issue-secondary-{number}"
+                                    )))
+                                })
+                                .child(
+                                    div()
+                                        .flex_shrink(1.)
+                                        .min_w(px(0.))
+                                        // Expand only the clip, not the metadata line's layout slot.
+                                        .py(theme::scaled_px(2.))
+                                        .my(theme::scaled_px(-2.))
+                                        .truncate()
+                                        .child(safe_text(&format!(
+                                            "{age} · {}",
+                                            super::i18n::issue_comments(issue.comment_count)
+                                        )))
+                                        .when(cfg!(feature = "gui-e2e"), |label| {
+                                            label.child(super::e2e::measure_inside(format!(
+                                                "issue-activity-{number}"
+                                            )))
+                                        }),
+                                )
                                 .child(div().flex_1().min_w(px(0.)))
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .child(SharedString::from(format!("#{}", issue.number))),
+                                        .child(SharedString::from(format!("#{}", issue.number)))
+                                        .when(cfg!(feature = "gui-e2e"), |label| {
+                                            label.child(super::e2e::measure_inside(format!(
+                                                "issue-number-{number}"
+                                            )))
+                                        }),
                                 ),
                         );
                     let row =

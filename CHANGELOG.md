@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log summary time, operation and outcome now share the 13px dense-list identity role while retaining the 22px summary floor and variable-height details. Issues navigator age, comment count and number use the readable 13px secondary role without changing card height or selected foregrounds. (#1498, #1499)
+  - Review: narrow Issues activity labels shrink and truncate so long ages and comment counts cannot clip the trailing Issue number, including 120px/160px sidebar widths.
 - Apple Light/Dark unselected Graph WIP hover uses a lighter 15% accent wash over its lane tint instead of opaque accent. Selection retains its 30% wash and counts/diffstat retain their normal colours. (#1497)
 - Historical Inspector Path/Tree controls share one keyboard-accessible roving TabList in wide and compact Changes, with explicit mode activation and selected accessibility semantics. Stage all, Unstage all and Discard all keep their semantic captions on neutral hover rather than painting an unmatched opaque accent. (#1495, #1496)
 - Document titlebars keep a fixed 36-logical-pixel height at every UI zoom, with capped tab-label typography; native macOS traffic lights retain their centred (9,9) placement. The second-row toolbar continues scaling normally. (#1500)

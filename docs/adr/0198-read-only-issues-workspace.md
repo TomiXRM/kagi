@@ -405,3 +405,13 @@ at activation. Detail/composition/mode departure yields hidden row focus;
 replacement/filter/append reconcile stable numbers without a second data
 or paging owner. Localized row names preserve sanitized title/state identity.
 
+
+## Amendment — 2026-10-14: readable navigator metadata (#1499)
+
+Issues navigator secondary age, comment count and number use 13px reference
+typography (11.7 logical points at 100%), retaining 13px leading, the existing
+two-line card height, selected foreground tokens and shared wide/compact
+renderer. The activity label shrinks and truncates at narrow sidebar widths;
+the trailing Issue number keeps its intrinsic width and remains fully visible.
+No global typography or density setting changes.
+

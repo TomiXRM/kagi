@@ -1191,6 +1191,12 @@ Other theme presets retain `selected_for_window(active)` unchanged; the wash
 does not replace their selection identity. WIP diffstat keeps its ordinary
 added/deleted colours directly, without an unused selected-foreground override.
 
+**#1497 (2026-10-14):** Unselected Apple Graph WIP hover composites a lighter
+15% `ui_accent()` wash over the same base/lane tint. Selected rows keep their
+30% wash even under the pointer; hover does not change normal text, chip or
+added/deleted diffstat colours. Non-Apple presets retain their existing hover
+and selected tokens.
+
 `Theme::on_accent` and the existing primary-button bridge share one
 `on_accent_foreground` derivation for Apple accents: prefer white when its
 contrast is at least **3.0:1**, otherwise black. **Owner decision: Finder

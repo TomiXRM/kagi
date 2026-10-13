@@ -263,16 +263,13 @@ impl KagiApp {
         let color = theme().lane_color(color_idx);
         let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
         let is_selected = is_commit_panel && commit_panel_open;
-        let uses_on_accent = theme().selection_uses_on_accent(is_selected, self.window_active);
         let dark = theme().dark;
         // Tinted chip built from the worktree's lane colour (badge_style only
         // takes a packed u32; lane_color is Hsla, so build the tint directly).
         // Stronger fill than a ref badge so the WIP rows read loudly.
         let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
         let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
-        let chip_text = if dark && uses_on_accent {
-            theme().selection_foreground(self.window_active)
-        } else if dark {
+        let chip_text: gpui::Hsla = if dark {
             rgb(0xffffff).into()
         } else {
             rgb(theme().bg_base).into()
@@ -308,6 +305,9 @@ impl KagiApp {
         .w_full()
         .relative()
         .px_3()
+        .when(is_commit_panel && cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside("graph-wip-row"))
+        })
         .child(
             div()
                 .absolute()
@@ -319,7 +319,10 @@ impl KagiApp {
         )
         .h(px(row_height(self.graph_compact)));
         row = if is_selected {
-            row.bg(theme().selected_for_window(self.window_active))
+            let base: gpui::Hsla = rgb(theme().bg_base).into();
+            row.bg(base
+                .blend(row_wash)
+                .blend(theme().selection_wash(self.window_active)))
         } else {
             row.bg(row_wash)
         };
@@ -399,6 +402,10 @@ impl KagiApp {
                             .min_w_0()
                             .overflow_hidden()
                             .truncate()
+                            .when(is_commit_panel && cfg!(feature = "gui-e2e"), |el| {
+                                el.relative()
+                                    .child(super::e2e::measure_inside("graph-wip-chip"))
+                            })
                             .child(chip_label),
                     )
                     .when(lane.is_some(), |el| {
@@ -493,22 +500,18 @@ impl KagiApp {
                     .child(
                         div()
                             .flex_1()
-                            .text_color(if uses_on_accent {
-                                theme().selection_secondary_foreground(self.window_active)
-                            } else {
-                                rgb(theme().text_muted).into()
-                            })
+                            .text_color(rgb(theme().text_muted))
                             .overflow_hidden()
                             .truncate()
+                            .when(is_commit_panel && cfg!(feature = "gui-e2e"), |el| {
+                                el.relative()
+                                    .child(super::e2e::measure_inside("graph-wip-note"))
+                            })
                             .child(SharedString::from(note)),
                     )
                     .children(self.render_compact_wip_affordance(is_commit_panel))
                     .when_some(diffstat, |el, stat| {
-                        let stat = render_wip_diffstat(
-                            stat,
-                            uses_on_accent
-                                .then(|| theme().selection_foreground(self.window_active)),
-                        );
+                        let stat = render_wip_diffstat(stat);
                         if self.compact.enabled && is_commit_panel {
                             el.child(
                                 div().flex_shrink_0().child(super::e2e::measure_control(

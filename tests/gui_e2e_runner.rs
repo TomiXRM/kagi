@@ -498,6 +498,10 @@ mod recovery_modal_compact;
 mod recovery_plan_card_994;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/plan_preview_files.rs"]
+mod recovery_plan_preview_files;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
@@ -1352,6 +1356,14 @@ mod macos {
             (
                 "plan_heading_chipless",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
+            ),
+            (
+                "plan_preview_files",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
             ),
             (
                 "plan_recovery_noop",

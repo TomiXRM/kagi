@@ -117,6 +117,7 @@ mod modal_command;
 mod modal_copy;
 mod modal_key_routing;
 pub mod modal_plan;
+mod modal_preview_files;
 mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;

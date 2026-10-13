@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Merge, Cherry-pick and Revert confirmation cards show the computed files to change with status glyphs, a localized count and bounded preview. Long paths use middle ellipsis with their full sanitized path in tooltips/accessibility names; the shared scrolling body keeps actions pinned at small-window/high-zoom sizes. Plan computations and confirmation policy are unchanged. (#1381)
+  - Review: omit empty/uncomputed previews on Merge-into and blocked plans; reaching Merge's existing 200-entry producer cap uses a lower-bound `200+` heading and nonnumeric overflow. Reuse Changes' status badges and explicitly allowlist the 25-row preview as a #454 exception.
 - Restore native cherry-pick abort-sequence coverage: valid plans still require Tab-focused confirmation, while blocked plans assert their disabled reason and exercise the guarded application boundary for refusal receipts without expecting an inert button in the Tab order. Production focus and destructive Return behavior are unchanged. (#1398)
 - Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Note names and the shared warning icon/style inside the scrolling plan body. Create Worktree uses the same warning list. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
 - Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)

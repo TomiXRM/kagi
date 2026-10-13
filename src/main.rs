@@ -146,6 +146,7 @@ fn main() {
 
     // Resolve the persisted reduce-motion flag (settings.json "reduce_motion";
     // issue #354 / ADR-0173) so decorative animations start static when on.
+    kagi::system_accessibility::init();
     ui::theme::init_reduce_motion();
     // #772 / ADR-0208: terminal auto-lock opt-in (default off).
     ui::settings::init_terminal_auto_lock();

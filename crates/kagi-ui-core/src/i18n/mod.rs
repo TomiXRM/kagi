@@ -509,6 +509,12 @@ pub enum Msg {
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
+    /// Computed plan file preview; `{}` is the full count.
+    ModalFilesToChange,
+    /// Bounded preview remainder; `{}` is the omitted count.
+    ModalFilesMore,
+    /// Preview producer reached its cap; the true omitted count is unknown.
+    ModalFilesMoreUnknown,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -2766,6 +2772,12 @@ impl Msg {
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
             (Ja, OpenedInFinder) => "Finder で開きました",
+            (En, ModalFilesToChange) => "Files to change ({})",
+            (Ja, ModalFilesToChange) => "変更するファイル ({})",
+            (En, ModalFilesMore) => "…and {} more",
+            (Ja, ModalFilesMore) => "…ほか {} 件",
+            (En, ModalFilesMoreUnknown) => "…and more files",
+            (Ja, ModalFilesMoreUnknown) => "…ほかにもファイルがあります",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
             (En, ConflictContinue) => "Continue",
@@ -3625,10 +3637,10 @@ impl Msg {
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
-                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+                "Stop decorative animations. macOS Reduce Motion is also respected, even when this switch is off."
             }
             (Ja, SettingsReduceMotionDesc) => {
-                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+                "装飾的なアニメーションを静止させます。オフでも macOS の「視差効果を減らす」を尊重します。"
             }
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",
@@ -4697,6 +4709,13 @@ pub fn branch_name_error(e: &kagi_domain::plan::BranchNameError) -> String {
         CreateInvalidRef(name) => branch_invalid_ref_fmt(name),
         CreateLeadingDash(name) => branch_leading_dash_fmt(name),
         CreateExists(name) => branch_exists_fmt(name),
+        CreateNamespaceCollision { name, existing } => match lang() {
+            Lang::En => e.to_string(),
+            Lang::Ja => format!(
+                "既存の ref `{}` と名前空間が競合しています。\nbranch `{}`",
+                existing, name
+            ),
+        },
     }
 }
 

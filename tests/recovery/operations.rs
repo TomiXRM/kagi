@@ -2072,15 +2072,12 @@ pub fn scenario_create_branch_presents_backend_receipt(cx: &mut VisualTestAppCon
     );
 }
 
-/// #1092: a valid ref name can still fail at the real execution boundary:
-/// an existing `collision` ref prevents creation of `collision/child`.
+/// #1092: an external ref lock can make a valid plan fail at execution.
 pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
-    git(&repo, &["branch", "collision"]);
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
     let before = repo_fingerprint(&repo);
-    let refs_before = output(&repo, &["show-ref", "--heads"]);
     let (app, window) = mount(cx, &repo);
     app.update(cx, |app, cx| app.open_create_branch_modal(head, cx));
     paint(cx, window);
@@ -2101,6 +2098,10 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
     });
     let confirm = kagi::ui::e2e::confirm_bounds(window.window_id())
         .expect("valid collision/child plan offers Create");
+    let lock = repo.join(".git/refs/heads/collision/child.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"external writer").unwrap();
+    let refs_before = output(&repo, &["show-ref", "--heads"]);
     cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
     cx.run_until_parked();
     paint(cx, window);
@@ -2112,7 +2113,7 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
     );
     assert!(
         matches!(durable[0].outcome, OpOutcome::Failed { .. }),
-        "namespace collision must fail execution, not planning: {:?}",
+        "external ref lock must fail execution, not planning: {:?}",
         durable[0].outcome
     );
     let error = cx.read(|cx| {
@@ -2137,6 +2138,7 @@ pub fn scenario_create_branch_execution_failure_keeps_input(cx: &mut VisualTestA
     assert_eq!(repo_fingerprint(&repo), before);
     assert_eq!(output(&repo, &["show-ref", "--heads"]), refs_before);
     assert!(output(&repo, &["branch", "--list", "collision/child"]).is_empty());
+    std::fs::remove_file(lock).unwrap();
 
     git(&repo, &["branch", "reload-marker"]);
     app.update(cx, |app, cx| app.reload(cx));
@@ -2788,6 +2790,9 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             );
         }
         if case == "rename" || case == "upstream" {
+            if case == "upstream" {
+                git(&repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+            }
             let input = cx
                 .read(|cx| {
                     let app = app.read(cx);

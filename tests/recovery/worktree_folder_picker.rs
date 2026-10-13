@@ -1,6 +1,5 @@
-//! #1043: Add Worktree's path field has the system folder dialog's button on
-//! its left. The runner cannot drive the native dialog, so `e2e` records the
-//! request and answers it with a folder (or a cancel).
+//! #1043 / #1383: the folder button uses production's async completion path.
+//! Deferred answers must remain owned by the requesting form and tab visit.
 use std::time::{Duration, Instant};
 
 use gpui::{AnyWindowHandle, Entity, Role, VisualTestAppContext};
@@ -12,6 +11,7 @@ use kagi_ui_core::{
     theme,
 };
 
+use crate::evidence_support::deferred;
 use crate::macos::{build_fixture, mount, unmount};
 
 #[path = "../support/git_fixture.rs"]
@@ -60,14 +60,134 @@ fn click_button(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
 }
 
+fn form_snapshot(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+) -> (String, bool, String, u64) {
+    cx.read(|cx| {
+        let app = app.read(cx);
+        let modal = app.create_worktree_modal().expect("card open");
+        assert_eq!(
+            modal.path_state.as_ref().unwrap().read(cx).value().as_str(),
+            modal.path_input,
+            "the path entity and form agree"
+        );
+        (
+            modal.path_input.clone(),
+            modal.path_touched,
+            format!("{:?}", modal.plan),
+            app.modal_replan_gen,
+        )
+    })
+}
+
+fn plan_count() -> usize {
+    kagi_ui_core::klog::tail()
+        .iter()
+        .filter(|line| line.starts_with("[kagi] plan: create-worktree '"))
+        .count()
+}
+
+fn reopen(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    head: &CommitId,
+) {
+    app.update(cx, |app, cx| {
+        app.cancel_create_worktree_modal();
+        app.open_create_worktree_modal_prefilled(head.clone(), "picked/one".into(), false, cx);
+        cx.notify();
+    });
+    settle(cx, app, window, "replacement form", |app| {
+        app.create_worktree_modal()
+            .is_some_and(|m| m.path_state.is_some() && m.plan.plan().is_some())
+    });
+}
+
+fn stale_answers(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    head: &CommitId,
+    chosen: &std::path::Path,
+) {
+    // A and B deliberately use the same branch name: matching input text is
+    // not matching the form which opened the system chooser.
+    let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+    kagi::ui::e2e::queue_folder_answer(task);
+    click_button(cx, window);
+    assert_eq!(kagi::ui::e2e::take_folder_prompts().len(), 1);
+    reopen(cx, app, window, head);
+    let before = form_snapshot(cx, app);
+    let plans = plan_count();
+    answer.send(Some(chosen.to_path_buf()));
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        form_snapshot(cx, app), before,
+        "late chooser A must not change replacement B's path, touched flag, plan or replan generation"
+    );
+    assert_eq!(plan_count(), plans, "a stale answer must not replan B");
+
+    // Reuse the original Input entity after departure/return to independently
+    // exercise attachment visit ownership rather than form replacement.
+    let original = cx.read(|cx| app.read(cx).create_worktree_modal().unwrap().clone());
+    let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+    kagi::ui::e2e::queue_folder_answer(task);
+    click_button(cx, window);
+    assert_eq!(kagi::ui::e2e::take_folder_prompts().len(), 1);
+    let other = build_fixture();
+    assert!(app.update(cx, |app, cx| app
+        .open_repository(other.path().to_path_buf(), cx)));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.switch_repo(0, cx));
+    cx.run_until_parked();
+    app.update(cx, |app, cx| {
+        app.set_create_worktree_modal(original);
+        cx.notify();
+    });
+    paint(cx, window);
+    let before = form_snapshot(cx, app);
+    let plans = plan_count();
+    answer.send(Some(chosen.to_path_buf()));
+    cx.run_until_parked();
+    paint(cx, window);
+    cx.advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    assert_eq!(
+        form_snapshot(cx, app),
+        before,
+        "tab departure/return must retire chooser A"
+    );
+    assert_eq!(plan_count(), plans, "a retired visit must not replan");
+    app.update(cx, |app, cx| app.close_tab(1, cx));
+    cx.run_until_parked();
+}
+
 pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom"]);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let head = CommitId(output(&repo, &["rev-parse", "HEAD"]));
     let chosen_dir = tempfile::tempdir().unwrap();
     let chosen = chosen_dir.path().canonicalize().unwrap();
-    let (app, window) = mount(cx, &repo);
+    let state = kagi::ui::e2e::app_state(&repo).unwrap();
+    let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let out = captured.clone();
+    let window = crate::macos::open_offscreen(
+        cx,
+        gpui::size(gpui::px(940.), gpui::px(660.)),
+        move |window, cx| kagi::ui::e2e::mount_root(state, window, cx, &out),
+    );
+    let app = captured.borrow().clone().unwrap();
+    drop(captured);
+    let window: AnyWindowHandle = window.into();
+    cx.run_until_parked();
+    theme::set_zoom(1.67);
 
     for lang in [Lang::En, Lang::Ja] {
         app.update(cx, |app, cx| {
@@ -139,9 +259,13 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
             "{lang:?}: the input gives up only the button's width: {button:?} / {input:?} / {comparison:?}"
         );
 
+        stale_answers(cx, &app, window, &head, &chosen);
+
         // Cancel: the request is made, nothing changes.
         let (default_path, touched) = path_input(cx, &app);
         assert!(!touched, "the default path follows the branch name");
+        let unchanged = form_snapshot(cx, &app);
+        let plans = plan_count();
         kagi::ui::e2e::answer_folder_prompt(None);
         click_button(cx, window);
         assert_eq!(
@@ -150,6 +274,14 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
             "{lang:?}: a click asks for one folder"
         );
         paint(cx, window);
+        cx.advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        assert_eq!(
+            form_snapshot(cx, &app),
+            unchanged,
+            "chooser cancel changes no form state"
+        );
+        assert_eq!(plan_count(), plans, "chooser cancel does not replan");
         assert_eq!(
             path_input(cx, &app),
             (default_path, false),
@@ -158,9 +290,19 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
 
         // Choose: the field becomes a new folder for the branch inside the
         // chosen one and is planned as typed input.
-        kagi::ui::e2e::answer_folder_prompt(Some(chosen.clone()));
+        let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+        kagi::ui::e2e::queue_folder_answer(task);
+        let before = form_snapshot(cx, &app);
+        let plans = plan_count();
         click_button(cx, window);
         assert_eq!(kagi::ui::e2e::take_folder_prompts().len(), 1);
+        assert_eq!(
+            form_snapshot(cx, &app),
+            before,
+            "pending chooser changes nothing"
+        );
+        answer.send(Some(chosen.clone()));
+        cx.run_until_parked();
         let expected = chosen.join("picked-one").display().to_string();
         settle(cx, &app, window, "the chosen folder's plan", |app| {
             app.create_worktree_modal().is_some_and(|m| {
@@ -175,6 +317,16 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
             path_input(cx, &app),
             (expected.clone(), true),
             "{lang:?}: the chosen folder is the user's path"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).modal_replan_gen),
+            before.3 + 1,
+            "the same form receives one path edit"
+        );
+        assert_eq!(
+            plan_count(),
+            plans + 1,
+            "the same form replans exactly once"
         );
         let blockers = cx.read(|cx| {
             app.read(cx)
@@ -194,6 +346,18 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
         assert!(
             !std::path::Path::new(&expected).exists(),
             "choosing a folder writes nothing"
+        );
+        assert!(
+            output(
+                &repo,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/heads/picked/one"
+                ]
+            )
+            .is_empty(),
+            "folder selection creates no branch ref"
         );
 
         app.update(cx, |app, cx| {

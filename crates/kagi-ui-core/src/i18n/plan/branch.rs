@@ -19,7 +19,7 @@ pub(crate) const ADVICE_DELETE_UNMERGED: &str =
     "未 merge の branch です。削除すると {} commit が他の ref から到達不能になりますが、復元用 ref で保持します。2 回確認すると削除します。\nbranch `{}` / 先端 `{}`";
 
 pub(crate) const ADVICE_BRANCH_RENAME_REF_ONLY_DIRTY: &str =
-    "リネームは ref だけを変更します。作業ツリーは変わりません。";
+    "リネームは ref だけを変更します。working tree は変わりません。";
 pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
     "remote branch はリネームされません。local の設定だけ引き継ぎます。";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG: &str = "引き継ぐ local branch の設定キー: {}。";
@@ -34,7 +34,7 @@ pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_HEADER: &str =
 pub(crate) const ADVICE_BRANCH_DELETE_CURRENT_BRANCH: &str =
     "checkout 中の branch は削除できません。別の branch に切り替えてください。\nbranch `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_CHECKED_OUT: &str =
-    "ブランチ '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別のブランチへ切り替えてください。";
+    "branch '{}' は worktree '{}' で checkout 中です。削除する前にその worktree を別の branch へ切り替えてください。";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_LOCKED_WORKTREE: &str =
     "ロックされた worktree で checkout 中です。先にロックを解除してください。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_DIRTY_WORKTREE: &str =
@@ -42,7 +42,7 @@ pub(crate) const ADVICE_BRANCH_DELETE_BRANCH_IN_DIRTY_WORKTREE: &str =
 pub(crate) const ADVICE_BRANCH_DELETE_REMOVES_PINNING_WORKTREE: &str =
     "clean な worktree で checkout 中です。worktree を削除してから branch を削除します。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_SQUASH_MERGED: &str =
-    "squash merge 済みです。変更は取り込み済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`";
+    "squash merge 済みです。変更は merge 先に反映済みで、削除しても失われません。\nbranch `{}` / merge 先 `{}`";
 pub(crate) const ADVICE_BRANCH_DELETE_KEEPS_REMOTE: &str =
     "削除するのは local branch だけです。remote は残ります。\nbranch `{}`";
 

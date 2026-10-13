@@ -26,7 +26,7 @@ pub(crate) const ADVICE_CHECKOUT_CHECKOUT_OVERLAP: &str =
 pub(crate) const ADVICE_CHECKOUT_DIRTY_CARRIED_OVER: &str =
     "{}は切り替え先に引き継がれます。\nbranch `{}`";
 pub(crate) const ADVICE_CHECKOUT_DIRTY_MAY_FAIL: &str =
-    "作業ツリーが dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。";
+    "working tree が dirty です({})。checkout に失敗する場合があります。先に stash か commit してください。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; kept local since `CheckoutNote` is

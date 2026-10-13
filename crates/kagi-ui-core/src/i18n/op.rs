@@ -405,10 +405,10 @@ mod tests {
         );
         super::super::set_lang_no_persist(Lang::Ja);
         assert_eq!(
-            op_refused("checkout", "未コミット", 0),
-            "checkout は拒否されました: 未コミット"
+            op_refused("checkout", "未 commit", 0),
+            "checkout は拒否されました: 未 commit"
         );
-        assert!(op_refused("checkout", "未コミット", 1).ends_with("（ほか 1 件は Operation Log）"));
+        assert!(op_refused("checkout", "未 commit", 1).ends_with("（ほか 1 件は Operation Log）"));
         super::super::set_lang_no_persist(Lang::En);
     }
 }

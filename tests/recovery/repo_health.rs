@@ -82,7 +82,7 @@ fn assert_plan_presentation(
             (MaintenanceTitle::WriteCommitGraph, Lang::Ja) => (
                 "commit-graph を書き込む",
                 "commit-graph 書き込み済み",
-                "すべてのコミットの commit-graph を書き込みます。作業ツリーは変更されません",
+                "すべての commit の commit-graph を書き込みます。working tree は変更されません",
             ),
             (MaintenanceTitle::EnableFsmonitor, Lang::En) => (
                 "Enable fsmonitor",
@@ -92,7 +92,7 @@ fn assert_plan_presentation(
             (MaintenanceTitle::EnableFsmonitor, Lang::Ja) => (
                 "fsmonitor を有効化",
                 "fsmonitor 有効",
-                "core.fsmonitor = true にします。作業ツリーは変更されません",
+                "core.fsmonitor = true にします。working tree は変更されません",
             ),
         };
         app.update(cx, |app, cx| app.set_lang(lang, cx));

@@ -18,11 +18,11 @@ pub(crate) const ADVICE_MERGE_INTO_UNRELATED_HISTORIES: &str =
 pub(crate) const ADVICE_MERGE_INTO_CHECKED_OUT_ELSEWHERE: &str =
     "branch は別の worktree で checkout 中です。その worktree 側で merge してください。\nbranch `{}` / worktree `{}`";
 pub(crate) const ADVICE_MERGE_INTO_WOULD_CONFLICT: &str =
-    "`{}` を `{}` に merge すると {} 件 conflict します。解決は作業ツリー上で行うため、`{}` を checkout してから実行してください。";
+    "`{}` を `{}` に merge すると {} 件 conflict します。解決は working tree 上で行うため、`{}` を checkout してから実行してください。";
 pub(crate) const ADVICE_MERGE_INTO_FAST_FORWARD: &str =
     "`{}` に固有の commit が無いため `{}` へ fast-forward します。ref が動くだけで merge commit は作られません。";
 pub(crate) const ADVICE_MERGE_INTO_WORKING_TREE_UNTOUCHED: &str =
-    "作業ツリーには触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。";
+    "working tree には触れません。`{}` は checkout されたまま、ディスク上のファイルは変わりません。";
 pub(crate) const ADVICE_MERGE_INTO_CREATES_LOCAL_BRANCH: &str =
     "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。";
 pub(crate) const ADVICE_MERGE_INTO_REMOTE_SOURCE: &str =

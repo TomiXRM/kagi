@@ -145,7 +145,7 @@ fn commit_panel_chrome_has_japanese_without_english_fallbacks() {
         (Msg::CommitPanelDiscardAll, "Discard all"),
         (Msg::CommitPanelStage, "Stage"),
         (Msg::CommitPanelUnstage, "Unstage"),
-        (Msg::CommitPanelConflict, "競合"),
+        (Msg::CommitPanelConflict, "conflict"),
     ] {
         assert_eq!(message.t_for(Lang::Ja), japanese);
         if matches!(
@@ -239,6 +239,45 @@ fn domain_words_stay_english_in_both_langs() {
         assert!(!m.t().contains("マージ"), "{:?} still contains マージ", m);
     }
     set_lang_no_persist(Lang::En);
+}
+
+#[test]
+fn japanese_git_terms_preserve_operation_names_and_working_tree_meaning() {
+    for (message, english, japanese) in [
+        (Msg::ToolbarBranch, "Branch", "Branch"),
+        (Msg::ToolbarStash, "Stash", "Stash"),
+        (Msg::ToolbarPop, "Pop", "Pop"),
+        (Msg::InputStash, "Stash", "Stash"),
+        (Msg::InputStashTitle, "Stash changes", "変更を stash する"),
+        (Msg::A11ySidebarWorktrees, "Worktrees", "worktree"),
+        (Msg::A11ySidebarStashes, "Stashes", "stash"),
+        (Msg::PrWhyConflicting, "Conflicts", "conflict"),
+        (
+            Msg::StashClean,
+            "Stash: working tree is clean — nothing to stash",
+            "working tree に stash する変更がありません",
+        ),
+        (
+            Msg::PopEmpty,
+            "Pop: stash is empty",
+            "stash した変更がありません",
+        ),
+        (
+            Msg::EditorWorkspaceEmpty,
+            "No changed files in the working tree.",
+            "working tree に変更されたファイルはありません。",
+        ),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+    assert_eq!(
+        Msg::StashPopConflictedKept.t_for(Lang::Ja),
+        "conflict ありで適用しました — stash は保持されています。conflict を解決してから手動で drop してください。",
+    );
+    assert!(plan::rebase::ADVICE_REBASE_DIRTY_WORKING_TREE.starts_with("working tree "));
+    assert!(plan::worktree::ADVICE_WORKTREE_CREATES_LINKED_WORKTREE.contains("worktree"));
+    assert!(plan::branch::ADVICE_BRANCH_DELETE_SQUASH_MERGED.contains("merge 先に反映済み"));
 }
 
 #[test]

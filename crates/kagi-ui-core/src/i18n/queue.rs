@@ -52,7 +52,7 @@ pub fn queue_text(key: QueueText) -> &'static str {
         (Lang::En, DraftChanged) => "Draft changed",
         (Lang::Ja, DraftChanged) => "下書きの変更",
         (Lang::En, StagedChanged) => "Staged files changed",
-        (Lang::Ja, StagedChanged) => "ステージ済みの変更",
+        (Lang::Ja, StagedChanged) => "stage 済みの変更",
         (Lang::En, PlanBlockers) => "Plan blockers",
         (Lang::Ja, PlanBlockers) => "plan の問題",
         (Lang::En, PlanWarnings) => "Plan warnings",

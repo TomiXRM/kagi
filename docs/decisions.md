@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-13
+> **Last updated:** 2026-10-14
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-14 | #1484: compact Changes projects the existing Inspector into metadata/files columns for historical commits; fit the entire bottom panel to one-third of window height | Keep WIP's Unstaged/Staged adapter unchanged and reuse Inspector metadata/actions, Path/Tree RowList, keyboard/AX and 20px/13px density rather than copying session-owned reads or selection. Extend #1355's presentation-only fit principle to height: retain the wide preferred height, keep compact divider adjustment transient, never persist compact fitting or drag heights, and restore the right Inspector/preferred height at ≥1000 logical px. [ADR-0224 amendment](adr/0224-compact-layout.md#amendment--2026-10-14-compact-commit-inspector-and-bottom-panel-height-1484). |
 | 2026-10-12 | #1225 dev sync: partition native compact geometry by height/zoom while retaining the original scenario name and all 16 cells | The combined native oracle reached its 120s deadline during real rail interactions after the merge. Four independently isolated processes each cover EN/JA × Apple Light/Dark with identical assertions; the existing compact_layout_ filter selects all partitions. No deadline increase, production behavior change or coverage reduction. |
 | 2026-10-12 | #1225: approved A″ compact Graph layout uses one zoom-independent `< px(1000.)` viewport breakpoint across presets, a scaled 44px navigator rail, pinned WIP composer and two independent Changes file lists | Extend existing sidebar/Popover, bottom TabList and one CommitPanelView through surface adapters; never clone draft, selection or staging state. Keep toolbar_display/overflow, graph columns/row heights/lanes and ≥1000px wide rendering unchanged. A scaled breakpoint would incorrectly exclude 940px at 100% and include 1392px at 167%; only rail/popup/control geometry scales. Reuse the later shared keyboard/AX footer and selectors, retaining modal/menu → diff/PR → toast → rail → composer Escape priority. Keyboard completion retains disabled compact staging focus; pointer completion returns to diff navigation. Final feature integration passes 40/40 filtered native scenarios at the unchanged 120s deadline and all functional gates; PM Tier B of the revised window remains pending. [ADR-0224](adr/0224-compact-layout.md). |
 | 2026-10-13 | #1467: remaining file/ref lists adopt `FILE_TREE_FONT_PX`, 20px File History/Editor rows and 16px badges with 1.2em leading | Reuse the shared role token rather than changing `text_xs` globally. File History alone consumes `CommitRowLayout::Table`, so graph cards retain their geometry. Sidebar headings stay 12px and worktree rows retain #855's 24px path/port wrapping slot; other refs stay 20px. Changes/Worktrees use the already-completed Commit Panel and are intentionally untouched. Native paint masks include descender containment and GPUI's rounded leading. [ADR-0089 amendment](adr/0089-file-history.md#amendment--2026-10-13-finder-inspired-list-density-1467). |

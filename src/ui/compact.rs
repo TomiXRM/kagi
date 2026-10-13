@@ -31,6 +31,8 @@ fn compact_width(width: Pixels) -> bool {
 pub(super) struct CompactState {
     pub enabled: bool,
     pub suspended: bool,
+    /// Compact divider adjustments are presentation-only, never saved preferences.
+    pub bottom_height: Option<f32>,
     owner: Option<SessionId>,
     pub popup_owner: Option<SessionId>,
     pub wip_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -54,6 +56,8 @@ impl KagiApp {
             self.compact.owner = owner;
         }
         if self.compact.enabled && !enabled {
+            self.compact.bottom_height = None;
+            self.bottom_panel_drag_origin = None;
             // Graph selection closes the legacy right-pane flag, not this pin.
             // Reattach the same owner/model to its desktop projection on resize.
             if self.compact.popup_owner.is_some()
@@ -74,6 +78,10 @@ impl KagiApp {
             self.bottom_tab = BottomTab::Changes;
             self.bottom_panel_open = true;
             self.yield_compact_input_focus(window, cx);
+        }
+        if enabled && !self.compact.enabled && self.ui().selected.is_some() {
+            self.bottom_tab = BottomTab::Changes;
+            self.bottom_panel_open = true;
         }
         if !enabled && self.bottom_tab == BottomTab::Changes {
             self.bottom_tab = BottomTab::OperationLog;
@@ -131,6 +139,7 @@ impl KagiApp {
             || self.bottom_tab != BottomTab::Changes
             || !self.bottom_panel_open
             || self.ui().commit_panel.is_some()
+            || self.ui().selected.is_some()
             || self.repo_path.is_none()
             || self.compact.pending_changes_owner == Some(owner)
         {
@@ -232,7 +241,7 @@ impl KagiApp {
 
     /// Changes activation initializes the existing owner, but does not pin a popup.
     pub(super) fn open_compact_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ui().commit_panel.is_none() {
+        if self.ui().commit_panel.is_none() && self.ui().selected.is_none() {
             self.open_commit_panel(window, cx);
             self.close_compact_composer(window, cx);
         }

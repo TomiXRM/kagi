@@ -83,9 +83,21 @@ fn assert_copy(
                 settings::Settings::load().graph_copy_target(),
             )
         });
-        let before = copy_count();
+        // The shared evidence tail is bounded; older copy lines can fall out
+        // during this three-width matrix. Count only after our local boundary.
+        const BOUNDARY: &str = "[kagi] graph-focus-test: copy boundary";
+        kagi_ui_core::klog!("graph-focus-test: copy boundary");
         assert_eq!(copy(cx, win).as_deref(), Some(expected.as_str()));
-        assert_eq!(copy_count(), before + 1, "one copy logs exactly once");
+        let tail = kagi_ui_core::klog::tail();
+        let boundary = tail.iter().rposition(|line| line == BOUNDARY).unwrap();
+        assert_eq!(
+            tail[boundary + 1..]
+                .iter()
+                .filter(|line| line.starts_with("[kagi] graph: copied "))
+                .count(),
+            1,
+            "one copy logs exactly once"
+        );
     }
 }
 
@@ -119,7 +131,7 @@ pub fn scenario_graph_pointer_focus(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "filter-target", "HEAD~1"]);
     let before = repo_fingerprint(fixture.path());
-    for size in [(940., 660.), (1392., 883.)] {
+    for size in [(940., 660.), (1040., 660.), (1392., 883.)] {
         for zoom in [1., 1.67] {
             for lang in [Lang::En, Lang::Ja] {
                 for slug in ["apple-light", "apple-dark"] {
@@ -144,6 +156,20 @@ pub fn scenario_graph_pointer_focus(cx: &mut VisualTestAppContext) {
 }
 
 fn pointer_case(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
+    let compact = cx
+        .update_window(win, |_, window, _| window.viewport_size().width < px(1000.))
+        .unwrap();
+    if compact {
+        // #1481: the narrow navigator lives in its actual rail Popover; the
+        // undrawn desktop sidebar cannot own a filter-focus assertion.
+        paint(cx, win);
+        let rail = e2e::control_bounds(win.window_id(), "compact-rail-local")
+            .expect("compact local navigator trigger")
+            .center();
+        cx.simulate_mouse_down(win, rail, MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(win, rail, MouseButton::Left, Modifiers::none());
+        paint(cx, win);
+    }
     keys(cx, win, "secondary-f");
     let input = cx.read(|cx| app.read(cx).sidebar.filter.clone()).unwrap();
     keys(cx, win, "f i l t e r - t a r g e t");

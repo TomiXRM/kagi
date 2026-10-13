@@ -8,7 +8,7 @@ use super::*;
 impl KagiApp {
     pub(super) fn finish_bottom_panel_resize(&mut self) {
         if let Some((_, _, original_height)) = self.bottom_panel_drag_origin.take() {
-            if (self.bottom_panel_height - original_height).abs() > 0.5 {
+            if !self.compact.enabled && (self.bottom_panel_height - original_height).abs() > 0.5 {
                 settings::write_setting(
                     "bottom_panel_height",
                     Some(&self.bottom_panel_height.to_string()),
@@ -158,6 +158,17 @@ impl KagiApp {
                 } else {
                     new_h
                 };
+                if self.compact.enabled {
+                    if self
+                        .compact
+                        .bottom_height
+                        .is_none_or(|height| (new_h - height).abs() > 0.5)
+                    {
+                        self.compact.bottom_height = Some(new_h);
+                        cx.notify();
+                    }
+                    return;
+                }
                 if (new_h - self.bottom_panel_height).abs() > 0.5 {
                     self.bottom_panel_height = new_h;
                     cx.notify();

@@ -116,7 +116,11 @@ impl KagiApp {
                     this.bottom_panel_drag_origin = Some((
                         f32::from(event.position.y),
                         height,
-                        this.bottom_panel_height,
+                        if compact {
+                            height
+                        } else {
+                            this.bottom_panel_height
+                        },
                     ));
                 }),
             )
@@ -253,6 +257,14 @@ impl KagiApp {
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
             BottomTab::Activity => self.render_activity_body(window, cx),
+            BottomTab::Changes if self.ui().selected.is_some() => {
+                let selected = self.ui().selected;
+                if let Some(row) = selected {
+                    self.with_ui(|ui| ui.sync_inspector_commit_files(row));
+                }
+                workspace::render_inspector_body(self, selected, None, window, cx)
+                    .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element())
+            }
             BottomTab::Changes => self
                 .compact_surface(false, cx)
                 .map(IntoElement::into_any_element)

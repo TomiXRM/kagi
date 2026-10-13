@@ -783,9 +783,16 @@ impl KagiApp {
             window,
             matches!(layout.center, workspace::CenterPane::Editor),
         );
-        let panel_height = self
-            .bottom_panel_height
-            .clamp(BOTTOM_PANEL_MIN_H, max_height);
+        let preferred_height = if compact {
+            self.compact.bottom_height.unwrap_or_else(|| {
+                f32::from(window.viewport_size().height) / (3. * theme::scaled(1.))
+                    - BOTTOM_PANEL_DIVIDER_H
+                    - BOTTOM_PANEL_TAB_H
+            })
+        } else {
+            self.bottom_panel_height
+        };
+        let panel_height = preferred_height.clamp(BOTTOM_PANEL_MIN_H, max_height);
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
             .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, window, cx)
@@ -911,10 +918,15 @@ impl KagiApp {
                 .and_then(workspace::right_item)
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
-        if !matches!(
-            right_pane,
-            Some(workspace::RightPane::Inspector | workspace::RightPane::Compare)
-        ) || right_element.is_none()
+        let compact_inspector_shown = compact
+            && panel_visible > 0.
+            && panel_tab == BottomTab::Changes
+            && self.ui().selected.is_some();
+        if !compact_inspector_shown
+            && (!matches!(
+                right_pane,
+                Some(workspace::RightPane::Inspector | workspace::RightPane::Compare)
+            ) || right_element.is_none())
         {
             self.ui()
                 .inspector_model

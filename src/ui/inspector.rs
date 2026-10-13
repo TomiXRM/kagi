@@ -83,6 +83,7 @@ pub(super) fn render_inspector(
     // time and read by the InspectorSplit drag handler in mod.rs.
     split_geom: std::rc::Rc<std::cell::Cell<(f32, f32)>>,
     panel_width: f32,
+    compact: bool,
     // W11-AVATAR: resolved GitHub avatar images keyed by author email.
     avatar_images: &std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
     fallback: Option<&gpui::FocusHandle>,
@@ -142,6 +143,8 @@ pub(super) fn render_inspector(
                 .text_xs()
                 .text_color(path_col)
                 .on_click(toggle_click_a)
+                .relative()
+                .child(super::e2e::measure_inside("toggle-path"))
                 .child(SharedString::from("Path")),
         )
         .child(
@@ -153,6 +156,8 @@ pub(super) fn render_inspector(
                 .bg(tree_bg)
                 .text_xs()
                 .text_color(tree_col)
+                .relative()
+                .child(super::e2e::measure_inside("toggle-tree"))
                 .on_click(toggle_click_b)
                 .child(SharedString::from("Tree")),
         );
@@ -276,7 +281,15 @@ pub(super) fn render_inspector(
         .h_full()
         .flex()
         .flex_col()
-        .bg(rgb(theme().panel));
+        .bg(rgb(theme().panel))
+        .when(compact, |panel| {
+            panel
+                .w_full()
+                .flex_1()
+                .min_h(px(0.))
+                .min_w(px(0.))
+                .flex_row()
+        });
     let Some((d, at)) = detail else {
         return panel.child(files_box.flex_1().flex_basis(relative(1.)).pt_1());
     };
@@ -459,6 +472,7 @@ pub(super) fn render_inspector(
                             .into()
                         })
                         .flex_shrink(1.)
+                        .when(compact, |author| author.flex_1())
                         .min_w(px(0.))
                         .text_sm()
                         .text_color(rgb(theme().text_main))
@@ -784,6 +798,65 @@ pub(super) fn render_inspector(
     // between two states on every pane-width change (blank-line jitter while
     // dragging). overflow_hidden on the outer box cuts that feedback; the
     // inner scroller gets its definite bounds from the solved box.
+    // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
+    let header_region = div()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .px_3()
+        .pt_1()
+        .pb_1()
+        .relative()
+        .child(super::e2e::measure_inside("inspector-header"))
+        .child(title_el)
+        .child(meta_row)
+        .child(badges_row)
+        .child(actions_row);
+    if compact {
+        // Metadata and message share one scroll viewport in the short bottom
+        // projection. The desktop header remains fixed in the ordinary pane.
+        let details_scroll = div()
+            .id("inspector-message-scroll")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(message_handle)
+            .child(header_region)
+            .child(message_inner.px_3());
+        let details = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .h_full()
+            .overflow_hidden()
+            .relative()
+            .child(super::e2e::measure_inside("compact-inspector-details"))
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "inspector-message-scrollbar",
+                message_handle,
+                details_scroll,
+                cx,
+            ));
+        let files = div()
+            .flex_1()
+            .flex_basis(px(0.))
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .h_full()
+            .relative()
+            .child(super::e2e::measure_inside("compact-inspector-files"))
+            .child(
+                files_box
+                    .size_full()
+                    .flex_basis(relative(1.))
+                    .pt_1()
+                    .border_l_1()
+                    .border_color(rgb(theme().surface)),
+            );
+        return panel.child(details).child(files);
+    }
     let message_scroll = div()
         .id("inspector-message-scroll")
         .size_full()
@@ -855,21 +928,6 @@ pub(super) fn render_inspector(
             },
             |_drag, _pos, _window, cx| cx.new(|_| DividerGhost),
         );
-
-    // ── Fixed header region (title, meta, badges, actions) — not scrolled ──
-    let header_region = div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .px_3()
-        .pt_1()
-        .pb_1()
-        .relative()
-        .child(super::e2e::measure_inside("inspector-header"))
-        .child(title_el)
-        .child(meta_row)
-        .child(badges_row)
-        .child(actions_row);
 
     // ── Split region: message │ divider │ files ───────────────────────────
     // Grouped under one flex_1 column so the split ratio is relative to the

@@ -95,6 +95,8 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     open_wip(cx, win);
     set_draft(cx, &panel, win);
     graph_selection(cx, &app, win);
+    assert!(cx.read(|cx| app.read(cx).ui().selected.is_some()));
+    commit_columns(win, case.dimensions());
     let before = snapshot(cx, &panel);
     roundtrip(cx, &app, &panel, win, fixture.path(), case, &before);
     if e2e::control_bounds(win.window_id(), "compact-composer").is_some() {
@@ -106,6 +108,17 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
         snapshot(cx, &panel),
         before,
         "surface roundtrip retains panel state"
+    );
+    commit_columns(win, case.dimensions());
+    // Reopening Changes preserves the graph's normal-commit selection.
+    // Only the real WIP row switches its projection back to staging.
+    click(cx, win, "compact-wip-row");
+    assert!(cx.read(|cx| app.read(cx).ui().selected.is_none()));
+    escape(cx, &app, win);
+    assert_eq!(
+        snapshot(cx, &panel),
+        before,
+        "real WIP reselect preserves the retained draft/selection/staging"
     );
     columns(win, case.dimensions());
     successful_commit(cx, &app, &panel, win, fixture.path(), &before);
@@ -292,6 +305,7 @@ fn roundtrip(
         resize(cx, win, dimensions);
         if dimensions.0 == WIDTH {
             rail_graph(win, dimensions);
+            commit_columns(win, dimensions);
         } else {
             assert!(
                 e2e::control_bounds(win.window_id(), "compact-rail").is_none(),

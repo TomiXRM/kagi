@@ -72,6 +72,11 @@ fn drag(
         cx.update_window(window, |_, window, _| window.viewport_size().height)
             .unwrap(),
     );
+    let compact = cx
+        .update_window(window, |_, window, _| {
+            window.viewport_size().width < px(1000.)
+        })
+        .unwrap();
     let graph_max = (viewport * 0.6 / scale).max(80.);
     let editor_budget = if kagi_ui_core::settings::toolbar_display(&theme::theme().slug)
         == kagi_ui_core::settings::ToolbarDisplay::IconOnly
@@ -95,10 +100,31 @@ fn drag(
             .height,
     ) / scale
         - 32.;
-    assert!(
-        (presented - before.clamp(80., max)).abs() <= 0.5,
-        "presentation must fit the independent workspace budget"
-    );
+    let tolerance = if compact { 1. / scale } else { 0.5 };
+    if compact {
+        assert!(
+            presented >= 80. - tolerance && presented <= max + tolerance,
+            "compact presentation retains the independent workspace budget"
+        );
+    } else {
+        assert!(
+            (presented - before.clamp(80., max)).abs() <= 0.5,
+            "presentation must fit the independent workspace budget"
+        );
+    }
+    let drag_height = |cx: &mut VisualTestAppContext| {
+        if compact {
+            f32::from(
+                e2e::control_bounds(window.window_id(), "bottom-panel")
+                    .unwrap()
+                    .size
+                    .height,
+            ) / scale
+                - 32.
+        } else {
+            cx.read(|cx| app.read(cx).bottom_panel_height)
+        }
+    };
     if (max - presented).abs() <= 0.5 {
         assert!(editor, "only the compact Editor cell begins at its cap");
         assert!(
@@ -112,25 +138,29 @@ fn drag(
         point(start.x, start.y - px(theme::scaled(2000.))),
     );
     assert!(
-        (cx.read(|cx| app.read(cx).bottom_panel_height) - max).abs() <= 0.5,
+        (drag_height(cx) - max).abs() <= tolerance,
         "upward overshoot must reach the independently calculated cap"
     );
     move_to(cx, window, start);
     assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), before);
+    assert!(
+        (drag_height(cx) - if compact { presented } else { before }).abs() <= tolerance,
+        "returning to origin restores the initial presentation"
+    );
     for step in [5., 20., 0., 40., 2000., -2000., 40.] {
         move_to(
             cx,
             window,
             point(start.x, start.y - px(theme::scaled(step))),
         );
-        let actual = cx.read(|cx| app.read(cx).bottom_panel_height);
-        let expected = if step == 0. {
+        let actual = drag_height(cx);
+        let expected = if step == 0. && !compact {
             before
         } else {
             (presented + step).clamp(80., max)
         };
         assert!(
-            (actual - expected).abs() <= 0.5,
+            (actual - expected).abs() <= tolerance,
             "step {step}: body height {actual} must use the unchanged press origin"
         );
         assert_eq!(
@@ -139,7 +169,10 @@ fn drag(
             "live drag must not persist intermediate heights"
         );
         if step == 0. {
-            assert_eq!(actual, before, "stationary drag frame must not jump");
+            assert!(
+                (actual - if compact { presented } else { before }).abs() <= tolerance,
+                "stationary drag frame must not jump"
+            );
         }
         if (20. ..=40.).contains(&step) {
             let painted = e2e::control_bounds(window.window_id(), "divider-bottom-panel").unwrap();
@@ -159,20 +192,33 @@ fn drag(
         }
     }
     let end = point(start.x, start.y - px(theme::scaled(40.)));
-    let after = cx.read(|cx| app.read(cx).bottom_panel_height);
+    let after = drag_height(cx);
     assert!(
-        (after - (presented + 40.).clamp(80., max)).abs() <= 0.5,
+        (after - (presented + 40.).clamp(80., max)).abs() <= tolerance,
         "drag +40 must use the presented origin and workspace cap: before={before}, after={after}"
     );
     cx.simulate_mouse_up(window, end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     draw(cx, window);
-    assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), after);
-    assert_eq!(
-        kagi_ui_core::settings::read_setting("bottom_panel_height"),
-        Some(after.to_string()),
-        "release persists the final height through the store"
-    );
+    assert!((drag_height(cx) - after).abs() <= tolerance);
+    if compact {
+        assert_eq!(
+            cx.read(|cx| app.read(cx).bottom_panel_height),
+            before,
+            "compact drag cannot replace the wide body preference"
+        );
+        assert_eq!(
+            kagi_ui_core::settings::read_setting("bottom_panel_height"),
+            setting_before,
+            "compact release keeps its height presentation-only"
+        );
+    } else {
+        assert_eq!(
+            kagi_ui_core::settings::read_setting("bottom_panel_height"),
+            Some(after.to_string()),
+            "release persists the final height through the store"
+        );
+    }
 }
 
 fn preserve_preference(
@@ -255,6 +301,115 @@ fn preserve_preference(
             .height,
         full
     );
+}
+
+/// #1484: the *entire* compact panel, including tabs/divider, is one third.
+/// Its local drag height must never replace the saved wide body preference.
+pub fn scenario_compact_bottom_third(cx: &mut VisualTestAppContext) {
+    let _saved =
+        crate::gui_isolation::SavedKeys::keep(&["bottom_panel_height", "ui_zoom", "reduce_motion"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    theme::set_reduce_motion(true);
+    let fixture = build_fixture();
+    for preset in ["apple-light", "apple-dark"] {
+        for lang in [kagi_ui_core::i18n::Lang::En, kagi_ui_core::i18n::Lang::Ja] {
+            for zoom in [1., 1.67] {
+                let (app, window) = mount(cx, fixture.path());
+                theme::set_zoom(zoom);
+                theme::set_active(preset);
+                kagi_ui_core::i18n::set_lang(lang);
+                cx.update(theme::sync_gpui_component_theme);
+                kagi_ui_core::settings::write_setting("bottom_panel_height", Some("240"));
+                app.update(cx, |app, cx| {
+                    app.bottom_panel_open = true;
+                    app.bottom_panel_height = 240.;
+                    cx.notify();
+                });
+                resize(cx, window, 1392., 883.);
+                let wide = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
+                resize(cx, window, 900., 660.);
+                let compact = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
+                assert!(
+                    (compact.size.height - px(660. / 3.)).abs() <= px(1.),
+                    "{preset}/{lang:?}/{zoom}: entire compact panel is 220px, not a 220px body plus tabs: {compact:?}"
+                );
+                assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 240.);
+                assert_eq!(
+                    kagi_ui_core::settings::read_setting("bottom_panel_height").as_deref(),
+                    Some("240"),
+                    "presentation-only compact fitting never writes settings"
+                );
+                // A press and a round trip to the origin cannot jump to the
+                // hidden wide preference. +40 uses the actual presented edge.
+                let start = e2e::control_bounds(window.window_id(), "divider-bottom-panel")
+                    .unwrap()
+                    .center();
+                cx.simulate_mouse_move(window, start, None, Modifiers::none());
+                cx.simulate_mouse_down(window, start, MouseButton::Left, Modifiers::none());
+                draw(cx, window);
+                assert_eq!(
+                    e2e::control_bounds(window.window_id(), "bottom-panel")
+                        .unwrap()
+                        .size
+                        .height,
+                    compact.size.height,
+                    "press alone preserves the compact presentation"
+                );
+                let end = point(start.x, start.y - px(theme::scaled(40.)));
+                move_to(cx, window, end);
+                let moved = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
+                assert!(
+                    (moved.size.height - compact.size.height - px(theme::scaled(40.))).abs()
+                        <= px(1.),
+                    "compact divider grows from presented origin"
+                );
+                move_to(cx, window, start);
+                assert!(
+                    (e2e::control_bounds(window.window_id(), "bottom-panel")
+                        .unwrap()
+                        .size
+                        .height
+                        - compact.size.height)
+                        .abs()
+                        <= px(1.),
+                    "returning to press origin restores one-third presentation"
+                );
+                move_to(cx, window, end);
+                cx.simulate_mouse_up(window, end, MouseButton::Left, Modifiers::none());
+                cx.run_until_parked();
+                draw(cx, window);
+                assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 240.);
+                assert_eq!(
+                    kagi_ui_core::settings::read_setting("bottom_panel_height").as_deref(),
+                    Some("240"),
+                    "compact release retains the wide preference on disk"
+                );
+                assert_eq!(
+                    e2e::control_bounds(window.window_id(), "bottom-panel")
+                        .unwrap()
+                        .size
+                        .height,
+                    moved.size.height,
+                    "released compact divider retains its local presentation"
+                );
+                resize(cx, window, 1392., 883.);
+                assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 240.);
+                assert_eq!(
+                    e2e::control_bounds(window.window_id(), "bottom-panel")
+                        .unwrap()
+                        .size
+                        .height,
+                    wide.size.height,
+                    "widening restores the saved wide body height, not the compact drag height"
+                );
+                assert_eq!(
+                    kagi_ui_core::settings::read_setting("bottom_panel_height").as_deref(),
+                    Some("240")
+                );
+                unmount(cx, app, window);
+            }
+        }
+    }
 }
 
 pub fn scenario_bottom_panel_divider_drag(cx: &mut VisualTestAppContext) {

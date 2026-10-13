@@ -3235,6 +3235,18 @@ mod macos {
                 Box::new(crate::compact_layout::changes::scenario_compact_layout_changes),
             ),
             (
+                "compact_inspector_columns",
+                Box::new(crate::compact_layout::inspector::scenario_compact_inspector_columns),
+            ),
+            (
+                "compact_bottom_third",
+                Box::new(crate::bottom_panel_divider_drag::scenario_compact_bottom_third),
+            ),
+            (
+                "compact_bottom_presentation_restore",
+                Box::new(crate::bottom_panel_divider_drag::scenario_compact_bottom_presentation_restore),
+            ),
+            (
                 "compact_layout_geometry",
                 Box::new(crate::compact_layout::scenario_compact_layout_geometry),
             ),

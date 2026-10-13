@@ -31,6 +31,10 @@ fn compact_width(width: Pixels) -> bool {
 pub(super) struct CompactState {
     pub enabled: bool,
     pub suspended: bool,
+    /// Compact divider adjustments are presentation-only, never saved preferences.
+    pub bottom_height: Option<f32>,
+    /// Desktop presentation is suspended, not replaced by compact activation.
+    wide_bottom: Option<(BottomTab, bool)>,
     owner: Option<SessionId>,
     pub popup_owner: Option<SessionId>,
     pub wip_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -45,6 +49,9 @@ impl KagiApp {
     pub(super) fn sync_compact_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let enabled = for_window(window);
         let owner = self.active_session();
+        if enabled && !self.compact.enabled {
+            self.compact.wide_bottom = Some((self.bottom_tab, self.bottom_panel_open));
+        }
         if self.compact.owner != owner || self.home_in_front() {
             self.close_compact_composer(window, cx);
             super::compact_sidebar::dismiss(window, cx);
@@ -54,6 +61,8 @@ impl KagiApp {
             self.compact.owner = owner;
         }
         if self.compact.enabled && !enabled {
+            self.compact.bottom_height = None;
+            self.bottom_panel_drag_origin = None;
             // Graph selection closes the legacy right-pane flag, not this pin.
             // Reattach the same owner/model to its desktop projection on resize.
             if self.compact.popup_owner.is_some()
@@ -64,6 +73,10 @@ impl KagiApp {
             }
             self.dismiss_compact_presentation(window, cx, true);
             super::compact_sidebar::dismiss(window, cx);
+            if let Some((tab, open)) = self.compact.wide_bottom.take() {
+                self.bottom_tab = tab;
+                self.bottom_panel_open = open;
+            }
         } else if enabled
             && !self.compact.enabled
             && self.ui().commit_panel_open
@@ -74,9 +87,6 @@ impl KagiApp {
             self.bottom_tab = BottomTab::Changes;
             self.bottom_panel_open = true;
             self.yield_compact_input_focus(window, cx);
-        }
-        if !enabled && self.bottom_tab == BottomTab::Changes {
-            self.bottom_tab = BottomTab::OperationLog;
         }
         self.compact.enabled = enabled;
         self.compact.suspended =
@@ -131,6 +141,7 @@ impl KagiApp {
             || self.bottom_tab != BottomTab::Changes
             || !self.bottom_panel_open
             || self.ui().commit_panel.is_some()
+            || self.ui().selected.is_some()
             || self.repo_path.is_none()
             || self.compact.pending_changes_owner == Some(owner)
         {
@@ -232,7 +243,7 @@ impl KagiApp {
 
     /// Changes activation initializes the existing owner, but does not pin a popup.
     pub(super) fn open_compact_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.ui().commit_panel.is_none() {
+        if self.ui().commit_panel.is_none() && self.ui().selected.is_none() {
             self.open_commit_panel(window, cx);
             self.close_compact_composer(window, cx);
         }

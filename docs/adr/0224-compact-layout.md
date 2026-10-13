@@ -311,6 +311,78 @@ Review removes the unused compact-only list/selector/bulk-action message keys:
 Changes renders the original `CommitPanel*` localization tested by the shared
 Commit Panel chrome test, not a parallel English-only message family.
 
+## Amendment — 2026-10-14: compact commit Inspector and bottom-panel height (#1484)
+
+[#1484](https://github.com/TomiXRM/kagi/issues/1484) extends the existing Changes
+tab rather than adding another Inspector tab or selection owner. Below the
+unchanged **1000 logical px** breakpoint, a selected non-WIP commit presents
+two side-by-side columns: **Inspector metadata on the left**, **changed files
+on the right**. Metadata reuses title/message, author, date, hash, ref chips,
+Branch here and Cherry-pick rendering and actions. Files reuse the normal
+Inspector's Path/Tree controls, RowList, stable-path selection, keyboard reveal,
+accessibility and dense 20-reference-px rows / 13-reference-px typography.
+Selecting a file opens the existing central diff. Loading, empty and error
+states continue to come from the existing Inspector/session read paths.
+
+The historical-commit adapter borrows the same session-owned read, Inspector
+state and action routing as the wide right pane; it does not clone the read
+model or create a second file-selection/focus owner. Selecting WIP restores the
+existing Unstaged/Staged Changes columns, retaining their original CommitPanelView
+and draft/staging ownership. Keep the existing localized Changes tab name and
+EN/JA Inspector labels and actions; no parallel message family is required.
+At or above the breakpoint, restore the existing right Inspector.
+The compact metadata column scrolls its complete existing header and message
+together; do not squeeze or clip the Branch here/Cherry-pick actions at high
+zoom to make the short panel appear to fit. The two column viewports retain
+equal allocation, with the shared system scrollbar policy and file RowList.
+
+Review amendment: Changes uses the existing workspace projection precedence,
+**Compare before Inspector**. Compare with HEAD/working tree and stash/PR peeks
+render their own synchronized file snapshot and comparison title; file activation
+must resolve the exact file from that same snapshot, never a commit-file index
+against a comparison owner.
+
+Explicit WIP activation retains the existing CommitPanel-before-Compare
+precedence: its active staging owner draws Unstaged/Staged even if a suspended
+Compare entity is retained. Compare-before-Inspector applies to the read surface
+when that WIP gate is closed or a historical commit is selected.
+
+Entering compact saves the desktop bottom tab and open/closed presentation in
+window-local transient state; widening restores both along with the preferred
+height. Selecting a normal commit updates content only when Changes is already
+being shown. It does not open a closed panel or replace Terminal, Activity or
+Operation Log. The existing explicit WIP/composer activation may select Changes
+inside compact, but cannot overwrite the saved desktop presentation. This
+supersedes the earlier Operation Log canonicalization on compact exit.
+
+Native Graph pointer-focus coverage must target the drawn navigator: at compact
+widths open the rail Popover before its filter; desktop Cmd-F/filter coverage
+uses widths at or above 1000px. Pointer selection then restores Graph focus
+without changing filter text. Copy-receipt assertions measure a local boundary
+inside the bounded contract-log tail rather than treating that tail as a
+monotonically growing event count.
+
+The compact bottom panel defaults to **one-third of the logical window
+height**, measured for the **entire panel including its tab strip**, not just
+the Changes body. Apply this as presentation-only fitting, following
+[#1355's preferred-versus-fitted policy](0217-graph-sidebar-panes.md#amendment--2026-10-12-horizontal-pane-budget-1355).
+Keep the saved preferred bottom-panel height authoritative for the wide layout:
+entering compact, fitting on window/zoom changes, and compact divider drags must
+not write a compact height to settings or replace the wide preference.
+The divider remains interactive using the rendered geometry; compact drag
+adjustment is transient presentation state, not a second saved preference.
+Widening restores the normal preferred height. Continue to respect existing
+viewport containment and minimum-content budgets when fitting a small window.
+
+Acceptance remains a verification contract, not a claim of results here:
+Tier A at 900×660 measures metadata/files columns, actual file-click diff opening,
+WIP's Unstaged/Staged switch, and total bottom-panel height near 220 logical px
+(within one file row). It exercises divider adjustment and 900→1392 restoration
+of the right Inspector and preferred height, and proves settings retain the
+wide height. Cover EN/JA × 100%/167% × Apple Light/Dark. Tier B captures the real
+900×660 commit and WIP selections in Apple Light and Dark. Existing wide
+Inspector keyboard/AX and WIP composer/state contracts remain authoritative.
+
 ## Consequences
 
 Narrow windows gain graph space without changing toolbar or graph geometry.

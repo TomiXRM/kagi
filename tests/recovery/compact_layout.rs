@@ -14,6 +14,8 @@ use std::{cell::RefCell, path::Path, process::Command, rc::Rc, time::Duration};
 
 #[path = "compact_layout/changes.rs"]
 pub mod changes;
+#[path = "compact_layout/inspector.rs"]
+pub mod inspector;
 #[path = "compact_layout/lifecycle.rs"]
 pub mod lifecycle;
 #[path = "compact_layout/popup.rs"]
@@ -78,6 +80,8 @@ const RECORDERS: &[&str] = &[
     "list-filter-text",
     "sidebar-local-main",
     "compact-tab-changes",
+    "compact-inspector-details",
+    "compact-inspector-files",
     "compact-composer",
     "compact-popup-close",
     "compact-changes-unstaged",
@@ -345,6 +349,38 @@ fn columns(win: AnyWindowHandle, dimensions: (f32, f32)) {
     assert!(
         (unstaged.size.width - staged.size.width).abs() <= theme::scaled_px(16.) + px(1.),
         "Changes columns share available width"
+    );
+}
+
+fn commit_columns(win: AnyWindowHandle, dimensions: (f32, f32)) {
+    let details = bounds(win, "compact-inspector-details");
+    let files = bounds(win, "compact-inspector-files");
+    for (name, column) in [("commit details", details), ("changed files", files)] {
+        contained(viewport(dimensions), column, name);
+        contained(bounds(win, "bottom-panel"), column, name);
+        assert!(
+            column.size.width > px(0.) && column.size.height > px(0.),
+            "{name} must be usable"
+        );
+    }
+    near(details.top(), files.top(), "Inspector columns share top");
+    near(
+        details.bottom(),
+        files.bottom(),
+        "Inspector columns share bottom",
+    );
+    assert!(
+        details.right() <= files.left() + px(1.),
+        "Inspector metadata is left of files, not stacked or overlapping"
+    );
+    assert!(
+        (details.size.width - files.size.width).abs() <= theme::scaled_px(16.) + px(1.),
+        "Inspector columns share available width"
+    );
+    contained(
+        files,
+        bounds(win, "inspector-files-scroll"),
+        "shared file RowList",
     );
 }
 
@@ -619,7 +655,26 @@ fn geometry_matrix(cx: &mut VisualTestAppContext, height: f32, zoom: f32) {
         let (app, win) = mount(cx, fixture.path(), case);
         rail_graph(win, case.dimensions());
         rail::rail_interactions(cx, &app, win, fixture.path(), case.dimensions());
-        let panel = changes(cx, &app, win);
+        // Selecting Changes for a historical commit does not create a WIP owner.
+        if !cx.read(|cx| app.read(cx).bottom_panel_open) {
+            focus_root(cx, &app, win);
+            cx.simulate_keystrokes(win, "cmd-j");
+            settle(cx, win);
+        }
+        click(cx, win, "compact-tab-changes");
+        assert!(
+            cx.read(|cx| app.read(cx).ui().selected.is_some()),
+            "local navigator selected a real commit"
+        );
+        commit_columns(win, case.dimensions());
+        // Changes follows graph selection. Restore real WIP before asking
+        // its existing staging lists to scroll; tab selection alone cannot.
+        click(cx, win, "compact-wip-row");
+        assert!(cx.read(|cx| app.read(cx).ui().selected.is_none()));
+        escape(cx, &app, win);
+        let panel = cx
+            .read(|cx| app.read(cx).ui().commit_panel.clone())
+            .expect("real WIP activation creates the shared staging owner");
         columns(win, case.dimensions());
         rail_graph(win, case.dimensions());
         independent_scroll(cx, &app, &panel, win);

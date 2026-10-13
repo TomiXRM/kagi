@@ -250,14 +250,14 @@ fn wide_tab_toggle(
     resize(cx, win, (1392., height));
     assert_eq!(
         cx.read(|cx| app.read(cx).bottom_tab),
-        BottomTab::OperationLog,
-        "wide mode canonicalizes stored Changes to the tab actually displayed"
+        BottomTab::Terminal,
+        "wide mode restores the desktop tab suspended on compact entry"
     );
     assert!(cx.read(|cx| app.read(cx).bottom_panel_open));
-    click(cx, win, "status-icon-oplog");
+    click(cx, win, "status-icon-terminal");
     assert!(
         !cx.read(|cx| app.read(cx).bottom_panel_open),
-        "first click on the visible Operation Log toggle closes it"
+        "first click on the restored Terminal toggle closes it"
     );
 }
 

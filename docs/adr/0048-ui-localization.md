@@ -194,3 +194,13 @@ column at Japanese high zoom.
   terminology migration. `コンフリクト` is also forbidden; ordinary compounds
   such as 「マージン」「ステージマネージャ」「プルダウン」
   「リモートデスクトップ」 are not Git translations and stay permissible.
+
+## Amendment — 2026-10-14: native Git headings and source coverage (#1501)
+
+- Native `Branch` and `Commit` menu headings retain English in JA; ordinary
+  File/Edit/View headings remain localized. Canonical section identities,
+  command actions and the AppKit Window-menu role do not change.
+- The JA Git-term invariant scans all application and crate Rust sources, not
+  only the i18n directory. It recognizes helpers that return EN unchanged as
+  their first statement and render JA in the remaining body, with a positive
+  early-return selftest sample. EN return expressions remain outside selection.

@@ -25,12 +25,22 @@ pub fn scenario_titlebar_tabs(cx: &mut VisualTestAppContext) {
                         let state = e2e::app_state(first.path()).unwrap();
                         let captured = Rc::new(RefCell::new(None));
                         let output = captured.clone();
-                        let win: AnyWindowHandle = crate::macos::open_offscreen(
-                            cx,
-                            size(px(width), px(height)),
-                            move |window, cx| e2e::mount_root(state, window, cx, &output),
-                        )
-                        .into();
+                        let win: AnyWindowHandle = cx
+                            .update(|cx| {
+                                let mut options = kagi::ui::window_restore::options(cx);
+                                options.window_bounds =
+                                    Some(gpui::WindowBounds::Windowed(gpui::Bounds {
+                                        origin: gpui::point(px(-10000.), px(-10000.)),
+                                        size: size(px(width), px(height)),
+                                    }));
+                                options.focus = false;
+                                options.show = false;
+                                cx.open_window(options, move |window, cx| {
+                                    e2e::mount_root(state, window, cx, &output)
+                                })
+                            })
+                            .expect("open production titlebar offscreen")
+                            .into();
                         let app = captured.borrow().clone().unwrap();
                         app.update(cx, |app, cx| {
                             app.set_theme(slug, cx);
@@ -41,6 +51,16 @@ pub fn scenario_titlebar_tabs(cx: &mut VisualTestAppContext) {
                         let toolbar = e2e::control_bounds(win.window_id(), "toolbar-row").unwrap();
                         assert!(toolbar.top() > px(0.), "toolbar must be below the always-visible titlebar tabs (#1462), got {toolbar:?}");
                         check_chrome(win, "toolbar-row", "toolbar-drag-region", zoom, true);
+                        for live_zoom in [1., 1.67, 1.] {
+                            theme::set_zoom(live_zoom);
+                            app.update(cx, |_, cx| cx.notify());
+                            settle(cx, win);
+                            crate::macos::request_native_frame(cx, win);
+                            check_native_lights(win);
+                        }
+                        theme::set_zoom(zoom);
+                        app.update(cx, |_, cx| cx.notify());
+                        settle(cx, win);
                         assert!(
                             kagi::ui::tab_panel_a11y::recorded_tab_panel("repo-tab-panel")
                                 .is_some()
@@ -244,8 +264,8 @@ fn check_chrome(win: AnyWindowHandle, row_id: &str, drag_id: &str, zoom: f32, ha
     let row = bounds(row_id);
     assert_eq!(strip.top(), px(0.), "document strip is first");
     assert!(
-        (f32::from(strip.size.height + px(1.)) - f32::from(theme::scaled_px(36.))).abs() <= 0.5,
-        "36 reference px titlebar: {strip:?}"
+        (f32::from(strip.size.height + px(1.)) - 36.).abs() <= 0.5,
+        "fixed 36 logical px titlebar at {zoom}: {strip:?}"
     );
     assert_eq!(
         row.top(),
@@ -306,5 +326,101 @@ fn check_chrome(win: AnyWindowHandle, row_id: &str, drag_id: &str, zoom: f32, ha
                 );
             }
         }
+    }
+}
+
+/// Read actual AppKit button bounds, not an app-owned geometry proxy.
+fn check_native_lights(win: AnyWindowHandle) {
+    use std::ffi::{c_char, c_void, CStr};
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Size {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Rect {
+        origin: Point,
+        size: Size,
+    }
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+    let title = format!("Kagi native-frame test {:?}", win.window_id());
+    let strip = e2e::control_bounds(win.window_id(), "repo-tab-strip").unwrap();
+    unsafe {
+        type Object = *mut c_void;
+        let send: unsafe extern "C" fn(Object, Object) -> Object =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let indexed: unsafe extern "C" fn(Object, Object, usize) -> Object =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let count: unsafe extern "C" fn(Object, Object) -> usize =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let rect: unsafe extern "C" fn(Object, Object) -> Rect =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let convert: unsafe extern "C" fn(Object, Object, Rect, Object) -> Rect =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let app = send(
+            objc_getClass(c"NSApplication".as_ptr()),
+            sel_registerName(c"sharedApplication".as_ptr()),
+        );
+        let windows = send(app, sel_registerName(c"windows".as_ptr()));
+        let mut found = false;
+        for index in 0..count(windows, sel_registerName(c"count".as_ptr())) {
+            let window = indexed(windows, sel_registerName(c"objectAtIndex:".as_ptr()), index);
+            let name = send(
+                send(window, sel_registerName(c"title".as_ptr())),
+                sel_registerName(c"UTF8String".as_ptr()),
+            );
+            if name.is_null() || CStr::from_ptr(name.cast()).to_bytes() != title.as_bytes() {
+                continue;
+            }
+            assert!(!found, "unique native test window");
+            found = true;
+            let content = send(window, sel_registerName(c"contentView".as_ptr()));
+            let content_bounds = rect(content, sel_registerName(c"bounds".as_ptr()));
+            for kind in 0..3 {
+                let button = indexed(
+                    window,
+                    sel_registerName(c"standardWindowButton:".as_ptr()),
+                    kind,
+                );
+                assert!(!button.is_null(), "native traffic light {kind} exists");
+                let local = rect(button, sel_registerName(c"bounds".as_ptr()));
+                let frame = convert(
+                    button,
+                    sel_registerName(c"convertRect:toView:".as_ptr()),
+                    local,
+                    content,
+                );
+                let top = content_bounds.size.height - frame.origin.y - frame.size.height;
+                let center = top + frame.size.height / 2.;
+                let row_center =
+                    f64::from(f32::from(strip.top() + (strip.size.height + px(1.)) / 2.));
+                assert!((center - row_center).abs() <= 2., "native light {kind} center={center}, titlebar center={row_center}, strip={strip:?}");
+                assert!(
+                    frame.origin.x + frame.size.width <= 80.,
+                    "native light exclusion"
+                );
+                assert!(
+                    frame.size.width > 0.
+                        && frame.size.width <= 20.
+                        && frame.size.height > 0.
+                        && frame.size.height <= 20.,
+                    "native lights stay unscaled"
+                );
+            }
+        }
+        assert!(found, "actual AppKit window found");
     }
 }

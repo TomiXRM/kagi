@@ -3239,6 +3239,14 @@ mod macos {
                 Box::new(crate::compact_layout::inspector::scenario_compact_inspector_columns),
             ),
             (
+                "compact_inspector_segment_keys",
+                Box::new(crate::compact_layout::inspector::scenario_compact_inspector_segment_keys),
+            ),
+            (
+                "commit_panel_bulk_hover",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
+            ),
+            (
                 "compact_bottom_third",
                 Box::new(crate::bottom_panel_divider_drag::scenario_compact_bottom_third),
             ),

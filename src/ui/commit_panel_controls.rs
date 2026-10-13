@@ -582,7 +582,7 @@ fn bulk_button(
         .text_xs()
         .text_color(rgb(if enabled { color } else { theme().text_muted }))
         .when(enabled, |el| {
-            el.hover(|s| s.bg(rgb(theme().selected)).cursor_default())
+            el.hover(|s| s.bg(rgb(theme().surface)).cursor_default())
         })
         .on_click(cx.listener(
             move |view: &mut CommitPanelView, _: &ClickEvent, window, cx| {

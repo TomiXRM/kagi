@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Historical Inspector Path/Tree controls share one keyboard-accessible roving TabList in wide and compact Changes, with explicit mode activation and selected accessibility semantics. Stage all, Unstage all and Discard all keep their semantic captions on neutral hover rather than painting an unmatched opaque accent. (#1495, #1496)
 - Compact Changes now follows Graph selection: historical commits show the existing Inspector metadata on the left and changed files with Path/Tree controls on the right; file selection opens the central diff. WIP retains Unstaged/Staged columns. The entire compact bottom panel defaults to one-third of the logical window height and remains divider-resizable without writing compact heights to settings; widening restores the preferred desktop height and right Inspector. (#1484)
   - Compact metadata scrolls as one viewport so the unchanged Inspector actions remain reachable at high zoom. Native Graph pointer-focus coverage now opens the actual compact navigator filter, retains desktop filter coverage at 1040px and 1392px, and counts copy receipts within the bounded log's local observation window.
   - Review: compact Changes uses the same Compare-before-Inspector source and title as desktop, so Compare file clicks open the matching comparison diff. Commit selection no longer replaces the active bottom surface or opens a closed panel; widening restores the desktop tab and open/closed state suspended on compact entry.

@@ -63,7 +63,7 @@ impl KagiApp {
             .items_center()
             .w_full()
             .when(cfg!(target_os = "macos"), |bar| bar.pl(gpui::px(80.)))
-            .h(theme::scaled_px(TAB_STRIP_H))
+            .h(gpui::px(TAB_STRIP_H))
             .flex_shrink_0()
             .bg(rgb(theme().chrome_surface()))
             .border_b_1()
@@ -337,7 +337,7 @@ fn tab_cell(
         .px(super::super::keyboard_nav::inset(8.))
         .gap_1()
         .bg(bg)
-        .text_sm()
+        .text_size(px(f32::from(theme::scaled_px(14.)).min(14.)))
         .text_color(rgb(fg))
         .mr(px(1.))
         .when(selected && tab_has_rail(&theme()), |cell| {

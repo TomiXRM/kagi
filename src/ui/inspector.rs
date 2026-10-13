@@ -93,74 +93,77 @@ pub(super) fn render_inspector(
 ) -> impl IntoElement {
     let files = model.files();
 
-    // ── Path⇄Tree toggle ─────────────────────────────────────────────────
-    // Each button sets its mode explicitly (a shared toggle would make the
-    // active button flip the view to the other mode on click).
-    let toggle_click_a = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = false;
-        cx.notify();
-    });
-    let toggle_click_b = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.inspector_tree_view = true;
-        cx.notify();
-    });
-    let path_active = !tree_view;
-    let tree_active = tree_view;
-    let path_bg = if path_active {
-        theme().segment_selected_bg()
-    } else {
-        rgb(theme().surface).into()
-    };
-    let tree_bg = if tree_active {
-        theme().segment_selected_bg()
-    } else {
-        rgb(theme().surface).into()
-    };
-    let path_col = if path_active {
-        rgb(theme().text_main)
-    } else {
-        rgb(theme().text_sub)
-    };
-    let tree_col = if tree_active {
-        rgb(theme().text_main)
-    } else {
-        rgb(theme().text_sub)
-    };
-
-    let toggle_row = div()
-        .id("files-toggle-row")
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .child(
+    // Share one session-owned roving selector between wide and compact Inspector.
+    // Activation explicitly sets the mode: reactivating a selected tab is inert.
+    let weak = cx.entity().downgrade();
+    let tabs = super::keyboard_nav::TabList::new(
+        &model.view_focus,
+        super::keyboard_nav::slot_keys(2),
+        vec![0, 1],
+        Some(usize::from(tree_view)),
+        super::keyboard_nav::Activation::Automatic,
+        fallback.cloned(),
+        move |slot, _, _, cx| {
+            let _ = weak.update(cx, |app, cx| {
+                app.inspector_tree_view = slot == 1;
+                cx.notify();
+            });
+        },
+        cx,
+    );
+    let cell = |slot, id: &'static str, label: &'static str| {
+        let selected = tree_view == (slot == 1);
+        super::e2e::commit_panel_labels::focus(id, tabs.focus_handle(slot));
+        tabs.cell(
+            slot,
+            label,
             div()
-                .id("toggle-path")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .bg(path_bg)
-                .text_xs()
-                .text_color(path_col)
-                .on_click(toggle_click_a)
+                .id(id)
+                .m(px(-super::keyboard_nav::RING))
                 .relative()
-                .child(super::e2e::measure_inside("toggle-path"))
-                .child(SharedString::from("Path")),
+                .role(super::e2e::commit_panel_labels::role(id, gpui::Role::Tab))
+                .aria_label(super::e2e::commit_panel_labels::name(id, label))
+                .aria_selected(super::e2e::commit_panel_labels::selected(id, selected))
+                .child(super::e2e::measure_inside(id))
+                .child(
+                    div()
+                        .px_2()
+                        .py_px()
+                        .rounded_sm()
+                        .bg(if selected {
+                            theme().segment_selected_bg()
+                        } else {
+                            rgb(theme().surface).into()
+                        })
+                        .text_xs()
+                        .text_color(rgb(if selected {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .child(SharedString::from(label)),
+                ),
         )
-        .child(
+    };
+    let toggle_row = tabs
+        .list(
             div()
-                .id("toggle-tree")
-                .px_2()
-                .py_px()
-                .rounded_sm()
-                .bg(tree_bg)
-                .text_xs()
-                .text_color(tree_col)
-                .relative()
-                .child(super::e2e::measure_inside("toggle-tree"))
-                .on_click(toggle_click_b)
-                .child(SharedString::from("Tree")),
-        );
+                .id("files-toggle-row")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1(),
+        )
+        .role(super::e2e::commit_panel_labels::role(
+            "files-toggle-row",
+            gpui::Role::TabList,
+        ))
+        .aria_label(super::e2e::commit_panel_labels::name(
+            "files-toggle-row",
+            Msg::A11yInspectorFiles.t(),
+        ))
+        .child(cell(0, "toggle-path", "Path"))
+        .child(cell(1, "toggle-tree", "Tree"));
 
     // ── Counts row (ChangeKind tally; 0-count kinds omitted) ──────────────
     let counts_row = files.map(|files| {

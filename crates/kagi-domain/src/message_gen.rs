@@ -439,7 +439,7 @@ pub fn rule_based(input: &GenInput, files: &[FileStatus]) -> String {
         // Defensive: should not happen in practice (caller stages first), but
         // the contract is "never empty".
         match input.lang {
-            Lang::Ja => "変更をコミット".to_string(),
+            Lang::Ja => "変更を commit".to_string(),
             Lang::En => "update changes".to_string(),
         }
     } else if files.len() == 1 {

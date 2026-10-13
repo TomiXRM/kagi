@@ -286,7 +286,6 @@ impl Render for KagiApp {
         for (owner, ui) in &self.ui {
             if Some(*owner) != active || self.home_in_front() {
                 ui.inspector_model
-                    .keyboard
                     .yield_focus(self.root_focus.as_ref(), window, cx);
             }
             let composer_focused = ui

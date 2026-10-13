@@ -73,10 +73,10 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                 );
                 if zoom == 1. {
                     let expected_height = match name {
-                        // #1462 restores the 36px titlebar above the 52px toolbar.
+                        // #1500 fixes the titlebar at 36 logical px.
                         // Only the flexible file list gives up viewport height;
                         // the fixed AutoGrow-era composer/action sizes below stay.
-                        "cp-files" => 408.,
+                        "cp-files" => 404.5,
                         "cp-body" => 257.,
                         "cp-smart-suggest" => 21.5,
                         "cp-commit-action" => 25.,

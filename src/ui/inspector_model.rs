@@ -136,9 +136,20 @@ pub(super) struct InspectorModel {
     /// `(full SHA, complete-message display derivations)`.
     message: Option<(SharedString, InspectorMessage)>,
     pub(super) keyboard: super::inspector_files::InspectorKeyboard,
+    pub(super) view_focus: super::keyboard_nav::TabFocus,
 }
 
 impl InspectorModel {
+    pub(super) fn yield_focus(
+        &self,
+        fallback: Option<&gpui::FocusHandle>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.keyboard.yield_focus(fallback, window, cx);
+        self.view_focus.yield_focus(fallback, window, cx);
+    }
+
     /// Re-derive the files slot iff it was built for another `source`.
     pub(super) fn sync_files(
         &mut self,

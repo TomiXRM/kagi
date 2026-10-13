@@ -386,6 +386,9 @@ mod overlay_focus;
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_analyze.rs"]
+mod settings_analyze;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_appearance_ax.rs"]
 mod settings_appearance_ax;
 #[cfg(target_os = "macos")]
@@ -2585,6 +2588,26 @@ mod macos {
             (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
+            ),
+            (
+                "settings_analyze_reset_confirm",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_confirm),
+            ),
+            (
+                "settings_analyze_portable_reset",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_portable_reset),
+            ),
+            (
+                "settings_analyze_reset_preserves_plan",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_preserves_plan),
+            ),
+            (
+                "settings_help_text",
+                Box::new(crate::settings_analyze::scenario_settings_help_text),
+            ),
+            (
+                "settings_analyze_save_state",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_save_state),
             ),
             (
                 "settings_switches",

@@ -1080,6 +1080,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreUnsaved,
     SettingsAnalyzeIgnoreSaved,
     SettingsAnalyzeIgnoreFailed,
+    SettingsAnalyzeIgnoreClean,
+    SettingsAnalyzeResetTitle,
+    SettingsAnalyzeResetDetail,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -3703,6 +3706,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
             (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
             (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (En, SettingsAnalyzeIgnoreClean) => "Saved",
+            (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
+            (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. The default patterns will replace the editor contents and the saved analyze_ignore file.",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。編集内容と保存済みの analyze_ignore ファイルをデフォルトのパターンに置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.

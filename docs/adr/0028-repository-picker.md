@@ -21,3 +21,18 @@
   置き換わる(エラー文字列自体は維持し headless ログ互換を保つ)
 - サブディレクトリ選択(repo 内の深い path)は git2 の discover に頼らず
   open_repository の既存挙動に従う(失敗なら理由を出す)
+
+## Amendment — 2026-10-13: picker localization and failures (#1419, #1420)
+
+The approval button uses an EN/JA `Msg` through `PathPromptOptions.prompt`.
+Pinned GPUI maps this field to NSOpenPanel `setPrompt`; no message field is
+exposed. The optional native explanatory message is outside this correction
+(PM decision), avoiding a second platform wrapper or dependency fork.
+
+Cancellation (`Ok(None)`) remains silent. Both platform errors and a dropped
+response channel produce the existing bounded error toast. With an active local
+repository, its context owns a Failed receipt retaining the complete diagnostic.
+Without a repository (Home), only the toast and process diagnostic are emitted;
+no empty/fabricated repository receipt is allowed (PM decision). A failed dialog
+does not observe or mutate Git state.
+

@@ -194,9 +194,9 @@ oracle retains its 60px readable-body floor at 940×660 / 167%, including a
 Button hit targets, terminal ownership and the live buffer remain unchanged.
 Pointer resizing uses the same presentation cap, preserves its measured press
 origin through clamp overshoot, and restores the larger preference when the
-pointer returns to that origin. Its native oracle measures the pressed body
-and discovers the cap through a real overshoot rather than assuming all
-workspace modes have the Graph's height budget.
+pointer returns to that origin. Its native oracle independently calculates the
+mode-specific cap from the viewport, chrome, and compound Editor budget, checks
+overshoot against that cap, and requires visible movement whenever room remains.
 
 Copy retains the pinned selectable TextView's existing clipboard semantics:
 the shared Root trims outer whitespace, including the final newline. Snapshot
@@ -219,8 +219,8 @@ coverage retains a real undo-capable history entry and verifies no modal opens.
 Open current leaves historical state with the same live Input focused.
 
 Native Save availability and dispatched writer admission are separate:
-menus remain disabled while busy, but an already-dispatched request for a
-visible live buffer reaches the existing lease refusal/footer/toast path.
+menus remain disabled while busy, but Cmd-S stays registered for a visible live
+buffer and reaches the existing lease refusal/footer/toast path.
 Hidden or historical buffers cannot save. Ordinary modal routing remains
 inert; a reconciled panic notice must be dismissed before retrying.
 

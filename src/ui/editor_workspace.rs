@@ -669,6 +669,10 @@ impl KagiApp {
         !self.has_active_modal() && !self.op_latched() && self.editor_save_target_available(cx)
     }
 
+    pub(super) fn editor_save_dispatch_available(&self, cx: &gpui::App) -> bool {
+        self.editor_save_target_available(cx) && (!self.has_active_modal() || self.op_latched())
+    }
+
     fn editor_save_target_available(&self, cx: &gpui::App) -> bool {
         self.workspace_mode() == WorkspaceMode::Editor
             && !self.home_in_front()
@@ -688,8 +692,7 @@ impl KagiApp {
     pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
         // Availability disables native menus, but a dispatched request must
         // still reach writer admission and explain a competing lease.
-        if !self.editor_save_target_available(cx) || (self.has_active_modal() && !self.op_latched())
-        {
+        if !self.editor_save_dispatch_available(cx) {
             return;
         }
         let Some(ev) = self.ui().editor_workspace.clone() else {

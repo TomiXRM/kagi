@@ -682,7 +682,7 @@ impl Render for KagiApp {
                 }),
             )
             .on_action(copy_diff_selection)
-            .when(self.editor_save_available(cx), |el| {
+            .when(self.editor_save_dispatch_available(cx), |el| {
                 el.on_action(save_editor_file)
             })
             .on_action(

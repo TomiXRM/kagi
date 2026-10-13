@@ -1121,6 +1121,11 @@ position (9,16); the main-window reversal does not change Settings geometry.
 **#1500 zoom alignment amendment (2026-10-14):** tab labels use the existing
 14-reference-px small-text role capped at 14 logical px, so text fits the fixed
 native chrome at 167%. Toolbar heights, typography and zoom are unchanged.
+The titlebar overflow trigger also caps its height at 24 logical px, retaining
+its shared keyboard/menu owner without changing toolbar overflow geometry.
+Editor bottom-panel fitting subtracts the fixed 36-logical-px titlebar before
+converting the remaining body budget to reference units; only the status bar
+and toolbar contributions scale.
 The `titlebar_tabs` matrix changes zoom on each actual macOS window through
 100% → 167% → 100%, reads all three AppKit `standardWindowButton:` bounds
 converted to the content view, and compares their centres with the titlebar

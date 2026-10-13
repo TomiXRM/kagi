@@ -161,6 +161,11 @@ pub fn scenario_titlebar_tabs_resize(cx: &mut VisualTestAppContext) {
                     e2e::control_bounds(win.window_id(), "tab-overflow").is_some(),
                     "narrow titlebar must overflow"
                 );
+                contained(
+                    e2e::control_bounds(win.window_id(), "repo-tab-strip").unwrap(),
+                    e2e::control_bounds(win.window_id(), "tab-overflow").unwrap(),
+                    "tab overflow fits the fixed titlebar at every zoom",
+                );
                 let narrow = e2e::control_bounds(win.window_id(), "repo-tab-0").unwrap();
                 crate::toolbar_overflow::resize_overflow_window(cx, win, 1392.);
                 e2e::clear_control_bounds(win.window_id(), "tab-overflow");

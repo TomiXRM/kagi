@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit consumption invalidates pending Smart generation so an old result cannot replace the next draft. Draft autosave failures keep edits unsaved, show English/Japanese failure feedback and offer Save Draft after storage recovers; saved logs are success-only. Smart replacements preserve standard Input Undo/Redo and earlier handwritten edits, including template comments. (#1434, #1435, #1436)
+  - Review: full Input replacement has an isolated Undo group even immediately after typing; discarded generation panels release their busy state and generating status only when their dispatch token still matches, never settling a newer panel's request. Pending consumption cannot retain an empty panel during reload.
 - Selected PR dashboard rows retain active/inactive selection fill on hover. Hidden clones keep a source-named running status and keyboard-reachable Show Progress action without starting another clone. Home's successful empty repository sections name their owner and host instead of claiming the whole account has no repositories; retrieval failures remain distinct. (#1451, #1452, #1453)
   - Review: the user's empty section uses a natural host-only sentence instead of interpolating the Yours/自分 heading; organization names remain explicit with idiomatic Japanese wording.
 - Restore always-visible repository/Home document tabs in a separate titlebar above the unchanged 52/60-reference-px toolbar, with trailing + when opening a document is available; only blank spacers handle window drag and double-click. Owner decision supersedes unified single-document chrome. (#1462, supersedes #1179)

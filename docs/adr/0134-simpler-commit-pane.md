@@ -116,6 +116,35 @@ The generation-counter guard stays: a result whose `gen` no longer matches has
 been superseded by a newer click and is still dropped. Only the
 "is it still empty?" check is gone.
 
+#### Undo and the consumed-message boundary (#1434/#1436, 2026-10-13)
+
+Explicit generation replaces both fields through the pinned Input's
+Undo-preserving `replace_all` API. Full replacement starts its own history
+group and ends it before subsequent typing, even when the preceding edit was
+less than one second ago. Rule generation, LLM completion and rule fallback
+share this path and retain the loaded template comment block. Title and body
+are separate Inputs: Undo restores each handwritten field in one step (two
+steps for the pair), Redo restores its generated text, and earlier edit groups
+remain traversable. Initial draft load and successful commit clear still use
+`set_value`: those are lifecycle changes, not Smart edits.
+
+The same panel generation guard advances on explicit generation/suggestion
+and on successful commit/amend message consumption; consumption also drops any
+queued result. A generation for the consumed message cannot land in the next
+draft, even if unstaged work retains the same panel entity. Failure, cancellation
+or abort does not consume the message and does not invalidate generation.
+Changes to the staged set (including unstage/restage or replacing staged files)
+also do not invalidate it: the result is still the user's explicit generation
+request. There is no second staged-set invalidation key.
+
+The session's in-flight descriptor also retains the dispatch token
+`(panel EntityId, panel generation)`. Completions settle spinner/provider/status
+only when that token still matches. This preserves weak panel ownership: if the
+initiating panel disappeared, its matching completion clears the generating
+status without resurrecting it; an older panel's completion cannot settle a
+new panel's request. The token does not introduce a staged-set invalidation key.
+
+
 ### The Template toggle
 
 A `commit.template` is opt-out per user, not per repo: the toggle at the bottom

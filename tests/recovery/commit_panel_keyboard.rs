@@ -27,6 +27,17 @@ pub use changes_keyboard::{
 mod smart_footer_provider;
 pub use smart_footer_provider::scenario_smart_commit_footer_provider;
 
+#[path = "commit_draft_save_failure.rs"]
+mod commit_draft_save_failure;
+#[path = "smart_generation_commit_boundary.rs"]
+mod smart_generation_commit_boundary;
+#[path = "smart_replace_undo.rs"]
+mod smart_replace_undo;
+pub use commit_draft_save_failure::scenario_commit_draft_save_failure;
+pub use smart_generation_commit_boundary::scenario_smart_generation_commit_boundary;
+pub use smart_generation_commit_boundary::scenario_smart_generation_replaced_panel;
+pub use smart_replace_undo::scenario_smart_replace_undo;
+
 const TEMPLATE: &str = "# Keyboard regression template\n";
 
 #[derive(Clone, Copy)]

@@ -658,6 +658,9 @@ pub enum Msg {
     CommitTitle,
     /// Commit panel: body input placeholder.
     CommitBody,
+    /// Commit draft persistence failure, followed by the I/O detail.
+    CommitDraftSaveFailed,
+    CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
     /// Commit panel: tooltip on the person+ (co-author) icon.
@@ -3047,6 +3050,10 @@ impl Msg {
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
             (Ja, CommitBody) => "説明(任意)",
+            (En, CommitDraftSaveFailed) => "Draft could not be saved",
+            (Ja, CommitDraftSaveFailed) => "下書きを保存できません",
+            (En, CommitDraftSaveRetry) => "Save Draft",
+            (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
             (En, AddCoAuthor) => "Add co-author",

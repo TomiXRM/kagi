@@ -290,7 +290,7 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
             for layout in [
                 CommitRowLayout::Card,
                 CommitRowLayout::Table {
-                    row_height: 29. * zoom,
+                    row_height: theme::scaled(20.),
                 },
             ] {
                 for (name, text) in inputs() {
@@ -703,7 +703,7 @@ pub fn scenario_file_history_virtualized(cx: &mut VisualTestAppContext, repo_pat
             row_h > 0. && list_h > 0.,
             "{dimensions:?}: list not laid out"
         );
-        let expected_row_h = theme::scaled(29.);
+        let expected_row_h = theme::scaled(20.);
         assert!(
             (row_h - expected_row_h).abs() <= EPS,
             "{dimensions:?}: row height {row_h} ≠ File History ROW_H {expected_row_h}"

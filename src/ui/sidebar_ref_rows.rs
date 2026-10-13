@@ -339,7 +339,8 @@ pub(super) fn build_tag_row(
         .flex()
         .items_center()
         .px_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(if reason.is_some() {
             theme().text_muted
         } else {
@@ -355,7 +356,19 @@ pub(super) fn build_tag_row(
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .on_click(click)
         .hover(|s| s.bg(rgb(theme().surface)))
-        .child(div().flex_1().truncate().child(label))
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .truncate()
+                .line_height(gpui::relative(1.2))
+                .child(label)
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label.child(super::e2e::measure_inside(format!(
+                        "sidebar-tag-name-{tag_name}"
+                    )))
+                }),
+        )
         .into_any_element()
 }
 
@@ -379,18 +392,35 @@ pub(super) fn build_stash_row(
     });
     div()
         .id(("sidebar-stash", index))
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(format!("sidebar-stash-{index}")))
+        })
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
         .items_center()
         .px_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(theme().color_warning))
         .overflow_hidden()
         .on_click(click)
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .hover(|s| s.bg(rgb(theme().surface)))
         .tooltip(name_tooltip(full))
-        .child(div().flex_1().truncate().child(label))
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .truncate()
+                .line_height(gpui::relative(1.2))
+                .child(label)
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label.child(super::e2e::measure_inside(format!(
+                        "sidebar-stash-name-{index}"
+                    )))
+                }),
+        )
         .into_any_element()
 }
 

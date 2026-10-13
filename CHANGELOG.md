@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Commit paging's native viewport check uses fresh rendered selection-row bounds rather than accumulating nominal zoom-scaled heights, preserving full-row Home/End/Page reveal and wheel-scroll assertions at fractional zoom. Production selection and scrolling are unchanged. (#1458)
 - Analyze Reset asks before discarding an unsaved draft and writing defaults; Cancel/Return preserve both draft and disk. Save is disabled for unchanged patterns, with localized saved/unsaved status. Settings render important help under controls as secondary text while retaining long-form tooltips and switch accessibility descriptions. (#1404, #1415, #1416)
   - Review: Reset approval is owned by the Settings form, preserving the main window's existing/pending plan and remaining visible in the portable overlay. Escape cancels only the alert; switch help is announced once rather than duplicated by its Group.
 - Clone folder-picker answers belong to the initiating card and repository visit; dismissed, replaced and reopened cards reject late answers. Hidden/background clones no longer switch repositories on completion: the existing notification offers an explicit Open Repository action, while a user waiting on the current card retains automatic opening. Native picker errors leave the card unchanged and show bounded feedback (with durable detail owned by the repository screen present at launch, never Home's background tab); cancellation stays silent. (#1402, #1405; #1420 Clone side)

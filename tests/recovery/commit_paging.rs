@@ -15,7 +15,9 @@ fn graph(
     window: AnyWindowHandle,
 ) -> (Option<usize>, usize, bool) {
     let window_id = window.window_id();
+    e2e::clear_control_bounds(window_id, "graph-selection-bar");
     cx.update_window(window, |_, window, cx| {
+        window.refresh();
         window.draw(cx).clear();
         let app = app.read(cx);
         let ui = app.ui();
@@ -23,23 +25,28 @@ fn graph(
             e2e::control_bounds(window_id, "commit-list-viewport").expect("commit viewport drawn");
         let handle = ui.commit_scroll_handle.0.borrow();
         let (_, height) = app.commit_row_geometry_for_e2e(0);
-        let row_height = gpui::px(height);
         let page = ((f32::from(handle.base_handle.bounds().size.height) / height).floor() as usize)
             .saturating_sub(1)
             .max(1);
-        let inside = ui.selected.is_some_and(|ix| {
-            let (item, _) = app.commit_row_geometry_for_e2e(ix);
-            let top = handle.base_handle.bounds().top()
-                + handle.base_handle.offset().y
-                + row_height * item;
-            top >= viewport.top() && top + row_height <= viewport.bottom()
-        });
+        // The selection bar spans the actual rendered row. GPUI rounds row
+        // heights to device pixels before uniform-list scrolling; multiplying
+        // the nominal scaled height accumulates error towards the list's end.
+        // Clear and redraw the probe above so an offscreen row cannot reuse
+        // its bounds from a previous frame.
+        let inside = ui.selected.is_some()
+            && e2e::control_bounds(window_id, "graph-selection-bar").is_some_and(|row| {
+                row.top() >= viewport.top() && row.bottom() <= viewport.bottom()
+            });
         (ui.selected, page, inside)
     })
     .unwrap()
 }
 
 pub fn scenario_commit_paging(cx: &mut VisualTestAppContext) {
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    // #1458: 90% makes the nominal 26.1px row round to 26 device-aligned
+    // logical pixels, exposing cumulative-height oracles at the final row.
+    kagi::ui::theme::set_zoom(0.9);
     let fixture = build_fixture();
     for n in 0..EXTRA {
         git(

@@ -1945,7 +1945,7 @@ impl Msg {
             (En, MenuServices) => "Services",
             (Ja, MenuServices) => "サービス",
             (En, MenuUndo) => "Undo",
-            (Ja, MenuUndo) => "元に戻す",
+            (Ja, MenuUndo) => "取り消す",
             (En, MenuRedo) => "Redo",
             (Ja, MenuRedo) => "やり直す",
             (En, MenuCut) => "Cut",

@@ -137,13 +137,8 @@ impl KagiApp {
                     .is_some_and(|root| root.contains(&focus, window))
         })
     }
-    pub(super) fn history_menu_available(
-        &self,
-        redo: bool,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> bool {
-        let input = self.menu_input_focused(window, cx);
+    /// Label targets follow editing context, not temporary action availability.
+    fn history_menu_target(&self, input: bool, window: &mut Window, cx: &mut App) -> bool {
         let terminal = self
             .ui()
             .terminal_session
@@ -156,21 +151,33 @@ impl KagiApp {
                 .editor_workspace
                 .as_ref()
                 .is_some_and(|view| view.read(cx).showing_history_commit());
+        !input && !terminal && !snapshot
+    }
+    pub(super) fn history_menu_available(
+        &self,
+        redo: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let input = self.menu_input_focused(window, cx);
         !self.home_in_front()
             && self.repo_path.is_some()
             && !self.has_active_modal()
             && !self.op_latched()
-            && !input
-            && !terminal
-            && !snapshot
+            && self.history_menu_target(input, window, cx)
             && if redo {
                 self.ui().operation_history.can_redo()
             } else {
                 self.ui().operation_history.can_undo()
             }
     }
-    pub(super) fn publish_window_menu_state(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let previous = current_state(cx);
+    fn menu_state(
+        &self,
+        previous: ViewMenuState,
+        fullscreen: bool,
+        input_focused: bool,
+        history_target: bool,
+    ) -> ViewMenuState {
         let summary = |old: &Option<gpui::SharedString>, entry: Option<&kagi_git::HistoryEntry>| {
             entry.map(|entry| {
                 old.as_ref()
@@ -179,25 +186,45 @@ impl KagiApp {
                     .unwrap_or_else(|| entry.summary.clone().into())
             })
         };
-        let state = ViewMenuState {
-            sidebar_visible: self.sidebar.visible,
-            fullscreen: window.is_fullscreen(),
-            input_focused: self.menu_input_focused(window, cx),
-            undo_summary: summary(
-                &previous.undo_summary,
-                self.ui()
-                    .operation_history
-                    .peek_undo()
-                    .filter(|_| self.history_menu_available(false, window, cx)),
-            ),
-            redo_summary: summary(
-                &previous.redo_summary,
-                self.ui()
-                    .operation_history
-                    .peek_redo()
-                    .filter(|_| self.history_menu_available(true, window, cx)),
-            ),
+        // Home temporarily has no foreground session. Retain the last history
+        // labels; its dispatch tree disables repository actions. Input focus
+        // still selects that Input's own Undo/Redo without reading a parked tab.
+        let history = if self.home_in_front() {
+            None
+        } else {
+            Some(&self.ui().operation_history)
         };
+        ViewMenuState {
+            sidebar_visible: self.sidebar.visible,
+            fullscreen,
+            input_focused,
+            undo_summary: history
+                .map(|history| {
+                    summary(
+                        &previous.undo_summary,
+                        history.peek_undo().filter(|_| history_target),
+                    )
+                })
+                .unwrap_or(previous.undo_summary),
+            redo_summary: history
+                .map(|history| {
+                    summary(
+                        &previous.redo_summary,
+                        history.peek_redo().filter(|_| history_target),
+                    )
+                })
+                .unwrap_or(previous.redo_summary),
+        }
+    }
+    pub(super) fn publish_window_menu_state(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.menu_input_focused(window, cx);
+        let history_target = self.history_menu_target(input, window, cx);
+        let state = self.menu_state(
+            current_state(cx),
+            window.is_fullscreen(),
+            input,
+            history_target,
+        );
         let handle = window.window_handle();
         let language = i18n::lang();
         let menus = cx.global_mut::<WindowMenus>();
@@ -276,4 +303,65 @@ pub fn bring_all_activation_order(cx: &App) -> Vec<AnyWindowHandle> {
 #[cfg(feature = "gui-e2e")]
 pub fn main_window_targets(cx: &App) -> Vec<AnyWindowHandle> {
     cx.global::<WindowMenus>().main_windows.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modal_busy_and_home_do_not_change_history_menu_labels() {
+        let mut app = KagiApp::new_common(Default::default());
+        app.open_initial_tab(
+            std::path::Path::new("/menu-state-test"),
+            "menu-state-test",
+            false,
+            Default::default(),
+        );
+        app.record_history(
+            kagi_git::OperationKind::Commit,
+            "main",
+            kagi_git::CommitId("before".into()),
+            kagi_git::CommitId("after".into()),
+            "commit fixture",
+        );
+        let state = app.menu_state(Default::default(), false, false, true);
+        assert_eq!(state.undo_summary.as_deref(), Some("commit fixture"));
+        for redo in [false, true] {
+            let state = app.menu_state(state.clone(), false, false, true);
+            assert_eq!(
+                if redo {
+                    state.redo_summary.as_deref()
+                } else {
+                    state.undo_summary.as_deref()
+                },
+                Some("commit fixture"),
+            );
+            app.set_app_notice(String::from("menu-state notice").into());
+            assert!(app.has_active_modal());
+            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            app.clear_app_notice();
+            assert!(!app.has_active_modal());
+            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            let scope = crate::app::WriteScope::Local(kagi_domain::remove::RepoId(
+                "/menu-state-test".into(),
+            ));
+            let operation = crate::app::OperationId(1);
+            app.app_sessions
+                .reserve_lease(scope.clone(), operation)
+                .unwrap();
+            assert!(app.op_latched());
+            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            app.app_sessions.release_lease(&scope, operation);
+            assert!(!app.op_latched());
+            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            let tab = app.tabs.pop().unwrap();
+            assert!(app.home_in_front());
+            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            app.tabs.push(tab);
+            if !redo {
+                app.ui_mut().unwrap().operation_history.undo();
+            }
+        }
+    }
 }

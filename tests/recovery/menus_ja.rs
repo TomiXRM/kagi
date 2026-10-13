@@ -18,6 +18,12 @@ fn item(cx: &mut VisualTestAppContext, section: usize, at: usize) -> Box<dyn Act
         _ => panic!("expected native action"),
     }
 }
+fn action_label(cx: &mut VisualTestAppContext, section: usize, at: usize) -> String {
+    match &cx.read(commands::build_menus)[section].items[at] {
+        MenuItem::Action { name, .. } => name.to_string(),
+        _ => panic!("expected native action label"),
+    }
+}
 fn dispatch(cx: &mut VisualTestAppContext, win: AnyWindowHandle, action: Box<dyn Action>) {
     cx.update_window(win, |_, w, cx| w.dispatch_action(action, cx))
         .unwrap();
@@ -53,7 +59,7 @@ const LOCALIZED_MENUS: [(Lang, [&str; 5], &str, &str, &str); 2] = [
         ["ファイル", "編集", "リポジトリ", "ウインドウ", "ヘルプ"],
         "設定…",
         "リポジトリを開く…",
-        "元に戻す",
+        "取り消す",
     ),
 ];
 
@@ -359,12 +365,16 @@ fn history_move_plan(
 ) {
     let action = item(cx, 2, at);
     assert!(available(cx, m.win, action.as_ref()));
-    let label = match &cx.read(commands::build_menus)[2].items[at] {
-        MenuItem::Action { name, .. } => name.to_string(),
-        _ => unreachable!(),
-    };
+    let label = action_label(cx, 2, at);
     assert!(label.contains("menu fixture"));
     dispatch(cx, m.win, action);
+    assert_eq!(
+        action_label(cx, 2, at),
+        label,
+        "modal availability does not rebuild history menu labels"
+    );
+    let disabled = item(cx, 2, at);
+    assert!(!available(cx, m.win, disabled.as_ref()));
     let entry = cx.read(|cx| {
         let modal = m.app.read(cx).history_modal().unwrap();
         assert_eq!(modal.is_undo, is_undo);
@@ -375,8 +385,10 @@ fn history_move_plan(
         cx.notify();
     });
     root(cx, m);
+    assert_eq!(action_label(cx, 2, at), label);
     cx.simulate_keystrokes(m.win, key);
     paint(cx, m.win);
+    assert_eq!(action_label(cx, 2, at), label);
     cx.read(|cx| {
         let modal = m.app.read(cx).history_modal().unwrap();
         assert_eq!(modal.entry.before, entry.before);
@@ -388,6 +400,7 @@ fn history_move_plan(
         cx.notify();
     });
     root(cx, m);
+    assert_eq!(action_label(cx, 2, at), label);
 }
 
 struct TerminalShell;

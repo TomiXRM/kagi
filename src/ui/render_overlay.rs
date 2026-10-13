@@ -194,6 +194,26 @@ fn toast_card(
                     d.child(e2e::measure_inside(format!("toast-message-{id}")))
                 }),
         )
+        .when_some(toast.action_focus.clone(), |card, focus| {
+            use gpui_component::button::{Button, ButtonVariants as _};
+            use gpui_component::Sizable as _;
+            card.child(e2e::measure_control(
+                "clone-completion-open",
+                toast_stack::ToastButton(
+                    Button::new(("toast-open-repository", id))
+                        .ghost()
+                        .small()
+                        .label(Msg::ToastOpenRepository.t())
+                        .on_click(cx.listener(move |stack, _, _, cx| {
+                            stack.activate_action(id, cx);
+                        })),
+                    id,
+                    focus,
+                    "toast-open-repository",
+                )
+                .on_key_down(super::keyboard_nav::stop_activation_keys),
+            ))
+        })
         .child(toast_close_control(toast, cx))
 }
 
@@ -204,7 +224,7 @@ fn toast_close_control(
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::Sizable as _;
     let id = toast.id;
-    let control = toast_stack::ToastCloseButton(
+    let control = toast_stack::ToastButton(
         Button::new(("toast-dismiss", id))
             .ghost()
             .small()
@@ -215,6 +235,7 @@ fn toast_close_control(
             ),
         id,
         toast.close_focus.clone(),
+        "toast-dismiss",
     )
     .aria_label(SharedString::from(Msg::ToastDismiss.t()))
     .on_key_down(super::keyboard_nav::stop_activation_keys);

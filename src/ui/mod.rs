@@ -97,6 +97,7 @@ pub use kagi_ui_core::i18n; // ADR-0121: was a shim file
 mod branch_picker;
 pub mod dialog_a11y;
 pub mod home;
+mod home_clone;
 pub mod home_clone_card;
 pub mod home_github;
 mod home_github_list;

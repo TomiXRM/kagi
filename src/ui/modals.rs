@@ -671,6 +671,14 @@ pub struct BranchCleanupModal {
     pub error: Option<SharedString>,
 }
 
+/// Clipboard approval is bound to the shell that requested it, not a reused tab.
+#[derive(Clone)]
+pub struct TerminalPasteModal {
+    pub owner: crate::app::SessionId,
+    pub generation: u64,
+    pub text: gpui::SharedString,
+}
+
 #[derive(Clone)]
 pub struct AppNotice {
     pub message: String,
@@ -696,6 +704,7 @@ pub enum ActiveModal {
     Update(UpdateModal),
     SmartCommit(super::smart_commit::SmartCommitModal),
     AppNotice(AppNotice),
+    TerminalPaste(TerminalPasteModal),
     About(super::about::AboutModal),
     /// Read-only Analyze help; payload is the stable opener to restore.
     AnalyzeHelp(gpui::FocusHandle),
@@ -803,6 +812,7 @@ impl ActiveModal {
             | M::EditorDirtyGuard(_)
             | M::EditorFsPrompt(_)
             | M::EditorDeleteConfirm(_)
+            | M::TerminalPaste(_)
             | M::TrustRepo(_) => true,
         }
     }

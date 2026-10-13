@@ -777,7 +777,14 @@ impl KagiApp {
         // non-entity contents (Loading placeholder / CommitList) keep plain
         // arms until B2 migrates them.
         let panel_visible = self.panel_motion.bottom.visible(motion_now);
-        let panel_height = self.bottom_panel_height;
+        // Fit only the presentation; shrinking a window or increasing zoom
+        // must not replace the larger preferred height.
+        let max_height = (f32::from(window.viewport_size().height) * BOTTOM_PANEL_MAX_FRAC
+            / theme::scaled(1.))
+        .max(BOTTOM_PANEL_MIN_H);
+        let panel_height = self
+            .bottom_panel_height
+            .clamp(BOTTOM_PANEL_MIN_H, max_height);
         let panel_tab = self.bottom_tab;
         let mut bottom_panel = self
             .render_bottom_panel_slot(panel_visible, panel_height, panel_tab, window, cx)
@@ -896,13 +903,23 @@ impl KagiApp {
         let right_element = if !right_shown && right_pane == Some(workspace::RightPane::Inspector) {
             self.panel_motion.inspector_row.and_then(|row| {
                 self.ui_mut()?.sync_inspector_commit_files(row);
-                workspace::render_inspector_body(self, Some(row), None, cx)
+                workspace::render_inspector_body(self, Some(row), None, window, cx)
             })
         } else {
             right_pane
                 .and_then(workspace::right_item)
                 .and_then(|item| item.render(self, &layout, None, window, cx))
         };
+        if !matches!(
+            right_pane,
+            Some(workspace::RightPane::Inspector | workspace::RightPane::Compare)
+        ) || right_element.is_none()
+        {
+            self.ui()
+                .inspector_model
+                .keyboard
+                .yield_focus(self.root_focus.as_ref(), window, cx);
+        }
         if let Some(el) = right_element {
             let pane = div()
                 .flex()
@@ -1006,8 +1023,12 @@ pub(super) fn render_loading_dots() -> gpui::Div {
         // so no per-frame animation ticks are requested (the pinned GPUI build's
         // animation element does not honor reduce-motion itself).
         let dot = if reduce_motion {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::system_accessibility::record_loading_animation(false);
             dot.into_any_element()
         } else {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::system_accessibility::record_loading_animation(true);
             dot.with_animation(
                 ("kagi-loading-dot", i),
                 gpui::Animation::new(Duration::from_millis(LOADING_BOB_MS)).repeat(),

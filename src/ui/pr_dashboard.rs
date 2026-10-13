@@ -15,7 +15,8 @@ use kagi_domain::list_filter::apply_prs;
 
 use super::i18n::Msg;
 use super::pr_attention::{
-    attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
+    attention_color, card_border, ci_glyph, dash_card_bg, focus_queue, queue_bucket_label,
+    reason_text,
 };
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -30,93 +31,33 @@ fn page_bg() -> u32 {
     theme().bg_base
 }
 
-/// A card on that page. No grey anywhere (user request): solid white in light
-/// themes, and in dark ones plain black over the page. A partly transparent
-/// white still mixed with what was behind it and came out grey, which is why
-/// the light theme kept looking washed out.
-fn dash_card_bg() -> gpui::Hsla {
-    if theme().dark {
-        gpui::hsla(0., 0., 0., 0.35)
-    } else {
-        gpui::hsla(0., 0., 1., 1.)
-    }
-}
+#[path = "pr_dashboard_controls.rs"]
+pub(super) mod controls;
 
-/// A header-bar button: icon + label, the same weight as the existing
-/// `GitHub ↗` one so the row reads as one set of controls.
-fn bar_button(
-    id: &'static str,
-    icon: &'static str,
-    label: String,
-    click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .relative()
-        .when(cfg!(feature = "gui-e2e"), |el| {
-            el.child(super::e2e::measure_inside(id))
-        })
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .flex_shrink_0()
-        .px_2()
-        .py_px()
-        .rounded_sm()
-        .border_1()
-        .border_color(rgb(theme().selected))
-        .text_xs()
-        .text_color(rgb(theme().text_sub))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().surface)))
-        .on_click(click)
-        .child(
-            gpui::svg()
-                .path(icon)
-                .flex_shrink_0()
-                .w(theme::scaled_px(12.))
-                .h(theme::scaled_px(12.))
-                .text_color(rgb(theme().text_sub)),
-        )
-        .child(SharedString::from(label))
-}
-
-/// Back to the dashboard. Opening a PR replaced the center for good — there
-/// was no way back to the home screen short of closing the tab (user report).
-pub(super) fn home_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
-    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_home(cx);
-    });
-    bar_button(
-        "pr-mode-home",
-        "icons/git-pull-request.svg",
-        format!("\u{2190} {}", Msg::PrAllPrs.t()),
-        click,
-    )
-}
-
-/// Fetch the PR list now instead of waiting out the 60s ticker (user request).
-pub(super) fn refresh_button(cx: &mut Context<KagiApp>) -> gpui::Stateful<gpui::Div> {
-    let click = cx.listener(|this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.pr_mode_refresh(cx);
-    });
-    bar_button(
-        "pr-mode-refresh",
-        "icons/refresh-cw.svg",
-        Msg::PrRefresh.t().to_string(),
-        click,
-    )
-}
-
-pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(super) fn render_dashboard(
+    app: &KagiApp,
+    window: &mut gpui::Window,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let ui = app.ui();
     let all = ui.pr_list_rows();
+    if !all.is_empty() && ui.filter_controls.focus.focused(window) == Some(10) {
+        if let Some(root) = &app.root_focus {
+            window.focus(root, cx);
+        }
+    }
     let error = ui.pr_list_error();
     let rows = apply_prs(all, &ui.github_pr_filter, |pr| {
         app.pr_status_availability(pr)
     });
     let filtered_count = rows.len();
+    if rows.is_empty() {
+        if let Some(mode) = app.pr_mode() {
+            mode.dashboard_keys
+                .borrow_mut()
+                .yield_focus(app.root_focus.as_ref(), window, cx);
+        }
+    }
     let numbers: HashSet<_> = rows.iter().map(|&index| all[index].number).collect();
     let now = kagi_ui_core::time::now_unix_secs();
     let mut buckets = focus_queue(app);
@@ -194,7 +135,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                             .text_color(rgb(theme().text_muted))
                             .child(safe_text(e))
                     }))
-                    .child(refresh_button(cx)),
+                    .child(controls::refresh_button(app, cx)),
             )
         });
     } else {
@@ -265,6 +206,7 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .pr_mode()
                 .map(|mode| mode.dashboard_scroll.clone())
                 .unwrap_or_default();
+            let keyboard = controls::dashboard_rows(app, &rows, all, &scroll, window, cx);
             let owner = app.active_session();
             let generation = ui.pr_list_revision();
             let list = div()
@@ -272,18 +214,30 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                 .flex_1()
                 .min_h(px(0.))
                 .flex()
-                .flex_col();
+                .flex_col()
+                .map(|list| {
+                    if let Some(keys) = &keyboard {
+                        keys.list(list)
+                    } else {
+                        list
+                    }
+                });
             table = table.child(
-                super::list_a11y::plain_list("pr-list", list, Msg::A11yPrList.t()).child(
+                super::list_a11y::list_box("pr-list", list, Msg::A11yPrList.t()).child(
                     uniform_list(
                         "pr-home-list",
                         row_count + usize::from(ui.pr_list_has_more()),
-                        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                             if this.active_session() != owner
                                 || this.ui().pr_list_revision() != generation
                             {
                                 return Vec::new();
                             }
+                            if let Some(mode) = this.pr_mode() {
+                                *mode.dashboard_drawn.borrow_mut() = range.clone();
+                            }
+                            let keyboard = keyboard.as_ref().map(|keys| keys.as_drawn(&range));
+                            let selected = keyboard.as_ref().and_then(|keys| keys.focused_stop(window, cx));
                             let start = range.start.saturating_sub(2);
                             let end = (range.end + 2).min(render_rows.len());
                             let first = range.start;
@@ -308,8 +262,16 @@ pub(super) fn render_dashboard(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui
                                             now,
                                             &this.avatars.images,
                                             (index, render_rows.len()),
+                                            (selected == Some(index), this.window_active),
                                             cx,
                                         );
+                                        let row = if let Some(keys) = &keyboard {
+                                            keys.row(index, row).px(super::keyboard_nav::inset(super::timeline_row::GUTTER))
+                                                .pt(super::keyboard_nav::inset(ROW_PY))
+                                                .pb(super::keyboard_nav::inset(ROW_PY) + px(1.))
+                                                .child(div().absolute().left_0().right_0().bottom_0()
+                                                    .h(px(1.)).bg(rgb(theme().surface)))
+                                        } else { row };
                                         let row = if index == first {
                                             let entity = cx.entity().downgrade();
                                             let rows = render_rows.clone();
@@ -540,6 +502,7 @@ fn render_table_row(
     avatars: &kagi_ui_core::avatar::AvatarImages,
     // #354: position (0-based) and size within the PR list.
     (position, size): (usize, usize),
+    (selected, window_active): (bool, bool),
     cx: &mut Context<KagiApp>,
 ) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
@@ -713,7 +676,7 @@ fn render_table_row(
                     )))
                 }),
         );
-    super::list_a11y::list_item(
+    super::list_a11y::list_option(
         "pr-list",
         super::timeline_row::clickable(super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
@@ -725,6 +688,7 @@ fn render_table_row(
         position,
         size,
         label,
+        selected,
     )
     .relative()
     .when(cfg!(feature = "gui-e2e"), |row| {
@@ -732,6 +696,9 @@ fn render_table_row(
             "pr-home-row-{}",
             pr.number
         )))
+    })
+    .when(selected, |row| {
+        row.bg(theme().selected_for_window(window_active))
     })
     .items_center()
     .flex_shrink_0()
@@ -758,10 +725,16 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         .flex_shrink_0()
         .px_4()
         .pt_3();
-    for (a, members) in buckets {
+    for (index, (a, members)) in buckets.iter().enumerate() {
         let c = attention_color(*a);
         row = row.child(
             div()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |tile| {
+                    tile.child(super::e2e::measure_inside(format!(
+                        "pr-attention-tile-{index}"
+                    )))
+                })
                 .flex()
                 .flex_row()
                 .items_center()

@@ -58,7 +58,7 @@ fn rendered_pr_numbers(
         .collect();
     match list_a11y::recorded_list("pr-list") {
         Some(list) => {
-            assert_eq!(list.role, Some(gpui::Role::List));
+            assert_eq!(list.role, Some(gpui::Role::ListBox));
             assert_eq!(
                 (list.size, list.rows.len()),
                 (drawn.len(), drawn.len()),

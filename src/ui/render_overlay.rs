@@ -37,8 +37,12 @@ pub(crate) fn sync_spinner(
         .h(theme::scaled_px(size))
         .text_color(rgb(accent));
     if theme::reduce_motion() {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::system_accessibility::record_spinner_animation(false);
         return icon.into_any_element();
     }
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::system_accessibility::record_spinner_animation(true);
     icon.with_animation(
         key,
         gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
@@ -190,6 +194,26 @@ fn toast_card(
                     d.child(e2e::measure_inside(format!("toast-message-{id}")))
                 }),
         )
+        .when_some(toast.action_focus.clone(), |card, focus| {
+            use gpui_component::button::{Button, ButtonVariants as _};
+            use gpui_component::Sizable as _;
+            card.child(e2e::measure_control(
+                "clone-completion-open",
+                toast_stack::ToastButton(
+                    Button::new(("toast-open-repository", id))
+                        .ghost()
+                        .small()
+                        .label(Msg::ToastOpenRepository.t())
+                        .on_click(cx.listener(move |stack, _, _, cx| {
+                            stack.activate_action(id, cx);
+                        })),
+                    id,
+                    focus,
+                    "toast-open-repository",
+                )
+                .on_key_down(super::keyboard_nav::stop_activation_keys),
+            ))
+        })
         .child(toast_close_control(toast, cx))
 }
 
@@ -200,7 +224,7 @@ fn toast_close_control(
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::Sizable as _;
     let id = toast.id;
-    let control = toast_stack::ToastCloseButton(
+    let control = toast_stack::ToastButton(
         Button::new(("toast-dismiss", id))
             .ghost()
             .small()
@@ -211,6 +235,7 @@ fn toast_close_control(
             ),
         id,
         toast.close_focus.clone(),
+        "toast-dismiss",
     )
     .aria_label(SharedString::from(Msg::ToastDismiss.t()))
     .on_key_down(super::keyboard_nav::stop_activation_keys);
@@ -442,6 +467,9 @@ impl KagiApp {
                     .when_some(self.trust_repo_modal().cloned(), |el, modal| {
                         el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
                     })
+                    .when_some(self.terminal_paste_modal().cloned(), |el, modal| {
+                        el.child(super::terminal::input::render_paste_confirmation(modal, cx))
+                    })
                     // ── Unlock-worktree confirmation ─────────────────
                     .when_some(unlock_worktree_modal.take(), |el, modal| {
                         el.child(render_unlock_worktree_modal(
@@ -523,6 +551,7 @@ impl KagiApp {
                             super::operations::oplog_restore::render_oplog_restore_modal(
                                 modal,
                                 &self.modal_section_overrides,
+                                window,
                                 cx,
                             ),
                         )

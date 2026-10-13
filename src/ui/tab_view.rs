@@ -59,6 +59,9 @@ pub struct TabViewState {
     pub status_summary: StatusBarSummary,
     pub toolbar_state: ToolbarState,
     pub remote_branches: Vec<RemoteBranch>,
+    /// Full remote ref names, rebuilt with this session's inventory. Drag
+    /// predicates borrow names for constant-time lookups without formatting.
+    pub remote_branch_names: HashSet<String>,
     pub tags: Vec<Tag>,
     /// Commits `refs/kagi/pr/**` point at (graph roots no branch names).
     pub pr_heads: Vec<CommitId>,
@@ -198,6 +201,11 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
 
     // W2-SIDEBAR: collect remote branches and tags.
     let remote_branches = snap.remote_branches.clone();
+    let remote_branch_names = snap
+        .remote_branches
+        .iter()
+        .map(|branch| format!("{}/{}", branch.remote, branch.name))
+        .collect();
     let tags = snap.tags.clone();
 
     // W2-SIDEBAR: build upstream info map (branch name → UpstreamInfo).
@@ -247,6 +255,7 @@ pub fn build_tab_view(snap: &RepoSnapshot, repo_name: &str) -> TabViewState {
         status_summary,
         toolbar_state,
         remote_branches,
+        remote_branch_names,
         tags,
         pr_heads: snap.pr_heads.clone(),
         branch_upstream_info,
@@ -356,7 +365,6 @@ pub struct TabUiState {
     /// Branch Cleanup list position and checked branch names.
     pub cleanup_scroll: UniformListScrollHandle,
     /// Positional state belongs to this repository session, not the active app.
-    pub inspector_files_scroll: gpui::ScrollHandle,
     pub inspector_message_scroll: gpui::ScrollHandle,
     pub activity_ranking_scroll: gpui::ScrollHandle,
     pub cleanup_selected: HashSet<String>,
@@ -528,7 +536,6 @@ impl Default for TabUiState {
             graph_scroll_x: 0.0,
             branch_groups_collapsed: HashSet::new(),
             cleanup_scroll: UniformListScrollHandle::new(),
-            inspector_files_scroll: gpui::ScrollHandle::new(),
             inspector_message_scroll: gpui::ScrollHandle::new(),
             activity_ranking_scroll: gpui::ScrollHandle::new(),
             smart_commit_generating: false,

@@ -132,6 +132,12 @@ pub enum ToastKind {
 pub type ToastCloseFocus =
     std::rc::Rc<std::cell::RefCell<Vec<(gpui::WindowId, gpui::FocusHandle)>>>;
 
+/// Actions remain inert until the user activates the notification's Button.
+#[derive(Clone, Debug)]
+pub enum ToastAction {
+    OpenRepository(std::path::PathBuf),
+}
+
 /// One snackbar entry, stacked bottom-right above the status bar.
 ///
 /// Rendered by `render_toasts`; pruned by a 500ms ticker task that runs only
@@ -145,12 +151,14 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub message: SharedString,
+    pub action: Option<ToastAction>,
     /// Creation time; drives the enter animation and auto-dismiss timing.
     pub born: std::time::Instant,
     /// Hover pause began here; elapsed hover time is excluded from the timer.
     pub paused_at: Option<std::time::Instant>,
     /// Per-window rendered Button handles, retained until removal repairs focus.
     pub close_focus: ToastCloseFocus,
+    pub action_focus: Option<ToastCloseFocus>,
     /// `Some(t)` once the toast has begun sliding out (auto-expiry or the ×
     /// button): `t` is when the exit animation started. The toast keeps
     /// rendering during the exit so the slide-out is visible, then a one-shot
@@ -169,6 +177,7 @@ impl Toast {
     /// already doing so).
     pub(crate) fn should_start_exit(&self) -> bool {
         self.kind != ToastKind::Error
+            && self.action.is_none()
             && self.paused_at.is_none()
             && self.dismissing.is_none()
             && self.born.elapsed() >= self.lifetime()

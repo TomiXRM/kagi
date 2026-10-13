@@ -252,7 +252,7 @@ pub fn scenario_worktree_remove_live_shell(cx: &mut VisualTestAppContext) {
     switch(cx, &app, side_tab);
     cx.read(|cx| {
         let session = app.read(cx).ui().terminal_session.as_ref().unwrap();
-        session.paste_writer.as_ref().unwrap().paste_text("\u{4}");
+        session.paste_writer.as_ref().unwrap().write_input("\u{4}");
     });
     wait_until(cx, "the side shell never exited", |cx| {
         !shell_live(cx, &app)

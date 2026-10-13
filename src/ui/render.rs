@@ -280,6 +280,11 @@ impl Render for KagiApp {
         let main_issues = !self.home_in_front()
             && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Issues;
         for (owner, ui) in &self.ui {
+            if Some(*owner) != active || self.home_in_front() {
+                ui.inspector_model
+                    .keyboard
+                    .yield_focus(self.root_focus.as_ref(), window, cx);
+            }
             let composer_focused = ui
                 .issue_composer
                 .editors
@@ -640,6 +645,22 @@ impl Render for KagiApp {
             }))
             // T023: capture drag-move for both dividers on the root element.
             .on_drag_move::<DividerDrag>(divider_drag_move)
+            // Targets override this default during capture; leaving any target
+            // must not retain its prohibited cursor.
+            .on_drag_move::<BranchDrag>(|_, window, cx| {
+                if cx.active_drag_cursor_style() != Some(gpui::CursorStyle::OpenHand) {
+                    cx.set_active_drag_cursor_style(gpui::CursorStyle::OpenHand, window);
+                }
+            })
+            .capture_any_mouse_up(cx.listener(|this, event: &gpui::MouseUpEvent, _, _| {
+                if event.button == MouseButton::Left {
+                    this.finish_bottom_panel_resize();
+                }
+            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.finish_bottom_panel_resize()),
+            )
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
             .on_action(

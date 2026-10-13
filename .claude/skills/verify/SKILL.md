@@ -64,6 +64,18 @@ The geometry matrix is partitioned across `compact_layout_geometry` (660px,
 (1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
 same assertions and real rail interactions; the broad filter selects every
 partition. This bounds process runtime without dropping matrix cells.
+For #1417/#1418 use
+`KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
+The in-memory system-display injection never writes macOS preferences. Both
+scenarios cover 940×660 / 1392×883, EN/JA and 100%/167%. Motion counts the actual
+loading/spinner animation-construction branches and freezes the panel clock to
+require immediate native pane geometry after system/app opt-ins. Transparency
+checks the production tile token's alpha/restoration, label contrast and Metal
+padding pixels of an actual PR tile. These injections do not prove native
+NSWorkspace notification delivery. Tier B: toggle Reduce Motion/Transparency in
+System Settings with an isolated running Kagi, compare pane/spinner and PR tile
+before/after without restarting, and restore both OS preferences afterward.
+
 For #1349/#1350 use `KAGI_GUI_E2E_ONLY='settings_'` with KEEP_GOING.
 `settings_theme_select_ax` and `settings_zoom_stepper_ax` inspect renderer-fed
 role/name/value/expanded/disabled properties on Appearance controls in the native
@@ -2530,6 +2542,21 @@ real read produces it. Used by `remote_refresh_departed_owner`,
 `squash_evidence_read_revision`, `squash_evidence_publish_generation`,
 `ecosystem_evidence_background_owner`, `ecosystem_evidence_superseded`,
 `ecosystem_evidence_detached_samepath` and `workspace_mode_toolbar`.
+
+`clone_picker_owner` (#1402, Clone side of #1420) uses
+`e2e::queue_folder_answer` with `evidence_support::deferred` to substitute a
+native folder dialog's `Result<Option<PathBuf>, String>`: late answers cannot
+replan a replacement/reopened card; cancellation is silent; failures preserve
+the card, report a localized error and record a failed receipt only when a
+repository owns the screen. It does not validate an actual OS dialog.
+`clone_completion_navigation` (#1405) uses `e2e::queue_clone_run` only to hold
+dispatch: release runs the real local clone, verification and successful oplog
+receipt. It proves background completion preserves the active session,
+selection, focus and tab count until the drawn Open Repository action is
+clicked (EN) or reached by Tab and activated with Enter (JA). Current-card
+completion opens normally. Its matrix covers 940×660/1392×883, 100%/167% and
+Apple Light/Dark. Use `KAGI_GUI_E2E_ONLY='clone_,home_,toast_'` for neighbors.
+Actual folder sheets, occlusion and native focus remain Tier B.
 
 The same kind of stand-in, outside `e2e::queue_*`:
 

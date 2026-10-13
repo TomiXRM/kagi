@@ -83,7 +83,6 @@ impl TabUiState {
             graph_scroll_x,
             branch_groups_collapsed,
             cleanup_scroll: _,
-            inspector_files_scroll: _,
             inspector_message_scroll: _,
             activity_ranking_scroll: _,
             cleanup_selected,

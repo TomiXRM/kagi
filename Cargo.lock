@@ -3378,6 +3378,7 @@ dependencies = [
 name = "kagi"
 version = "0.44.0"
 dependencies = [
+ "block2 0.6.2",
  "chrono",
  "getrandom 0.3.4",
  "git2",
@@ -3396,6 +3397,7 @@ dependencies = [
  "kagi-ui-file-history",
  "markdown",
  "notify",
+ "objc2 0.6.4",
  "percent-encoding",
  "portable-pty",
  "serde",

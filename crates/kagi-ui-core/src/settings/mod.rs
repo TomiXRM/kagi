@@ -250,6 +250,15 @@ impl Settings {
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
     }
 
+    /// Bottom-panel body height in unscaled reference pixels (#1372).
+    /// The UI applies its minimum and viewport-dependent maximum.
+    pub fn bottom_panel_height(&self) -> Option<f32> {
+        self.get_str("bottom_panel_height")?
+            .parse::<f32>()
+            .ok()
+            .filter(|height| height.is_finite() && *height > 0.)
+    }
+
     /// UI zoom, stored as a permille integer string (`"ui_zoom"`). Returns the
     /// parsed permille; the caller clamps and divides by 1000.
     pub fn ui_zoom_permille(&self) -> Option<u32> {
@@ -530,6 +539,20 @@ mod tests {
 
     fn parse(text: &str) -> Settings {
         serde_json::from_str(text).unwrap_or_default()
+    }
+
+    #[test]
+    fn bottom_panel_body_height_is_finite_and_positive() {
+        assert_eq!(
+            parse(r#"{"bottom_panel_height":"202.5"}"#).bottom_panel_height(),
+            Some(202.5)
+        );
+        for value in ["NaN", "inf", "-inf", "0", "-2", "invalid"] {
+            let mut settings = Settings::default();
+            settings.set_str("bottom_panel_height", value);
+            assert_eq!(settings.bottom_panel_height(), None, "{value}");
+        }
+        assert_eq!(Settings::default().bottom_panel_height(), None);
     }
 
     #[test]

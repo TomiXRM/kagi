@@ -6,12 +6,16 @@ use gpui::{
 };
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
+#[path = "keyboard_rows.rs"]
+mod rows;
+pub use rows::*;
 actions!(
     kagi_tab_list,
     [TabListPrev, TabListNext, TabListFirst, TabListLast]
 );
 const CONTEXT: &str = "KagiTabList";
 pub fn bind_keys(cx: &mut App) {
+    rows::bind_keys(cx);
     cx.bind_keys([
         KeyBinding::new("left", TabListPrev, Some(CONTEXT)),
         KeyBinding::new("right", TabListNext, Some(CONTEXT)),

@@ -18,6 +18,8 @@ use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
 pub mod sidebar_labels;
+#[cfg(feature = "gui-e2e")]
+pub mod system_accessibility;
 
 #[cfg(feature = "gui-e2e")]
 pub mod activity;
@@ -56,6 +58,7 @@ pub mod unborn;
 thread_local! {
     static STATUS_CONTROLS: RefCell<std::collections::HashMap<&'static str, (gpui::Role, &'static str, gpui::Toggled)>> = RefCell::new(Default::default());
     static STATUS_BRANCH_IDENTITY: RefCell<Option<(gpui::SharedString, gpui::SharedString)>> = const { RefCell::new(None) };
+    static STATUS_CHIPS: RefCell<Vec<(String, Option<String>, Option<String>)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(feature = "gui-e2e")]
@@ -85,6 +88,21 @@ pub(crate) fn record_status_branch_identity(
 #[cfg(feature = "gui-e2e")]
 pub fn status_branch_identity() -> Option<(gpui::SharedString, gpui::SharedString)> {
     STATUS_BRANCH_IDENTITY.with(|identity| identity.borrow().clone())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chips(chips: Vec<(String, Option<String>, Option<String>)>) {
+    STATUS_CHIPS.with(|value| *value.borrow_mut() = chips);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_status_chip(text: String, label: String, tooltip: String) {
+    STATUS_CHIPS.with(|value| value.borrow_mut().push((text, Some(label), Some(tooltip))));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn status_chips() -> Vec<(String, Option<String>, Option<String>)> {
+    STATUS_CHIPS.with(|value| value.borrow().clone())
 }
 
 /// #707 review: the revision-laundering and cross-session regressions need to
@@ -632,6 +650,17 @@ pub fn build_kagi_entity(
                         {
                             root.focus(window, cx);
                         }
+                    }
+                },
+            )
+            .detach();
+        }
+        if let Some(stack) = app_state.toast_stack.as_ref() {
+            cx.subscribe(
+                stack,
+                |app, _, action: &super::types::ToastAction, cx| match action {
+                    super::types::ToastAction::OpenRepository(path) => {
+                        app.open_repository(path.clone(), cx);
                     }
                 },
             )
@@ -1273,22 +1302,39 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static FOLDER_ANSWER: RefCell<Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>>> = const { RefCell::new(None) };
+    static CLONE_RUN: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
 }
 
-/// #1043: the system folder dialog cannot be driven from the GUI runner. A
-/// request is recorded under its prompt and answered with the folder set by
-/// [`answer_folder_prompt`]; with none set it is cancelled.
+/// #1043 / #1383: record the native folder request and await its answer through
+/// the same completion task as production. An unqueued request is cancelled.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn take_folder_prompt(
+    prompt: &str,
+) -> Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>> {
     FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
     FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
 }
 
-/// The folder the next dialog request chooses (`None`: it is cancelled).
+/// Queue the next dialog answer using the shared deferred-task transport.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_folder_answer(task: gpui::Task<Result<Option<std::path::PathBuf>, String>>) {
+    FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(task).is_none()));
+}
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
-    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+    queue_folder_answer(gpui::Task::ready(Ok(folder)));
+}
+
+/// Hold dispatch only: the real clone still executes, verifies and records.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_clone_run(task: gpui::Task<()>) {
+    CLONE_RUN.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_clone_run() -> Option<gpui::Task<()>> {
+    CLONE_RUN.with(|slot| slot.borrow_mut().take())
 }
 
 /// The prompts of the folder dialogs requested since the last call.

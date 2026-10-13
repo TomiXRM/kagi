@@ -412,6 +412,56 @@ pub fn scenario_compact_bottom_third(cx: &mut VisualTestAppContext) {
     }
 }
 
+/// #1484 review: selection follows visible Changes, never commandeers another
+/// bottom surface; leaving compact restores its original desktop presentation.
+pub fn scenario_compact_bottom_presentation_restore(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixture = build_fixture();
+    for (tab, open) in [
+        (kagi::ui::BottomTab::Terminal, false),
+        (kagi::ui::BottomTab::Activity, true),
+    ] {
+        let (app, window) = mount(cx, fixture.path());
+        resize(cx, window, 1392., 883.);
+        app.update(cx, |app, cx| {
+            app.select(0);
+            app.bottom_tab = tab;
+            app.bottom_panel_open = open;
+            cx.notify();
+        });
+        draw(cx, window);
+        resize(cx, window, 900., 660.);
+        assert_eq!(
+            cx.read(|cx| (app.read(cx).bottom_tab, app.read(cx).bottom_panel_open)),
+            (tab, open),
+            "entering compact with a commit selected preserves the existing bottom surface"
+        );
+        app.update(cx, |app, cx| {
+            app.select(1);
+            cx.notify();
+        });
+        draw(cx, window);
+        assert_eq!(
+            cx.read(|cx| (app.read(cx).bottom_tab, app.read(cx).bottom_panel_open)),
+            (tab, open),
+            "compact commit selection must not open Changes or replace Terminal/Activity"
+        );
+        app.update(cx, |app, cx| {
+            app.bottom_tab = kagi::ui::BottomTab::Changes;
+            app.bottom_panel_open = true;
+            cx.notify();
+        });
+        draw(cx, window);
+        resize(cx, window, 1392., 883.);
+        assert_eq!(
+            cx.read(|cx| (app.read(cx).bottom_tab, app.read(cx).bottom_panel_open)),
+            (tab, open),
+            "wide restoration returns the original tab and open/closed presentation"
+        );
+        unmount(cx, app, window);
+    }
+}
+
 pub fn scenario_bottom_panel_divider_drag(cx: &mut VisualTestAppContext) {
     let _saved =
         crate::gui_isolation::SavedKeys::keep(&["bottom_panel_height", "ui_zoom", "reduce_motion"]);

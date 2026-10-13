@@ -655,7 +655,13 @@ fn geometry_matrix(cx: &mut VisualTestAppContext, height: f32, zoom: f32) {
         let (app, win) = mount(cx, fixture.path(), case);
         rail_graph(win, case.dimensions());
         rail::rail_interactions(cx, &app, win, fixture.path(), case.dimensions());
-        let panel = changes(cx, &app, win);
+        // Selecting Changes for a historical commit does not create a WIP owner.
+        if !cx.read(|cx| app.read(cx).bottom_panel_open) {
+            focus_root(cx, &app, win);
+            cx.simulate_keystrokes(win, "cmd-j");
+            settle(cx, win);
+        }
+        click(cx, win, "compact-tab-changes");
         assert!(
             cx.read(|cx| app.read(cx).ui().selected.is_some()),
             "local navigator selected a real commit"
@@ -666,6 +672,9 @@ fn geometry_matrix(cx: &mut VisualTestAppContext, height: f32, zoom: f32) {
         click(cx, win, "compact-wip-row");
         assert!(cx.read(|cx| app.read(cx).ui().selected.is_none()));
         escape(cx, &app, win);
+        let panel = cx
+            .read(|cx| app.read(cx).ui().commit_panel.clone())
+            .expect("real WIP activation creates the shared staging owner");
         columns(win, case.dimensions());
         rail_graph(win, case.dimensions());
         independent_scroll(cx, &app, &panel, win);

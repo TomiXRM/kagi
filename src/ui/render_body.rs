@@ -921,7 +921,8 @@ impl KagiApp {
         let compact_inspector_shown = compact
             && panel_visible > 0.
             && panel_tab == BottomTab::Changes
-            && self.ui().selected.is_some();
+            && (self.ui().selected.is_some()
+                || (self.ui().compare_view.is_some() && !self.ui().commit_panel_open));
         if !compact_inspector_shown
             && (!matches!(
                 right_pane,

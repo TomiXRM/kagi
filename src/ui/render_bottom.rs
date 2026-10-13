@@ -2,6 +2,7 @@
 //! of `render.rs` (T-SPLIT-RENDER-001 / ADR-0116 Wave 3). `render_body` places
 //! the panel below the center pane, beside the full-height sidebar and inspector.
 
+use super::workspace::WorkspaceItem as _;
 use super::*;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::IconName;
@@ -257,12 +258,23 @@ impl KagiApp {
                 .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element()),
             BottomTab::Terminal => self.render_terminal_body(cx),
             BottomTab::Activity => self.render_activity_body(window, cx),
-            BottomTab::Changes if self.ui().selected.is_some() => {
-                let selected = self.ui().selected;
-                if let Some(row) = selected {
-                    self.with_ui(|ui| ui.sync_inspector_commit_files(row));
-                }
-                workspace::render_inspector_body(self, selected, None, window, cx)
+            BottomTab::Changes
+                if self.ui().selected.is_some()
+                    || (workspace::CompareItem.is_open(self) && !self.ui().commit_panel_open) =>
+            {
+                // Match the ordinary right slot: Compare owns the files even
+                // while its historical base commit remains selected.
+                let item: &dyn workspace::WorkspaceItem = if workspace::CompareItem.is_open(self) {
+                    &workspace::CompareItem
+                } else {
+                    &workspace::InspectorItem
+                };
+                let layout = workspace::resolve_workspace(&self.workspace_inputs(
+                    false,
+                    false,
+                    self.ui().selected.is_some(),
+                ));
+                item.render(self, &layout, None, window, cx)
                     .unwrap_or_else(|| div().flex_1().min_h(px(0.)).into_any_element())
             }
             BottomTab::Changes => self

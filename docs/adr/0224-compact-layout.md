@@ -336,6 +336,25 @@ together; do not squeeze or clip the Branch here/Cherry-pick actions at high
 zoom to make the short panel appear to fit. The two column viewports retain
 equal allocation, with the shared system scrollbar policy and file RowList.
 
+Review amendment: Changes uses the existing workspace projection precedence,
+**Compare before Inspector**. Compare with HEAD/working tree and stash/PR peeks
+render their own synchronized file snapshot and comparison title; file activation
+must resolve the exact file from that same snapshot, never a commit-file index
+against a comparison owner.
+
+Explicit WIP activation retains the existing CommitPanel-before-Compare
+precedence: its active staging owner draws Unstaged/Staged even if a suspended
+Compare entity is retained. Compare-before-Inspector applies to the read surface
+when that WIP gate is closed or a historical commit is selected.
+
+Entering compact saves the desktop bottom tab and open/closed presentation in
+window-local transient state; widening restores both along with the preferred
+height. Selecting a normal commit updates content only when Changes is already
+being shown. It does not open a closed panel or replace Terminal, Activity or
+Operation Log. The existing explicit WIP/composer activation may select Changes
+inside compact, but cannot overwrite the saved desktop presentation. This
+supersedes the earlier Operation Log canonicalization on compact exit.
+
 Native Graph pointer-focus coverage must target the drawn navigator: at compact
 widths open the rail Popover before its filter; desktop Cmd-F/filter coverage
 uses widths at or above 1000px. Pointer selection then restores Graph focus

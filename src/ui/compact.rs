@@ -33,6 +33,8 @@ pub(super) struct CompactState {
     pub suspended: bool,
     /// Compact divider adjustments are presentation-only, never saved preferences.
     pub bottom_height: Option<f32>,
+    /// Desktop presentation is suspended, not replaced by compact activation.
+    wide_bottom: Option<(BottomTab, bool)>,
     owner: Option<SessionId>,
     pub popup_owner: Option<SessionId>,
     pub wip_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -47,6 +49,9 @@ impl KagiApp {
     pub(super) fn sync_compact_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let enabled = for_window(window);
         let owner = self.active_session();
+        if enabled && !self.compact.enabled {
+            self.compact.wide_bottom = Some((self.bottom_tab, self.bottom_panel_open));
+        }
         if self.compact.owner != owner || self.home_in_front() {
             self.close_compact_composer(window, cx);
             super::compact_sidebar::dismiss(window, cx);
@@ -68,6 +73,10 @@ impl KagiApp {
             }
             self.dismiss_compact_presentation(window, cx, true);
             super::compact_sidebar::dismiss(window, cx);
+            if let Some((tab, open)) = self.compact.wide_bottom.take() {
+                self.bottom_tab = tab;
+                self.bottom_panel_open = open;
+            }
         } else if enabled
             && !self.compact.enabled
             && self.ui().commit_panel_open
@@ -78,13 +87,6 @@ impl KagiApp {
             self.bottom_tab = BottomTab::Changes;
             self.bottom_panel_open = true;
             self.yield_compact_input_focus(window, cx);
-        }
-        if enabled && !self.compact.enabled && self.ui().selected.is_some() {
-            self.bottom_tab = BottomTab::Changes;
-            self.bottom_panel_open = true;
-        }
-        if !enabled && self.bottom_tab == BottomTab::Changes {
-            self.bottom_tab = BottomTab::OperationLog;
         }
         self.compact.enabled = enabled;
         self.compact.suspended =

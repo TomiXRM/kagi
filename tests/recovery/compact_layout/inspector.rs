@@ -17,6 +17,9 @@ fn inspector_fixture() -> tempfile::TempDir {
     git(fixture.path(), &["add", "."]);
     git(fixture.path(), &["commit", "-qm", MESSAGE]);
     git(fixture.path(), &["tag", "compact-inspector"]);
+    std::fs::write(fixture.path().join("compare-only.txt"), "HEAD comparison\n").unwrap();
+    git(fixture.path(), &["add", "compare-only.txt"]);
+    git(fixture.path(), &["commit", "-qm", "Comparison HEAD"]);
     std::fs::write(fixture.path().join("staged.txt"), "staged WIP\n").unwrap();
     git(fixture.path(), &["add", "staged.txt"]);
     std::fs::write(fixture.path().join("unstaged.txt"), "unstaged WIP\n").unwrap();
@@ -99,6 +102,7 @@ pub fn scenario_compact_inspector_columns(cx: &mut VisualTestAppContext) {
             cx.notify();
         });
         settle(cx, win);
+        compare_with_head(cx, &app, win, row);
         click(cx, win, "compact-wip-row");
         settle(cx, win);
         columns(win, DIMENSIONS);
@@ -259,6 +263,63 @@ fn keyboard_file(
         ax.rows.values().filter(|(_, selected)| *selected).count(),
         1
     );
+}
+
+fn compare_with_head(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    row: usize,
+) {
+    // The AX recorder retains row positions across frames; discard the
+    // historical two-row list before observing the shorter Compare list.
+    list_a11y::clear_recorded_lists();
+    app.update(cx, |app, cx| {
+        let base = app.view().rows[row].id.clone();
+        app.open_compare_with_head(base, Some(cx));
+        cx.notify();
+    });
+    settle(cx, win);
+    let (base, files) = cx.read(|cx| {
+        let app = app.read(cx);
+        let compare = app.ui().compare_view.as_ref().unwrap().read(cx).view();
+        assert_eq!(compare.target, kagi::ui::diff_view::CompareTarget::Head);
+        (compare.base.clone(), compare.files.clone())
+    });
+    assert_eq!(files.len(), 1, "fixture Compare differs from commit files");
+    assert_eq!(files[0].path.to_str(), Some("compare-only.txt"));
+    let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
+    assert_eq!(
+        ax.rows.len(),
+        files.len(),
+        "compact Changes renders Compare files"
+    );
+    for (index, file) in files.iter().enumerate() {
+        let path = file.path.to_str().unwrap();
+        assert!(
+            ax.rows.values().any(|(name, _)| name.ends_with(path)),
+            "compact Changes must show actual Compare path {path}"
+        );
+        click(cx, win, &format!("inspector-file-{index}"));
+        cx.read(|cx| {
+            let app = app.read(cx);
+            let diff = app.ui().main_diff.as_ref().unwrap().read(cx);
+            assert_eq!(diff.view.title.as_ref(), path);
+            assert!(matches!(
+                &diff.view.source,
+                MainDiffSource::Compare { base: actual, target, file_index }
+                    if actual == &base
+                        && *target == kagi::ui::diff_view::CompareTarget::Head
+                        && *file_index == index
+            ));
+            assert_eq!(app.ui().selected, Some(row));
+        });
+    }
+    app.update(cx, |app, cx| {
+        app.close_main_diff();
+        cx.notify();
+    });
+    settle(cx, win);
 }
 
 fn assert_diff(

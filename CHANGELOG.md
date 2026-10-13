@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR swimlane commits share retained keyboard row navigation and complete subject/SHA/PR accessibility names. Selected commits retain the shared active/inactive selection fill, including on hover; inert context rows remain read-only. Headings use an authoritative PR commit total when supplied, otherwise explicitly say how many commits are loaded in English and Japanese. (#1409, #1410, #1412)
 - Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Note names and the shared warning icon/style inside the scrolling plan body. Create Worktree uses the same warning list. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
 - Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
   - Review: opening/closing Generated splices only its children, retaining the disclosure's scroll position and focus. Reaching the final row also reveals the unfocusable overflow notice, including after its rows have been measured.

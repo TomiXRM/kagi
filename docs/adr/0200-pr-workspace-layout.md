@@ -764,3 +764,18 @@ on draft and ready rows at 940×660 / 1392×883, EN/JA, 100%/167%, rest/hover
 and active/inactive presentation. Theme-token assertions alone do not prove
 composited text contrast. Keyboard/VoiceOver delivery remains separate Tier B
 evidence, not a claim from the ListItem recorder.
+
+## Amendment — 2026-10-13: PR lane keyboard, selection and count (#1409, #1410, #1412)
+
+The dense companion lane retains its graph geometry and uses shared
+`RowFocus`/`RowList` navigation. Only PR-owned commits participate in its one
+roving Tab stop: arrows and Home/End reveal those rows, and Enter/Space select
+the same immutable commit key as a pointer click. Row names include the full
+sanitized commit subject, SHA and owning PR; context rows expose read-only
+identity without activation. Selection is independent of keyboard focus and
+uses `selected_for_window`, with the selected fill retained on hover.
+
+The heading must not present loaded-history intersections as a PR total.
+An explicit total supplied by PR data is authoritative; absent that data, the
+heading says `N loaded` / `N 読み込み済み`. No additional request is made just
+to count commits, and a potentially capped commit array is not a total.

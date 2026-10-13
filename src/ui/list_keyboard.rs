@@ -73,6 +73,9 @@ impl ListKeyboard {
 impl super::KagiApp {
     pub fn list_row_focused_for_e2e(&self, list: &str, window: &Window) -> Option<String> {
         match list {
+            "pr-lane-body" => self
+                .pr_mode()
+                .and_then(|mode| mode.lane_navigation.keyboard.focused(window)),
             "issue-keyboard-list" => self.ui().issue_rows.focused(window),
             "inspector-files-scroll" => self.ui().inspector_model.keyboard.focused(window),
             "home-recent-list" => self.home_github.recent.keyboard.focused(window),

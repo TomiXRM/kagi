@@ -107,7 +107,21 @@ pub fn parse_pr_body_detail(json: &str) -> Result<PrBodyDetail, GitError> {
         changed_files: count_at(&value, "changedFiles"),
         additions: count_at(&value, "additions"),
         deletions: count_at(&value, "deletions"),
+        commit_total: explicit_commit_total(&value),
     })
+}
+
+/// Only explicit totals are authoritative. `gh` commit arrays can be capped.
+pub(crate) fn explicit_commit_total(value: &serde_json::Value) -> Option<usize> {
+    value
+        .get("commitCount")
+        .or_else(|| {
+            value
+                .get("commits")
+                .and_then(|commits| commits.get("totalCount"))
+        })
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|count| usize::try_from(count).ok())
 }
 
 fn required_number(value: &serde_json::Value) -> Result<u64, GitError> {
@@ -609,6 +623,21 @@ mod tests {
             (body.changed_files, body.additions, body.deletions),
             (0, 0, 0)
         );
+    }
+
+    #[test]
+    fn commit_totals_require_explicit_count_not_array_length() {
+        for (json, expected) in [
+            (r#"{"commitCount":10}"#, Some(10)),
+            (r#"{"commits":{"totalCount":10}}"#, Some(10)),
+            (r#"{"commits":{"totalCount":0}}"#, Some(0)),
+            (r#"{"commits":[{}, {}, {}]}"#, None),
+            (r#"{"commits":null}"#, None),
+            (r#"{}"#, None),
+        ] {
+            let value = serde_json::from_str(json).unwrap();
+            assert_eq!(explicit_commit_total(&value), expected, "{json}");
+        }
     }
 
     #[test]

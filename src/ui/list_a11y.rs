@@ -16,8 +16,16 @@ use kagi_ui_core::i18n::Msg;
 
 /// Mark `el` as the list `id`, named `label`.
 pub(crate) fn list_box(id: &'static str, el: Stateful<Div>, label: &'static str) -> Stateful<Div> {
-    record_list(id, Role::ListBox, label);
-    el.role(Role::ListBox).aria_label(SharedString::from(label))
+    list_box_named(id, el, SharedString::from(label))
+}
+
+pub(crate) fn list_box_named(
+    id: &'static str,
+    el: Stateful<Div>,
+    label: SharedString,
+) -> Stateful<Div> {
+    record_list(id, Role::ListBox, &label);
+    el.role(Role::ListBox).aria_label(label)
 }
 
 /// A clickable trailing list row is a named button, not a list option.

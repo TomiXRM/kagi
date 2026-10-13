@@ -46,17 +46,35 @@ fn save_action(cx: &mut VisualTestAppContext) -> Box<dyn Action> {
         })
         .expect("File menu exposes existing SaveEditorFile action")
 }
-const LOCALIZED_MENUS: [(Lang, [&str; 5], &str, &str, &str); 2] = [
+const LOCALIZED_MENUS: [(Lang, [&str; 8], &str, &str, &str); 2] = [
     (
         Lang::En,
-        ["File", "Edit", "Repository", "Window", "Help"],
+        [
+            "File",
+            "Edit",
+            "View",
+            "Repository",
+            "Branch",
+            "Commit",
+            "Window",
+            "Help",
+        ],
         "Settings…",
         "Open Repository…",
         "Undo",
     ),
     (
         Lang::Ja,
-        ["ファイル", "編集", "リポジトリ", "ウインドウ", "ヘルプ"],
+        [
+            "ファイル",
+            "編集",
+            "表示",
+            "リポジトリ",
+            "Branch",
+            "Commit",
+            "ウインドウ",
+            "ヘルプ",
+        ],
         "設定…",
         "リポジトリを開く…",
         "取り消す",
@@ -70,7 +88,7 @@ pub fn scenario_menus_localized(cx: &mut VisualTestAppContext) {
     for (lang, titles, settings, open, undo) in LOCALIZED_MENUS {
         i18n::set_lang(lang);
         let menus = commands::menus_for_state(window_menu::ViewMenuState::default());
-        for (at, title) in [1, 2, 4, 7, 8].into_iter().zip(titles) {
+        for (at, title) in (1..=8).zip(titles) {
             assert_eq!(
                 menus[at].name.as_ref(),
                 title,
@@ -103,6 +121,14 @@ pub fn scenario_menus_localized(cx: &mut VisualTestAppContext) {
         }
         identities = Some(actions);
         cx.update(commands::publish_menus);
+        let published = cx.read(commands::build_menus);
+        for (at, title) in (1..=8).zip(titles) {
+            assert_eq!(
+                published[at].name.as_ref(),
+                title,
+                "published native menu heading"
+            );
+        }
         assert_eq!(
             commands::effective_keystroke("file.openRepository").as_deref(),
             Some("secondary-o")

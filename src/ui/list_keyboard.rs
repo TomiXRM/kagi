@@ -62,6 +62,15 @@ impl ListKeyboard {
     ) {
         self.focus.borrow_mut().yield_focus(fallback, window, cx);
     }
+    pub(super) fn focused_entry(&self, window: &Window) -> Option<usize> {
+        let focus = self.focus.borrow();
+        let key = focus.focused(window)?;
+        self.keys
+            .borrow()
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, ix)| *ix)
+    }
 
     #[cfg(feature = "gui-e2e")]
     pub(super) fn focused(&self, window: &Window) -> Option<String> {
@@ -76,6 +85,12 @@ impl super::KagiApp {
             "pr-lane-body" => self
                 .pr_mode()
                 .and_then(|mode| mode.lane_navigation.keyboard.focused(window)),
+            "restore-refs" => self
+                .oplog_restore_modal()
+                .and_then(|modal| modal.inspection.refs.focused(window)),
+            "restore-preview-rows" => self
+                .oplog_restore_modal()
+                .and_then(|modal| modal.inspection.preview.focused(window)),
             "issue-keyboard-list" => self.ui().issue_rows.focused(window),
             "inspector-files-scroll" => self.ui().inspector_model.keyboard.focused(window),
             "home-recent-list" => self.home_github.recent.keyboard.focused(window),

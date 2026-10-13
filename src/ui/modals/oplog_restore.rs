@@ -27,11 +27,13 @@ pub struct OplogRestoreModal {
     pub op: Operation,
     pub plan: std::sync::Arc<OperationPlan>,
     /// Canonical plan rows decoded once on opening; the original plan stays intact.
-    pub restores: Vec<RefRestore>,
+    pub restores: std::rc::Rc<[RefRestore]>,
     pub error: Option<SharedString>,
     pub confirm_armed: bool,
     /// `None` when the plan moves nothing (a blocked plan).
     pub preview: Option<std::sync::Arc<RestoreGraphPreview>>,
+    pub(crate) inspection:
+        std::rc::Rc<crate::ui::operations::oplog_restore_inspection::RestoreInspection>,
 }
 
 impl OplogRestoreModal {

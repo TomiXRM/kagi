@@ -119,13 +119,23 @@ impl KagiApp {
                 super::oplog_restore_preview::build(self.view(), &restores, &plan.head_at_plan)
             })
             .flatten();
+        let preview_count = preview.as_ref().map_or(0, |preview| match &preview.graph {
+            kagi_domain::restore_preview::RestorePreview::Graph { rows, .. } => rows.len(),
+            _ => 0,
+        });
+        let inspection = std::rc::Rc::new(super::oplog_restore_inspection::RestoreInspection::new(
+            restores.len(),
+            preview_count,
+            cx,
+        ));
         self.set_oplog_restore_modal(OplogRestoreModal {
             op,
             plan: std::sync::Arc::new(plan),
-            restores,
+            restores: restores.into(),
             error: None,
             confirm_armed: false,
             preview,
+            inspection,
         });
         self.focus_root_for_modal();
         cx.notify();
@@ -208,7 +218,8 @@ impl KagiApp {
 pub(crate) fn render_oplog_restore_modal(
     modal: OplogRestoreModal,
     overrides: &std::collections::HashMap<&'static str, bool>,
+    window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    super::oplog_restore_card::render(modal, overrides, cx)
+    super::oplog_restore_card::render(modal, overrides, window, cx)
 }

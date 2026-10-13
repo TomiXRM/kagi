@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log restore cards expose named, read-only ref and graph-preview lists with single-stop keyboard inspection, arrow/Home/End/PageUp/PageDown reveal and system scrollbars. Long warnings/blockers share a named keyboard-scrollable body; focused list rows also reveal their parent position. Copy all and the two-stage destructive approval/execution path are unchanged. (#1382)
+  - Review: dedicated body scroll actions outrank global navigation; parent reveal runs only for a changed focused row, preserving later pointer scrolling. Ref/preview wheel events stay within panes that can move in that direction, but fitting panes and outward wheel input at their boundaries scroll the surrounding safety prose.
 - PR dashboard rows now share stable-identity keyboard navigation and offscreen reveal; Enter/Space open the focused PR. Shared filter/sort/Clear/Refresh chips and dashboard All PRs/Refresh are named, focus-visible keyboard buttons in English and Japanese. (#1408, #1413, #1414)
 - Open Repository's native picker approval button follows the EN/JA UI language. Picker failures produce a bounded error toast and durable Operation Log detail for an active repository (a process diagnostic on Home); cancellation stays silent. (#1419, #1420)
   - Review: Home foreground never writes a receipt against retained background tabs, and a pending native picker retains its launch repository context across tab switches.

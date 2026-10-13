@@ -437,13 +437,7 @@ impl KagiApp {
             .rounded_lg()
             .bg(rgb(theme().panel));
         for (slot, cell) in cells.into_iter().enumerate() {
-            row = row.child(pane_cell(
-                &tabs,
-                slot,
-                cell,
-                cell.0 == active,
-                self.window_active,
-            ));
+            row = row.child(pane_cell(&tabs, slot, cell, cell.0 == active));
         }
         row.into_any_element()
     }
@@ -459,7 +453,6 @@ fn pane_cell(
     slot: usize,
     cell: (HomePane, &'static str, Option<usize>, bool),
     active: bool,
-    window_active: bool,
 ) -> AnyElement {
     let (pane, label, count, loading) = cell;
     let id = match pane {
@@ -471,13 +464,11 @@ fn pane_cell(
         Some(count) => format!("{label} {count}"),
         None => label.to_string(),
     };
-    let fg = if active && window_active {
-        theme().accent_text_on(theme().surface)
-    } else if active {
+    let fg = rgb(if active {
         theme().text_main
     } else {
         theme().text_muted
-    };
+    });
     let badge = match count {
         Some(count) => Some(
             div()
@@ -485,15 +476,11 @@ fn pane_cell(
                 .px(theme::scaled_px(6.))
                 .rounded_md()
                 .bg(if active {
-                    theme().selected_for_window(window_active)
+                    theme().segment_selected_bg()
                 } else {
                     rgb(theme().surface).into()
                 })
-                .text_color(rgb(if active && !window_active {
-                    theme().text_main
-                } else {
-                    theme().text_sub
-                }))
+                .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(count.to_string()))
                 .into_any_element(),
         ),
@@ -501,7 +488,11 @@ fn pane_cell(
             format!("{id}-spinner"),
             super::render_overlay::sync_spinner(
                 12.,
-                theme().text_muted,
+                if active {
+                    theme().text_main
+                } else {
+                    theme().text_muted
+                },
                 SharedString::from(format!("{id}-spinner")),
             ),
         )),
@@ -519,9 +510,9 @@ fn pane_cell(
         .rounded_md()
         .cursor_pointer()
         .text_sm()
-        .text_color(rgb(fg))
+        .text_color(fg)
         .when(active, |el| {
-            el.bg(theme().selected_for_window(window_active))
+            el.bg(theme().segment_selected_bg())
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))

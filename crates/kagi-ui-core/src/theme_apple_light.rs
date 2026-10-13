@@ -9,21 +9,6 @@ pub(crate) const SYSTEM_ACCENTS: [u32; 8] = [
     0x8e8e93, 0xff3b30, 0xff9500, 0xffcc00, 0x34c759, 0x007aff, 0xaf52de, 0xff2d55,
 ];
 
-#[cfg(target_os = "macos")]
-/// 15% accent on white, calculated once at compile time, not in row renders.
-pub(crate) const SYSTEM_SELECTIONS: [u32; 8] = {
-    let mut result = [0; 8];
-    let mut i = 0;
-    while i < 8 {
-        let color = SYSTEM_ACCENTS[i];
-        let r = (((color >> 16) & 255) * 15 + 255 * 85 + 50) / 100;
-        let g = (((color >> 8) & 255) * 15 + 255 * 85 + 50) / 100;
-        let b = ((color & 255) * 15 + 255 * 85 + 50) / 100;
-        result[i] = (r << 16) | (g << 8) | b;
-        i += 1;
-    }
-    result
-};
 /// Identifying input/unchecked-checkbox boundary: 3:1 on white and panel grey.
 pub const INPUT_BORDER: u32 = 0x8e8e8e;
 

@@ -369,6 +369,7 @@ fn file_row(
     let (badge, color, _) = status_badge(Some(&file.change), false);
     let focus = rows.clone();
     let selected = presentation.selected == Some(index);
+    let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
     let row = super::list_a11y::list_option(
         LIST,
         rows.row(slot, div().id(("inspector-file", index))),
@@ -386,7 +387,7 @@ fn file_row(
     .pl(theme::scaled_px(*depth as f32 * 12.))
     .h(theme::scaled_px(ROW_HEIGHT))
     .line_height(relative(1.2))
-    .hover(|s| s.bg(rgb(theme().surface)))
+    .when(!selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
     .when(selected, |el| {
         el.bg(theme().selected_for_window(presentation.active))
             .rounded_sm()
@@ -409,7 +410,11 @@ fn file_row(
             .w(theme::scaled_px(16.))
             .flex_shrink_0()
             .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-            .text_color(rgb(color))
+            .text_color(if selection_on_accent {
+                theme().selection_foreground(presentation.active)
+            } else {
+                rgb(color).into()
+            })
             .child(SharedString::from(badge))
             .when(cfg!(feature = "gui-e2e"), |badge| {
                 badge.relative().child(super::e2e::measure_inside(format!(
@@ -422,7 +427,11 @@ fn file_row(
             .flex_1()
             .min_w(px(0.))
             .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-            .text_color(rgb(theme().text_main))
+            .text_color(if selection_on_accent {
+                theme().selection_foreground(presentation.active)
+            } else {
+                rgb(theme().text_main).into()
+            })
             .truncate()
             .child(row.name.clone())
             .when(cfg!(feature = "gui-e2e"), |name| {
@@ -434,6 +443,7 @@ fn file_row(
     .child(super::diffstat_bar::diffstat_unit(
         index,
         file.stat.as_ref(),
+        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active)),
     ));
     super::e2e::measure_control(format!("inspector-file-{index}"), row)
 }

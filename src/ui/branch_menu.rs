@@ -401,6 +401,7 @@ pub fn render_branch_menu_overlay(
     header: SharedString,
     groups: Vec<MenuGroup<BranchAction>>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -426,6 +427,7 @@ pub fn render_branch_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )

@@ -125,7 +125,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                theme::theme().ui_selected(),
+                default_expected,
             );
             let selected = cx.read(|cx| app.read(cx).ui().selected);
             app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
@@ -149,7 +149,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                theme::theme().ui_selected(),
+                default_expected,
             );
 
             let output = std::process::Command::new("git")
@@ -316,7 +316,7 @@ pub fn scenario_system_accent_chrome(cx: &mut VisualTestAppContext) {
                     f32::from(row.right()) - 2.,
                     f32::from(row.top()) + 1.,
                 ),
-                theme::theme().ui_selected(),
+                expected,
             );
             drop(injected);
         }

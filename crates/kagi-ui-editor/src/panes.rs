@@ -79,10 +79,18 @@ pub(crate) fn render_history_pane(
         uniform_list(
             "ews-history-list",
             row_count,
-            cx.processor(move |this, range: Range<usize>, _window, cx| {
+            cx.processor(move |this, range: Range<usize>, window, cx| {
                 range
                     .filter_map(|i| {
-                        render_history_row(this, i, history.entries.get(i)?, &selected, now, cx)
+                        render_history_row(
+                            this,
+                            i,
+                            history.entries.get(i)?,
+                            &selected,
+                            now,
+                            window.is_window_active(),
+                            cx,
+                        )
                     })
                     .collect::<Vec<_>>()
             }),
@@ -162,6 +170,7 @@ fn render_history_row(
     entry: &FileHistoryEntry,
     selected: &Option<String>,
     now: i64,
+    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<AnyElement> {
     debug_assert_ne!(entry.kind, FileHistoryEntryKind::Wip);
@@ -180,6 +189,7 @@ fn render_history_row(
             &model,
             CommitRowLayout::Card,
             is_selected,
+            window_active,
         )
         .on_click(click)
         .into_any_element(),

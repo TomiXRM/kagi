@@ -60,8 +60,8 @@ pub(crate) const TAB_STRIP_H: f32 = 36.0;
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;
 
-/// Document tabs are neutral chrome in Apple themes, not accent-selected rows.
-fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (gpui::Hsla, u32) {
+/// Document tabs use ordinary text on subtle selection fills, not accent-selected rows.
+fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
     match palette.slug.as_ref() {
         "apple-light" => (
             rgb(if selected {
@@ -83,7 +83,7 @@ fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (g
         ),
         _ => (
             if selected {
-                palette.selected_for_window(window_active)
+                palette.segment_selected_bg()
             } else {
                 rgb(palette.surface).into()
             },
@@ -1143,35 +1143,33 @@ mod tab_chrome_tests {
     #[test]
     fn apple_tab_selection_contrast_and_preset_roles() {
         for palette in theme::THEMES {
-            for key in [true, false] {
-                let (active, active_text) = tab_colors(palette, true, key);
-                let (inactive, inactive_text) = tab_colors(palette, false, key);
-                if !tab_has_rail(palette) {
-                    let first = luminance(active);
-                    let second = luminance(inactive);
-                    assert!(
-                        (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
-                        "{} selected tab must be distinct",
-                        palette.slug
-                    );
-                    for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
-                        let fill = luminance(fill);
-                        let text = luminance(rgb(text).into());
-                        assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
-                    }
-                } else {
-                    assert_eq!(
-                        active,
-                        palette.selected_for_window(key),
-                        "{} keeps selection palette",
-                        palette.slug
-                    );
-                    assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
-                    assert_eq!(
-                        (active_text, inactive_text),
-                        (palette.text_main, palette.text_sub)
-                    );
+            let (active, active_text) = tab_colors(palette, true);
+            let (inactive, inactive_text) = tab_colors(palette, false);
+            if !tab_has_rail(palette) {
+                let first = luminance(active);
+                let second = luminance(inactive);
+                assert!(
+                    (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
+                    "{} selected tab must be distinct",
+                    palette.slug
+                );
+                for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
+                    let fill = luminance(fill);
+                    let text = luminance(rgb(text).into());
+                    assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
                 }
+            } else {
+                assert_eq!(
+                    active,
+                    palette.segment_selected_bg(),
+                    "{} keeps segment selection palette",
+                    palette.slug
+                );
+                assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
+                assert_eq!(
+                    (active_text, inactive_text),
+                    (palette.text_main, palette.text_sub)
+                );
             }
         }
     }

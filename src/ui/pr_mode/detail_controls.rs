@@ -127,7 +127,9 @@ fn cell(tabs: &TabList, slot: usize, label: &str, selected: bool) -> AnyElement 
         } else {
             theme().text_sub
         }))
-        .hover(|style| style.text_color(rgb(theme().text_main)))
+        .when(!selected, |element| {
+            element.hover(|style| style.text_color(rgb(theme().text_main)))
+        })
         .child(super::super::e2e::measure_inside(IDS[slot]))
         .child(
             gpui::svg()
@@ -136,22 +138,14 @@ fn cell(tabs: &TabList, slot: usize, label: &str, selected: bool) -> AnyElement 
                 .w(theme::scaled_px(13.))
                 .h(theme::scaled_px(13.))
                 .text_color(rgb(if selected {
-                    theme().accent_text_on(theme().panel)
+                    theme().text_main
                 } else {
                     theme().text_sub
                 })),
         )
         .child(div().text_xs().child(SharedString::from(label.to_string())))
         .when(selected, |element| {
-            element.child(
-                div()
-                    .absolute()
-                    .bottom(px(0.))
-                    .left(px(0.))
-                    .right(px(0.))
-                    .h(px(2.))
-                    .bg(rgb(theme().ui_accent())),
-            )
+            element.bg(theme().segment_selected_bg())
         });
     tabs.cell(slot, label, element).into_any_element()
 }

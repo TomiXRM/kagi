@@ -1526,7 +1526,9 @@ fn render_center(
                 .when(selected_commit.is_none(), |el| {
                     el.bg(theme().selected_for_window(app.window_active))
                 })
-                .hover(|s| s.bg(rgb(theme().surface)))
+                .when(selected_commit.is_some(), |el| {
+                    el.hover(|s| s.bg(rgb(theme().surface)))
+                })
                 .on_click(all_click)
                 .map(|el| {
                     #[cfg(feature = "gui-e2e")]
@@ -1539,11 +1541,16 @@ fn render_center(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgb(if selected_commit.is_none() {
-                            theme().text_main
-                        } else {
-                            theme().text_muted
-                        }))
+                        .text_color(
+                            if theme().selection_uses_on_accent(
+                                selected_commit.is_none(),
+                                app.window_active,
+                            ) {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            },
+                        )
                         .child(SharedString::from(format!(
                             "{} ({})",
                             Msg::PrModeCommits.t(),
@@ -1556,6 +1563,7 @@ fn render_center(
                 this.pr_mode_select_commit(Some(i), cx);
             });
             let sel = selected_commit == Some(i);
+            let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
             strip = strip.child(
                 div()
                     .id(("pr-mode-commit", i))
@@ -1570,14 +1578,18 @@ fn render_center(
                     .when(sel, |el| {
                         el.bg(theme().selected_for_window(app.window_active))
                     })
-                    .hover(|s| s.bg(rgb(theme().surface)))
+                    .when(!sel, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                     .on_click(click)
                     // Straight-line "graph": a dot per commit, no lanes — the
                     // user asked for focus on this change, not the whole repo.
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(rgb(theme().accent_text_on(theme().bg_base)))
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().accent_text_on(theme().bg_base)).into()
+                            })
                             .child(SharedString::from("\u{25CF}")),
                     )
                     .child(
@@ -1585,7 +1597,11 @@ fn render_center(
                             .flex_shrink_0()
                             .font_family(super::MONO_FONT)
                             .text_xs()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            })
                             .child(SharedString::from(cmt.id.short())),
                     )
                     .child(
@@ -1593,21 +1609,33 @@ fn render_center(
                             .flex_1()
                             .min_w(px(0.))
                             .truncate()
-                            .text_color(rgb(theme().text_main))
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_main).into()
+                            })
                             .child(safe_text(&cmt.summary)),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
                             .text_xs()
-                            .text_color(rgb(theme().text_sub))
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_sub).into()
+                            })
                             .child(safe_text(&cmt.author.name)),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
                             .text_xs()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(if selection_on_accent {
+                                theme().selection_secondary_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            })
                             .child(SharedString::from(kagi_ui_core::time::relative_time(
                                 cmt.author.time,
                                 now,
@@ -1828,6 +1856,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
             }
         });
         let sel = selected_file == Some(i);
+        let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
         let is_viewed = marks.map(|v| v.is_viewed(&f.path));
         let name = f
             .path
@@ -1853,7 +1882,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .when(sel, |el| {
                     el.bg(theme().selected_for_window(app.window_active))
                 })
-                .hover(|s| s.bg(rgb(theme().surface)))
+                .when(!sel, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                 .on_click(click)
                 .map(|el| {
                     #[cfg(feature = "gui-e2e")]
@@ -1868,13 +1897,21 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                     div()
                         .w(theme::scaled_px(14.))
                         .flex_shrink_0()
-                        .text_color(rgb(color))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(app.window_active)
+                        } else {
+                            rgb(color).into()
+                        })
                         .child(SharedString::from(badge)),
                 )
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(app.window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .child(SharedString::from(name)),
                 )
                 .child(
@@ -1883,7 +1920,11 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                         .min_w(px(0.))
                         .truncate()
                         .text_xs()
-                        .text_color(rgb(theme().text_muted))
+                        .text_color(if selection_on_accent {
+                            theme().selection_secondary_foreground(app.window_active)
+                        } else {
+                            rgb(theme().text_muted).into()
+                        })
                         .child(SharedString::from(dir)),
                 ),
         );

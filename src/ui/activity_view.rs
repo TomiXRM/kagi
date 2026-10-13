@@ -220,7 +220,7 @@ impl KagiApp {
             let active = Some(slot) == selected;
             let id = format!("activity-gran-{}", gran.label());
             let label = period_label(*gran);
-            let cell = period_cell(&tabs, slot, &id, label, active, self.window_active);
+            let cell = period_cell(&tabs, slot, &id, label, active);
             #[cfg(feature = "gui-e2e")]
             {
                 let attributes = self.activity_period_focus.recorded_tabs();
@@ -561,7 +561,6 @@ fn period_cell(
     id: &str,
     label: &'static str,
     selected: bool,
-    window_active: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let id = SharedString::from(id.to_string());
     tabs.cell(slot, label, div().id(id.clone()))
@@ -573,14 +572,12 @@ fn period_cell(
         .rounded(theme::scaled_px(4.))
         .text_xs()
         .cursor_default()
-        .text_color(rgb(if selected {
-            theme().text_main
+        .text_color(if selected {
+            rgb(theme().text_main)
         } else {
-            theme().text_muted
-        }))
-        .when(selected, |cell| {
-            cell.bg(theme().selected_for_window(window_active))
+            rgb(theme().text_muted)
         })
+        .when(selected, |cell| cell.bg(theme().segment_selected_bg()))
         .when(!selected, |cell| cell.hover(|s| s.bg(rgb(theme().surface))))
         .child(label)
         .when(cfg!(feature = "gui-e2e"), |cell| {

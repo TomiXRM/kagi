@@ -120,6 +120,7 @@ impl KagiApp {
 pub(crate) fn render_file_menu_overlay(
     menu: FileMenu,
     keys: super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -148,7 +149,7 @@ pub(crate) fn render_file_menu_overlay(
         .relative()
         .child(super::e2e::measure_inside("changes-file-menu"));
     for (slot, entry) in FILE_MENU_ACTIONS.into_iter().enumerate() {
-        card = card.child(file_menu_item(&menu, &keys, slot, entry, cx));
+        card = card.child(file_menu_item(&menu, &keys, slot, entry, window_active, cx));
     }
     let card = super::menu_overlay::with_menu_keys(card, &keys, None, dismiss, opened, window, cx);
     let pos = kagi_ui_core::theme::clamp_menu_pos(
@@ -183,11 +184,18 @@ fn file_menu_item(
     keys: &super::menu_keys::MenuKeys,
     slot: usize,
     (id, label, action): (&'static str, Msg, FileMenuAction),
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     keys.place(slot, slot);
     let expected = menu.clone();
     super::e2e::commit_panel_labels::focus(id, &keys.item(slot, cx));
+    let primary = SharedString::from(label.t());
+    #[cfg(feature = "gui-e2e")]
+    let primary = div()
+        .child(primary)
+        .relative()
+        .child(super::e2e::measure_inside(format!("{id}-primary")));
     let row = div()
         .id(id)
         .role(super::e2e::commit_panel_labels::role(
@@ -205,12 +213,15 @@ fn file_menu_item(
         } else {
             theme().text_main
         }))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active).cursor_default())
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
             this.dispatch_file_menu_action(&expected, action, cx);
         }))
-        .child(SharedString::from(label.t()));
-    super::e2e::measure_control(id, super::menu_overlay::focus_row(row, keys, slot, cx))
+        .child(primary);
+    super::e2e::measure_control(
+        id,
+        super::menu_overlay::focus_row(row, keys, slot, true, window_active, cx),
+    )
 }
 
 /// Inspector / Compare changed-file row context menu: History / Open in
@@ -220,6 +231,7 @@ pub(crate) fn render_inspector_file_menu_overlay(
     fi: usize,
     pos: gpui::Point<gpui::Pixels>,
     viewport: gpui::Size<gpui::Pixels>,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let pos =
@@ -292,16 +304,19 @@ pub(crate) fn render_inspector_file_menu_overlay(
                 .child(item(
                     ("insp-menu-history", fi),
                     SharedString::from(Msg::MenuShowFileHistory.t()),
+                    window_active,
                     history_click,
                 ))
                 .child(item(
                     ("insp-menu-edit", fi),
                     SharedString::from(Msg::MenuOpenInEditor.t()),
+                    window_active,
                     edit_click,
                 ))
                 .child(item(
                     ("insp-menu-ext", fi),
                     SharedString::from(Msg::OpenInExternalEditor.t()),
+                    window_active,
                     ext_click,
                 ))
                 .child(super::e2e::measure_control(
@@ -309,6 +324,7 @@ pub(crate) fn render_inspector_file_menu_overlay(
                     item(
                         ("insp-menu-copy", fi),
                         SharedString::from(Msg::EditorTreeCopyPath.t()),
+                        window_active,
                         copy_click,
                     ),
                 )),
@@ -317,19 +333,30 @@ pub(crate) fn render_inspector_file_menu_overlay(
 }
 
 /// Compact menu row shared by the hand-rolled overlays here.
-fn item<H>(id: (&'static str, usize), label: SharedString, handler: H) -> gpui::Stateful<gpui::Div>
+fn item<H>(
+    id: (&'static str, usize),
+    label: SharedString,
+    window_active: bool,
+    handler: H,
+) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    let primary = label;
+    #[cfg(feature = "gui-e2e")]
+    let primary = div()
+        .child(primary)
+        .relative()
+        .child(super::e2e::measure_inside(format!("{}-primary", id.0)));
     div()
         .id(id)
         .px_3()
         .py(theme::scaled_px(3.))
         .text_sm()
         .text_color(rgb(theme().text_main))
-        .hover(|s| s.bg(rgb(theme().selected)).cursor_default())
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active).cursor_default())
         .on_click(handler)
-        .child(label)
+        .child(primary)
 }
 
 /// PR context menu — Peek / Jump to branch / Open on GitHub / Copy URL.
@@ -337,6 +364,7 @@ pub(crate) fn render_pr_menu_overlay(
     pr: kagi_domain::github::PullRequest,
     pos: gpui::Point<gpui::Pixels>,
     viewport: gpui::Size<gpui::Pixels>,
+    window_active: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     // Keep the shared anchor margin, then fit the actual laid-out card below:
@@ -397,6 +425,7 @@ pub(crate) fn render_pr_menu_overlay(
                             item(
                                 ("pr-menu-peek", n),
                                 SharedString::from(Msg::PrPeek.t()),
+                                window_active,
                                 peek_click,
                             ),
                         ))
@@ -405,6 +434,7 @@ pub(crate) fn render_pr_menu_overlay(
                             item(
                                 ("pr-menu-jump", n),
                                 SharedString::from(Msg::PrJumpToBranch.t()),
+                                window_active,
                                 jump_click,
                             ),
                         ))
@@ -413,6 +443,7 @@ pub(crate) fn render_pr_menu_overlay(
                             item(
                                 ("pr-menu-open", n),
                                 SharedString::from(Msg::PrOpenOnGitHub.t()),
+                                window_active,
                                 open_click,
                             ),
                         ))
@@ -421,6 +452,7 @@ pub(crate) fn render_pr_menu_overlay(
                             super::e2e::probe_pr_menu_copy(item(
                                 ("pr-menu-copy", n),
                                 SharedString::from(Msg::PrCopyUrl.t()),
+                                window_active,
                                 copy_click,
                             )),
                         )),

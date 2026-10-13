@@ -2,7 +2,6 @@
 #![allow(clippy::too_many_arguments)]
 use super::super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
-use crate::ui::button_style::{ButtonRole, KagiButton};
 
 // Uniform slots must not inherit the inline button's natural outer height.
 pub(super) const FILE_ROW_HEIGHT: f32 = 22.;
@@ -151,6 +150,8 @@ fn render_cp_file_row(
         view.defer_select_file(file_ref.clone(), window, cx);
     });
     // Row background: conflicted files get red tint
+    let selected = (is_sel || wip_hit) && !is_conflicted;
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let row_bg = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else if is_sel || wip_hit {
@@ -208,7 +209,11 @@ fn render_cp_file_row(
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
-                .text_color(rgb(badge_color))
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(badge_color).into()
+                })
                 .child(SharedString::from(badge)),
         )
         .child(
@@ -222,7 +227,18 @@ fn render_cp_file_row(
                 })
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
-                .text_color(rgb(theme().text_main))
+                .when(cfg!(feature = "gui-e2e") && selected, |el| {
+                    el.relative().child(super::e2e::measure_inside(if staged {
+                        "cp-selected-staged-label"
+                    } else {
+                        "cp-selected-unstaged-label"
+                    }))
+                })
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
                 .overflow_hidden()
                 .truncate()
                 .child(name),
@@ -248,6 +264,7 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
+            selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
         ));
     file_row = super::super::commit_panel_navigation::file_row(
         view,
@@ -286,55 +303,9 @@ fn render_cp_file_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
-    let (label, role) = if staged {
-        (Msg::CommitPanelUnstage.t(), ButtonRole::Warning)
-    } else {
-        (Msg::CommitPanelStage.t(), ButtonRole::Success)
-    };
-    let action_id = if staged {
-        "cp-row-unstage"
-    } else {
-        "cp-row-stage"
-    };
-    let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
-        if staged {
-            view.defer_unstage_file(fi, window, cx);
-        } else {
-            view.defer_stage_file(fi, window, cx);
-        }
-    });
-    file_row.child(
-        KagiButton::styled(
-            (btn_id, fi),
-            super::e2e::commit_panel_labels::caption(action_id, label),
-            role,
-            cx,
-        )
-        .xsmall()
-        .h(theme::scaled_px(20.))
-        .py_0()
-        .text_xs()
-        .line_height(theme::scaled_px(16.))
-        // Keep focus inside the slot, clear of the next row's opaque paint.
-        .border_2()
-        .border_color(gpui::transparent_black())
-        .overflow_hidden()
-        .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
-        // Only the remembered row's inline action participates in Tab;
-        // preceding rows must not intercept Shift+Tab out of the section.
-        .tab_stop(super::super::commit_panel_navigation::action_tab_stop(
-            view, drawn, staged, fi,
-        ))
-        .min_h(px(20.))
-        .ml_2()
-        .flex_shrink_0()
-        .relative()
-        .child(super::e2e::commit_panel_labels::measure_hit_box(
-            action_id,
-            super::super::keyboard_nav::RING,
-        ))
-        .on_click(action_click),
-    )
+    file_row.child(super::controls::inline_file_action(
+        view, drawn, staged, fi, btn_id, cx,
+    ))
 }
 
 /// A directory row in either tree list (`prefix` is the id namespace). Commit

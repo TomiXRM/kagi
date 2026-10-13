@@ -120,6 +120,24 @@ fn select(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHa
     }
     cx.simulate_keystrokes(win, "down");
     draw(cx, win);
+    // High zoom can reveal N at the viewport top, virtualizing N-1. Scroll
+    // without changing focus so the hover oracle samples both live rows.
+    let selected = row_bounds(win, 2);
+    cx.simulate_event(
+        win,
+        gpui::ScrollWheelEvent {
+            position: point(selected.left() + theme::scaled_px(12.), selected.center().y),
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(1000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cx.run_until_parked();
+    draw(cx, win);
+    assert!(
+        row_bounds(win, 1).bottom() <= row_bounds(win, 2).top() + px(1.),
+        "the unselected neighbor and selected PR must have distinct live row bounds"
+    );
     assert_identity(cx, app, win);
 }
 

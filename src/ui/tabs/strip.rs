@@ -320,7 +320,7 @@ fn tab_cell(
     window_active: bool,
     width: Option<gpui::Pixels>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (bg, fg) = tab_colors(&theme(), selected, window_active);
+    let (bg, fg) = tab_colors(&theme(), selected);
     let min = if width.is_some() {
         px(f32::from(theme::scaled_px(TAB_MIN_W)).ceil())
     } else {

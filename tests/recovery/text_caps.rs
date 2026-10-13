@@ -89,8 +89,11 @@ fn graph_names(
                 .iter()
                 .map(|badge| badge.label.as_ref())
                 .collect();
-            let label =
-                list_a11y::commit_row_label(&safe, &row.author, &row.date, &row.short_id, &refs);
+            let age = kagi_ui_core::time::relative_time_description(
+                row.author_secs,
+                kagi_ui_core::time::now_unix_secs(),
+            );
+            let label = list_a11y::commit_row_label(&safe, &row.author, &age, &row.short_id, &refs);
             assert_eq!(
                 rows.rows.get(&i).map(|r| &r.0),
                 Some(&label),

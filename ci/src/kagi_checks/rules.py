@@ -387,6 +387,9 @@ RULES: tuple[Rule, ...] = (
             r"\.\s*take\("
         ),
         globs=("src/ui/**/*.rs",),
+        # #1381 / ADR-0105: this shared helper intentionally shows 25 rows
+        # plus a visible overflow line. Other modal lists still render every row.
+        excludes=("src/ui/modal_preview_files.rs",),
         message=(
             "a modal preview list is truncated with .take(N) — render every row "
             "(list panel + scroll), see #454."

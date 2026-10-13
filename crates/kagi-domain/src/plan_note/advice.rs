@@ -470,7 +470,7 @@ macro_rules! advice_template_en {
         "Upstream must be a remote branch name like origin/main."
     };
     (PushUpstreamNotPresentLocally) => {
-        "Remote-tracking branch '{}' is not present locally; config can still be set."
+        "Remote-tracking branch '{}' is not present locally; fetch it before setting upstream."
     };
     (PullDirtyPullGuard) => {
         "Working tree has {}. Pull will proceed only if fetched changes do not touch those paths."

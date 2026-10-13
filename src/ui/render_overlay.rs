@@ -37,8 +37,12 @@ pub(crate) fn sync_spinner(
         .h(theme::scaled_px(size))
         .text_color(rgb(accent));
     if theme::reduce_motion() {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::system_accessibility::record_spinner_animation(false);
         return icon.into_any_element();
     }
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::system_accessibility::record_spinner_animation(true);
     icon.with_animation(
         key,
         gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),

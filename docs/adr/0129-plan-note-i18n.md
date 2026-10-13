@@ -102,3 +102,18 @@ pub enum PlanDisposition { Ready, NoOp(NoOpKind), Blocked }
 - EN 文言の改善(Phase 3 完了後に解禁)。
 - Fluent/ICU の導入(3言語以上になったら UI crate 側で再検討。
   導入しても構造化 args の必要性は消えない — Codex 代替案評価より)。
+
+## Amendment — 2026-10-13: ref feasibility blockers (#1379 / #1380)
+
+Create Branch/Tag plans treat parent/descendant ref namespace collisions as typed
+blockers alongside existing exact-name and invalid-name blockers. The backend
+checks logical references (including packed refs), names the blocking ref, and
+never touches refs, index, worktree or config. Existing plan cards localize these
+notes and disable Confirm. Sibling names and heads/tags sharing a name remain valid.
+
+Set Upstream's `UpstreamNotPresentLocally` note is a blocker, not a warning:
+the requested remote-tracking ref must exist before libgit2 can set that upstream.
+Existing local branches remain valid upstreams, matching the executor contract.
+EN/JA text directs the user to fetch a missing tracking ref first; planning never
+performs that fetch. Input Enter may record an existing Refused receipt, but
+blocked creation never admits a write or produces an execution receipt.

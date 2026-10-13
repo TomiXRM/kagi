@@ -328,7 +328,7 @@ pub(crate) fn conflict_paths_from_index(index: &mut git2::Index) -> Result<Vec<S
 /// 10k files must not allocate a 10k-element Vec, clone it into the modal, and
 /// hand it to GPUI; the modal only ever renders the first handful anyway (issue
 /// #301). `Backend::snapshot` is likewise bounded.
-pub(crate) const PREVIEW_FILES_CAP: usize = 200;
+pub const PREVIEW_FILES_CAP: usize = 200;
 
 /// Cap on how many conflicting file names a merge plan note lists. The note
 /// still carries the true `count`; the renderer appends "and N more" (#301).

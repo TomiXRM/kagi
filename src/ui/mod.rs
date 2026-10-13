@@ -3006,9 +3006,9 @@ impl KagiApp {
     /// Cmd+C on the Graph: copy the selected row's branch name or full SHA per
     /// the `graph_copy_target` setting (ADR-0170). A `Branch` target with no
     /// local branch on the row falls back to the SHA — the copy never yields
-    /// nothing. Only reached when the root (Graph) holds focus and a row is
-    /// selected; the `!Terminal && !Input` keybinding + the diff-selection
-    /// guard keep it off text selections.
+    /// nothing. Only reached when the visible, uncovered CommitList owns root
+    /// focus and a row is selected; takeovers/front layers propagate Copy to
+    /// the text owner, and diff selection keeps its existing priority.
     fn copy_graph_selection(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(row) = self.view().rows.get(index) else {
             return;
@@ -3276,6 +3276,11 @@ impl KagiApp {
             && !self.home_in_front()
             && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
                 == workspace::CenterPane::CommitList
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn commit_list_has_focus_for_e2e(&self, window: &Window, cx: &Context<Self>) -> bool {
+        self.commit_list_has_focus(window, cx)
     }
 
     /// Commit list coordinates and rendered row height for the GUI viewport

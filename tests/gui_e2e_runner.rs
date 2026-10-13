@@ -170,6 +170,10 @@ mod dnd_self;
 mod sidebar_filter;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_focus.rs"]
+mod graph_focus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
 mod input_names;
 
@@ -3767,6 +3771,14 @@ mod macos {
                 Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
+            (
+                "graph_pointer_focus",
+                Box::new(crate::graph_focus::scenario_graph_pointer_focus),
+            ),
+            (
+                "graph_copy_foreground",
+                Box::new(crate::graph_focus::scenario_graph_copy_foreground),
+            ),
             (
                 "diff_survives_reload",
                 Box::new(scenario_diff_survives_reload),

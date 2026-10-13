@@ -325,12 +325,7 @@ pub(crate) fn render_badges_column(
                             cx.notify();
                         },
                     );
-                    chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                        style
-                            .bg(rgb(theme().ui_selected()))
-                            .border_color(rgb(theme().ui_accent()))
-                    })
-                    .on_drop::<BranchDrag>(drop_handler)
+                    super::branch_drag::feedback(chip, name, cx).on_drop::<BranchDrag>(drop_handler)
                 } else {
                     chip
                 }
@@ -342,12 +337,8 @@ pub(crate) fn render_badges_column(
                         cx.notify();
                     },
                 );
-                chip.drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                    style
-                        .bg(rgb(theme().ui_selected()))
-                        .border_color(rgb(theme().ui_accent()))
-                })
-                .on_drop::<BranchDrag>(drop_handler)
+                let target = badge.label.trim_end_matches(" \u{2713}").to_string();
+                super::branch_drag::feedback(chip, target, cx).on_drop::<BranchDrag>(drop_handler)
             }
             BadgeKind::Tag | BadgeKind::Worktree => chip,
         };

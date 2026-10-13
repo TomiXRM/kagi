@@ -95,12 +95,7 @@ fn resolve_target(repo: &Repository, target: &str) -> Result<ResolvedTarget, Git
     }
     // Not a local branch — try it as a remote-tracking ref.
     if let Ok(rb) = repo.find_branch(target, BranchType::Remote) {
-        // `origin/feature` → `feature`. `split_once` (not `rsplit_once`): a
-        // branch name may itself contain slashes, the remote name may not.
-        let local = target
-            .split_once('/')
-            .map(|(_, rest)| rest.to_string())
-            .unwrap_or_else(|| target.to_string());
+        let local = kagi_domain::refs::merge_into_target_name(target, false, true).to_string();
         let tip = rb.get().target();
         return Ok(ResolvedTarget {
             create_at: local_branch_oid(repo, &local)

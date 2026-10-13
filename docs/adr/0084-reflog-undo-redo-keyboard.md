@@ -84,3 +84,16 @@ selected History commit. A retained Editor behind PRs/Issues/takeovers must not
 suppress their normal shortcuts. The immutable
 reader has no input Undo handler; text undo must not plan a repository move.
 Normal graph Undo/Redo outside this historical Editor state remains unchanged.
+
+## Amendment — 2026-10-13: Edit menu shares focused Undo/Redo (#1439)
+
+Remove `EditUndo`/`EditRedo`: GPUI caf5007 does not send these to native text
+undo. Menus select Input's real text actions while an attached Input owns
+focus and the existing HistoryUndo/HistoryRedo actions otherwise. The same
+history availability predicate controls registration and execution for both
+menu and shortcut: history entry present, foreground repository, not busy,
+not a modal, and neither Input, Terminal nor historical Editor context.
+Menu labels append the corresponding pending repository entry summary;
+unavailable contexts do not advertise an unrelated history target. No history
+executor or confirmation/preflight/verification/logging policy changes.
+

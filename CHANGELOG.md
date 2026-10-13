@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Clicking or right-clicking a Graph commit returns keyboard ownership to the Graph; arrows and Copy no longer stay in the previous filter, sidebar row or toolbar control, and Escape from the context menu returns to the Graph. Graph Copy now uses the same visible-center/front-layer guard as commit navigation, so takeovers and modals cannot copy a hidden commit; foreground TextView and diff selections retain their copy paths. (#1447, #1448)
 - Relative ages follow the EN/JA UI language, including fully spoken accessibility units, without reloading repository models. Branch Cleanup merge dates now share Detail's local, per-instant DST-aware calendar; stored timestamps, staleness and deletion eligibility are unchanged. (#1454, #1455)
   - Review: Japanese Graph ages use short unit forms that fit the fixed column; visible and AX ages share one reference-clock read per list render.
 - Terminal plain clipboard paste now requires explicit approval for ASCII control bytes (except Tab) even without a newline. English/Japanese warnings name invisible control characters; Cancel sends zero bytes, while approved contents, ordinary Japanese text and clipboard Tab are delivered exactly once. Tab does not replace the newline warning. Bracketed-paste filtering and raw completion keys remain unchanged. (#1437)

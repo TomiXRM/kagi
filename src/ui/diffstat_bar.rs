@@ -74,7 +74,8 @@ pub fn diffstat_unit(
         return base
             .child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(selected_foreground.unwrap_or_else(|| rgb(t.text_muted).into()))
                     .child(SharedString::from("BIN")),
             )
@@ -97,7 +98,8 @@ pub fn diffstat_unit(
         if additions > 0 {
             numbers = numbers.child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_added).into()))
                     .child(SharedString::from(format!("+{additions}"))),
             );
@@ -105,7 +107,8 @@ pub fn diffstat_unit(
         if deletions > 0 {
             numbers = numbers.child(
                 gpui::div()
-                    .text_xs()
+                    .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                    .line_height(theme::scaled_px(16.))
                     .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_deleted).into()))
                     .child(SharedString::from(format!("-{deletions}"))),
             );

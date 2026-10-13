@@ -507,6 +507,8 @@ fn render_table_row(
 ) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-home-row-{}", open.number));
         this.pr_mode_open(&open, cx);
     });
     let menu_pr = pr.clone();
@@ -732,6 +734,7 @@ fn render_table_row(
     })
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
+            .cursor_pointer()
     })
     .when(selection_on_accent, |row| {
         row.text_color(theme().selection_foreground(window_active))

@@ -46,9 +46,10 @@ impl KagiApp {
             .window_control_area(gpui::WindowControlArea::Drag)
             .child(super::e2e::measure_inside(id))
             .when(cfg!(target_os = "macos"), |el| {
-                el.on_mouse_down_out(cx.listener(|this, _, _, _| {
-                    this.titlebar_should_move = false;
-                }))
+                el.on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.titlebar_should_move = false),
+                )
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, _| {
@@ -225,7 +226,7 @@ impl KagiApp {
         }));
         let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
             settings::set_toolbar_display(action.mode);
-            cx.set_menus(cmds::build_menus(cx));
+            cmds::publish_menus(cx);
             cx.notify();
         }));
         // W22-I18N: language switch actions (always enabled).
@@ -234,8 +235,8 @@ impl KagiApp {
         el
     }
 
-    /// Unified top frame: native traffic lights, repository identity, actions
-    /// and workspace group. Document tabs are a separate optional row below.
+    /// Second-row toolbar: repository identity, actions and workspace group.
+    /// Document tabs and native traffic lights belong to the titlebar above.
     pub(super) fn render_header_slot(
         &mut self,
         toolbar: ToolbarState,
@@ -669,7 +670,7 @@ impl KagiApp {
                 .flex_shrink_0()
         };
 
-        // The native lights stay unscaled; controls and frame follow UI zoom.
+        // Toolbar controls follow the separate titlebar strip.
         div()
             .id("toolbar-bar")
             .flex()
@@ -679,12 +680,7 @@ impl KagiApp {
             .overflow_hidden()
             .child(toolbar_overflow::probe(layout_app.clone(), None, style_key))
             .w_full()
-            .pr_3()
-            .pl(if cfg!(target_os = "macos") {
-                px(80.)
-            } else {
-                theme::scaled_px(12.)
-            })
+            .px_3()
             .h(chrome_frame_height())
             .flex_shrink_0()
             .bg(rgb(theme().chrome_surface()))
@@ -981,16 +977,6 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w(px(workspace_width))
-                    .when(!icon_only, |el| {
-                        // Balance the unscaled native-light exclusion against
-                        // trailing padding/+ when both side columns have room.
-                        let balance = if cfg!(target_os = "macos") {
-                            (80. - f32::from(theme::scaled_px(40.))).max(0.)
-                        } else {
-                            0.
-                        };
-                        el.flex_basis(px(balance))
-                    })
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(
@@ -1170,6 +1156,5 @@ impl KagiApp {
                         self.root_focus.clone(),
                     )),
             )
-            .child(self.render_tab_add(cx))
     }
 }

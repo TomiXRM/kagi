@@ -29,7 +29,7 @@ fn invoke(
 fn menu_labels(menus: Vec<gpui::Menu>, section: &str) -> Vec<String> {
     menus
         .into_iter()
-        .find(|m| m.name.as_ref() == section)
+        .find(|m| m.name.as_ref() == i18n::menu_heading(section, i18n::lang()))
         .unwrap()
         .items
         .into_iter()
@@ -148,6 +148,7 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
         let fullscreen = commands::menus_for_state(window_menu::ViewMenuState {
             sidebar_visible: false,
             fullscreen: true,
+            ..Default::default()
         });
         assert!(
             menu_labels(fullscreen, "View").contains(&exit.to_string()),

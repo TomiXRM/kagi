@@ -130,13 +130,7 @@ impl Layout {
                     + workspace
                     + workspace_spacing
                     + overflow
-                    + 24. * scale
-                    + if cfg!(target_os = "macos") {
-                        80. - 12. * scale
-                    } else {
-                        0.
-                    }
-                    + 28. * scale;
+                    + 24. * scale;
             }
             let workspace_minimum = if visible & 0x3f00 & !selected_mask != 0 {
                 100. * scale
@@ -149,10 +143,8 @@ impl Layout {
             repo + repo_spacing
                 + side
                 + side.max(ICON_IDENTITY_MIN_WIDTH * (theme::BASE_REM_PX / 16.) * scale)
-                // Frame padding, native lights (unscaled) and trailing +.
+                // Symmetric toolbar padding; native lights and + are above.
                 + 24. * scale
-                + if cfg!(target_os = "macos") { 80. - 12. * scale } else { 0. }
-                + 28. * scale
         };
         if required(repo, workspace, 0) <= self.available {
             self.last_hidden = 0;
@@ -693,12 +685,8 @@ mod tests {
     fn toolbar_overflow_releases_selected_only_workspace_reservation_for_git() {
         let key = (true, i18n::Lang::En, 1_f32.to_bits());
         let mut layout = Layout::default();
-        // Keep the same content budget with and without native traffic lights.
-        let available = if cfg!(target_os = "macos") {
-            620.
-        } else {
-            552.
-        };
+        // The toolbar no longer reserves native lights or the titlebar's +.
+        let available = 524.;
         layout.measure(None, available, key);
         for index in 0..IDS.len() {
             layout.measure(Some(index), 36., key);

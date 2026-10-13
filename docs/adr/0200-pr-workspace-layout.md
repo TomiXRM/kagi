@@ -789,6 +789,25 @@ Tier A `pr_dashboard_keyboard` and `pr_filter_strip_keyboard` cover both
 940×660 and 1392×883, EN/JA and 100%/167%. Native VoiceOver delivery and
 Full Keyboard Access remain real-window checks, not renderer-record evidence.
 
+## Amendment — 2026-10-13: dashboard selection survives hover (#1451)
+
+The dense dashboard retains its existing RowFocus owner and PR-number identity.
+The selected option uses the same `selected_for_window` fill at rest and under
+the pointer, including the neutral inactive-window selection. Only unselected
+rows receive the shared timeline `surface` hover wash. This corrects the shared
+clickable row's hover style overriding the selected base fill; it does not change
+row geometry, focus ownership, accessibility selection or the PR-open listener.
+
+Tier A `pr_dashboard_hover_selected` enters the production list with Tab and
+selects PR N with Down, comparing native Metal fill pixels before/after same-row
+hover in active/inactive/reactivated presentation. It checks an unselected row's
+surface hover, unchanged AX selected N and focused key N, and exactly one
+activation of N for each Enter/Space down/up sequence while hovered. Its matrix
+covers EN/JA, 100%/167%, Apple Light/Dark and 940×660 / 1392×883. Renderer AX
+metadata and simulated keys are not native VoiceOver or Full Keyboard Access
+evidence; those remain real-window checks.
+
+
 ## Amendment — 2026-10-13: PR lane keyboard, selection and count (#1409, #1410, #1412)
 
 The dense companion lane retains its graph geometry and uses shared

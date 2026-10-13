@@ -206,9 +206,9 @@ pub(super) fn render_inspector(
             .items_center()
             .justify_between()
             .gap_2()
-            .mb_2()
+            .mb_1()
             .px_2()
-            .py_1()
+            .py_px()
             .rounded_sm()
             .bg(rgb(theme().surface))
             .child(
@@ -278,7 +278,7 @@ pub(super) fn render_inspector(
         .flex_col()
         .bg(rgb(theme().panel));
     let Some((d, at)) = detail else {
-        return panel.child(files_box.flex_1().flex_basis(relative(1.)).pt_2());
+        return panel.child(files_box.flex_1().flex_basis(relative(1.)).pt_1());
     };
 
     // ── Short SHA (first 8 hex chars) ────────────────────────────────────
@@ -435,7 +435,7 @@ pub(super) fn render_inspector(
         .flex_row()
         .items_center()
         .gap_2()
-        .mb_2()
+        .mb_1()
         .child(avatar_el)
         .child(
             div()
@@ -552,7 +552,7 @@ pub(super) fn render_inspector(
     let coauthors_block: Option<gpui::AnyElement> = if coauthor_rows.is_empty() {
         None
     } else {
-        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+        let mut block = div().flex().flex_col().gap_px().mb_1().child(
             div()
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
@@ -625,7 +625,7 @@ pub(super) fn render_inspector(
     let trailers_block: Option<gpui::AnyElement> = if trailer_rows.is_empty() {
         None
     } else {
-        let mut block = div().flex().flex_col().gap_px().mb_2().child(
+        let mut block = div().flex().flex_col().gap_px().mb_1().child(
             div()
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
@@ -756,7 +756,7 @@ pub(super) fn render_inspector(
         .items_center()
         .gap_1()
         .flex_wrap()
-        .mb_2()
+        .mb_1()
         .child(create_branch_button)
         .child(cherry_pick_button);
 
@@ -862,8 +862,10 @@ pub(super) fn render_inspector(
         .flex_col()
         .flex_shrink_0()
         .px_3()
-        .pt_2()
+        .pt_1()
         .pb_1()
+        .relative()
+        .child(super::e2e::measure_inside("inspector-header"))
         .child(title_el)
         .child(meta_row)
         .child(badges_row)

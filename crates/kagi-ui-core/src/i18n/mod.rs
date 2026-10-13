@@ -220,6 +220,7 @@ pub enum Msg {
     A11yHomeFilter,
     A11yListTitleFilter,
     A11ySidebarFilter,
+    SidebarGroupFilterExpanded,
     A11yPrReviewersFilter,
     A11yPrAssigneesFilter,
     A11yPrLabelsFilter,
@@ -239,6 +240,15 @@ pub enum Msg {
     MenuHideOthers,
     MenuShowAll,
     MenuServices,
+    ShortcutsRemapHelp,
+    MenuUndo,
+    MenuRedo,
+    MenuCut,
+    MenuCopy,
+    MenuPaste,
+    MenuSelectAll,
+    MenuSave,
+    NothingToSave,
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
@@ -275,7 +285,6 @@ pub enum Msg {
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
-    NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
     /// ADR-0124: diff-header selected mode segments.
@@ -786,7 +795,10 @@ pub enum Msg {
     /// `{}` = why the read failed.
     HomeGithubRefreshFailed,
     HomeGithubFailedHint,
-    HomeGithubEmpty,
+    /// `{owner}` = section heading; `{host}` = host this list was read from.
+    HomeGithubSectionEmpty,
+    /// `{host}` = host the user's successfully empty list was read from.
+    HomeGithubMineEmpty,
     HomeGithubNoMatch,
     /// `{}` = how many were read.
     HomeGithubTruncated,
@@ -833,6 +845,9 @@ pub enum Msg {
     /// `{}` = the host it downloads from.
     CloneRunningHint,
     CloneHide,
+    /// `{}` = the full source of the single running clone.
+    CloneHiddenRunning,
+    CloneShowProgress,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -1901,6 +1916,8 @@ impl Msg {
             (Ja, A11yListTitleFilter) => "タイトルで絞り込み",
             (En, A11ySidebarFilter) => "Filter sidebar",
             (Ja, A11ySidebarFilter) => "サイドバーを絞り込み",
+            (En, SidebarGroupFilterExpanded) => "Groups stay expanded while filtering. Clear the filter to collapse a group.",
+            (Ja, SidebarGroupFilterExpanded) => "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。",
             (En, A11yPrReviewersFilter) => "Filter pull request reviewers",
             (Ja, A11yPrReviewersFilter) => "pull request のレビュー担当者を絞り込み",
             (En, A11yPrAssigneesFilter) => "Filter pull request assignees",
@@ -1941,6 +1958,22 @@ impl Msg {
             (Ja, MenuShowAll) => "すべてを表示",
             (En, MenuServices) => "Services",
             (Ja, MenuServices) => "サービス",
+            (En, MenuUndo) => "Undo",
+            (Ja, MenuUndo) => "取り消す",
+            (En, MenuRedo) => "Redo",
+            (Ja, MenuRedo) => "やり直す",
+            (En, MenuCut) => "Cut",
+            (Ja, MenuCut) => "カット",
+            (En, MenuCopy) => "Copy",
+            (Ja, MenuCopy) => "コピー",
+            (En, MenuPaste) => "Paste",
+            (Ja, MenuPaste) => "ペースト",
+            (En, MenuSelectAll) => "Select All",
+            (Ja, MenuSelectAll) => "すべてを選択",
+            (En, MenuSave) => "Save",
+            (Ja, MenuSave) => "保存",
+            (En, NothingToSave) => "No editable unsaved file",
+            (Ja, NothingToSave) => "保存できる未保存のファイルがありません",
             (language, OplogPanel(key)) => key.t_for(language),
             (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
             (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
@@ -2371,6 +2404,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
+            (En, ShortcutsRemapHelp) => "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\": \"secondary-shift-b\" で変更できます（\"\" は割り当て解除）。再起動すると反映されます。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",
@@ -2428,8 +2463,6 @@ impl Msg {
             (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
-            (En, NoTabsOpen) => "no open tabs",
-            (Ja, NoTabsOpen) => "開いているタブがありません",
             (En, NoCommitSelected) => "no commit selected",
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",
@@ -3233,8 +3266,10 @@ impl Msg {
             (Ja, HomeGithubFailedHint) => {
                 "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
             }
-            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
-            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
+            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
+            (En, HomeGithubMineEmpty) => "You have no repositories to display on {host}.",
+            (Ja, HomeGithubMineEmpty) => "{host} に表示できるあなたのリポジトリはありません。",
             (En, HomeGithubNoMatch) => "No repository matches the filter.",
             (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
             (En, HomeGithubTruncated) => {
@@ -3311,6 +3346,10 @@ impl Msg {
             }
             (En, CloneHide) => "Continue in background",
             (Ja, CloneHide) => "バックグラウンドで続ける",
+            (En, CloneHiddenRunning) => "Cloning {}…",
+            (Ja, CloneHiddenRunning) => "{} を clone 中…",
+            (En, CloneShowProgress) => "Show Progress",
+            (Ja, CloneShowProgress) => "進捗を表示",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",
@@ -4913,6 +4952,26 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
 /// Localized graph label for a detached worktree HEAD.
 pub fn graph_detached_worktree_label(short_oid: &str) -> String {
     format!("{} {}", Msg::GraphDetachedWorktree.t(), short_oid)
+}
+
+/// Localized display heading; canonical section names remain stable identifiers.
+pub fn menu_heading(section: &str, language: Lang) -> &str {
+    if language == Lang::En {
+        return section;
+    }
+    match section {
+        "File" => "ファイル",
+        "Edit" => "編集",
+        "View" => "表示",
+        "Repository" => "リポジトリ",
+        "Branch" => "ブランチ",
+        "Commit" => "コミット",
+        "Window" => "ウインドウ",
+        "Help" => "ヘルプ",
+        "Theme" => "テーマ",
+        "Language" => "言語",
+        _ => section,
+    }
 }
 
 /// Japanese label for a command-registry id (issue #352, command palette).

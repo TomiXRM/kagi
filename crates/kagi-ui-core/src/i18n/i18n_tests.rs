@@ -6,6 +6,25 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn shortcuts_remap_help_localizes_prose_and_preserves_config_syntax() {
+    let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
+    let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);
+    assert_ne!(english, japanese);
+    for text in [english, japanese] {
+        for syntax in [
+            "~/.kagi/settings.json",
+            "keybinding.<command id>",
+            "secondary-shift-b",
+            "\"\"",
+        ] {
+            assert!(text.contains(syntax));
+        }
+    }
+    assert!(english.contains("restart"));
+    assert!(japanese.contains("再起動"));
+}
+
+#[test]
 fn palette_descriptions_use_localized_sentence_boundaries() {
     assert_eq!(
         command_palette_description(Lang::En, "Actions", Some("Unavailable")),
@@ -546,4 +565,16 @@ fn chooser_row_names_preserve_external_identity_in_both_languages() {
         }
     }
     ACTIVE.store(old, Ordering::Relaxed);
+}
+
+#[test]
+fn sidebar_filtered_disclosure_reason_is_localized() {
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::En),
+        "Groups stay expanded while filtering. Clear the filter to collapse a group."
+    );
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::Ja),
+        "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。"
+    );
 }

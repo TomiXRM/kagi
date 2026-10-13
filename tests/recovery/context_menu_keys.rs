@@ -484,9 +484,8 @@ pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
         "the focus left the hidden item for the window"
     );
 
-    // The Keyboard Shortcuts Info panel takes no focus of its own:
-    // it covers the menu as the notice did (#991 review). Settings and the
-    // palette, which do take the focus, are the only overlays that do not.
+    // Keyboard Shortcuts retires the covered context menu and focuses its
+    // read-only scroll body; the hidden menu item must not keep keyboard input.
     app.update(cx, |app, cx| {
         app.active_modal = None;
         cx.notify();
@@ -496,13 +495,12 @@ pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
         menu(cx, &app, window).0.is_some(),
         "the menu holds the focus again"
     );
-    app.update(cx, |app, cx| {
-        app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
-            title: "Keyboard Shortcuts".into(),
-            lines: vec![],
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("help.shortcuts", window, cx);
         });
-        cx.notify();
-    });
+    })
+    .unwrap();
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
     assert!(
@@ -510,8 +508,14 @@ pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
         "the Info panel closed the menu"
     );
     assert!(
-        root_focused(cx, &app, window),
-        "Info: the focus left the hidden item for the window"
+        cx.update_window(window, |_, window, cx| {
+            match app.read(cx).menu_overlay.as_ref().unwrap() {
+                kagi::ui::commands::MenuOverlay::Info { focus, .. } => focus.is_focused(window),
+                _ => false,
+            }
+        })
+        .unwrap(),
+        "Info: the focus left the hidden item for the scroll body"
     );
     unmount(cx, app, window);
 }
@@ -568,7 +572,9 @@ pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
             title: "About".into(),
-            lines: vec![],
+            lines: vec![].into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus: cx.focus_handle(),
         });
         cx.notify();
     });
@@ -706,7 +712,9 @@ pub fn scenario_context_menu_keys_row_behind_info(cx: &mut VisualTestAppContext)
     app.update(cx, |app, cx| {
         app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
             title: "About".into(),
-            lines: vec![],
+            lines: vec![].into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus: cx.focus_handle(),
         });
         cx.notify();
     });

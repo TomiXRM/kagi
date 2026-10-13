@@ -106,6 +106,29 @@ pub struct HomeGithub {
     pub(crate) row_focus: super::keyboard_nav::RowFocus,
 }
 
+impl HomeGithub {
+    /// Prefer the identity of the displayed read, including a saved list.
+    /// Token-authenticated reads lack an account but use gh's selected host.
+    pub(super) fn section_host(&self) -> std::borrow::Cow<'_, str> {
+        self.shown_account
+            .as_deref()
+            .and_then(|account| account.split_once('/').map(|(host, _)| host.into()))
+            .unwrap_or_else(|| {
+                std::env::var("GH_HOST")
+                    .ok()
+                    .filter(|host| !host.is_empty())
+                    .map_or_else(|| "github.com".into(), std::borrow::Cow::Owned)
+            })
+    }
+}
+#[cfg(feature = "gui-e2e")]
+impl HomeGithub {
+    pub fn set_account_for_e2e(&mut self, account: &str) {
+        self.shown_account = Some(account.to_string());
+        self.list_key = None;
+    }
+}
+
 /// The clone card: which repository, and — once the user has chosen a folder —
 /// the clone planned for it. Kagi never picks the folder itself (user ruling,
 /// ADR-0219 decision 7): the card opens with none, and Clone stays off until

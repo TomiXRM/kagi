@@ -159,30 +159,33 @@ impl RestoreInspection {
 
 impl RestoreInspection {
     pub(crate) fn body(&self, label: &'static str) -> gpui::Stateful<gpui::Div> {
-        use gpui::prelude::*;
-        use BodyStep::{First, Last, Line, Page};
-        crate::ui::keyboard_nav::with_ring(
-            crate::ui::modal_shell::modal_scroll_body()
-                .relative()
-                .role(gpui::Role::Group)
-                .aria_label(label)
-                .key_context(BODY_CONTEXT)
-                .track_focus(&self.body_focus.clone().tab_index(0).tab_stop(true))
-                .track_scroll(&self.body_scroll)
-                .on_action(body_action::<RestoreBodyPrev>(&self.body_scroll, Line(1.)))
-                .on_action(body_action::<RestoreBodyNext>(&self.body_scroll, Line(-1.)))
-                .on_action(body_action::<RestoreBodyFirst>(&self.body_scroll, First))
-                .on_action(body_action::<RestoreBodyLast>(&self.body_scroll, Last))
-                .on_action(body_action::<RestoreBodyPageUp>(
-                    &self.body_scroll,
-                    Page(1.),
-                ))
-                .on_action(body_action::<RestoreBodyPageDown>(
-                    &self.body_scroll,
-                    Page(-1.),
-                )),
-        )
+        read_only_scroll_body(&self.body_scroll, &self.body_focus, label)
     }
+}
+
+/// Shared read-only card navigation; only the focused body consumes these keys.
+pub(crate) fn read_only_scroll_body(
+    scroll: &ScrollHandle,
+    focus: &FocusHandle,
+    label: impl Into<gpui::SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::prelude::*;
+    use BodyStep::{First, Last, Line, Page};
+    crate::ui::keyboard_nav::with_ring(
+        crate::ui::modal_shell::modal_scroll_body()
+            .relative()
+            .role(gpui::Role::Group)
+            .aria_label(label)
+            .key_context(BODY_CONTEXT)
+            .track_focus(&focus.clone().tab_index(0).tab_stop(true))
+            .track_scroll(scroll)
+            .on_action(body_action::<RestoreBodyPrev>(scroll, Line(1.)))
+            .on_action(body_action::<RestoreBodyNext>(scroll, Line(-1.)))
+            .on_action(body_action::<RestoreBodyFirst>(scroll, First))
+            .on_action(body_action::<RestoreBodyLast>(scroll, Last))
+            .on_action(body_action::<RestoreBodyPageUp>(scroll, Page(1.)))
+            .on_action(body_action::<RestoreBodyPageDown>(scroll, Page(-1.))),
+    )
 }
 
 #[cfg(feature = "gui-e2e")]

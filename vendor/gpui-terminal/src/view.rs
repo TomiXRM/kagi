@@ -1149,14 +1149,24 @@ impl TerminalView {
         &self.focus_handle
     }
 
+    /// Clipboard control bytes other than CR/LF, which have their own warning.
+    /// UTF-8 continuation bytes are not controls; Japanese text stays unchanged.
+    pub fn paste_contains_control_characters(text: &str) -> bool {
+        text.bytes()
+            .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\r'))
+    }
+
     /// kagi: Respect the emulator's parsed DECSET/DECRST ?2004 mode.
-    /// Returns false without writing when plain multi-line input needs approval.
-    pub fn paste_text(&self, text: &str, multiline_confirmed: bool) -> bool {
+    /// Returns false without writing when plain input needs explicit approval.
+    pub fn paste_text(&self, text: &str, plain_paste_confirmed: bool) -> bool {
         let bracketed = self
             .state
             .mode()
             .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
-        if !bracketed && !multiline_confirmed && text.contains(['\n', '\r']) {
+        if !bracketed
+            && !plain_paste_confirmed
+            && (text.contains(['\n', '\r']) || Self::paste_contains_control_characters(text))
+        {
             return false;
         }
         // Hold one writer lock across both delimiters and the safe payload.

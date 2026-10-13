@@ -103,13 +103,20 @@ the existing full inline error and bounded toast. Pane changes and host reopen
 retain the same editor.
 
 Reset keeps its explicit immediate-save meaning. When the draft differs from
-saved text, it first uses the originating KagiApp's single active_modal slot
-for a Settings-owned AlertDialog. The alert names both discarded unsaved
-patterns and the saved analyze_ignore file that defaults will replace. It
-traps focus inside the originating host, makes Return/Cancel safe, and only
-explicit Reset writes through settings::. It is not a second modal slot in
-the native host, and does not install a repository-window scrim. Closing its
-Settings host retires that host's pending approval without writing.
+saved text, the shared Settings form state owns an AlertDialog rendered and
+key-routed inside the originating native Settings window or portable Settings
+overlay. The main window's single active_modal invariant applies to its own
+repository modals, not an alert in a separate Settings host. Settings never
+replaces or invalidates a repository plan, dirty guard, trust prompt, or pending
+asynchronous plan. A repository modal arriving in the portable window still
+closes that window's Settings overlay and retires its alert without writing.
+
+Both hosts use the same alert renderer, focus trap, and AlertReturnFocus helper.
+The alert names both discarded unsaved patterns and the saved analyze_ignore
+file that defaults will replace. Return and Escape cancel; only explicit Reset
+writes through settings::. Cancellation returns focus within Settings and
+leaves the portable overlay open. Closing the originating host retires its
+pending approval without writing or installing a repository-window scrim.
 
 Settings is an open-density form: important details are secondary text under
 the corresponding control, with the existing page scroll owner and no nested

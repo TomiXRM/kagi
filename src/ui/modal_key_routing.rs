@@ -95,7 +95,6 @@ impl KagiApp {
                 | M::OplogRestore(_)
                 | M::ConflictAbort(_)
                 | M::EditorDirtyGuard(_)
-                | M::AnalyzeReset(_)
                 | M::EditorDeleteConfirm(_)
                 | M::RemoveWorktree(_)
                 | M::PruneWorktrees(_),
@@ -148,8 +147,7 @@ impl KagiApp {
     /// Alert-style confirmations have no text field to take focus for them.
     /// Share the named-dialog focus trap, including the owner-trust prompt.
     pub(super) fn active_modal_needs_alert_trap(&self) -> bool {
-        self.analyze_reset_modal().is_none()
-            && (self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some())
+        self.active_modal_defaults_to_cancel() || self.trust_repo_modal().is_some()
     }
 
     /// Cards rendered through input_dialog_frame own their replacement focus,
@@ -170,7 +168,6 @@ impl KagiApp {
                 | M::PrFields(_)
                 | M::Clone(_)
                 | M::AnalyzeHelp(_)
-                | M::AnalyzeReset(_)
                 | M::About(_),
             ) => true,
             None

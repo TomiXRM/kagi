@@ -2495,6 +2495,14 @@ mod macos {
                 Box::new(crate::settings_analyze::scenario_settings_analyze_reset_confirm),
             ),
             (
+                "settings_analyze_portable_reset",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_portable_reset),
+            ),
+            (
+                "settings_analyze_reset_preserves_plan",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_preserves_plan),
+            ),
+            (
                 "settings_help_text",
                 Box::new(crate::settings_analyze::scenario_settings_help_text),
             ),

@@ -15,6 +15,7 @@ pub(crate) struct SettingsControls {
     pub models: TabFocus,
     pub saved_ignore: Option<String>,
     pub ignore_error: Option<String>,
+    pub(super) reset_alert: Option<super::settings_analyze::AnalyzeResetAlert>,
 }
 
 impl SettingsControls {

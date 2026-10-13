@@ -180,7 +180,7 @@ pub(super) fn render_settings_overlay(
     analyze_ignore_input: Option<Entity<InputState>>,
     controls: &super::settings_controls::SettingsControls,
     analyze_dirty: bool,
-    reset: Option<super::settings_analyze::AnalyzeResetModal>,
+    reset: Option<super::settings_analyze::AnalyzeResetAlert>,
     scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
@@ -443,7 +443,6 @@ fn setting_row_with_help(
         .id(id)
         .role(gpui::Role::Group)
         .aria_label(title.t())
-        .aria_description(detail.t())
         .tooltip(move |window, cx| {
             #[cfg(feature = "gui-e2e")]
             record_settings_help(id, detail.t());

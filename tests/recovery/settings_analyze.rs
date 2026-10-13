@@ -32,9 +32,22 @@ fn matrix(
     pane: &str,
     leg: fn(&mut VisualTestAppContext, &Entity<KagiApp>, AnyWindowHandle),
 ) {
+    matrix_host(cx, pane, true, leg);
+}
+
+fn matrix_host(
+    cx: &mut VisualTestAppContext,
+    pane: &str,
+    native: bool,
+    leg: fn(&mut VisualTestAppContext, &Entity<KagiApp>, AnyWindowHandle),
+) {
     let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _keys = crate::gui_isolation::SavedKeys::keep(&["settings_pane", "settings_window_frame"]);
-    let _host = crate::settings_window::SettingsHostGuard::native(cx);
+    let _host = if native {
+        crate::settings_window::SettingsHostGuard::native(cx)
+    } else {
+        crate::settings_window::SettingsHostGuard::portable(cx)
+    };
     let _ignore = IgnoreRestore(std::fs::read(settings::analyze_ignore_path().unwrap()).ok());
     for lang in [i18n::Lang::En, i18n::Lang::Ja] {
         for zoom in [1., 1.67] {
@@ -50,6 +63,7 @@ fn matrix(
                 settings::write_setting("settings_pane", Some(pane));
                 settings::write_analyze_ignore("saved-pattern\n").unwrap();
                 let fixture = build_fixture();
+                crate::macos::git(fixture.path(), &["branch", "settings-plan"]);
                 let (app, repo) = mount(cx, fixture.path());
                 cx.update_window(repo, |_, window, cx| {
                     window.resize(gpui::size(gpui::px(viewport.0), gpui::px(viewport.1)));
@@ -59,19 +73,25 @@ fn matrix(
                 })
                 .unwrap();
                 cx.run_until_parked();
-                let window = cx.read(|cx| {
-                    cx.windows()
-                        .into_iter()
-                        .find(|w| w.window_id() != repo.window_id())
-                        .unwrap()
-                });
+                let window = if native {
+                    cx.read(|cx| {
+                        cx.windows()
+                            .into_iter()
+                            .find(|w| w.window_id() != repo.window_id())
+                            .unwrap()
+                    })
+                } else {
+                    repo
+                };
                 draw(cx, window);
                 leg(cx, &app, window);
-                if cx.read(|cx| {
-                    cx.windows()
-                        .iter()
-                        .any(|w| w.window_id() == window.window_id())
-                }) {
+                if native
+                    && cx.read(|cx| {
+                        cx.windows()
+                            .iter()
+                            .any(|w| w.window_id() == window.window_id())
+                    })
+                {
                     cx.update_window(window, |_, window, _| window.remove_window())
                         .unwrap();
                 }
@@ -341,4 +361,132 @@ pub fn scenario_settings_analyze_save_state(cx: &mut VisualTestAppContext) {
 pub fn scenario_settings_help_text(cx: &mut VisualTestAppContext) {
     matrix(cx, "0", help_leg);
     eprintln!("[gui-e2e] PASS settings_help_text");
+}
+
+fn portable_reset_leg(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    draft(cx, app, window, "portable-draft\n");
+    let frame = e2e::control_bounds(window.window_id(), "settings-frame").unwrap();
+    for _ in 0..12 {
+        let bounds = e2e::control_bounds(window.window_id(), "settings-analyze-reset").unwrap();
+        if frame.contains(&bounds.center()) {
+            cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
+            break;
+        }
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: gpui::point(frame.center().x, frame.bottom() - gpui::px(40.)),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-500.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        draw(cx, window);
+    }
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+        "portable Reset alert must not close its Settings overlay"
+    );
+    assert!(
+        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some(),
+        "portable Reset alert is visibly rendered inside Settings"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    for _ in 0..6 {
+        cx.simulate_keystrokes(window, "tab");
+        draw(cx, window);
+        assert_eq!(
+            cx.update_window(window, |_, window, cx| {
+                app.read(cx).analyze_reset_focus_for_e2e(window, cx)
+            })
+            .unwrap(),
+            Some(true),
+            "portable Tab stays inside the Settings alert"
+        );
+    }
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none());
+    assert_eq!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).analyze_reset_focus_for_e2e(window, cx)
+        })
+        .unwrap(),
+        None
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    assert!(cx.read(|cx| app.read(cx).analyze_ignore_dirty_for_e2e(cx)));
+    click(cx, window, "settings-analyze-reset");
+    cx.simulate_keystrokes(window, "enter");
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_some()));
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none());
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    portable_yields_to_plan(cx, app, window);
+}
+
+fn portable_yields_to_plan(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    click(cx, window, "settings-analyze-reset");
+    app.update(cx, |app, cx| app.open_plan_modal("settings-plan", cx));
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).menu_overlay.is_none()));
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    assert_eq!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx).analyze_reset_focus_for_e2e(window, cx)
+        })
+        .unwrap(),
+        None,
+        "closing portable Settings retires its alert without touching the plan"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+}
+
+fn preserve_plan_leg(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    draft(cx, app, window, "unsaved-pattern\n");
+    app.update(cx, |app, cx| app.open_plan_modal("settings-plan", cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    click(cx, window, "settings-analyze-reset");
+    assert!(
+        cx.read(|cx| app.read(cx).plan_modal().is_some()),
+        "Settings Reset must preserve the main window's checkout plan"
+    );
+    assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some());
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    click(cx, window, "settings-analyze-reset");
+    click(cx, window, "settings-analyze-reset-confirm");
+    assert!(cx.read(|cx| app.read(cx).plan_modal().is_some()));
+    assert_eq!(
+        settings::read_analyze_ignore_text(),
+        settings::DEFAULT_ANALYZE_IGNORE
+    );
+    app.update(cx, |app, _| app.clear_plan_modal());
+}
+
+pub fn scenario_settings_analyze_portable_reset(cx: &mut VisualTestAppContext) {
+    matrix_host(cx, "3", false, portable_reset_leg);
+    eprintln!("[gui-e2e] PASS settings_analyze_portable_reset");
+}
+
+pub fn scenario_settings_analyze_reset_preserves_plan(cx: &mut VisualTestAppContext) {
+    matrix(cx, "3", preserve_plan_leg);
+    eprintln!("[gui-e2e] PASS settings_analyze_reset_preserves_plan");
 }

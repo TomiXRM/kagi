@@ -16,7 +16,6 @@ mod conflict;
 mod editor;
 mod oplog_restore;
 mod repo_health;
-mod settings_analyze;
 mod smart;
 mod window;
 mod worktree;
@@ -53,7 +52,7 @@ impl KagiApp {
     pub(crate) fn early_modal_visible(&self) -> bool {
         use ActiveModal as M;
         match self.active_modal.as_ref() {
-            None | Some(M::SmartCommit(_) | M::Update(_) | M::AnalyzeReset(_)) => false,
+            None | Some(M::SmartCommit(_) | M::Update(_)) => false,
             Some(
                 M::RemoteBrowse(_)
                 | M::Clone(_)
@@ -142,7 +141,6 @@ impl KagiApp {
                 | M::SmartCommit(_)
                 | M::AppNotice(_)
                 | M::AnalyzeHelp(_)
-                | M::AnalyzeReset(_)
                 | M::About(_)
                 | M::Checkout(_)
                 | M::QueuedCommit(_)

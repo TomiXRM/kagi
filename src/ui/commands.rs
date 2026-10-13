@@ -2679,7 +2679,7 @@ impl KagiApp {
                 self.analyze_ignore_input.clone(),
                 &self.settings_controls,
                 self.analyze_ignore_dirty(cx),
-                self.analyze_reset_modal().cloned(),
+                self.analyze_reset_alert().cloned(),
                 self.settings_scroll.clone(),
                 window,
                 cx,

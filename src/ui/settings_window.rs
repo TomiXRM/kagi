@@ -137,11 +137,7 @@ impl SettingsWindow {
             }
             if let Some(owner) = this.owner.upgrade() {
                 owner.update(cx, |app, cx| {
-                    if app
-                        .analyze_reset_modal()
-                        .is_some_and(|modal| modal.window == id)
-                    {
-                        app.clear_analyze_reset_modal();
+                    if app.clear_analyze_reset_alert(id) {
                         cx.notify();
                     }
                 });
@@ -350,7 +346,7 @@ impl Render for SettingsWindow {
                 el.child(super::busy::toast_container().child(stack))
             })
             .when_some(
-                owner.read(cx).analyze_reset_modal().cloned(),
+                owner.read(cx).analyze_reset_alert().cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
             )
             .into_any_element()

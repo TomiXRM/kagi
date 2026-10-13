@@ -4,22 +4,42 @@ use gpui::{div, prelude::*, App, Context, Entity, FocusHandle, Window, WindowId}
 use gpui_component::{button::Button, FocusTrapElement as _};
 
 #[derive(Clone)]
-pub struct AnalyzeResetModal {
+pub(super) struct AnalyzeResetAlert {
     pub window: WindowId,
     pub focus: FocusHandle,
-    pub opener: Option<FocusHandle>,
+    pub alert_return_focus: super::overlay_focus::AlertReturnFocus,
 }
 
 impl KagiApp {
+    pub(super) fn analyze_reset_alert(&self) -> Option<&AnalyzeResetAlert> {
+        self.settings_controls.reset_alert.as_ref()
+    }
+
+    pub(super) fn clear_analyze_reset_alert(&mut self, window: WindowId) -> bool {
+        if self
+            .analyze_reset_alert()
+            .is_some_and(|alert| alert.window == window)
+        {
+            self.settings_controls.reset_alert = None;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn request_analyze_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.analyze_ignore_dirty(cx) {
             self.save_analyze_ignore(true, window, cx);
             return;
         }
         let focus = cx.focus_handle();
-        self.set_analyze_reset_modal(AnalyzeResetModal {
+        self.settings_controls.reset_alert = Some(AnalyzeResetAlert {
             window: window.window_handle().window_id(),
-            opener: window.focused(cx),
+            alert_return_focus: super::overlay_focus::AlertReturnFocus::for_settings(
+                window,
+                cx,
+                focus.clone(),
+            ),
             focus: focus.clone(),
         });
         window.focus(&focus, cx);
@@ -32,16 +52,14 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(modal) = self.analyze_reset_modal().cloned() else {
+        let Some(modal) = self
+            .settings_controls
+            .reset_alert
+            .take_if(|alert| alert.window == window.window_handle().window_id())
+        else {
             return;
         };
-        if modal.window != window.window_handle().window_id() {
-            return;
-        }
-        self.clear_analyze_reset_modal();
-        if let Some(opener) = modal.opener {
-            window.focus(&opener, cx);
-        }
+        modal.alert_return_focus.restore_settings(window, cx);
         if confirm {
             self.save_analyze_ignore(true, window, cx);
         }
@@ -51,7 +69,7 @@ impl KagiApp {
 
 pub(super) fn reset_alert(
     app: &Entity<KagiApp>,
-    modal: AnalyzeResetModal,
+    modal: AnalyzeResetAlert,
     cx: &App,
 ) -> impl IntoElement {
     use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
@@ -64,6 +82,7 @@ pub(super) fn reset_alert(
         let _ = owner.update(cx, |app, cx| app.finish_analyze_reset(false, window, cx));
     });
     let key_cancel = cancel.clone();
+    let action_cancel = cancel.clone();
     let cancel_click = cancel.clone();
     let confirm_click = confirm.clone();
     let title = Msg::SettingsAnalyzeResetTitle.t();
@@ -109,6 +128,10 @@ pub(super) fn reset_alert(
         cancel,
     )
     .focus_trap("settings-analyze-reset-alert", &modal.focus)
+    .on_action(move |_: &super::CloseMainDiff, window, cx| {
+        action_cancel(window, cx);
+        cx.stop_propagation();
+    })
     .on_key_down(move |event, window, cx| {
         if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
             key_cancel(window, cx);
@@ -125,7 +148,8 @@ pub(super) fn reset_alert(
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
     pub fn analyze_reset_focus_for_e2e(&self, window: &Window, cx: &App) -> Option<bool> {
-        self.analyze_reset_modal()
+        self.analyze_reset_alert()
+            .filter(|alert| alert.window == window.window_handle().window_id())
             .map(|modal| modal.focus.contains_focused(window, cx))
     }
 }

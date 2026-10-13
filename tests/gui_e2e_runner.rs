@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/open_picker.rs"]
+mod open_picker;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/ref_validation.rs"]
 mod ref_validation;
 
@@ -2398,6 +2402,22 @@ mod macos {
             (
                 "trust_failure_feedback",
                 Box::new(crate::modal_polish_b::scenario_trust_failure_feedback),
+            ),
+            (
+                "open_repository_picker_localized",
+                Box::new(crate::open_picker::scenario_open_repository_picker_localized),
+            ),
+            (
+                "open_repository_picker_error",
+                Box::new(crate::open_picker::scenario_open_repository_picker_error),
+            ),
+            (
+                "open_repository_picker_home_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_home_owner),
+            ),
+            (
+                "open_repository_picker_frozen_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_frozen_owner),
             ),
             (
                 "worktree_folder_picker",

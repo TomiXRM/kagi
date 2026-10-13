@@ -5,8 +5,8 @@
 //! (`keyboard_nav::RowFocus` over the pane's `uniform_list`). ↑/↓ stay inside
 //! the pane. A pane that offers no drawn row — collapsed, empty, emptied by
 //! the filter, or too short to draw one — has its header as its Tab stop
-//! instead (#981 review), and on a collapsed one Enter / Space open the pane
-//! and move to its first row.
+//! instead (#981 review). Enter / Space toggle that header; opening transfers
+//! focus to the first drawn row. Left on a row collapses its pane onto the header.
 //!
 //! Enter / Space press a row: a branch opens its checkout plan (the current
 //! branch: jumps to it), a worktree opens or closes its inspection card (the
@@ -40,10 +40,13 @@ const WORKTREES: usize = 2;
 
 gpui::actions!(worktree_inspection, [WorktreeCardNext, WorktreeCardPrev]);
 
+gpui::actions!(sidebar_pane, [CollapseSidebarPane]);
+
 pub(super) fn bind_keys(cx: &mut gpui::App) {
     cx.bind_keys([
         gpui::KeyBinding::new("tab", WorktreeCardNext, Some("WorktreeInspection")),
         gpui::KeyBinding::new("shift-tab", WorktreeCardPrev, Some("WorktreeInspection")),
+        gpui::KeyBinding::new("left", CollapseSidebarPane, Some("KagiSidebarPaneRows")),
     ]);
 }
 
@@ -373,15 +376,29 @@ impl KagiApp {
         self.sidebar.focus.group_reveal = None;
     }
 
-    /// Enter / Space on a collapsed pane's header: open it, and its first row
-    /// takes the focus once its rows are built.
-    fn open_sidebar_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+    /// Enter / Space use the same toggle as the pointer, including empty panes.
+    fn toggle_sidebar_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
         let section = super::sidebar_panes::SECTIONS[pane];
-        if self.sidebar.collapsed.contains(section) {
+        self.sidebar.toggle_section(section);
+        self.sidebar.focus.open_first[pane] = !self.sidebar.collapsed.contains(section);
+        cx.notify();
+    }
+
+    /// A pane-scoped Left retains one roving stop and returns focus before unmount.
+    pub(super) fn collapse_sidebar_pane(
+        &mut self,
+        pane: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let section = super::sidebar_panes::SECTIONS[pane];
+        if !self.sidebar.collapsed.contains(section) {
             self.sidebar.toggle_section(section);
-            self.sidebar.focus.open_first[pane] = true;
-            cx.notify();
         }
+        self.sidebar.focus.open_first[pane] = false;
+        self.sidebar.focus.card = None;
+        self.sidebar.focus.headers.get(pane, cx).focus(window, cx);
+        cx.notify();
     }
 
     /// Enter / Space on a row: its main action (see the module docs).
@@ -391,7 +408,7 @@ impl KagiApp {
             SidebarRow::LocalGroupHeader { key, .. }
             | SidebarRow::RemoteHeader { key, .. }
             | SidebarRow::RemoteSubGroup { key, .. } => {
-                self.with_ui(|ui| ui.toggle_branch_group(key));
+                self.toggle_sidebar_group(key, cx);
             }
             SidebarRow::LocalBranchLeaf {
                 name,
@@ -436,10 +453,8 @@ impl KagiApp {
     }
 }
 
-/// A pane header: the pane's Tab stop while the pane offers no drawn row to
-/// Tab to (collapsed, empty, or too short to draw one), so every pane keeps
-/// one; on a collapsed pane Enter / Space open it. `header` is the drawn
-/// heading, which keeps its own click.
+/// A pane header is the single Tab stop while no row is drawn. Enter / Space
+/// toggle it, like its pointer click; opening transfers to the first drawn row.
 pub(super) fn header(
     app: &KagiApp,
     pane: usize,
@@ -461,7 +476,7 @@ pub(super) fn header(
     )
     .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
         if event.is_keyboard() {
-            this.open_sidebar_pane(pane, cx);
+            this.toggle_sidebar_pane(pane, cx);
         }
     }))
     .child(under_ring(header, app.root_focus.clone()))

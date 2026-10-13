@@ -26,7 +26,7 @@ fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, key: &str) {
     cx.dispatch_keystroke(window, keystroke.clone());
     cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
 }
-fn entry(repo: &std::path::Path, i: usize, variant: usize, long: bool) -> OpLogEntry {
+pub(crate) fn entry(repo: &std::path::Path, i: usize, variant: usize, long: bool) -> OpLogEntry {
     let state = StateSummary {
         head: "main".into(),
         dirty: "clean".into(),

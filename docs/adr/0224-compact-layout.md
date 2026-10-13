@@ -389,3 +389,14 @@ Narrow windows gain graph space without changing toolbar or graph geometry.
 Commit state survives relocation because ownership does not move or duplicate.
 The compact surfaces add placement and dismissal responsibilities, but no second
 commit workflow, new read store, persisted layout mode, or wide-layout redesign.
+
+## Amendment — 2026-10-14: remaining dense row typography (#1498/#1499)
+
+Operation Log summary time, operation and outcome use the existing
+`FILE_TREE_FONT_PX` 13px identity role, preserving the 22px summary floor,
+RowFocus space, variable-height expanded details and full-entry copy.
+Issues navigator secondary age, comment count and number also use 13px
+reference typography (11.7 logical points at 100%), retaining 13px leading,
+the existing two-line card height, selected foreground tokens and shared
+wide/compact renderer. No global text helper or density setting changes.
+

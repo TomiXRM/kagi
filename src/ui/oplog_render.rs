@@ -262,27 +262,37 @@ fn summary_fields(
         div()
             .w(theme_mod::scaled_px(60.))
             .flex_shrink_0()
-            .text_xs()
+            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().text_muted))
             .child(time)
+            .when(cfg!(feature = "gui-e2e"), |label| {
+                label.child(super::e2e::measure_inside(format!("oplog-time-{i}")))
+            })
             .into_any_element(),
         div()
             .w(theme_mod::scaled_px(100.))
             .flex_shrink_0()
             .ml(theme_mod::scaled_px(6.))
-            .text_xs()
+            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().text_sub))
+            .truncate()
             .child(SharedString::from(entry.op.clone()))
+            .when(cfg!(feature = "gui-e2e"), |label| {
+                label.child(super::e2e::measure_inside(format!("oplog-operation-{i}")))
+            })
             .into_any_element(),
         actor_badge(i, entry.actor),
         worktree_badge(i, entry),
         div()
             .flex_1()
             .ml(theme_mod::scaled_px(6.))
-            .text_xs()
+            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
             .text_color(rgb(color))
             .truncate()
             .child(outcome)
+            .when(cfg!(feature = "gui-e2e"), |label| {
+                label.child(super::e2e::measure_inside(format!("oplog-outcome-{i}")))
+            })
             .into_any_element(),
     ]
 }

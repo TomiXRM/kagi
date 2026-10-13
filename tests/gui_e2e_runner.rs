@@ -779,6 +779,9 @@ mod finder_scale_editor;
 mod finder_scale_history;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/density_rest.rs"]
+mod density_rest;
+#[cfg(target_os = "macos")]
 #[path = "recovery/finder_scale_rest.rs"]
 mod finder_scale_rest;
 
@@ -4033,6 +4036,8 @@ mod macos {
                 Box::new(scenario_commit_panel_survives_reload),
             ),
             ("oplog_expand_copy", Box::new(scenario_oplog_expand_copy)),
+            ("oplog_row_typography", Box::new(crate::density_rest::oplog)),
+            ("issues_row_secondary_text", Box::new(crate::density_rest::issues)),
             (
                 "oplog_keyboard_single",
                 Box::new(crate::recovery_oplog_keyboard::scenario_oplog_keyboard_single),

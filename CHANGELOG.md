@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log summary time, operation and outcome now share the 13px dense-list identity role while retaining the 22px summary floor and variable-height details. Issues navigator age, comment count and number use the readable 13px secondary role without changing card height or selected foregrounds. (#1498, #1499)
 - Compact Changes now follows Graph selection: historical commits show the existing Inspector metadata on the left and changed files with Path/Tree controls on the right; file selection opens the central diff. WIP retains Unstaged/Staged columns. The entire compact bottom panel defaults to one-third of the logical window height and remains divider-resizable without writing compact heights to settings; widening restores the preferred desktop height and right Inspector. (#1484)
   - Compact metadata scrolls as one viewport so the unchanged Inspector actions remain reachable at high zoom. Native Graph pointer-focus coverage now opens the actual compact navigator filter, retains desktop filter coverage at 1040px and 1392px, and counts copy receipts within the bounded log's local observation window.
   - Review: compact Changes uses the same Compare-before-Inspector source and title as desktop, so Compare file clicks open the matching comparison diff. Commit selection no longer replaces the active bottom surface or opens a closed panel; widening restores the desktop tab and open/closed state suspended on compact entry.

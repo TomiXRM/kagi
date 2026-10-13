@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Relative ages follow the EN/JA UI language, including fully spoken accessibility units, without reloading repository models. Branch Cleanup merge dates now share Detail's local, per-instant DST-aware calendar; stored timestamps, staleness and deletion eligibility are unchanged. (#1454, #1455)
 - Clone folder-picker answers belong to the initiating card and repository visit; dismissed, replaced and reopened cards reject late answers. Hidden/background clones no longer switch repositories on completion: the existing notification offers an explicit Open Repository action, while a user waiting on the current card retains automatic opening. Native picker errors leave the card unchanged and show bounded feedback (with durable detail owned by the repository screen present at launch, never Home's background tab); cancellation stays silent. (#1402, #1405; #1420 Clone side)
   - Review: persistent Open Repository feedback stops the expiry ticker and, like errors, is retained ahead of routine notifications when the toast cap is exceeded.
 - Operation Log restore cards expose named, read-only ref and graph-preview lists with single-stop keyboard inspection, arrow/Home/End/PageUp/PageDown reveal and system scrollbars. Long warnings/blockers share a named keyboard-scrollable body; focused list rows also reveal their parent position. Copy all and the two-stage destructive approval/execution path are unchanged. (#1382)

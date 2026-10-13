@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/time_locale.rs"]
+mod time_locale;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/open_picker.rs"]
 mod open_picker;
 
@@ -1471,6 +1475,14 @@ mod macos {
             (
                 "pr_filter_strip_keyboard",
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
+            ),
+            (
+                "relative_time_ja",
+                Box::new(crate::time_locale::scenario_relative_time_ja),
+            ),
+            (
+                "cleanup_local_date",
+                Box::new(crate::time_locale::scenario_cleanup_local_date),
             ),
             (
                 "pr_dashboard_responsive",

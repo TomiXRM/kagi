@@ -102,5 +102,8 @@ pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-time"))
         })
-        .child(row.date_short.clone())
+        .child(kagi_ui_core::time::relative_time_short(
+            row.author_secs,
+            kagi_ui_core::time::now_unix_secs(),
+        ))
 }

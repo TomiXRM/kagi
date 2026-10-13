@@ -547,3 +547,15 @@ fn chooser_row_names_preserve_external_identity_in_both_languages() {
     }
     ACTIVE.store(old, Ordering::Relaxed);
 }
+
+#[test]
+fn sidebar_filtered_disclosure_reason_is_localized() {
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::En),
+        "Groups stay expanded while filtering. Clear the filter to collapse a group."
+    );
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::Ja),
+        "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。"
+    );
+}

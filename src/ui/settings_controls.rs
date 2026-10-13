@@ -185,18 +185,18 @@ fn chip(id: &str, label: String, selected: bool, available: bool) -> gpui::State
         .px(keyboard_nav::inset(12.) + gpui::px(1.))
         .py(keyboard_nav::inset(4.) + gpui::px(1.))
         .rounded_md()
-        .bg(rgb(if selected {
-            theme().selected
+        .bg(if selected {
+            theme().segment_selected_bg()
         } else {
-            theme().bg_base
-        }))
+            rgb(theme().bg_base).into()
+        })
         .text_sm()
-        .text_color(rgb(if selected {
-            theme().text_main
+        .text_color(if selected {
+            rgb(theme().text_main)
         } else {
-            theme().text_sub
-        }))
-        .when(available, |el| {
+            rgb(theme().text_sub)
+        })
+        .when(available && !selected, |el| {
             el.hover(|s| {
                 s.bg(rgb(theme().selected))
                     .text_color(rgb(theme().text_main))

@@ -1085,7 +1085,7 @@ pub fn render_body(
     let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
         Some(file) if file.kind == ConflictKind::Content => {
             let path = file.path.clone();
-            super::conflict_editor::render_editor(mode, chrome, &path, window_active, cx)
+            super::conflict_editor::render_editor(mode, chrome, &path, cx)
         }
         _ => render_center(mode, chrome.writer_busy, &chrome.raw_preview_scroll, cx),
     };
@@ -1452,10 +1452,18 @@ fn card_icon<H>(
     icon: gpui_component::IconName,
     tip: &'static str,
     on_down: H,
+    selected_active: Option<bool>,
 ) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_sub).into()
+    };
     div()
         .id(SharedString::from(id))
         .flex()
@@ -1464,11 +1472,13 @@ where
         .w(theme::scaled_px(22.))
         .h(theme::scaled_px(22.))
         .rounded_md()
-        .text_color(rgb(theme().text_sub))
-        .hover(|s| {
-            s.bg(rgb(theme().bg_row_alt))
-                .text_color(rgb(theme().text_main))
-                .cursor_pointer()
+        .text_color(foreground)
+        .cursor_pointer()
+        .when(selected_active.is_none(), |el| {
+            el.hover(|s| {
+                s.bg(rgb(theme().bg_row_alt))
+                    .text_color(rgb(theme().text_main))
+            })
         })
         .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         .on_mouse_down(MouseButton::Left, on_down)
@@ -1498,11 +1508,13 @@ enum ConflictFileAction {
 /// its `on_select` may call the parent's conflict actions directly without
 /// leasing the entity. The owning `file_menu` state lives on the entity, so the
 /// dismiss/select close over the entity handle to clear it via `entity.update`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_file_menu(
     entity: &Entity<ConflictView>,
     mode: &ConflictMode,
     idx: usize,
     pos: gpui::Point<gpui::Pixels>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -1580,6 +1592,7 @@ pub fn render_file_menu(
         on_dismiss,
         on_select,
         None,
+        window_active,
         window,
         cx,
     )
@@ -1693,6 +1706,7 @@ fn section(
     for (position, &idx) in indices.iter().enumerate() {
         let file = &mode.session.files[idx];
         let selected = mode.selected_file == Some(idx);
+        let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
         let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
         let kind = file.kind;
         let (status_color, status_text) = match file.status {
@@ -1736,7 +1750,9 @@ fn section(
             .cursor_pointer()
             .when(selected, |s| {
                 s.bg(theme().selected_for_window(window_active))
-                    .text_color(rgb(theme().text_main))
+            })
+            .when(selection_on_accent, |s| {
+                s.text_color(theme().selection_foreground(window_active))
             })
             .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
@@ -1751,7 +1767,11 @@ fn section(
                     .child(
                         div()
                             .text_size(theme::scaled_px(12.))
-                            .text_color(rgb(theme().text_main))
+                            .text_color(if selection_on_accent {
+                                theme().selection_foreground(window_active)
+                            } else {
+                                rgb(theme().text_main).into()
+                            })
                             .truncate()
                             .child(path_str.clone()),
                     )
@@ -1764,10 +1784,14 @@ fn section(
                             .child(
                                 div()
                                     .text_size(theme::scaled_px(10.))
-                                    .text_color(rgb(status_color))
+                                    .text_color(if selection_on_accent {
+                                        theme().selection_secondary_foreground(window_active)
+                                    } else {
+                                        rgb(status_color).into()
+                                    })
                                     .child(SharedString::from(status_text)),
                             )
-                            .child(kind_badge(kind)),
+                            .child(kind_badge(kind, selected.then_some(window_active))),
                     ),
             )
             // Right: Keynote-style icon group — "…" / open externally / copy path.
@@ -1785,6 +1809,7 @@ fn section(
                         gpui_component::IconName::Ellipsis,
                         Msg::ConflictMore.t(),
                         more,
+                        selected.then_some(window_active),
                     )),
             );
         let row_el = super::list_a11y::list_option(
@@ -1807,15 +1832,22 @@ fn section(
 }
 
 /// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
-fn kind_badge(kind: ConflictKind) -> gpui::AnyElement {
+fn kind_badge(kind: ConflictKind, selected_active: Option<bool>) -> gpui::AnyElement {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
+        theme().selection_secondary_foreground(true)
+    } else {
+        rgb(theme().text_muted).into()
+    };
     div()
         .px(theme::scaled_px(5.))
         .py(px(1.))
         .rounded_md()
         .border_1()
-        .border_color(rgb(theme().text_muted))
+        .border_color(foreground)
         .text_size(theme::scaled_px(9.))
-        .text_color(rgb(theme().text_muted))
+        .text_color(foreground)
         .child(SharedString::from(kind_tag(kind)))
         .into_any_element()
 }

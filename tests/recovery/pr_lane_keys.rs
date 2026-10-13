@@ -122,7 +122,11 @@ pub fn scenario_pr_lane_selected(cx: &mut VisualTestAppContext) {
                     .update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
                 cell.paint(cx);
                 let expected = if active {
-                    theme::theme().ui_selected()
+                    if matches!(&*theme::theme().slug, "apple-light" | "apple-dark") {
+                        theme::theme().ui_accent()
+                    } else {
+                        theme::theme().selected
+                    }
                 } else {
                     theme::theme().inactive_selected
                 };
@@ -133,6 +137,13 @@ pub fn scenario_pr_lane_selected(cx: &mut VisualTestAppContext) {
                     255,
                 ];
                 assert_eq!(native_fill(cx, cell, &id), expected, "shared selected fill");
+                assert_eq!(
+                    e2e::control_paint(cell.win.window_id(), &format!("pr-lane-label-{ix}"))
+                        .unwrap()
+                        .text_color,
+                    theme::theme().selection_foreground(active),
+                    "actual selected lane subject foreground follows activation"
+                );
                 cx.simulate_event(
                     cell.win,
                     gpui::MouseMoveEvent {

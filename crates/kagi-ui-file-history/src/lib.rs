@@ -167,6 +167,7 @@ pub enum FileHistoryEvent {
 pub struct FileHistoryView {
     /// The view-model data (loaded history, selection, split, generation).
     pub data: FileHistoryState,
+    pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     /// Commit-row context menu: (entry index, anchor). Moved off `KagiApp`.
     pub menu: Option<(usize, Point<Pixels>)>,
     /// Shared with `KagiApp.file_history_geom` (the *same* `Rc<Cell>`): the
@@ -216,6 +217,7 @@ impl FileHistoryView {
     ) -> Self {
         Self {
             data,
+            window_activation_subscription: None,
             menu: None,
             geom,
             panel_width,

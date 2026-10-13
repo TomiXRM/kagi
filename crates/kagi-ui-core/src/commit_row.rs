@@ -18,7 +18,7 @@
 //! uses.
 
 use gpui::prelude::*;
-use gpui::{div, px, relative, rgb, Div, SharedString, Stateful};
+use gpui::{div, px, relative, rgb, Div, Hsla, SharedString, Stateful};
 
 use kagi_domain::file_history::{FileHistoryEntry, FileHistoryEntryKind};
 
@@ -123,13 +123,13 @@ pub fn commit_row_model(entry: &FileHistoryEntry, now: i64) -> CommitRowModel {
 }
 
 /// Row background: selection wins, then zebra striping by visible position.
-pub fn row_background(is_selected: bool, ix: usize) -> u32 {
+pub fn row_background(is_selected: bool, ix: usize, window_active: bool) -> Hsla {
     if is_selected {
-        theme().selected
+        theme().selected_for_window(window_active)
     } else if ix % 2 == 1 {
-        theme().bg_row_alt
+        rgb(theme().bg_row_alt).into()
     } else {
-        theme().panel
+        rgb(theme().panel).into()
     }
 }
 
@@ -144,11 +144,33 @@ pub fn render_commit_row(
     model: &CommitRowModel,
     layout: CommitRowLayout,
     is_selected: bool,
+    window_active: bool,
 ) -> Stateful<Div> {
+    let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+    let foreground = if uses_on_accent {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(theme().text_main).into()
+    };
+    let secondary_foreground = if uses_on_accent {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_sub).into()
+    };
+    let muted_foreground = if uses_on_accent {
+        theme().selection_secondary_foreground(window_active)
+    } else {
+        rgb(theme().text_muted).into()
+    };
+    let badge_foreground = if uses_on_accent {
+        theme().selection_foreground(window_active)
+    } else {
+        rgb(model.badge_color).into()
+    };
     let base = div()
         .id((id, ix))
         .w_full()
-        .bg(rgb(row_background(is_selected, ix)))
+        .bg(row_background(is_selected, ix, window_active))
         .cursor_pointer()
         // Hover uses the subtle `surface` tint (like the commit panel / branch
         // list), NOT `selected` — using the selection colour made a hovered row
@@ -172,28 +194,34 @@ pub fn render_commit_row(
                     ix,
                     "badge",
                     16.,
-                    model.badge_color,
+                    badge_foreground,
                     model.badge.into(),
                 ))
                 .child(
-                    table_text(ix, "subject", theme().text_main, model.subject.clone())
+                    table_text(ix, "subject", foreground, model.subject.clone())
                         .flex_1()
                         .min_w(px(0.)),
                 )
                 .child(
-                    table_col(ix, "author", 90., theme().text_sub, model.author.clone())
-                        .min_w(px(0.))
-                        .flex_shrink(1.),
+                    table_col(
+                        ix,
+                        "author",
+                        90.,
+                        secondary_foreground,
+                        model.author.clone(),
+                    )
+                    .min_w(px(0.))
+                    .flex_shrink(1.),
                 )
                 .child(table_col(
                     ix,
                     "date",
                     64.,
-                    theme().text_muted,
+                    muted_foreground,
                     model.date_relative.clone(),
                 ))
                 .child(
-                    table_col(ix, "stat", 72., theme().text_sub, model.stat.clone())
+                    table_col(ix, "stat", 72., secondary_foreground, model.stat.clone())
                         .min_w(px(0.))
                         .flex_shrink(1.),
                 )
@@ -201,7 +229,7 @@ pub fn render_commit_row(
                     ix,
                     "hash",
                     64.,
-                    theme().text_muted,
+                    muted_foreground,
                     model.short_hash.clone(),
                 ));
             #[cfg(feature = "gui-e2e")]
@@ -215,7 +243,7 @@ pub fn render_commit_row(
             .px_2()
             .py_1()
             .gap_1()
-            .child(fixed_col(14., model.badge_color, model.badge.into()))
+            .child(fixed_col(14., badge_foreground, model.badge.into()))
             .child(
                 div()
                     .flex_1()
@@ -226,7 +254,7 @@ pub fn render_commit_row(
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(theme().text_main))
+                            .text_color(foreground)
                             .truncate()
                             .child(model.subject.clone()),
                     )
@@ -236,7 +264,7 @@ pub fn render_commit_row(
                             .flex_row()
                             .gap_2()
                             .text_xs()
-                            .text_color(rgb(theme().text_muted))
+                            .text_color(muted_foreground)
                             .child(model.short_hash.clone())
                             .child(model.author.clone())
                             .child(model.date_ymd.clone()),
@@ -246,8 +274,8 @@ pub fn render_commit_row(
 }
 
 /// Table columns inherit File History's Finder font and leading.
-fn table_text(ix: usize, part: &'static str, color: u32, text: SharedString) -> Div {
-    let col = div().text_color(rgb(color)).truncate().child(text);
+fn table_text(ix: usize, part: &'static str, color: Hsla, text: SharedString) -> Div {
+    let col = div().text_color(color).truncate().child(text);
     #[cfg(feature = "gui-e2e")]
     let col = col.relative().child(table_probe(ix, part));
     #[cfg(not(feature = "gui-e2e"))]
@@ -255,18 +283,18 @@ fn table_text(ix: usize, part: &'static str, color: u32, text: SharedString) -> 
     col
 }
 
-fn table_col(ix: usize, part: &'static str, width: f32, color: u32, text: SharedString) -> Div {
+fn table_col(ix: usize, part: &'static str, width: f32, color: Hsla, text: SharedString) -> Div {
     table_text(ix, part, color, text)
         .w(theme::scaled_px(width))
         .flex_shrink_0()
 }
 
 /// One fixed-width, non-shrinking, truncating column.
-fn fixed_col(width: f32, color: u32, text: SharedString) -> Div {
+fn fixed_col(width: f32, color: Hsla, text: SharedString) -> Div {
     div()
         .w(theme::scaled_px(width))
         .flex_shrink_0()
-        .text_color(rgb(color))
+        .text_color(color)
         .truncate()
         .text_sm()
         .child(text)

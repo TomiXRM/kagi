@@ -166,6 +166,10 @@ mod dark_elevation;
 mod inactive_selection;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/selection_on_accent.rs"]
+mod selection_on_accent;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/tab_strip.rs"]
 mod tab_strip;
 
@@ -1711,6 +1715,10 @@ mod macos {
             (
                 "inactive_selection",
                 Box::new(crate::inactive_selection::scenario_inactive_selection),
+            ),
+            (
+                "selection_on_accent",
+                Box::new(crate::selection_on_accent::scenario_selection_on_accent),
             ),
             (
                 "repo_tabs_neutral",

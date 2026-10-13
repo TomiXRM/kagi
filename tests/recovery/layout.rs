@@ -105,7 +105,7 @@ impl Render for Rows {
             .size_full()
             .font_family(theme::UI_FONT)
             .child(
-                uniform_list("recovery-history", 3, move |range, _, _| {
+                uniform_list("recovery-history", 3, move |range, window, _| {
                     range
                         .map(|ix| {
                             render_commit_row(
@@ -114,6 +114,7 @@ impl Render for Rows {
                                 &commit_row_model(&entries[ix], NOW),
                                 layout,
                                 ix == selected,
+                                window.is_window_active(),
                             )
                             .track_scroll(&handles[ix])
                         })
@@ -135,6 +136,7 @@ impl Render for Rows {
                                     &commit_row_model(entry, NOW),
                                     layout,
                                     ix == selected,
+                                    window.is_window_active(),
                                 )
                                 .into_any_element()
                                 .layout_as_root(

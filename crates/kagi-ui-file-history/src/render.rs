@@ -27,6 +27,10 @@ use kagi_domain::file_history::{FileChangeType, FileHistoryEntry};
 
 impl Render for FileHistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.window_activation_subscription.is_none() {
+            self.window_activation_subscription =
+                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        }
         render_file_history_view(self, window, cx)
     }
 }
@@ -566,7 +570,7 @@ pub(crate) fn render_fh_commit_list(
     let list = uniform_list(
         "fh-commit-list",
         row_count,
-        cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+        cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
             this.last_built_range = range.clone();
             let Some(history) = this.data.history.as_ref() else {
                 return Vec::new();
@@ -582,7 +586,17 @@ pub(crate) fn render_fh_commit_list(
             };
             range
                 .filter_map(|ix| history.entries.get(ix).map(|e| (ix, e)))
-                .map(|(ix, entry)| render_fh_row(ix, entry, ix == selected, now, &rows, cx))
+                .map(|(ix, entry)| {
+                    render_fh_row(
+                        ix,
+                        entry,
+                        ix == selected,
+                        now,
+                        window.is_window_active(),
+                        &rows,
+                        cx,
+                    )
+                })
                 .collect()
         }),
     )
@@ -610,6 +624,7 @@ pub(crate) fn render_fh_row(
     entry: &FileHistoryEntry,
     is_selected: bool,
     now: i64,
+    window_active: bool,
     rows: &kagi_ui_core::keyboard_nav::RowList,
     cx: &mut Context<FileHistoryView>,
 ) -> impl IntoElement {
@@ -656,6 +671,7 @@ pub(crate) fn render_fh_row(
                 row_height: fh_row_height(),
             },
             is_selected,
+            window_active,
         ),
         move |index, _, cx| {
             if let Some(entity) = entity.upgrade() {

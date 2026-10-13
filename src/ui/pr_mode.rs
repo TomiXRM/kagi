@@ -170,6 +170,9 @@ pub struct PrModeState {
     pub dashboard_scroll: UniformListScrollHandle,
     /// Shared horizontal viewport for the dashboard's header and virtual rows.
     pub dashboard_horizontal_scroll: ScrollHandle,
+    pub dashboard_keys: std::cell::RefCell<super::keyboard_nav::RowFocus>,
+    pub dashboard_drawn: std::cell::RefCell<std::ops::Range<usize>>,
+    pub dashboard_row_keys: std::cell::RefCell<super::keyboard_nav::RowKeys>,
     /// Which navigator sections are unfolded, indexed by
     /// [`PrSection::index`]. The Inbox opens with the mode; the rest are the
     /// viewer's own lists and stay folded until asked for.
@@ -202,6 +205,9 @@ impl Default for PrModeState {
             view: PrView::Overview,
             dashboard_scroll: UniformListScrollHandle::new(),
             dashboard_horizontal_scroll: ScrollHandle::new(),
+            dashboard_keys: Default::default(),
+            dashboard_drawn: Default::default(),
+            dashboard_row_keys: Default::default(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
             lane_navigation: Default::default(),
@@ -1346,12 +1352,15 @@ fn render_center(
         // No tab: use the whole center as a PR dashboard instead of an empty
         // hint (user request) — every open PR as a table row, click to open.
         return col
-            .child(super::pr_dashboard::render_dashboard(app, cx))
+            .child(super::pr_dashboard::render_dashboard(app, window, cx))
             .into_any_element();
     };
     // Header facts and counts borrow the tab; owning snapshots are taken only
     // by the selected view or when an action actually runs.
     let mode = app.pr_mode().unwrap();
+    mode.dashboard_keys
+        .borrow_mut()
+        .yield_focus(app.root_focus.as_ref(), window, cx);
     let tab = &mode.tabs[ix];
     let pr = &tab.pr;
     let commits = &tab.commits;
@@ -1407,8 +1416,8 @@ fn render_center(
         .py_2()
         // Leaving a PR: back to the dashboard, and a manual fetch so CI state
         // can be refreshed without waiting out the ticker (user request).
-        .child(super::pr_dashboard::home_button(cx))
-        .child(super::pr_dashboard::refresh_button(cx))
+        .child(super::pr_dashboard::controls::home_button(app, cx))
+        .child(super::pr_dashboard::controls::refresh_button(app, cx))
         .child(
             div()
                 .text_color(rgb(theme().accent_text_on(theme().bg_base)))

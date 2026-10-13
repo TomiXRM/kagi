@@ -53,6 +53,9 @@ mod ref_validation;
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_keyboard.rs"]
+mod pr_dashboard_keyboard;
+#[cfg(target_os = "macos")]
 #[path = "recovery/surface_scrollbars.rs"]
 mod surface_scrollbars;
 #[cfg(target_os = "macos")]
@@ -537,6 +540,9 @@ mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
+#[cfg(target_os = "macos")]
+#[path = "recovery/oplog_restore_keys.rs"]
+mod recovery_oplog_restore_keys;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_select.rs"]
 mod recovery_oplog_select;
@@ -1457,6 +1463,14 @@ mod macos {
             (
                 "pr_list_roles",
                 Box::new(crate::recovery_operations::scenario_pr_list_roles),
+            ),
+            (
+                "pr_dashboard_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_dashboard_keyboard),
+            ),
+            (
+                "pr_filter_strip_keyboard",
+                Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
             ),
             (
                 "pr_dashboard_responsive",
@@ -3813,6 +3827,22 @@ mod macos {
             (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
+            ),
+            (
+                "oplog_restore_keyboard",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_keyboard),
+            ),
+            (
+                "oplog_restore_body_keys",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_keys),
+            ),
+            (
+                "oplog_restore_body_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_body_wheel),
+            ),
+            (
+                "oplog_restore_pane_wheel",
+                Box::new(crate::recovery_oplog_restore_keys::scenario_oplog_restore_pane_wheel),
             ),
             (
                 "oplog_restore_guarded_rows",

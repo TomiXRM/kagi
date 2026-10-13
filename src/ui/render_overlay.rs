@@ -551,6 +551,7 @@ impl KagiApp {
                             super::operations::oplog_restore::render_oplog_restore_modal(
                                 modal,
                                 &self.modal_section_overrides,
+                                window,
                                 cx,
                             ),
                         )

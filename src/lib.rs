@@ -18,6 +18,7 @@ pub mod remote;
 // that re-imports `kagi::ui` / `kagi::single_instance`. No `gpui/test-support`
 // reaches here — the runner owns that (see `ui::e2e`).
 pub mod single_instance;
+pub mod system_accessibility;
 pub mod ui;
 pub mod update;
 

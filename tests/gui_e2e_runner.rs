@@ -104,6 +104,10 @@ mod worktree_inspection_actions;
 mod system_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/system_accessibility.rs"]
+mod system_accessibility;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_quiet.rs"]
 mod settings_quiet;
 
@@ -1500,6 +1504,14 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "system_reduce_motion",
+                Box::new(crate::system_accessibility::scenario_system_reduce_motion),
+            ),
+            (
+                "system_reduce_transparency",
+                Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
             (
                 "window_title_identity",

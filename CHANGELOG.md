@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- macOS Reduce Motion is read at startup and refreshed on display-accessibility notifications; system or app opt-in skips decorative animations. Reduce Transparency selects an opaque equivalent for dark PR tiles without changing their normal appearance. (#1417, #1418; refs #354)
 - Stash Apply, Pop and Drop confirmations show the approved entry's sanitized message beside its index, with middle ellipsis and full tooltip/accessibility text. Existing full-OID/order preflight guards reject a replaced stash even when stack depth is unchanged. Apply also shows its plan warnings outside the recovery disclosure. (#1384, #652)
   - Review: Apply warnings reuse the shared `Note` row and visible ⚠ cue; a missing stash index displays only the index rather than inventing a repeated message.
 - Create Worktree ignores late folder-picker answers after its requesting form is replaced or its repository tab is left, including departure and return. The surviving form still plans `<chosen parent>/<branch>` exactly once; cancelling or choosing a folder creates no directory or branch. (#1383)

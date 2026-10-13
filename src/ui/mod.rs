@@ -3325,6 +3325,7 @@ pub fn run_app(app_state: KagiApp) {
 
     application.run(move |cx: &mut App| {
         fonts::load_bundled_fonts(cx);
+        crate::system_accessibility::install(cx);
 
         // #491: flush trailing settings-store writes on every exit path.
         cx.on_app_quit(|_cx| async move { settings::flush() })

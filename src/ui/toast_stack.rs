@@ -221,7 +221,7 @@ impl ToastStack {
             let oldest = self
                 .toasts
                 .iter()
-                .position(|t| t.kind != ToastKind::Error && t.id != id)
+                .position(|t| t.kind != ToastKind::Error && t.action.is_none() && t.id != id)
                 .unwrap_or(0);
             let removed = self.toasts.remove(oldest);
             self.removed_focus = take_toast_focus(&removed);
@@ -278,7 +278,7 @@ impl ToastStack {
     pub fn has_pending(&self) -> bool {
         self.toasts
             .iter()
-            .any(|t| t.kind != ToastKind::Error && t.dismissing.is_none())
+            .any(|t| t.kind != ToastKind::Error && t.action.is_none() && t.dismissing.is_none())
     }
 
     /// Pause the short preview timer while the pointer is reading the card.
@@ -458,6 +458,10 @@ mod tests {
         ));
         toast.born -= Duration::from_secs(60);
         assert!(stack.expiring_ids().is_empty());
+        assert!(
+            !stack.has_pending(),
+            "actionable completion must stop the expiry ticker"
+        );
         let id = stack.toasts[0].id;
         stack.start_exit(id);
         assert!(stack.toasts[0].dismissing.is_some());
@@ -513,6 +517,28 @@ mod tests {
         }
         assert_eq!(stack.toasts.len(), TOASTS_MAX);
         assert_eq!(stack.toasts[0].message, "important");
+    }
+
+    #[test]
+    fn cap_preserves_clone_action_before_routine_notifications() {
+        let mut stack = ToastStack::new();
+        stack.push(ToastKind::Success, "clone finished");
+        stack.toasts.last_mut().unwrap().action = Some(
+            super::super::types::ToastAction::OpenRepository("clone".into()),
+        );
+        stack.push(ToastKind::Error, "important");
+        for _ in 0..TOASTS_MAX {
+            stack.push(ToastKind::Info, "routine");
+        }
+        assert_eq!(stack.toasts.len(), TOASTS_MAX);
+        assert!(
+            stack.toasts.iter().any(|toast| toast.action.is_some()),
+            "routine arrivals must not evict the clone's Open Repository action"
+        );
+        assert!(stack
+            .toasts
+            .iter()
+            .any(|toast| toast.kind == ToastKind::Error));
     }
 
     #[test]

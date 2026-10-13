@@ -100,4 +100,8 @@ running operation; folder-picker answers still require the original card focus
 identity. Actionable completion feedback remains until activation or dismissal
 (subject to the existing notification cap), instead of disappearing after four
 seconds before the user can act.
+The expiry ticker stops when only actionable completions or errors remain.
+At the existing four-toast cap, routine arrivals evict older routine feedback
+before actionable completions or errors; activation still starts the normal
+exit/removal path.
 

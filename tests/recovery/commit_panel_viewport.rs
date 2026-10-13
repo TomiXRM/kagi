@@ -62,10 +62,10 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                 );
                 if zoom == 1. {
                     let expected_height = match name {
-                        // #1179's unified frame hides the single-document strip,
-                        // giving the flexible file list more viewport height.
-                        // The fixed AutoGrow-era composer/action sizes below stay.
-                        "cp-files" => 440.5,
+                        // #1462 restores the 36px titlebar above the 52px toolbar.
+                        // Only the flexible file list gives up viewport height;
+                        // the fixed AutoGrow-era composer/action sizes below stay.
+                        "cp-files" => 408.,
                         "cp-body" => 257.,
                         "cp-smart-suggest" => 21.5,
                         "cp-commit-action" => 25.,
@@ -74,7 +74,7 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
                     assert_eq!(
                         bounds.size.height,
                         px(expected_height),
-                        "desktop height must match recorded unified-frame measurement"
+                        "desktop height must match the titlebar-plus-toolbar layout"
                     );
                 }
             }
@@ -112,11 +112,13 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
             .unwrap();
             draw(cx, window.into(), (width, height));
             let before = cx.read(|cx| body.read(cx).scroll_offset().y);
-            let viewport = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
+            // Added titlebar space can bring the icon row above the former
+            // fixed +24px point. Wheel over the actual editable viewport.
+            let viewport = e2e::control_bounds(window.window_id(), "cp-body-input").unwrap();
             cx.simulate_event(
                 window.into(),
                 ScrollWheelEvent {
-                    position: point(viewport.center().x, viewport.top() + px(24.)),
+                    position: viewport.center(),
                     delta: ScrollDelta::Pixels(point(px(0.), px(-240.))),
                     touch_phase: TouchPhase::Moved,
                     ..Default::default()

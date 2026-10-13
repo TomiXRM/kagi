@@ -3482,11 +3482,11 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // Themed title bar: make the native bar transparent so kagi's own top
     // content fills the title-bar area. macOS still draws the traffic lights,
-    // positioned over the unified frame, which reserves an unscaled 80px inset.
+    // positioned over the document titlebar's unscaled 80px exclusion.
     Some(gpui::TitlebarOptions {
         title: Some("Kagi".into()),
         appears_transparent: true,
-        traffic_light_position: Some(gpui::point(px(9.0), px(16.0))),
+        traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
     })
 }
 

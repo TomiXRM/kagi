@@ -198,7 +198,7 @@ def _rust_expression_end(code: str, start: int, *, delimited: bool = False) -> i
                 stack.pop()
                 # Blocks may omit the arm comma; tuple patterns end here too
                 # when the caller explicitly requests a delimited region.
-                if not stack and (delimited or code[first:first + 1] == "{"):
+                if not stack and (delimited or code[first : first + 1] == "{"):
                     return pos + 1
         elif char in ",;" and not stack:
             return pos
@@ -360,7 +360,8 @@ RULES: tuple[Rule, ...] = (
                 "リモート": r"リモート(?!デスクトップ)",
             }.get(term, re.escape(term))
             for term in JA_GIT_TERMS
-        ) + r"|(?<![ァ-ヶー])プル(?!ダウン)",
+        )
+        + r"|(?<![ァ-ヶー])プル(?!ダウン)",
         globs=("crates/kagi-ui-core/src/i18n/**/*.rs",),
         select_source=_ja_git_literals,
         message=(
@@ -391,15 +392,13 @@ RULES: tuple[Rule, ...] = (
             'Lang::Ja /* wrapped */ =>\n format!("コミット\\n\\\nしてください"),',
             'Lang::Ja => "名前空間が競合。ファイルの競合を解決してください",',
             'Lang::Ja => "ref を変更する前に競合を解決してください",',
-            'Lang::Ja => { "commit" }\n Lang::En => "コミット",\n'
-            'Lang::Ja => "ブランチ",',
-            'Lang::Ja => format!("{}", Msg::Title.t_for(Lang::En)),\n'
-            'Lang::Ja => "コミット",',
+            'Lang::Ja => { "commit" }\n Lang::En => "コミット",\nLang::Ja => "ブランチ",',
+            'Lang::Ja => format!("{}", Msg::Title.t_for(Lang::En)),\nLang::Ja => "コミット",',
             '/* outer /* nested */ Lang::En => "safe" */ Lang::Ja => "コミット",',
             '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "コミット"; }\n'
             'const ADVICE_ACTION: &str = "ブランチ";',
             'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merging", "マージ")];',
-            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
             '("merge",\n "Merging",\n r#"競合を解決"#,\n),\n];',
             'const ACTION_LABELS: &[(&str, &str)] = &[("Commit", "コミット")];',
             'const TRANSLATIONS: &[(&str, &str)] = &[("Branch",\n "ブランチ",)];',
@@ -407,7 +406,7 @@ RULES: tuple[Rule, ...] = (
             'match self { Commit => ("Commit", "コミット"), }\n}',
             "fn action_label(self) -> (&'static str, &'static str) {\n"
             'match self { Merge => (\n "Merge",\n r##"競合 "file""##,\n), }\n}',
-            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
             '("commit", /* EN */ "Commit", /* JA */ "コミット"),\n];',
         ),
         samples_ok=(
@@ -435,26 +434,24 @@ RULES: tuple[Rule, ...] = (
             'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
             'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',
             'assert!(!Msg::Merge.t_for(Lang::Ja).contains("マージ"));',
-            'assert!(!m.t().contains(\'衝\'), "{:?} still contains 衝突", m);',
+            "assert!(!m.t().contains('衝'), \"{:?} still contains 衝突\", m);",
             'assert_eq!(render(Lang::Ja, "コミット"), "commit");',
             'Lang::En => format!("{}", Msg::Title.t_for(Lang::Ja)),\n'
             '(En, Action) => "Quoted コミット",',
             'const ADVICE_EN_ACTION: &str = "Quoted コミット";',
-            '// Lang::Ja => "競合"\n'
-            '(En, Action) => r##"Quoted リモート "origin" のブランチ"##,',
+            '// Lang::Ja => "競合"\n(En, Action) => r##"Quoted リモート "origin" のブランチ"##,',
             'Lang::Ja => { "commit" }\nLang::En => "コミット",',
             '(Ja, Action) => format!("commit: {value}"), (En, Action) => "コミット",',
-            'const ADVICE_ACTION: &str = "commit";\n'
-            'fn note_en() -> String { "コミット".into() }',
-            'fn note_ja() -> String { match lang() {\n'
+            'const ADVICE_ACTION: &str = "commit";\nfn note_en() -> String { "コミット".into() }',
+            "fn note_ja() -> String { match lang() {\n"
             'Lang::En => "コミット".into(), Lang::Ja => "commit".into(),\n} }',
-            '#[test]\n fn terms_ja_are_english() {\n'
+            "#[test]\n fn terms_ja_are_english() {\n"
             'assert!(!m.t().contains("コミット"));\n'
             'let expected = match lang() { Ja => "マージ", En => "merge" };\n}',
             '#[cfg(test)] mod tests { const ADVICE_ACTION: &str = "ブランチ"; }',
-            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
             '("コミット", "Quoted マージ", "commit"),\n];',
-            'const LABELS: &[(&str, &str, &str)] = &[\n'
+            "const LABELS: &[(&str, &str, &str)] = &[\n"
             '("colour", "Purple", "パープル"),\n'
             '("name", "Name", "ref の名前空間が競合しています"),\n];',
             'const ACTION_LABELS: &[(&str, &str)] = &[("Quoted コミット", "commit")];',
@@ -466,7 +463,7 @@ RULES: tuple[Rule, ...] = (
             'const USER_DATA: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
             'const LABELS: &[(&str, Msg)] = &[("コミット", Msg::Commit)];',
             '// const LABELS: &[(&str, &str, &str)] = &[("a", "b", "コミット")];',
-            '#[cfg(test)] mod tests {\n'
+            "#[cfg(test)] mod tests {\n"
             'const LABELS: &[(&str, &str, &str)] = &[("merge", "Merge", "マージ")];\n}',
         ),
     ),

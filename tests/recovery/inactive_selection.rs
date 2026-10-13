@@ -151,14 +151,6 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                 for active in [true, false] {
                     app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
                     cx.run_until_parked();
-                    if count == 1 {
-                        crate::recovery_layout::draw(cx, window, (1440., 900.));
-                        assert!(
-                            e2e::control_bounds(window.window_id(), "repo-tab-0").is_none(),
-                            "single document hides the neutral strip (#1179)"
-                        );
-                        continue;
-                    }
                     for index in 0..count {
                         let name = format!("repo-tab-{index}");
                         let expected = if index == 0 {

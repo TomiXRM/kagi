@@ -29,3 +29,12 @@ gpui-terminal 0.1.0(crates.io 唯一の公開版)はマウス選択が **TODO �
 - repo にクレート1個分のソースが入る(小規模、許容)
 - 上流更新の追従は手動(diff は小さく保たれる前提)
 - Cargo.toml の「変更禁止」規約に vendor path 切替の例外履歴が1件付く(本 ADR が根拠)
+
+## Amendment — 2026-10-13: mode-owned clipboard paste (#1403)
+
+`TerminalView::paste_text` now owns generic bracketed-paste framing using the
+existing emulator mode. It refuses unapproved plain multi-line text without
+writing; Kagi owns the confirmation UI. `SharedWriter::write_input` remains
+raw key transport only, replacing the former app-side clipboard write path.
+This is a safety correction within the minimal vendor-fix policy; no second
+mode parser or Kagi-specific modal dependency is introduced into the vendor.

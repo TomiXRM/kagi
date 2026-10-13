@@ -44,6 +44,7 @@ impl KagiApp {
             self.activity_hover = None;
         }
         if visible <= 0. {
+            self.yield_terminal_focus(window, cx);
             self.bottom_tab_focus
                 .yield_focus(self.root_focus.as_ref(), window, cx);
             return None;
@@ -264,15 +265,14 @@ impl KagiApp {
         // Case 1: running terminal view.
         if let Some(session) = active_session {
             if let Some(ref view_entity) = session.view {
-                // cmd-v paste: gpui-terminal 0.1.0 has no built-in clipboard
-                // paste, so an ancestor key listener reads the gpui clipboard
-                // and writes straight to the PTY. Key events bubble along the
-                // focus path, so this fires while the terminal is focused.
+                // Clipboard mode handling lives on TerminalView; raw completion
+                // keys keep the shared PTY writer and never receive paste framing.
                 let paste_writer = session.paste_writer.clone();
                 let tab_writer = paste_writer.clone();
                 let shift_tab_writer = paste_writer.clone();
                 let term_focus = view_entity.read(cx).focus_handle().clone();
                 return div()
+                    .id("terminal-input")
                     .flex_1()
                     .min_h(px(0.))
                     .w_full()
@@ -281,6 +281,12 @@ impl KagiApp {
                     // those keys while the terminal is focused — they flow to the
                     // terminal's own on_key_down → PTY (history, vim, etc.).
                     .key_context("Terminal")
+                    .role(gpui::Role::Group)
+                    .aria_label("Terminal")
+                    .aria_description(terminal::input::focus_description())
+                    .on_action(cx.listener(|this, _: &TerminalExitFocus, window, cx| {
+                        this.exit_terminal_focus(window, cx);
+                    }))
                     // Tab / Shift-Tab → PTY (shell completion; user report).
                     // gpui_component::Root binds "tab" to focus cycling in its
                     // "Root" context, and bindings run before key listeners —
@@ -289,13 +295,13 @@ impl KagiApp {
                     // (mod.rs), which outranks Root's binding.
                     .on_action(cx.listener(move |_this, _: &TerminalSendTab, _w, _cx| {
                         if let Some(writer) = tab_writer.as_ref() {
-                            writer.paste_text("\t");
+                            writer.write_input("\t");
                         }
                     }))
                     .on_action(
                         cx.listener(move |_this, _: &TerminalSendShiftTab, _w, _cx| {
                             if let Some(writer) = shift_tab_writer.as_ref() {
-                                writer.paste_text("\x1b[Z");
+                                writer.write_input("\x1b[Z");
                             }
                         }),
                     )
@@ -309,25 +315,17 @@ impl KagiApp {
                             window.focus(&term_focus, cx);
                         }),
                     )
-                    .on_key_down(
-                        cx.listener(move |_this, event: &KeyDownEvent, _window, cx| {
-                            let ks = &event.keystroke;
-                            if ks.modifiers.platform && ks.key == "v" {
-                                if let Some(writer) = paste_writer.as_ref() {
-                                    if let Some(text) =
-                                        cx.read_from_clipboard().and_then(|item| item.text())
-                                    {
-                                        writer.paste_text(&text);
-                                        eprintln!(
-                                            "[kagi] terminal: paste {} chars",
-                                            text.chars().count()
-                                        );
-                                    }
-                                }
-                                cx.stop_propagation();
+                    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
+                        let ks = &event.keystroke;
+                        if ks.modifiers.platform && ks.key == "v" {
+                            if let Some(text) =
+                                cx.read_from_clipboard().and_then(|item| item.text())
+                            {
+                                this.paste_into_terminal(text, cx);
                             }
-                        }),
-                    )
+                            cx.stop_propagation();
+                        }
+                    }))
                     .child(view_entity.clone())
                     .into_any();
             }

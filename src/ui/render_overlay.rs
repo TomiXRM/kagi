@@ -442,6 +442,9 @@ impl KagiApp {
                     .when_some(self.trust_repo_modal().cloned(), |el, modal| {
                         el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
                     })
+                    .when_some(self.terminal_paste_modal().cloned(), |el, modal| {
+                        el.child(super::terminal::input::render_paste_confirmation(modal, cx))
+                    })
                     // ── Unlock-worktree confirmation ─────────────────
                     .when_some(unlock_worktree_modal.take(), |el, modal| {
                         el.child(render_unlock_worktree_modal(

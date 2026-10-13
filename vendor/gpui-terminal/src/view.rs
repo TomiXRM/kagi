@@ -1149,6 +1149,30 @@ impl TerminalView {
         &self.focus_handle
     }
 
+    /// kagi: Respect the emulator's parsed DECSET/DECRST ?2004 mode.
+    /// Returns false without writing when plain multi-line input needs approval.
+    pub fn paste_text(&self, text: &str, multiline_confirmed: bool) -> bool {
+        let bracketed = self
+            .state
+            .mode()
+            .contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
+        if !bracketed && !multiline_confirmed && text.contains(['\n', '\r']) {
+            return false;
+        }
+        // Hold one writer lock across both delimiters and the exact payload.
+        // Keystrokes and query replies cannot interleave with paste framing.
+        let mut writer = self.stdin_writer.lock();
+        if bracketed {
+            let _ = writer.write_all(b"\x1b[200~");
+        }
+        let _ = writer.write_all(text.as_bytes());
+        if bracketed {
+            let _ = writer.write_all(b"\x1b[201~");
+        }
+        let _ = writer.flush();
+        true
+    }
+
     /// Update the terminal configuration.
     ///
     /// This method updates the terminal's configuration, including font settings,

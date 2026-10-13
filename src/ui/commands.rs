@@ -1336,7 +1336,7 @@ pub fn effective_keystroke(id: &str) -> Option<String> {
 /// - all Edit actions (os_action only — must not shadow text-input).
 use crate::ui::{
     CloseMainDiff, CommitFirst, CommitLast, CommitPageDown, CommitPageUp, CopyDiffSelection,
-    DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane, SaveEditorFile,
+    DiffNextFile, DiffPrevFile, PrModeNextPane, PrModePrevPane, SaveEditorFile, TerminalExitFocus,
     TerminalSendShiftTab, TerminalSendTab,
 };
 
@@ -1389,6 +1389,8 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", TerminalSendTab, Some("Terminal")),
         KeyBinding::new("shift-tab", TerminalSendShiftTab, Some("Terminal")),
+        KeyBinding::new("ctrl-shift-tab", TerminalExitFocus, Some("Terminal")),
+        KeyBinding::new("secondary-shift-j", TerminalExitFocus, Some("Terminal")),
     ]);
     // Arrow keys step through files while the main diff is open
     // (no-ops otherwise; see main_diff_step). Scoped `!Terminal` so up/down
@@ -2168,6 +2170,9 @@ impl KagiApp {
     pub(super) fn toggle_bottom_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_settings_for_command(window, cx);
         self.bottom_panel_open = !self.bottom_panel_open;
+        if !self.bottom_panel_open {
+            self.yield_terminal_focus(window, cx);
+        }
         cx.notify();
     }
 

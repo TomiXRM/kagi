@@ -62,7 +62,6 @@ pub fn render_editor(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // Embedded as the CENTER main area; the right Conflict Dashboard is always
@@ -75,7 +74,7 @@ pub fn render_editor(
         .min_w(px(0.))
         .bg(rgb(theme().bg_base))
         .child(render_toolbar(mode, chrome, path, cx))
-        .child(render_panes(mode, chrome, path, window_active, cx))
+        .child(render_panes(mode, chrome, path, cx))
         .into_any_element()
 }
 
@@ -246,7 +245,6 @@ fn render_panes(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     // No hunk model (binary / single-sided) → guidance message.
@@ -364,7 +362,7 @@ fn render_panes(
         .min_h(px(0.))
         .flex_basis(relative(result_frac))
         .flex_shrink(1.)
-        .child(render_result_pane(mode, chrome, path, window_active, cx));
+        .child(render_result_pane(mode, chrome, path, cx));
 
     // The split region is measured for the horizontal divider drag.
     let geom = chrome.geom.clone();
@@ -1429,7 +1427,6 @@ fn render_result_pane(
     mode: &ConflictMode,
     chrome: &EditorChrome,
     path: &std::path::Path,
-    window_active: bool,
     cx: &mut Context<ConflictView>,
 ) -> gpui::AnyElement {
     let Some(inputs) = chrome.inputs.as_ref().filter(|i| i.path == path) else {
@@ -1493,7 +1490,7 @@ fn render_result_pane(
                 .text_color(rgb(theme().text_label))
                 .child(SharedString::from(Msg::EditorResultOutput.t())),
         )
-        .child(mode_toggle(editing, window_active, toggle))
+        .child(mode_toggle(editing, toggle))
         .child(
             div()
                 .flex_grow(1.)
@@ -1566,26 +1563,25 @@ fn render_result_pane(
 }
 
 /// A two-segment Preview | Edit toggle (UX-015).
-fn mode_toggle<H>(editing: bool, window_active: bool, handler: H) -> gpui::Stateful<gpui::Div>
+fn mode_toggle<H>(editing: bool, handler: H) -> gpui::Stateful<gpui::Div>
 where
     H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let seg = |label: &str, active: bool| {
-        let accent = if active {
-            if !window_active {
-                theme().text_main
-            } else {
-                theme().accent_text_on(theme().ui_selected())
-            }
+    let seg = |probe: &'static str, label: &str, active: bool| {
+        let foreground = rgb(if active {
+            theme().text_main
         } else {
             theme().text_sub
-        };
+        });
         div()
             .px(theme::scaled_px(7.))
             .py(theme::scaled_px(2.))
             .text_size(theme::scaled_px(10.))
-            .text_color(rgb(accent))
-            .when(active, |s| s.bg(theme().selected_for_window(window_active)))
+            .text_color(foreground)
+            .when(active, |s| s.bg(theme().segment_selected_bg()))
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                el.relative().child(super::e2e::measure_inside(probe))
+            })
             .child(SharedString::from(label.to_string()))
     };
     div()
@@ -1597,8 +1593,16 @@ where
         .border_color(rgb(theme().surface))
         .overflow_hidden()
         .cursor_pointer()
-        .child(seg(Msg::EditorPreviewMode.t(), !editing))
-        .child(seg(Msg::EditorEditMode.t(), editing))
+        .child(seg(
+            "conflict-result-preview",
+            Msg::EditorPreviewMode.t(),
+            !editing,
+        ))
+        .child(seg(
+            "conflict-result-edit",
+            Msg::EditorEditMode.t(),
+            editing,
+        ))
         .on_click(handler)
 }
 

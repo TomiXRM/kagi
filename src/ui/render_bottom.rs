@@ -160,13 +160,13 @@ impl KagiApp {
                 .rounded(theme::scaled_px(4.))
                 .text_xs()
                 .cursor_pointer()
-                .text_color(rgb(if selected {
-                    theme().text_main
+                .text_color(if selected {
+                    rgb(theme().text_main)
                 } else {
-                    theme().text_muted
-                }))
+                    rgb(theme().text_muted)
+                })
                 .when(selected, |cell| {
-                    cell.bg(theme().selected_for_window(self.window_active))
+                    cell.bg(theme().segment_selected_bg())
                         .font_weight(gpui::FontWeight::MEDIUM)
                 })
                 .when(!selected, |cell| {

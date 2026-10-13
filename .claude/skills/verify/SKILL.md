@@ -135,6 +135,24 @@ activation input under `gui-e2e`; it never activates an OS window or takes the
 user's foreground. Pair it with `inactive_selection_tests` in kagi-ui-core
 for all-preset primary-label contrast.
 
+For #1468 use
+`KAGI_GUI_E2E_ONLY='selection_on_accent,inactive_selection,sidebar_rows,pr_lane_selected,commit_panel_selection_hover,graph_'`
+with KEEP_GOING. `selection_on_accent` checks native opaque system-blue Graph
+fills, actual summary/ref-chip/secondary label paint, non-key grey/normal row
+labels, retained identity/geometry and native primary-button labels across all
+presets. Sidebar and Commit Panel selected segments must instead paint neutral
+grey (not accent) and retain ordinary foregrounds in both activation states.
+See [ADR-0125 amendment](../../../docs/adr/0125-apple-hig-themes.md#amendment--2026-10-13-finder-style-on-accent-labels-1468).
+Pair with UI-core `selection_on_accent` / `finder_accent` and system-accent
+injection tests. The scenario also exercises selected PR sidebar cards and
+enabled menu hover/keyboard highlights, including explicit child-label paint.
+Tier B uses the plain build, isolated profile and a copy of the stress fixture:
+Apple Light/Dark selected Graph/file/PR sidebar rows, neutral segments,
+accent-filled primary buttons and menu-hover PNGs,
+plus one owned Finder list window/file selection captured by window ID and
+closed afterward. Active-window screenshots require owner-authorized brief
+activation of only the launched PID, with the prior foreground app restored.
+
 For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
 with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,
 compares its Button role/name/toggled assignments, measures real button bounds,
@@ -3314,6 +3332,9 @@ with KEEP_GOING. Dashboard coverage samples native selected-row fills before
 and during hover in active/inactive windows, retains PR-number focus/AX identity
 and checks one Enter/Space activation. Apple Dark's active and inactive tokens
 can legitimately match; each state must still match its own resolved token.
+The high-zoom setup sends a native wheel event inside the focused row to expose
+the sampled neighbor without moving focus; distinct live bounds reject retired
+virtualized-row probe coordinates.
 The hidden-clone scenario holds production dispatch before a real fixture clone,
 hides its card and opens repository B. The rendered Status names the frozen
 source; Tab reaches the pinned Button's existing keyed focus owner and

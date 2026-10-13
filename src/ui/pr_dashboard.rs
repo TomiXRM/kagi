@@ -562,6 +562,7 @@ fn render_table_row(
     // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
     // width and the fixed columns land at a different x on each row (user
     // report).
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let cells = div()
         .flex_1()
         .min_w(px(0.))
@@ -570,7 +571,11 @@ fn render_table_row(
         .flex_row()
         .items_center()
         .text_xs()
-        .text_color(rgb(theme().text_muted))
+        .text_color(if selection_on_accent {
+            theme().selection_secondary_foreground(window_active)
+        } else {
+            rgb(theme().text_muted).into()
+        })
         .child(
             div()
                 .w(theme::scaled_px(COL_NO))
@@ -609,7 +614,11 @@ fn render_table_row(
                         .w_full()
                         .truncate()
                         .text_sm()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .child(safe_text(&pr.title)),
                 )
                 .child(
@@ -631,11 +640,16 @@ fn render_table_row(
                         pr.number
                     )))
                 })
-                .text_color(rgb(if matches!(why, PrReason::Draft) {
-                    theme().text_muted
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
                 } else {
-                    attention_color(bucket)
-                }))
+                    rgb(if matches!(why, PrReason::Draft) {
+                        theme().text_muted
+                    } else {
+                        attention_color(bucket)
+                    })
+                    .into()
+                })
                 .child(SharedString::from(state)),
         )
         .child(
@@ -656,11 +670,16 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_CHECKS))
                 .flex_shrink_0()
-                .text_color(rgb(if pr.failed_checks() > 0 {
-                    theme().color_blocker
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
                 } else {
-                    glyph_ink
-                }))
+                    rgb(if pr.failed_checks() > 0 {
+                        theme().color_blocker
+                    } else {
+                        glyph_ink
+                    })
+                    .into()
+                })
                 .child(SharedString::from(checks)),
         )
         .child(
@@ -698,14 +717,15 @@ fn render_table_row(
             kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
-        )
-        .when(!selected, super::timeline_row::clickable),
+        ),
         position,
         size,
         label,
         selected,
     )
     .relative()
+    .cursor_pointer()
+    .when(!selected, super::timeline_row::clickable)
     .when(cfg!(feature = "gui-e2e"), |row| {
         row.child(super::e2e::measure_inside(format!(
             "pr-home-row-{}",
@@ -715,6 +735,9 @@ fn render_table_row(
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
             .cursor_pointer()
+    })
+    .when(selection_on_accent, |row| {
+        row.text_color(theme().selection_foreground(window_active))
     })
     .items_center()
     .flex_shrink_0()

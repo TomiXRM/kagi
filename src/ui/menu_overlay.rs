@@ -33,6 +33,7 @@ pub fn render_menu_overlay<A>(
     on_dismiss: impl Fn(&mut KagiApp, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
     on_select: impl Fn(&mut KagiApp, A, &mut Window, &mut Context<KagiApp>) + Clone + 'static,
     keys: Option<&MenuKeys>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
@@ -77,6 +78,7 @@ where
         groups: &groups,
         keys,
         parent: None,
+        window_active,
     };
     div()
         .size_full()
@@ -100,6 +102,7 @@ struct Panel<'a, A> {
     groups: &'a [MenuGroup<A>],
     keys: Option<&'a MenuKeys>,
     parent: Option<&'a MenuKeys>,
+    window_active: bool,
 }
 
 fn menu_height<A>(panel: &Panel<A>) -> f32 {
@@ -170,6 +173,7 @@ where
                         groups,
                         keys: Some(&child_keys),
                         parent: Some(keys),
+                        window_active: panel.window_active,
                     };
                     layer = layer.child(render_panels(&child, on_select, on_dismiss, window, cx));
                 }
@@ -359,6 +363,7 @@ where
                 item,
                 slot,
                 panel.keys,
+                panel.window_active,
                 (*on_select).clone(),
                 cx,
             ));
@@ -439,6 +444,7 @@ fn render_item<A, S>(
     item: &MenuItem<A>,
     slot: usize,
     keys: Option<&MenuKeys>,
+    window_active: bool,
     on_select: S,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement
@@ -450,13 +456,13 @@ where
     let enabled = item.state == ItemState::Enabled;
     let mut row = base_row(&control, item);
     if let Some(keys) = keys {
-        row = focus_row(row, keys, slot, cx);
+        row = focus_row(row, keys, slot, enabled, window_active, cx);
     }
     if matches!(item.kind, MenuItemKind::Submenu(_)) {
         row = row.child("›").aria_expanded(
             keys.is_some_and(|keys| keys.submenu().is_some_and(|(at, _)| at == slot)),
         );
-        if let Some(keys) = keys {
+        if let Some(keys) = keys.filter(|_| enabled) {
             row = submenu_row(row, keys, slot, cx);
         }
     } else if let MenuItemKind::Command(action) = &item.kind {
@@ -477,7 +483,7 @@ where
         }));
     }
     row = if enabled {
-        row.hover(|style| style.bg(rgb(theme().selected)).cursor_default())
+        row.hover(move |style| highlight_style(style, window_active).cursor_default())
     } else {
         row.hover(|style| style.bg(rgb(theme().surface)))
             .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
@@ -499,6 +505,11 @@ fn base_row<A>(control: &SharedString, item: &MenuItem<A>) -> gpui::Stateful<gpu
     } else {
         item.label.clone()
     };
+    let primary = div().flex_1().truncate().child(text);
+    #[cfg(feature = "gui-e2e")]
+    let primary = primary
+        .relative()
+        .child(super::e2e::measure_inside(format!("{control}-primary")));
     div()
         .id(control.clone())
         .role(Role::MenuItem)
@@ -511,19 +522,41 @@ fn base_row<A>(control: &SharedString, item: &MenuItem<A>) -> gpui::Stateful<gpu
         .text_sm()
         .text_color(rgb(color))
         .overflow_hidden()
-        .child(div().flex_1().truncate().child(text))
+        .child(primary)
+}
+
+/// Enabled menu highlights share the row-selection role, without erasing
+/// semantic foregrounds in non-Apple themes or inactive owner windows.
+pub(crate) fn highlight_style(
+    style: gpui::StyleRefinement,
+    window_active: bool,
+) -> gpui::StyleRefinement {
+    let style = style.bg(theme().selected_for_window(window_active));
+    if theme().selection_uses_on_accent(true, window_active) {
+        style.text_color(theme().selection_foreground(window_active))
+    } else {
+        style
+    }
 }
 
 pub(crate) fn focus_row(
     row: gpui::Stateful<gpui::Div>,
     keys: &MenuKeys,
     slot: usize,
+    enabled: bool,
+    window_active: bool,
     cx: &gpui::App,
 ) -> gpui::Stateful<gpui::Div> {
     let probe = keys.clone();
     row.track_focus(&keys.item(slot, cx).tab_index(0).tab_stop(false))
         .on_key_down(super::keyboard_nav::stop_activation_keys)
-        .focus_visible(|style| style.bg(rgb(theme().selected)))
+        .focus_visible(move |style| {
+            if enabled {
+                highlight_style(style, window_active)
+            } else {
+                style.bg(rgb(theme().selected))
+            }
+        })
         .child(
             canvas(
                 |_, _, _| {},

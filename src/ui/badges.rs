@@ -41,7 +41,10 @@ pub(crate) enum WipRowClick {
     },
 }
 
-pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
+pub(crate) fn render_wip_diffstat(
+    stat: WipDiffStat,
+    selected_foreground: Option<gpui::Hsla>,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_row()
@@ -52,12 +55,14 @@ pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
         .font_weight(gpui::FontWeight::BOLD)
         .child(
             div()
-                .text_color(rgb(theme().change_added))
+                .text_color(selected_foreground.unwrap_or_else(|| rgb(theme().change_added).into()))
                 .child(SharedString::from(format!("+{}", stat.additions))),
         )
         .child(
             div()
-                .text_color(rgb(theme().change_deleted))
+                .text_color(
+                    selected_foreground.unwrap_or_else(|| rgb(theme().change_deleted).into()),
+                )
                 .child(SharedString::from(format!("-{}", stat.deletions))),
         )
 }
@@ -78,6 +83,7 @@ pub(crate) fn render_badges_column(
     // instead of its semantic HEAD/branch/remote/tag colour, so pills agree with
     // the graph line / node / band. `None` = classic semantic colours.
     lane_pill_color: Option<u32>,
+    selected_presentation: Option<bool>,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Content layout (reworked — user report: a label ellipsized at a fixed
@@ -170,7 +176,17 @@ pub(crate) fn render_badges_column(
         let worktrees = badge.worktrees.clone();
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
-        let name_el = div().min_w(px(0.)).truncate().child(name);
+        let badge_foreground = selected_presentation
+            .filter(|active| theme().selection_uses_on_accent(true, *active))
+            .map(|active| theme().selection_foreground(active))
+            .unwrap_or_else(|| rgb(badge_text).into());
+        let name_el = div().min_w(px(0.)).truncate().child(name).when(
+            cfg!(feature = "gui-e2e") && selected_presentation.is_some() && is_primary,
+            |el| {
+                el.relative()
+                    .child(super::e2e::measure_inside("graph-selected-badge-label"))
+            },
+        );
         let name_el = if badge.kind == BadgeKind::Branch && !worktrees.is_empty() {
             super::e2e::measure_control("graph-worktree-branch-name", name_el)
         } else {
@@ -253,7 +269,7 @@ pub(crate) fn render_badges_column(
             .bg(gpui::rgba(badge_bg))
             .border_1()
             .border_color(gpui::rgba(badge_border))
-            .text_color(rgb(badge_text))
+            .text_color(badge_foreground)
             .text_sm()
             .flex()
             .flex_row()
@@ -279,7 +295,7 @@ pub(crate) fn render_badges_column(
                     .flex_shrink_0()
                     .w(theme::scaled_px(11.))
                     .h(theme::scaled_px(11.))
-                    .text_color(rgb(badge_text))
+                    .text_color(badge_foreground)
             }))
             .child(name_el);
 
@@ -524,7 +540,7 @@ pub(crate) fn render_provenance_badge(
         AgentKind::ClaudeCode => 0xf97316, // orange
         _ => 0x8b5cf6,                     // violet
     };
-    let (bg, border, _text) = theme::badge_style(hue);
+    let (bg, border, text) = theme::badge_style(hue);
     // Tooltip still names the agent (and review state) so hover carries the detail.
     let detail = provenance_detail(prov);
     let base_tip = if prov.reviewed {
@@ -540,6 +556,7 @@ pub(crate) fn render_provenance_badge(
         .bg(gpui::rgba(bg))
         .border_1()
         .border_color(gpui::rgba(border))
+        .text_color(rgb(text))
         .text_sm()
         .flex_shrink_0()
         .tooltip(move |window, cx| {

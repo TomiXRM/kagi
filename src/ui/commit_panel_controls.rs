@@ -87,6 +87,65 @@ fn button_paint(button: impl IntoElement) -> gpui::Stateful<gpui::Div> {
         .child(button)
 }
 
+/// The Stage/Unstage button stays inside its virtualized file-row slot.
+pub(super) fn inline_file_action(
+    view: &CommitPanelView,
+    drawn: &crate::ui::commit_panel_navigation::ChangesRows,
+    staged: bool,
+    fi: usize,
+    btn_id: &'static str,
+    cx: &mut Context<CommitPanelView>,
+) -> Button {
+    use crate::ui::button_style::{ButtonRole, KagiButton};
+    let (label, role) = if staged {
+        (Msg::CommitPanelUnstage.t(), ButtonRole::Warning)
+    } else {
+        (Msg::CommitPanelStage.t(), ButtonRole::Success)
+    };
+    let action_id = if staged {
+        "cp-row-unstage"
+    } else {
+        "cp-row-stage"
+    };
+    let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
+        if staged {
+            view.defer_unstage_file(fi, window, cx);
+        } else {
+            view.defer_stage_file(fi, window, cx);
+        }
+    });
+    KagiButton::styled(
+        (btn_id, fi),
+        e2e::commit_panel_labels::caption(action_id, label),
+        role,
+        cx,
+    )
+    .xsmall()
+    .h(theme::scaled_px(20.))
+    .py_0()
+    .text_xs()
+    .line_height(theme::scaled_px(16.))
+    // Keep focus inside the slot, clear of the next row's opaque paint.
+    .border_2()
+    .border_color(gpui::transparent_black())
+    .overflow_hidden()
+    .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
+    // Only the remembered row's inline action participates in Tab;
+    // preceding rows must not intercept Shift+Tab out of the section.
+    .tab_stop(crate::ui::commit_panel_navigation::action_tab_stop(
+        view, drawn, staged, fi,
+    ))
+    .min_h(px(20.))
+    .ml_2()
+    .flex_shrink_0()
+    .relative()
+    .child(e2e::commit_panel_labels::measure_hit_box(
+        action_id,
+        keyboard_nav::RING,
+    ))
+    .on_click(action_click)
+}
+
 pub(super) fn footer_button(
     view: &CommitPanelView,
     id: &'static str,
@@ -234,16 +293,18 @@ pub(super) fn view_selector(
                         .px_1p5()
                         .py_px()
                         .text_xs()
+                        .relative()
+                        .child(e2e::measure_inside(format!("{id}-label")))
                         .bg(if selected {
-                            theme().selected_for_window(view.window_active)
+                            theme().segment_selected_bg()
                         } else {
                             rgb(theme().surface).into()
                         })
-                        .text_color(rgb(if selected {
-                            theme().text_main
+                        .text_color(if selected {
+                            rgb(theme().text_main)
                         } else {
-                            theme().text_muted
-                        }))
+                            rgb(theme().text_muted)
+                        })
                         .hover(|s| s.cursor_default())
                         .child(e2e::commit_panel_labels::caption(id, label)),
                 ),

@@ -1,9 +1,8 @@
 //! Linux/FreeBSD in-app platform menu dropdown (ADR-0085).
 //!
-//! Moved verbatim from `ui/mod.rs` (T-HOTSPOT-UIMOD-001) as an additional
-//! `impl KagiApp` block. Behaviour and signatures are unchanged; a descendant
-//! module can access `KagiApp` privates, but `render_platform_menu_dropdown`
-//! is called from `render.rs` (a sibling), so it is `pub(crate)` here.
+//! Split from `ui/mod.rs` (T-HOTSPOT-UIMOD-001) as an additional `impl KagiApp`
+//! block. The owner passes its activation state so menu highlights follow the
+//! same render seam as selected rows.
 //!
 //! Only the Linux/FreeBSD titlebar opens the dropdown (`platform_menu_open`),
 //! but the renderer compiles on every target so the macOS GUI runner can lay
@@ -14,6 +13,7 @@ use crate::ui::*;
 impl KagiApp {
     pub(crate) fn render_platform_menu_dropdown(
         &self,
+        window_active: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         // Use the same filtered section as the visibility/keyboard gate; the
@@ -123,6 +123,7 @@ impl KagiApp {
                 .id(SharedString::from(format!(
                     "platform-menu-item-{ix}-{row_ix}"
                 )))
+                .group("platform-menu-row")
                 .flex()
                 .items_center()
                 .justify_between()
@@ -137,19 +138,46 @@ impl KagiApp {
                 })
                 .when(enabled, |s| {
                     s.cursor_pointer()
-                        .hover(|s| s.bg(rgb(theme().selected)))
+                        .hover(move |s| super::menu_overlay::highlight_style(s, window_active))
                         .on_click(invoke)
                 })
                 .when_some(disabled_reason, |s, reason| {
                     s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
                 })
-                .child(div().flex_1().truncate().child(SharedString::from(label)))
+                .child(
+                    div()
+                        .flex_1()
+                        .truncate()
+                        .child(SharedString::from(label))
+                        .when(cfg!(feature = "gui-e2e"), |s| {
+                            s.relative().child(super::e2e::measure_inside(format!(
+                                "platform-menu-cmd-{id}-primary"
+                            )))
+                        }),
+                )
                 .when(!key.is_empty(), move |s| {
                     s.child(
                         div()
+                            // Group hover must reach text layout, not only its paint probe.
+                            .id("shortcut")
                             .text_xs()
                             .text_color(rgb(theme().text_muted))
-                            .child(SharedString::from(key)),
+                            .when(
+                                enabled && theme().selection_uses_on_accent(true, window_active),
+                                |s| {
+                                    s.group_hover("platform-menu-row", |s| {
+                                        s.text_color(
+                                            theme().selection_secondary_foreground(window_active),
+                                        )
+                                    })
+                                },
+                            )
+                            .child(SharedString::from(key))
+                            .when(cfg!(feature = "gui-e2e"), |s| {
+                                s.relative().child(super::e2e::measure_inside(format!(
+                                    "platform-menu-cmd-{id}-shortcut"
+                                )))
+                            }),
                     )
                 });
             // Tier A reads the row's bounds (#935). Absolute and compiled out
@@ -192,7 +220,7 @@ impl KagiApp {
                 // themes appear here too.
                 commands::MenuNode::Submenu(commands::DynSubmenu::Theme) => {
                     for entry in commands::theme_menu_entries() {
-                        panel = panel.child(theme_row(cx, ix, row_ix, entry));
+                        panel = panel.child(theme_row(cx, ix, row_ix, entry, window_active));
                         row_ix += 1;
                     }
                 }
@@ -224,9 +252,19 @@ impl KagiApp {
                             .text_sm()
                             .text_color(rgb(theme().text_main))
                             .cursor_pointer()
-                            .hover(|style| style.bg(rgb(theme().selected)))
+                            .hover(move |style| {
+                                super::menu_overlay::highlight_style(style, window_active)
+                            })
                             .on_click(invoke)
-                            .child(div().flex_1().truncate().child(label));
+                            .child(div().flex_1().truncate().child(label).when(
+                                cfg!(feature = "gui-e2e"),
+                                |s| {
+                                    s.relative().child(super::e2e::measure_inside(format!(
+                                        "platform-menu-toolbar-{}-primary",
+                                        mode.as_str()
+                                    )))
+                                },
+                            ));
                         #[cfg(feature = "gui-e2e")]
                         let row = row.relative().child(super::e2e::measure_inside(format!(
                             "platform-menu-toolbar-{}",
@@ -283,6 +321,7 @@ fn theme_row(
     ix: usize,
     row_ix: usize,
     entry: commands::ThemeMenuEntry,
+    window_active: bool,
 ) -> gpui::AnyElement {
     let label = if entry.active {
         format!("\u{2713} {}", entry.name)
@@ -292,12 +331,18 @@ fn theme_row(
     // Tier A reads the row's bounds (#935); compiled out of normal builds.
     #[cfg(feature = "gui-e2e")]
     let probe = super::e2e::measure_inside(format!("platform-menu-theme-{}", entry.slug));
+    #[cfg(feature = "gui-e2e")]
+    let primary_probe =
+        super::e2e::measure_inside(format!("platform-menu-theme-{}-primary", entry.slug));
     let slug = entry.slug;
     let invoke = cx.listener(move |this, _: &gpui::ClickEvent, _window, cx| {
         this.platform_menu_open = None;
         this.set_theme(&slug, cx);
         cx.stop_propagation();
     });
+    let primary = div().flex_1().truncate().child(SharedString::from(label));
+    #[cfg(feature = "gui-e2e")]
+    let primary = primary.relative().child(primary_probe);
     let row = div()
         .id(SharedString::from(format!(
             "platform-menu-item-{ix}-{row_ix}"
@@ -310,9 +355,9 @@ fn theme_row(
         .text_sm()
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
+        .hover(move |s| super::menu_overlay::highlight_style(s, window_active))
         .on_click(invoke)
-        .child(div().flex_1().truncate().child(SharedString::from(label)));
+        .child(primary);
     #[cfg(feature = "gui-e2e")]
     let row = row.relative().child(probe);
     row.into_any_element()

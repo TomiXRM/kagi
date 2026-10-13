@@ -6,7 +6,7 @@ use kagi_domain::plan_note::{WorktreeNote, WorktreeRecovery, WorktreeTitle};
 use crate::i18n::Msg;
 
 pub(crate) const ADVICE_WORKTREE_DIRTY_BLOCKS_CHECKOUT_AFTER_CREATE: &str =
-    "作業ツリーに {} があります。branch 作成後の checkout で変更が失われる可能性があります。先に stash してください。";
+    "working tree に {} があります。branch 作成後の checkout で変更が失われる可能性があります。先に stash してください。";
 pub(crate) const ADVICE_WORKTREE_CREATES_LINKED_WORKTREE: &str =
     "リンク worktree を作成します(起点 {})。\nworktree `{}` / branch `{}`";
 pub(crate) const ADVICE_WORKTREE_LOCKED_WITH_REASON: &str =

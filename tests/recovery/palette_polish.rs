@@ -104,7 +104,12 @@ fn assert_single_fill(
                     (y * scale).into(),
                 )
                 .0;
-            let expected = theme::theme().selected;
+            let palette = theme::theme();
+            let expected = if window.is_window_active() {
+                palette.ui_selected()
+            } else {
+                palette.inactive_selected
+            };
             let rgb = [
                 (expected >> 16) as u8,
                 (expected >> 8) as u8,

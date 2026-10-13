@@ -303,6 +303,7 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                         },
                     );
                     let age = super::timeline_row::age(&issue.updated_at);
+                    let on_accent = theme().selection_uses_on_accent(active_row, app.window_active);
                     let content = div()
                         .flex_1()
                         .min_w(px(0.))
@@ -318,7 +319,11 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                                 .mb(px(3.))
                                 .text_sm()
                                 .line_height(theme::scaled_px(18.))
-                                .text_color(rgb(theme().text_main))
+                                .text_color(if on_accent {
+                                    theme().selection_foreground(app.window_active)
+                                } else {
+                                    rgb(theme().text_main).into()
+                                })
                                 .child(safe_text(&issue.title)),
                         )
                         .child(
@@ -330,7 +335,11 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                                 .w_full()
                                 .text_size(theme::scaled_px(10.))
                                 .line_height(theme::scaled_px(13.))
-                                .text_color(rgb(theme().text_muted))
+                                .text_color(if on_accent {
+                                    theme().selection_secondary_foreground(app.window_active)
+                                } else {
+                                    rgb(theme().text_muted).into()
+                                })
                                 .child(div().flex_shrink_0().child(safe_text(&format!(
                                     "{age} · {}",
                                     super::i18n::issue_comments(issue.comment_count)

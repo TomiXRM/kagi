@@ -90,14 +90,29 @@ pub(crate) fn render_rows(
             let is_selected = selected == Some(ix);
             let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 
-            // Selected row gets a prominent surface highlight;
-            // even/odd stripes apply otherwise.
+            // Selection wins over zebra striping.
             let row_bg = if is_selected {
                 theme().selected_for_window(window_active)
             } else if ix % 2 == 0 {
                 rgb(theme().bg_base).into()
             } else {
                 rgb(theme().bg_row_alt).into()
+            };
+            let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+            let foreground = if uses_on_accent {
+                theme().selection_foreground(window_active)
+            } else {
+                rgb(theme().text_main).into()
+            };
+            let secondary_foreground = if uses_on_accent {
+                theme().selection_secondary_foreground(window_active)
+            } else {
+                rgb(theme().text_sub).into()
+            };
+            let muted_foreground = if uses_on_accent {
+                theme().selection_secondary_foreground(window_active)
+            } else {
+                rgb(theme().text_muted).into()
             };
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
             // BEHIND the graph column only and tinted by this row's lane colour.
@@ -255,6 +270,7 @@ pub(crate) fn render_rows(
                 el.child(super::e2e::measure_inside("graph-commit-row"))
             })
             .bg(row_bg)
+            .text_color(foreground)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
             // Row-wide Tooltip preserves complete subjects; child ref/author
@@ -275,6 +291,7 @@ pub(crate) fn render_rows(
                 badge_col_w,
                 connector_color,
                 pill_lane,
+                is_selected.then_some(window_active),
                 &mut *cx,
             ))
             // ── Inner divider spacer (badge|graph handle width) ──
@@ -454,14 +471,14 @@ pub(crate) fn render_rows(
                     }
                 })
             })
-            .child(metadata::subject(row, ix, subject_min))
+            .child(metadata::subject(row, ix, subject_min, foreground))
             // Issue #337: AI-agent provenance badge (nothing when the
             // commit is unclassifiable — prefer no badge to a false one).
             .when_some(row.provenance.as_ref(), |el, prov| {
                 el.child(badges::render_provenance_badge(prov, ix))
             })
-            .child(metadata::author(row, ix))
-            .child(metadata::age(row, ix, now))
+            .child(metadata::author(row, ix, secondary_foreground))
+            .child(metadata::age(row, ix, now, muted_foreground))
         })
         .collect()
 }

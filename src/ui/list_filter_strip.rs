@@ -155,7 +155,6 @@ impl KagiApp {
 fn chip(
     id: &'static str,
     active: bool,
-    window_active: bool,
     label: &str,
     app: &KagiApp,
     cx: &gpui::App,
@@ -193,17 +192,17 @@ fn chip(
     .rounded_sm()
     .border_1()
     .border_color(rgb(theme().selected))
-    .when(active, |el| {
-        el.bg(theme().selected_for_window(window_active))
-    })
+    .when(active, |el| el.bg(theme().segment_selected_bg()))
     .text_xs()
-    .text_color(rgb(if active {
-        theme().text_main
+    .text_color(if active {
+        rgb(theme().text_main)
     } else {
-        theme().text_sub
-    }))
+        rgb(theme().text_sub)
+    })
     .cursor_pointer()
-    .hover(|style| style.bg(rgb(theme().surface)))
+    .when(!active, |el| {
+        el.hover(|style| style.bg(rgb(theme().surface)))
+    })
 }
 
 fn menu_chip(
@@ -218,7 +217,7 @@ fn menu_chip(
     let owner = app.active_session();
     super::e2e::measure_control(
         id,
-        chip(id, active, app.window_active, &label, app, cx)
+        chip(id, active, &label, app, cx)
             .aria_expanded(
                 app.filter_menu_visible()
                     && app
@@ -387,7 +386,6 @@ pub(super) fn render_strip(
             chip(
                 "list-filter-direction",
                 false,
-                app.window_active,
                 match order.direction {
                     SortDirection::Ascending => Msg::ListSortAscending.t(),
                     SortDirection::Descending => Msg::ListSortDescending.t(),
@@ -410,7 +408,6 @@ pub(super) fn render_strip(
             chip(
                 "list-filter-clear",
                 false,
-                app.window_active,
                 Msg::ListFilterClear.t(),
                 app,
                 cx,
@@ -434,24 +431,17 @@ pub(super) fn render_strip(
             })),
         ))
         .child(
-            chip(
-                "list-filter-refresh",
-                false,
-                app.window_active,
-                Msg::PrRefresh.t(),
-                app,
-                cx,
-            )
-            .child(SharedString::from(Msg::PrRefresh.t()))
-            .on_click(cx.listener(move |app, _, _, cx| {
-                if app.active_session() != owner {
-                    return;
-                }
-                match kind {
-                    ListKind::Prs => app.refresh_pr_strip(cx),
-                    ListKind::Issues => app.refresh_github_issues(cx),
-                }
-            })),
+            chip("list-filter-refresh", false, Msg::PrRefresh.t(), app, cx)
+                .child(SharedString::from(Msg::PrRefresh.t()))
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    if app.active_session() != owner {
+                        return;
+                    }
+                    match kind {
+                        ListKind::Prs => app.refresh_pr_strip(cx),
+                        ListKind::Issues => app.refresh_github_issues(cx),
+                    }
+                })),
         );
     strip.into_any_element()
 }
@@ -717,6 +707,7 @@ pub(super) fn render_menu(
             }
         },
         Some(&app.ui().filter_controls.menu_keys),
+        app.window_active_for_render(window),
         window,
         cx,
     ))

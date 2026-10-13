@@ -4997,8 +4997,6 @@ pub fn menu_heading(section: &str, language: Lang) -> &str {
         "Edit" => "編集",
         "View" => "表示",
         "Repository" => "リポジトリ",
-        "Branch" => "ブランチ",
-        "Commit" => "コミット",
         "Window" => "ウインドウ",
         "Help" => "ヘルプ",
         "Theme" => "テーマ",

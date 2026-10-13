@@ -114,14 +114,14 @@ fn stale_answers(
 ) {
     // A and B deliberately use the same branch name: matching input text is
     // not matching the form which opened the system chooser.
-    let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+    let (task, answer) = deferred::<Result<Option<std::path::PathBuf>, String>>(cx);
     kagi::ui::e2e::queue_folder_answer(task);
     click_button(cx, window);
     assert_eq!(kagi::ui::e2e::take_folder_prompts().len(), 1);
     reopen(cx, app, window, head);
     let before = form_snapshot(cx, app);
     let plans = plan_count();
-    answer.send(Some(chosen.to_path_buf()));
+    answer.send(Ok(Some(chosen.to_path_buf())));
     cx.run_until_parked();
     paint(cx, window);
     cx.advance_clock(Duration::from_millis(600));
@@ -135,7 +135,7 @@ fn stale_answers(
     // Reuse the original Input entity after departure/return to independently
     // exercise attachment visit ownership rather than form replacement.
     let original = cx.read(|cx| app.read(cx).create_worktree_modal().unwrap().clone());
-    let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+    let (task, answer) = deferred::<Result<Option<std::path::PathBuf>, String>>(cx);
     kagi::ui::e2e::queue_folder_answer(task);
     click_button(cx, window);
     assert_eq!(kagi::ui::e2e::take_folder_prompts().len(), 1);
@@ -152,7 +152,7 @@ fn stale_answers(
     paint(cx, window);
     let before = form_snapshot(cx, app);
     let plans = plan_count();
-    answer.send(Some(chosen.to_path_buf()));
+    answer.send(Ok(Some(chosen.to_path_buf())));
     cx.run_until_parked();
     paint(cx, window);
     cx.advance_clock(Duration::from_millis(600));
@@ -290,7 +290,7 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
 
         // Choose: the field becomes a new folder for the branch inside the
         // chosen one and is planned as typed input.
-        let (task, answer) = deferred::<Option<std::path::PathBuf>>(cx);
+        let (task, answer) = deferred::<Result<Option<std::path::PathBuf>, String>>(cx);
         kagi::ui::e2e::queue_folder_answer(task);
         let before = form_snapshot(cx, &app);
         let plans = plan_count();
@@ -301,7 +301,7 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
             before,
             "pending chooser changes nothing"
         );
-        answer.send(Some(chosen.clone()));
+        answer.send(Ok(Some(chosen.clone())));
         cx.run_until_parked();
         let expected = chosen.join("picked-one").display().to_string();
         settle(cx, &app, window, "the chosen folder's plan", |app| {

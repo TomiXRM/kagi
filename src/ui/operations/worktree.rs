@@ -106,7 +106,7 @@ impl KagiApp {
         });
         cx.spawn_in(window, async move |app, acx| {
             #[cfg(feature = "gui-e2e")]
-            let folder = receiver.await;
+            let folder = receiver.await.ok().flatten();
             #[cfg(not(feature = "gui-e2e"))]
             let folder = receiver
                 .await

@@ -198,6 +198,13 @@ pointer returns to that origin. Its native oracle independently calculates the
 mode-specific cap from the viewport, chrome, and compound Editor budget, checks
 overshoot against that cap, and requires visible movement whenever room remains.
 
+Horizontal Editor fitting measures its actual body bounds, excluding the host's
+Compact icon rail. Both side-pane presentation widths and divider inverse
+coordinates use those bounds, preserving the preferred widths while reserving
+180 reference pixels for a fully revealed, maximum-width buffer tab. The
+out-of-flow measurement requests a new frame only when horizontal geometry
+changes; it does not override manual tab scrolling on ordinary redraws.
+
 Copy retains the pinned selectable TextView's existing clipboard semantics:
 the shared Root trims outer whitespace, including the final newline. Snapshot
 source content remains unchanged; no local clipboard override or second

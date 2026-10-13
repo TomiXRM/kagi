@@ -1,6 +1,6 @@
 //! Editor buffer tabs: stable identity, bounded width and native horizontal overflow.
 use crate::EditorWorkspaceView;
-use gpui::{canvas, div, prelude::*, px, rgb, Context, Role, SharedString, Size};
+use gpui::{canvas, div, prelude::*, px, rgb, Bounds, Context, Role, SharedString, Size, Window};
 use gpui_component::{
     scroll::{Scrollbar, ScrollbarShow},
     tooltip::Tooltip,
@@ -14,6 +14,16 @@ use std::{
 };
 
 impl EditorWorkspaceView {
+    /// Actual Editor body coordinates, excluding any host-owned compact rail.
+    pub fn pane_bounds(&self, window: &Window) -> Bounds<gpui::Pixels> {
+        let bounds = self.tab_presentation.pane_bounds.get();
+        if bounds.size.width > px(0.) {
+            bounds
+        } else {
+            Bounds::new(gpui::Point::default(), window.viewport_size())
+        }
+    }
+
     /// Render-only compression shared with divider input's inverse conversion.
     pub fn pane_width_fraction(&self, available: gpui::Pixels) -> f32 {
         let tree = if self.show_tree { self.tree_w } else { 0. };
@@ -58,6 +68,30 @@ pub(crate) struct TabPresentation {
     active: RefCell<Option<PathBuf>>,
     zoom: Cell<f32>,
     viewport: Rc<Cell<Size<gpui::Pixels>>>,
+    pane_bounds: Rc<Cell<Bounds<gpui::Pixels>>>,
+}
+
+pub(crate) fn measure_pane_bounds(
+    view: &EditorWorkspaceView,
+    cx: &Context<EditorWorkspaceView>,
+) -> impl gpui::IntoElement {
+    let geometry = view.tab_presentation.pane_bounds.clone();
+    let entity = cx.weak_entity();
+    canvas(
+        move |bounds, window, _| {
+            let previous = geometry.replace(bounds);
+            if previous.origin.x != bounds.origin.x || previous.size.width != bounds.size.width {
+                let entity = entity.clone();
+                window.on_next_frame(move |window, cx| {
+                    let _ = entity.update(cx, |_, cx| cx.notify());
+                    window.refresh();
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
 }
 
 fn distinguishing_label(path: &Path, tabs: &[PathBuf]) -> String {

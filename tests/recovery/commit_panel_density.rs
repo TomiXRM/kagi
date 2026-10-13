@@ -58,6 +58,9 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                     }
                     for staged in [false, true] {
                         check(window.into(), staged, tree, zoom);
+                        if !tree {
+                            check_focus_ring(cx, window.into(), staged, (width, height));
+                        }
                     }
                     unmount(cx, app, window.into());
                 }
@@ -122,9 +125,9 @@ fn check(window: AnyWindowHandle, staged: bool, tree: bool, zoom: f32) {
         } else {
             "cp-row-stage"
         });
-        // The button probe excludes its two 1px borders, not its clickable frame.
+        // The row-action probe includes the reserved inset focus border.
         assert!(
-            action.size.height + px(2.) >= px(20.),
+            action.size.height >= px(20.),
             "Stage/Unstage tap target: {action:?}"
         );
         assert!(
@@ -132,4 +135,57 @@ fn check(window: AnyWindowHandle, staged: bool, tree: bool, zoom: f32) {
             "first flat row starts immediately within border"
         );
     }
+}
+
+fn check_focus_ring(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    staged: bool,
+    dimensions: (f32, f32),
+) {
+    let section = if staged { "st" } else { "us" };
+    let row = e2e::commit_panel_labels::focus_handle(&format!("cp-{section}-row-0")).unwrap();
+    cx.update_window(window, |_, window, cx| row.focus(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(cx, window, dimensions);
+    cx.simulate_keystrokes(window, "tab");
+    cx.run_until_parked();
+    draw(cx, window, dimensions);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            row.contains_focused(window, cx) && !row.is_focused(window)
+        })
+        .unwrap(),
+        "Tab enters the remembered row's Stage/Unstage button"
+    );
+    let first =
+        e2e::control_bounds(window.window_id(), &format!("cp-{section}-density-file-0")).unwrap();
+    let action = e2e::control_bounds(
+        window.window_id(),
+        if staged {
+            "cp-row-unstage"
+        } else {
+            "cp-row-stage"
+        },
+    )
+    .unwrap();
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("inline action focus ring");
+        let scale = window.scale_factor();
+        // The button is centered in the row, but at high zoom its paint frame
+        // is shorter than the slot. Sample its own lower border, not the gap.
+        let edge_y = first.center().y + action.size.height / 2. - px(0.5);
+        let pixel = image.get_pixel(
+            (f32::from(action.center().x) * scale) as u32,
+            (f32::from(edge_y) * scale) as u32,
+        ).0;
+        let color = theme::theme().ui_accent();
+        let expected = [(color >> 16) as u8, (color >> 8) as u8, color as u8];
+        assert!(
+            (0..3).all(|channel| pixel[channel].abs_diff(expected[channel]) <= 2),
+            "focused Stage/Unstage lower ring edge must survive adjacent row paint: {pixel:?}, expected {expected:?}"
+        );
+    })
+    .unwrap();
 }

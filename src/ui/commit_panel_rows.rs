@@ -291,6 +291,11 @@ fn render_cp_file_row(
     } else {
         (Msg::CommitPanelStage.t(), ButtonRole::Success)
     };
+    let action_id = if staged {
+        "cp-row-unstage"
+    } else {
+        "cp-row-stage"
+    };
     let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
         if staged {
             view.defer_unstage_file(fi, window, cx);
@@ -301,14 +306,7 @@ fn render_cp_file_row(
     file_row.child(
         KagiButton::styled(
             (btn_id, fi),
-            super::e2e::commit_panel_labels::caption(
-                if staged {
-                    "cp-row-unstage"
-                } else {
-                    "cp-row-stage"
-                },
-                label,
-            ),
+            super::e2e::commit_panel_labels::caption(action_id, label),
             role,
             cx,
         )
@@ -316,6 +314,12 @@ fn render_cp_file_row(
         .h(theme::scaled_px(20.))
         .py_0()
         .text_xs()
+        .line_height(theme::scaled_px(16.))
+        // Keep focus inside the slot, clear of the next row's opaque paint.
+        .border_2()
+        .border_color(gpui::transparent_black())
+        .overflow_hidden()
+        .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
         // Only the remembered row's inline action participates in Tab;
         // preceding rows must not intercept Shift+Tab out of the section.
         .tab_stop(super::super::commit_panel_navigation::action_tab_stop(
@@ -325,11 +329,10 @@ fn render_cp_file_row(
         .ml_2()
         .flex_shrink_0()
         .relative()
-        .child(super::e2e::measure_inside(if staged {
-            "cp-row-unstage"
-        } else {
-            "cp-row-stage"
-        }))
+        .child(super::e2e::commit_panel_labels::measure_hit_box(
+            action_id,
+            super::super::keyboard_nav::RING,
+        ))
         .on_click(action_click),
     )
 }

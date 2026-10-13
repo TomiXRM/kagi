@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Commit Panel Staged/Unstaged file lists use Finder-inspired 22-reference-pixel slots (at least 20 logical pixels) and shared 13-reference-pixel file typography in both List and Tree. Directory labels are vertically centered instead of leaving uneven space below them, section-header padding is reduced, and Stage/Unstage retains its minimum target and existing keyboard/accessibility behavior. (#1463, #1467)
+  - Review: Stage/Unstage draws its keyboard-focus border inside the unchanged click target so adjacent dense rows cannot cover its lower edge. Shared diffstat typography also applies to Inspector.
 - Relative ages follow the EN/JA UI language, including fully spoken accessibility units, without reloading repository models. Branch Cleanup merge dates now share Detail's local, per-instant DST-aware calendar; stored timestamps, staleness and deletion eligibility are unchanged. (#1454, #1455)
   - Review: Japanese Graph ages use short unit forms that fit the fixed column; visible and AX ages share one reference-clock read per list render.
 - Terminal plain clipboard paste now requires explicit approval for ASCII control bytes (except Tab) even without a newline. English/Japanese warnings name invisible control characters; Cancel sends zero bytes, while approved contents, ordinary Japanese text and clipboard Tab are delivered exactly once. Tab does not replace the newline warning. Bracketed-paste filtering and raw completion keys remain unchanged. (#1437)

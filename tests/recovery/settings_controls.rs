@@ -332,6 +332,9 @@ fn unwritable_directory(
         );
         std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0)).unwrap();
         click(cx, window, name);
+        if name == "settings-analyze-reset" {
+            click(cx, window, "settings-analyze-reset-confirm");
+        }
         let error = cx
             .read(|cx| {
                 app.read(cx)
@@ -369,6 +372,9 @@ fn analyze_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
     std::fs::write(&sentinel, b"original bytes").unwrap();
     for name in ["settings-analyze-save", "settings-analyze-reset"] {
         click(cx, window, name);
+        if name == "settings-analyze-reset" {
+            click(cx, window, "settings-analyze-reset-confirm");
+        }
         let error = cx
             .read(|cx| {
                 app.read(cx)

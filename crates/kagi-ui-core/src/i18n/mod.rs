@@ -238,6 +238,7 @@ pub enum Msg {
     MenuHideOthers,
     MenuShowAll,
     MenuServices,
+    ShortcutsRemapHelp,
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
@@ -2366,6 +2367,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
+            (En, ShortcutsRemapHelp) => "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\": \"secondary-shift-b\" で変更できます（\"\" は割り当て解除）。再起動すると反映されます。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",

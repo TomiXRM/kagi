@@ -499,7 +499,9 @@ pub fn scenario_context_menu_keys_covered(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
             title: "Keyboard Shortcuts".into(),
-            lines: vec![],
+            lines: vec![].into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus: cx.focus_handle(),
         });
         cx.notify();
     });
@@ -568,7 +570,9 @@ pub fn scenario_context_menu_keys_covered_row(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, cx| {
         app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
             title: "About".into(),
-            lines: vec![],
+            lines: vec![].into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus: cx.focus_handle(),
         });
         cx.notify();
     });
@@ -706,7 +710,9 @@ pub fn scenario_context_menu_keys_row_behind_info(cx: &mut VisualTestAppContext)
     app.update(cx, |app, cx| {
         app.menu_overlay = Some(kagi::ui::commands::MenuOverlay::Info {
             title: "About".into(),
-            lines: vec![],
+            lines: vec![].into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus: cx.focus_handle(),
         });
         cx.notify();
     });

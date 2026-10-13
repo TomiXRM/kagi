@@ -590,10 +590,7 @@ impl KagiApp {
         .detach();
     }
 
-    /// Close the tab at `index`.  Discards that tab's per-repo state only
-    /// (the repository itself is untouched).  Closing the last tab returns to
-    /// the Welcome screen (ADR-0027 / ADR-0028).
-    /// Persist the open tabs + active index to `settings.json` so a fresh
+    /// Persist open local tabs and the active repository identity so a fresh
     /// launch (or a Dock-reopen after the last window closed) restores the
     /// previous session.  Paths are joined with U+001F (unit separator) —
     /// settings.json is kagi-private and read back by the same tolerant
@@ -618,7 +615,14 @@ impl KagiApp {
             super::settings::write_setting("session_active", None);
         } else {
             super::settings::write_setting("session_repos", Some(&joined));
-            super::settings::write_setting("session_active", Some(&self.active_tab.to_string()));
+            let active = self
+                .tabs
+                .get(self.active_tab)
+                .filter(|tab| tab.remote.is_none());
+            super::settings::write_setting(
+                "session_active",
+                active.map(|tab| tab.path.to_string_lossy()).as_deref(),
+            );
         }
     }
 
@@ -1068,6 +1072,14 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         Some(s) if !s.is_empty() => s,
         _ => return,
     };
+    // Legacy numeric settings name an entry in the saved set, not in the
+    // filtered result. All new saves contain the local repository path itself.
+    let active_path = super::settings::read_setting("session_active").and_then(|identity| {
+        match identity.parse::<usize>() {
+            Ok(index) => saved.split('\u{1f}').nth(index).map(PathBuf::from),
+            Err(_) => Some(PathBuf::from(identity)),
+        }
+    });
     for raw in saved.split('\u{1f}') {
         let path = PathBuf::from(raw);
         if app.tabs.iter().any(|t| t.path == path) {
@@ -1090,10 +1102,15 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     if app.tabs.is_empty() {
         return;
     }
-    let active = super::settings::read_setting("session_active")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0)
-        .min(app.tabs.len() - 1);
+    // Missing/ephemeral active owners fall back to the first surviving local
+    // repository. With no survivors the early return above keeps initial Home.
+    let active = active_path
+        .and_then(|path| {
+            app.tabs
+                .iter()
+                .position(|tab| tab.remote.is_none() && tab.path == path)
+        })
+        .unwrap_or(0);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
     let session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();

@@ -130,6 +130,16 @@ mod settings_window;
 mod window_restore;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/close_window_initial_home.rs"]
+mod close_window_initial_home;
+#[cfg(target_os = "macos")]
+#[path = "recovery/shortcuts_panel_scroll.rs"]
+mod shortcuts_panel_scroll;
+#[cfg(target_os = "macos")]
+#[path = "recovery/tab_restore_active_identity.rs"]
+mod tab_restore_active_identity;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
 mod primary_button;
 
@@ -1567,6 +1577,18 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "tab_restore_active_identity",
+                Box::new(crate::tab_restore_active_identity::scenario_tab_restore_active_identity),
+            ),
+            (
+                "close_window_initial_home",
+                Box::new(crate::close_window_initial_home::scenario_close_window_initial_home),
+            ),
+            (
+                "shortcuts_panel_scroll",
+                Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
             ),
             (
                 "window_restore_position",

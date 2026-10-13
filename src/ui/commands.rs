@@ -945,13 +945,8 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         "commit.reset" => Disabled(Msg::ResetUnimplemented.t()),
 
         // ── Repo required ────────────────────────────────────────────────
-        "file.closeTab" => {
-            if has_repo || (app.home.is_some() && app.home_in_front()) {
-                Enabled
-            } else {
-                Disabled(Msg::NoTabsOpen.t())
-            }
-        }
+        // Cmd-W closes a document when present, otherwise the guarded host.
+        "file.closeTab" => Enabled,
         "file.openInTerminal" | "repo.openInFinder" => {
             if has_repo {
                 Enabled
@@ -1643,7 +1638,12 @@ pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
         .filter_map(|c| {
-            effective_keystroke(c.id).map(|k| (SharedString::from(c.label), SharedString::from(k)))
+            effective_keystroke(c.id).map(|key| {
+                (
+                    super::command_palette::command_label(c.id, i18n::lang()).into(),
+                    SharedString::from(key),
+                )
+            })
         })
         .collect()
 }
@@ -1678,7 +1678,9 @@ pub enum MenuOverlay {
     /// Read-only Keyboard Shortcuts panel, titled with body lines.
     Info {
         title: SharedString,
-        lines: Vec<SharedString>,
+        lines: std::rc::Rc<[SharedString]>,
+        scroll: gpui::ScrollHandle,
+        focus: gpui::FocusHandle,
     },
     /// ADR-0080's portable Settings overlay. macOS uses ADR-0223's independent
     /// native host instead (the E2E portable-host suite still exercises this).
@@ -1900,6 +1902,8 @@ impl KagiApp {
                     self.close_home_tab(cx);
                 } else if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);
+                } else if !self.hold_host_close(cx) {
+                    window.remove_window();
                 }
             }
             "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
@@ -2026,7 +2030,7 @@ impl KagiApp {
             }
 
             // ── Help ────────────────────────────────────────────────
-            "help.shortcuts" => self.open_shortcuts_overlay(),
+            "help.shortcuts" => self.open_shortcuts_overlay(window, cx),
             "help.documentation" => cx.open_url(GITHUB_URL),
             "help.reportIssue" => cx.open_url(ISSUES_URL),
 
@@ -2642,8 +2646,9 @@ impl KagiApp {
     }
 
     /// Build the Keyboard Shortcuts overlay from the registry (auto-generated).
-    fn open_shortcuts_overlay(&mut self) {
+    fn open_shortcuts_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_settings_for_overlay();
+        self.capture_overlay_return_focus(window, cx);
         let mut lines: Vec<SharedString> = shortcut_listing()
             .into_iter()
             .map(|(label, key)| SharedString::from(format!("{key}    {label}")))
@@ -2651,12 +2656,14 @@ impl KagiApp {
         // Tell the user these are re-mappable, and how (settings.json is the
         // one config surface kagi has; no in-app editor for this yet).
         lines.push(SharedString::from(""));
-        lines.push(SharedString::from(
-            "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
-        ));
+        lines.push(SharedString::from(Msg::ShortcutsRemapHelp.t()));
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         self.menu_overlay = Some(MenuOverlay::Info {
-            title: SharedString::from("Keyboard Shortcuts"),
-            lines,
+            title: super::command_palette::command_label("help.shortcuts", i18n::lang()).into(),
+            lines: lines.into(),
+            scroll: gpui::ScrollHandle::new(),
+            focus,
         });
     }
 
@@ -2672,7 +2679,12 @@ impl KagiApp {
                 branches,
                 rows,
             } => Some(self.render_branch_picker(mode, branches, rows, window, cx)),
-            MenuOverlay::Info { title, lines } => Some(self.render_info_overlay(title, lines, cx)),
+            MenuOverlay::Info {
+                title,
+                lines,
+                scroll,
+                focus,
+            } => Some(self.render_info_overlay(title, lines, (&scroll, &focus), window, cx)),
             // T-SETTINGS-001: the OpenLogi-style Settings window (the field
             // closures route apply/persist through the live `KagiApp` entity).
             MenuOverlay::Settings => Some(super::settings_view::render_settings_overlay(
@@ -2696,40 +2708,97 @@ impl KagiApp {
     fn render_info_overlay(
         &self,
         title: SharedString,
-        lines: Vec<SharedString>,
+        lines: std::rc::Rc<[SharedString]>,
+        navigation: (&gpui::ScrollHandle, &gpui::FocusHandle),
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let mut panel = div()
-            .w(theme::scaled_px(420.0))
-            .max_h(theme::scaled_px(480.0))
+        let (scroll, focus) = navigation;
+        let gutter = theme::scaled_px(16.);
+        let viewport = window.viewport_size();
+        let mut body = super::operations::oplog_restore_inspection::read_only_scroll_body(
+            scroll,
+            focus,
+            title.clone(),
+        )
+        .gap_0()
+        // Keep the last line clear of the body's fixed focus-border band.
+        .pb(gpui::px(super::keyboard_nav::RING))
+        .child(super::e2e::measure_inside("shortcuts-body"));
+        let last = lines.len().saturating_sub(1);
+        for (index, line) in lines.iter().enumerate() {
+            body = body.child(
+                div()
+                    .relative()
+                    .flex_shrink_0()
+                    .when(index == last, |row| {
+                        row.child(super::e2e::measure_inside("shortcuts-tail"))
+                    })
+                    .px_4()
+                    .py(theme::scaled_px(3.))
+                    .text_sm()
+                    .text_color(rgb(theme().text_sub))
+                    .child(line.clone()),
+            );
+        }
+        let panel = div()
+            .relative()
+            .child(super::e2e::measure_inside("shortcuts-panel"))
+            .w(theme::scaled_px(420.).min(viewport.width - gutter * 2.))
+            .h(theme::scaled_px(480.).min(viewport.height - gutter * 2.))
+            .flex()
+            .flex_col()
             .overflow_hidden()
-            .rounded(theme::scaled_px(8.0))
+            .rounded(theme::scaled_px(8.))
             .border_1()
             .border_color(rgb(theme().elevated_border(theme().selected)))
             .bg(rgb(theme().elevated_surface(theme().panel)))
             .shadow_lg()
-            .child(
-                div()
-                    .px_4()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(theme().selected))
-                    .text_color(rgb(theme().color_branch))
-                    .child(title),
-            );
+            .child(self.render_info_header(title, cx))
+            .child(super::render_helpers::with_system_vertical_scrollbar(
+                "shortcuts-scrollbar",
+                scroll,
+                body,
+                cx,
+            ));
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(self.wrap_overlay(panel.into_any_element(), cx))
+            .into_any_element()
+    }
 
-        for line in lines {
-            panel = panel.child(
-                div()
-                    .px_4()
-                    .py(theme::scaled_px(3.0))
-                    .text_sm()
-                    .text_color(rgb(theme().text_sub))
-                    .child(line),
-            );
-        }
-
-        self.wrap_overlay(panel.into_any_element(), cx)
+    fn render_info_header(&self, title: SharedString, cx: &mut Context<Self>) -> gpui::Div {
+        use gpui_component::button::{Button, ButtonVariants as _};
+        use gpui_component::Sizable as _;
+        div()
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .justify_between()
+            .px_4()
+            .py_2()
+            .border_b_1()
+            .border_color(rgb(theme().selected))
+            .text_color(rgb(theme().color_branch))
+            .child(super::e2e::measure_inside("shortcuts-header"))
+            .child(div().min_w_0().child(title))
+            .child(super::e2e::measure_control(
+                "shortcuts-dismiss",
+                Button::new("shortcuts-dismiss")
+                    .label(Msg::AppNoticeDismiss.t())
+                    .ghost()
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu_overlay = None;
+                        cx.notify();
+                    })),
+            ))
     }
 
     /// Centre an overlay panel over a dim, click-to-dismiss backdrop.

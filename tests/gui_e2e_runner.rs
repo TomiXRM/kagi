@@ -152,6 +152,10 @@ mod smart_picker;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/dnd_self.rs"]
+mod dnd_self;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
 
@@ -3399,6 +3403,14 @@ mod macos {
             (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
+            (
+                "branch_drag_self_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_self_target),
+            ),
+            (
+                "branch_drag_detached_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_detached_target),
             ),
             (
                 "cross_worktree_merge",

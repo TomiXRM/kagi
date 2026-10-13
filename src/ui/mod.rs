@@ -16,6 +16,7 @@ mod avatar_resolve;
 pub mod badges;
 pub mod blocking_ops;
 pub mod branch_cleanup;
+mod branch_drag;
 pub mod branch_menu;
 mod busy;
 pub mod button_style;
@@ -348,10 +349,15 @@ fn validate_merge_into_from_drag(
     if busy {
         return Err(Msg::OpInProgress.t().to_string());
     }
-    if source == target {
+    let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
+    let resolved_target = kagi_domain::refs::merge_into_target_name(
+        target,
+        is_local(target),
+        remotes.iter().any(|name| name == target),
+    );
+    if source == target || source == resolved_target {
         return Err(format!("'{}' is already that branch.", source));
     }
-    let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
     if !is_local(source) && !remotes.iter().any(|n| n == source) {
         return Err(format!("Branch '{}' is not a branch.", source));
     }
@@ -3778,6 +3784,29 @@ mod drag_merge_into_validation_tests {
             false
         )
         .is_err());
+    }
+
+    #[test]
+    fn remote_target_alias_rejects_self_but_exact_local_name_wins() {
+        let remotes = vec!["origin/feature".to_string()];
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "origin/feature",
+            &branches(),
+            &remotes,
+            false,
+        )
+        .is_err());
+        let mut locals = branches();
+        locals.push(("origin/feature".to_string(), false));
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "origin/feature",
+            &locals,
+            &remotes,
+            false,
+        )
+        .is_ok());
     }
 }
 

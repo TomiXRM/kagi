@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Branch drag-over highlights only distinct resolved destinations. Self and remote-target alias drops show a prohibited cursor and do nothing instead of opening a merge plan or reporting a late refusal; sidebar rows and graph chips share the same read-only identity rule as merge-into planning. (#1421)
+  - Review: drag predicates reuse the session's local-tip map and snapshot-built remote-name set for allocation-free constant-time lookups. Unknown destinations retain their existing planning path, including the detached HEAD chip's explanatory blocker.
 - Terminal clipboard paste respects the shell's bracketed-paste mode. Without it, multi-line text requires explicit approval and Cancel sends nothing. Control-Shift-Tab / Command-Shift-J return to the bottom-panel tabs without disrupting shell completion, and hiding Terminal returns focus to the visible graph while retaining its PTY. (#1403, #1406, #1407)
   - Review: bracketed payloads remove ESC and ETX without changing CR/LF, preventing an embedded end marker from escaping paste protection. A real PTY respawn regression confirms approval for the exited shell cannot reach its replacement; Terminal's accessibility name uses the localized toolbar label.
 - macOS Reduce Motion is read at startup and refreshed on display-accessibility notifications; system or app opt-in skips decorative animations. Reduce Transparency selects an opaque equivalent for dark PR tiles without changing their normal appearance. (#1417, #1418; refs #354)

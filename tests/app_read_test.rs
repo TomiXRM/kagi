@@ -362,3 +362,60 @@ fn a_status_only_update_does_not_copy_the_commit_rows() {
     assert_eq!(view.rows.as_ptr(), rows, "the commit rows were copied");
     assert_eq!(view.details.as_ptr(), details, "the details were copied");
 }
+
+/// #1421 review: the allocation-free drag lookup follows ref publication and
+/// stays attached to the inventory's owner rather than a global active-tab cache.
+#[test]
+fn remote_name_index_rebuilds_with_its_session_inventory() {
+    let dir = tempfile::tempdir().unwrap();
+    let alpha = fixture(dir.path(), "alpha", 2);
+    let beta = fixture(dir.path(), "beta", 2);
+    git(
+        &alpha,
+        &["update-ref", "refs/remotes/origin/topic/x", "HEAD"],
+    );
+    git(
+        &beta,
+        &["update-ref", "refs/remotes/origin/topic/y", "HEAD"],
+    );
+    let mut sessions = Sessions::new();
+    let a = attach(&mut sessions, &alpha);
+    let b = attach(&mut sessions, &beta);
+    let mut reads: Reads<TabViewState> = Reads::new();
+    reads.publish(a, view_of(&alpha, "alpha", 100));
+    reads.publish(b, view_of(&beta, "beta", 100));
+    assert!(reads.get(Some(a)).branch_targets.contains_key("main"));
+    assert!(reads
+        .get(Some(a))
+        .remote_branch_names
+        .contains("origin/topic/x"));
+    assert!(!reads
+        .get(Some(a))
+        .remote_branch_names
+        .contains("origin/topic/y"));
+    assert!(reads
+        .get(Some(b))
+        .remote_branch_names
+        .contains("origin/topic/y"));
+
+    git(&alpha, &["update-ref", "-d", "refs/remotes/origin/topic/x"]);
+    git(&alpha, &["update-ref", "refs/remotes/upstream/new", "HEAD"]);
+    let replacement = reads.begin(a);
+    assert!(reads.accept(replacement, view_of(&alpha, "alpha", 100)));
+    assert!(!reads
+        .get(Some(a))
+        .remote_branch_names
+        .contains("origin/topic/x"));
+    assert!(reads
+        .get(Some(a))
+        .remote_branch_names
+        .contains("upstream/new"));
+    assert!(reads
+        .get(Some(b))
+        .remote_branch_names
+        .contains("origin/topic/y"));
+    assert!(!reads
+        .get(Some(b))
+        .remote_branch_names
+        .contains("upstream/new"));
+}

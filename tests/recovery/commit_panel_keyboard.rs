@@ -12,12 +12,15 @@ use kagi_ui_core::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+#[path = "commit_panel_bulk_hover.rs"]
+mod bulk_hover;
 #[path = "changes_keyboard.rs"]
 mod changes_keyboard;
 #[path = "commit_panel_coauthor_tab.rs"]
 mod commit_panel_coauthor_tab;
 #[path = "commit_panel_keyboard_focus.rs"]
 mod focus_regressions;
+pub use bulk_hover::scenario_commit_panel_bulk_hover;
 pub use changes_keyboard::{
     scenario_changes_discard_keyboard, scenario_changes_file_menu_viewport,
     scenario_changes_rows_keyboard,

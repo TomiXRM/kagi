@@ -42,3 +42,17 @@ the pre-link foreground rather than rejecting a previously valid file. An
 explicit `link` overrides that default. Explicit custom colours remain
 authoritative; the 4.5:1 body-background regression applies to built-in palettes,
 not a new custom-file contrast rejection policy.
+
+## Verification amendment — 2026-10-14: capped reload feedback (#1487)
+
+The native `theme_custom` oracle compares newly admitted toast IDs for the
+winning reload: exactly one localized success summary and one error per rejected
+fixture file. It must not require the number of identical success labels to grow.
+ADR-0110's intentional four-card cap retains errors ahead of older routine
+notifications, so the second reload's file error can evict the first reload's
+success while the second success remains visible. Bisection found this oracle
+became stale at `87f2d954` (#1240, merged in #1245), before #1433 and #1475;
+there is no identical-toast deduplication or lost current-reload feedback.
+Releasing a superseded read must still leave all toast IDs, active colours,
+selection and menu contents unchanged. Production reload and toast policy are
+unchanged.

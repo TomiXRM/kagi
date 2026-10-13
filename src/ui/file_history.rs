@@ -27,6 +27,7 @@ use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
 /// diff loads (rapid arrowing — including A→B→A on a WIP entry whose
 /// working-tree contents can change between reads).
 pub struct FhDiffPane {
+    owner: crate::app::SessionId,
     /// Diff of the selected entry, reusing the existing diff renderer.
     pub diff: Option<MainDiffView>,
     /// Native variable-height measurements for this selected diff.
@@ -37,6 +38,12 @@ pub struct FhDiffPane {
     /// #809: the embedded diff's toggle falls back to its icon when the
     /// File History column is too narrow for its label.
     pub fit: render_helpers::HeaderFit,
+}
+
+impl Drop for FhDiffPane {
+    fn drop(&mut self) {
+        super::diff_selection::retire_surface(self.list_layout.selection_owner());
+    }
 }
 
 impl super::diff_view::highlight::DiffHighlightHost for FhDiffPane {
@@ -61,10 +68,12 @@ impl Render for FhDiffPane {
                 self.scroll.clone(),
                 &self.list_layout,
                 None,
+                super::diff_selection::SelectionOwner::History(self.owner),
                 cx,
             )
             .into_any_element(),
             None => {
+                super::diff_selection::retire_surface(self.list_layout.selection_owner());
                 self.list_layout.clear(&self.scroll);
                 div()
                     .flex_1()
@@ -160,6 +169,7 @@ impl KagiApp {
         let geom = self.file_history_geom.clone();
         let panel_width = self.panel_width;
         let diff_pane = cx.new(|_| FhDiffPane {
+            owner,
             diff: None,
             scroll: render_helpers::new_diff_list_state(),
             list_layout: Default::default(),
@@ -330,7 +340,7 @@ impl KagiApp {
         // (pre-extraction this was `data.diff = None` + the generation guard).
         if let Some(pane) = fh_diff_pane(view, cx) {
             pane.update(cx, |p, cx| {
-                p.diff = None;
+                super::diff_view::highlight::install(&mut p.diff, None);
                 p.req = p.req.wrapping_add(1);
                 cx.notify();
             });
@@ -388,7 +398,7 @@ impl KagiApp {
         };
         let Some(entry) = entry else {
             pane.update(cx, |p, cx| {
-                p.diff = None;
+                super::diff_view::highlight::install(&mut p.diff, None);
                 cx.notify();
             });
             return;

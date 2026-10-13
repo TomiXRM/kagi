@@ -581,33 +581,30 @@ impl Render for KagiApp {
 
         // T-WS-EDITOR-002: Cmd-S saves the Editor Workspace's dirty buffer.
         // No-ops when the workspace is closed or the buffer is clean.
-        // R1: ⌘C — copy the diff line selection (kept across the copy so the
-        // user sees what was taken; Esc clears it).
+        // Diff bodies handle their own focused, revision-valid selection.
+        // The root never reads another surface's saved text.
         let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, window, cx| {
-            // Only the visible, uncovered Graph gets first refusal (ADR-0170).
-            // Otherwise propagate to Root's foreground TextView selection;
-            // the diff-row selection below retains its existing priority.
-            if diff_selection::selected_text().is_none() {
-                if this.commit_list_has_focus(window, cx) {
-                    if let Some(i) = this.ui().selected {
-                        this.copy_graph_selection(i, cx);
-                        return;
-                    }
+            // Only the visible, uncovered Graph owns the root Copy action.
+            // Focused diff bodies have already handled their valid selections.
+            if this.commit_list_has_focus(window, cx) {
+                if let Some(i) = this.ui().selected {
+                    this.copy_graph_selection(i, cx);
+                    return;
                 }
-                cx.propagate();
-                return;
             }
-            if let Some(text) = diff_selection::selected_text() {
-                let lines = text.lines().count();
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            // Preserve gpui-component's focused TextView Copy path.
+            cx.propagate();
+        });
+        let diff_selection_copied = cx.listener(
+            |this, copied: &diff_selection::keyboard::SelectionCopied, _window, cx| {
                 this.push_toast(
                     ToastKind::Info,
-                    SharedString::from(i18n::diff_lines_copied(lines)),
+                    SharedString::from(i18n::diff_lines_copied(copied.lines)),
                     cx,
                 );
                 cx.notify();
-            }
-        });
+            },
+        );
 
         let save_editor_file = cx.listener(|this, _: &SaveEditorFile, _window, cx| {
             this.save_editor_file(cx);
@@ -684,6 +681,7 @@ impl Render for KagiApp {
                 }),
             )
             .on_action(copy_diff_selection)
+            .on_action(diff_selection_copied)
             .when(self.editor_save_dispatch_available(cx), |el| {
                 el.on_action(save_editor_file)
             })

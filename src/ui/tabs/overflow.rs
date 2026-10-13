@@ -255,6 +255,7 @@ impl gpui::RenderOnce for Trigger {
             self.selected,
             &self.focus,
         )
+        .h(px(f32::from(theme::scaled_px(28.)).min(24.)))
         .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
             let focus = window.focused(cx);
             let _ = pointer.update(cx, |state, _| {

@@ -271,6 +271,17 @@ def _ja_git_literals(text: str) -> str:
     for owner in owners.finditer(code):
         start = owner.end() - 1 if owner.group().endswith("{") else owner.end()
         regions.append((start, _rust_expression_end(code, start)))
+    # A two-language helper may return EN unchanged before its JA-only body.
+    # Select only the remainder of a function whose first statement is that
+    # explicit locale guard; do not mistake an arbitrary EN block for JA.
+    early_en = re.compile(
+        r"\bfn\s+\w+\s*\([^;{}]*\b(?P<locale>\w+)\s*:\s*Lang\b[^;{}]*\)"
+        r"[^;{}]*\{\s*if\s+(?P=locale)\s*==\s*Lang\s*::\s*En\s*\{"
+        r"\s*return\b[^;{}]*;\s*\}"
+    )
+    for owner in early_en.finditer(code):
+        body_start = code.index("{", owner.start())
+        regions.append((owner.end(), _rust_expression_end(code, body_start)))
     # busy.rs declares (internal tag, EN, JA) LABELS; Op::label returns
     # (EN, JA) pairs. Restrict this to translation/label owners, not arbitrary
     # repository-data tuples, and never select their EN or internal-tag members.
@@ -362,7 +373,7 @@ RULES: tuple[Rule, ...] = (
             for term in JA_GIT_TERMS
         )
         + r"|(?<![ァ-ヶー])プル(?!ダウン)",
-        globs=("crates/kagi-ui-core/src/i18n/**/*.rs",),
+        globs=("src/**/*.rs", "crates/**/src/**/*.rs"),
         select_source=_ja_git_literals,
         message=(
             "JA Git domain terms must stay English (ADR-0048 / #1465); "
@@ -408,8 +419,17 @@ RULES: tuple[Rule, ...] = (
             'match self { Merge => (\n "Merge",\n r##"競合 "file""##,\n), }\n}',
             "const LABELS: &[(&str, &str, &str)] = &[\n"
             '("commit", /* EN */ "Commit", /* JA */ "コミット"),\n];',
+            *(
+                "fn menu_heading(section: &str, language: Lang) -> &str {\n"
+                "if language == Lang::En { return section; }\n"
+                f'match section {{ "Git" => "{term}", _ => section }}\n}}'
+                for term in ("ブランチ", "コミット")
+            ),
         ),
         samples_ok=(
+            "fn menu_heading(section: &str, language: Lang) -> &str {\n"
+            'if language == Lang::En { return "Quoted コミット"; }\n'
+            'match section { "Branch" => "Branch", "File" => "ファイル", _ => section }\n}',
             '(Ja, Action) => "stash / working tree / commit / branch / conflict",',
             'Lang::En => "User branch name: コミット",',
             '(En,\n Action) => format!(\n "User message: マージ\\nブランチ"\n),',

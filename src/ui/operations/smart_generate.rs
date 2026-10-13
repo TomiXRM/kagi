@@ -50,6 +50,7 @@ impl KagiApp {
             v.gen = v.gen.wrapping_add(1);
             v.gen
         });
+        let request = (cp_entity.entity_id(), gen);
         // #722 P1: only this weak handle crosses into the completion, so
         // closing the tab drops the panel immediately even mid-generation.
         let cp_weak = cp_entity.downgrade();
@@ -58,6 +59,7 @@ impl KagiApp {
         };
         ui.smart_commit_generating = true;
         ui.smart_commit_generation = Some(smart_commit::SmartGeneration {
+            request,
             provider,
             model: (provider == smart_commit::SmartProvider::Ollama).then(|| model.clone().into()),
         });
@@ -118,12 +120,22 @@ impl KagiApp {
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
+                // A replacement panel can have a newer request in this same
+                // session, even after the initiating weak entity disappeared.
+                if ui
+                    .smart_commit_generation
+                    .as_ref()
+                    .is_none_or(|generation| generation.request != request)
+                {
+                    return;
+                }
                 // Upgrade only now: `release_session` dropped the entity when
                 // the tab closed, so a completion that lost its panel writes
                 // nothing instead of resurrecting it (#722 P1).
                 let Some(cp_entity) = cp_weak.upgrade() else {
                     ui.smart_commit_generating = false;
                     ui.smart_commit_generation = None;
+                    ui.smart_commit_status = None;
                     if app.active_session() == Some(owner) {
                         cx.notify();
                     }

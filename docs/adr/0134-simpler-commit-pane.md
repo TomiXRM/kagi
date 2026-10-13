@@ -137,6 +137,13 @@ Changes to the staged set (including unstage/restage or replacing staged files)
 also do not invalidate it: the result is still the user's explicit generation
 request. There is no second staged-set invalidation key.
 
+The session's in-flight descriptor also retains the dispatch token
+`(panel EntityId, panel generation)`. Completions settle spinner/provider/status
+only when that token still matches. This preserves weak panel ownership: if the
+initiating panel disappeared, its matching completion clears the generating
+status without resurrecting it; an older panel's completion cannot settle a
+new panel's request. The token does not introduce a staged-set invalidation key.
+
 
 ### The Template toggle
 

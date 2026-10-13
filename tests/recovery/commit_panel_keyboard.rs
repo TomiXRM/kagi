@@ -35,6 +35,7 @@ mod smart_generation_commit_boundary;
 mod smart_replace_undo;
 pub use commit_draft_save_failure::scenario_commit_draft_save_failure;
 pub use smart_generation_commit_boundary::scenario_smart_generation_commit_boundary;
+pub use smart_generation_commit_boundary::scenario_smart_generation_replaced_panel;
 pub use smart_replace_undo::scenario_smart_replace_undo;
 
 const TEMPLATE: &str = "# Keyboard regression template\n";

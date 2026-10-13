@@ -55,7 +55,7 @@ pub struct RepoTab {
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
 /// (the OS bar is transparent), so it carries a little extra height for padding
 /// around the tabs and the traffic lights.
-pub(crate) const TAB_STRIP_H: f32 = 40.0;
+pub(crate) const TAB_STRIP_H: f32 = 36.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;
@@ -982,7 +982,7 @@ impl KagiApp {
     // Rendering
     // ──────────────────────────────────────────────────────────────────────
 
-    /// New-document affordance belongs to the frame, including hidden-strip states.
+    /// New-document affordance follows document tabs in the titlebar strip.
     pub(super) fn render_tab_add(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let label = if self.tabs.is_empty() && self.remote_view.is_some() {
             match i18n::lang() {

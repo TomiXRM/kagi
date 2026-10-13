@@ -421,6 +421,9 @@ mod status_chips;
 #[path = "recovery/status_controls.rs"]
 mod status_controls;
 #[cfg(target_os = "macos")]
+#[path = "recovery/titlebar_tabs.rs"]
+mod titlebar_tabs;
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_overflow.rs"]
 mod toolbar_overflow;
 
@@ -1653,8 +1656,8 @@ mod macos {
                 Box::new(crate::tab_strip::scenario_tab_close_names),
             ),
             (
-                "unified_toolbar",
-                Box::new(crate::toolbar_overflow::scenario_unified_toolbar),
+                "titlebar_tabs",
+                Box::new(crate::titlebar_tabs::scenario_titlebar_tabs),
             ),
             (
                 "dialog_a11y_roles",

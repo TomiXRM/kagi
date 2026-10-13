@@ -581,6 +581,14 @@ synced kit palette and scrollbar policy on Drop, including panic unwinding.
 
 ## Amendment — 2026-10-11: unified window frame (#1179)
 
+**Historical layout, superseded by the #1462 owner decision below.** The unified
+frame, below-toolbar document strip, single-document hiding, toolbar traffic-light
+and + reservations, hidden-cell focus/TabPanel policy and 440.5px viewport result
+in this amendment describe #1179, not the restored layout. The 52/60-reference-px
+toolbar heights, neutral paint, existing command owners and blank-only window
+gestures remain authoritative. Its native validation reports are historical,
+not verification of #1462.
+
 Every theme uses the same unified top-frame geometry, not an Apple-only fork.
 GPUI still owns native macOS traffic lights, positioned at (9,16) logical px;
 the frame reserves an unscaled 80px left exclusion. Repository name and branch
@@ -831,9 +839,10 @@ suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.
 
 ## Amendment — 2026-10-11: Home virtual-list containment oracle (#1179, #1212)
 
-The unified frame can expose a partially mounted GitHub repository row below
-Home's scrollable fold at 940×660/167%. Native row bounds include virtualization
-overdraw, not only painted clipped content. `home_heading` therefore restricts
+Home can expose a partially mounted GitHub repository row below its scrollable
+fold at 940×660/167%, independently of the chrome arrangement restored by #1462.
+Native row bounds include virtualization overdraw, not only painted clipped
+content. `home_heading` therefore restricts
 window containment to fixed controls and the first Recent repository row;
 compact GitHub action-in-row and name-priority checks remain, along with every
 other heading, fixed-control and wide-layout assertion. Production is unchanged.
@@ -1086,7 +1095,65 @@ presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
 the existing 660px legs retain every operation/menu activation assertion.
 The verification skill is updated. Real-window comparison remains Tier B.
 
-The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusion
-from its non-macOS available width, preserving the same effective content budget
-and collapse expectation rather than assuming macOS geometry on Linux.
+Historical unified-frame fixture: the selected-only pure fit fixture subtracted
+macOS's 68px traffic-light exclusion from its non-macOS available width. #1462
+supersedes that reservation: the separate toolbar has no traffic-light exclusion.
+
+## Amendment — 2026-10-13: restored titlebar document tabs (#1462)
+
+**Owner decision:** return to two rows in every theme, for repository workspaces
+and Home alike. This supersedes #1179's unified frame and single-document hiding;
+it is an explicit layout reversal, not a theme-specific exception.
+
+The first row starts at y=0 and is a 36-reference-px titlebar. Native macOS traffic
+lights retain their GPUI owner and (9,16) logical-px position, with an unscaled
+80px exclusion in this row only. Repository and Home document tabs are always
+visible, including a single repository or Home-only document. The titlebar owns
+the trailing + and tab overflow, including the Home-only document.
+Home-only windows omit the inert × because there is no document behind Home.
+The old #1180 40px strip geometry is superseded by this 36px titlebar, while its
+always-visible single-document policy is restored.
+
+The second row is the toolbar: Icon Only remains 52 reference px (46.8 logical
+px at 100%); Icon and Text remains 60 reference px (54 logical px at 100%).
+Neither macOS traffic-light exclusion nor + participates in toolbar layout or
+fitting. Preserve repository/branch identity, measured natural control widths,
+centered wide-window actions, narrow overflow and #1316's Git-first collapse
+priority; this decision changes row ownership, not action order or dispatch.
+
+Only actual blank spacers own window gestures. macOS retains
+`app_owns_titlebar_drag: true`; a blank-spacer left press/pressed move delegates
+to `window.start_window_move()`, and its double-click delegates to
+`window.titlebar_double_click()` for the person's zoom/minimize/none preference.
+Windows retains native Drag hit testing on those same blank-only targets.
+No tab, +, overflow trigger, toolbar button or their wrapping container is a
+drag/double-click target.
+
+Retain session-keyed `TabList`/`TabPanel` accessibility, one roving Tab stop,
+manual keyboard activation, active/focused tab reveal, natural tab widths and
+constrained horizontal overflow, neutral selected/inactive fills, localized
+close/chooser names, dirty-close guards and existing native window titles.
+Cmd+T/Cmd+W and File → New/Close Tab keep their command owners. Closing from two
+documents to one must not hide the remaining tab or release its focus merely
+because the count changed; #1179's hidden-strip focus and ordinary-content
+TabPanel expectations are historical. Closing the final document still releases
+focus through the existing owner, and keyed close/reindex behavior remains.
+
+Native desktop `commit_panel_viewport` measures **408 logical px** for the file
+list at 1392×883@100%: #1179's historical 440.5px minus the restored titlebar's
+snapped 32.5px frame, including its literal 1px separator.
+Fixed composer (257px), Generate (21.5px), Commit
+(25px), desktop panel width (324px) and small-body AutoGrow contracts are unchanged.
+At 940×560/167%, the added titlebar exposes the previous zero minimum on the
+compound message group: its body/action row could extend below the group's
+allocation and overpaint Commit. The group now reserves the existing Medium
+subject, gap and body/action-row minimum together; the footer reserves its
+existing padding, gaps, Small Commit and optional status/warning lines. File
+viewports keep a 20-logical-px hit-height floor and yield before the composer on
+very short windows. AutoGrow measurement, desktop geometry and focus owners stay
+unchanged.
+The Home virtual-list overdraw rationale above remains authoritative: check
+fixed chrome and the first Recent row against the window, and compact GitHub
+actions/names against their row; do not require partially mounted virtual rows
+below the fold to fit inside the window.
 

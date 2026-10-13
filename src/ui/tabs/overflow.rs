@@ -100,7 +100,7 @@ pub(super) fn viewport(
             .flex()
             .flex_row()
             .items_center()
-            .flex_1()
+            .flex_shrink(1.)
             .min_w_0()
             .h_full()
             .overflow_x_scroll()

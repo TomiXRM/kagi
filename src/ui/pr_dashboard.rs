@@ -15,7 +15,8 @@ use kagi_domain::list_filter::apply_prs;
 
 use super::i18n::Msg;
 use super::pr_attention::{
-    attention_color, card_border, ci_glyph, focus_queue, queue_bucket_label, reason_text,
+    attention_color, card_border, ci_glyph, dash_card_bg, focus_queue, queue_bucket_label,
+    reason_text,
 };
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -28,18 +29,6 @@ use super::KagiApp;
 /// only.
 fn page_bg() -> u32 {
     theme().bg_base
-}
-
-/// A card on that page. No grey anywhere (user request): solid white in light
-/// themes, and in dark ones plain black over the page. A partly transparent
-/// white still mixed with what was behind it and came out grey, which is why
-/// the light theme kept looking washed out.
-fn dash_card_bg() -> gpui::Hsla {
-    if theme().dark {
-        gpui::hsla(0., 0., 0., 0.35)
-    } else {
-        gpui::hsla(0., 0., 1., 1.)
-    }
 }
 
 /// A header-bar button: icon + label, the same weight as the existing
@@ -758,10 +747,16 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         .flex_shrink_0()
         .px_4()
         .pt_3();
-    for (a, members) in buckets {
+    for (index, (a, members)) in buckets.iter().enumerate() {
         let c = attention_color(*a);
         row = row.child(
             div()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |tile| {
+                    tile.child(super::e2e::measure_inside(format!(
+                        "pr-attention-tile-{index}"
+                    )))
+                })
                 .flex()
                 .flex_row()
                 .items_center()

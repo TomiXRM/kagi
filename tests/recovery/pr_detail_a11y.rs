@@ -12,7 +12,7 @@ use kagi::ui::{
 use kagi_ui_core::theme;
 
 #[path = "pr_detail_a11y_support.rs"]
-mod support;
+pub(crate) mod support;
 use support::*;
 
 const DRAFT: &str = "unsent 日本語 draft";

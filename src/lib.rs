@@ -17,6 +17,7 @@ pub mod remote;
 // can mount the real `KagiApp` offscreen. The bin (`main.rs`) is a thin wrapper
 // that re-imports `kagi::ui` / `kagi::single_instance`. No `gpui/test-support`
 // reaches here — the runner owns that (see `ui::e2e`).
+pub mod native_menus;
 pub mod single_instance;
 pub mod system_accessibility;
 pub mod ui;

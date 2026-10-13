@@ -94,6 +94,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_ja.rs"]
+mod menus_ja;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
 mod plan_labels;
 
@@ -1568,6 +1572,9 @@ mod macos {
                 "system_reduce_transparency",
                 Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
+            ("menus_localized", Box::new(crate::menus_ja::scenario_menus_localized)),
+            ("edit_menu_undo_redo", Box::new(crate::menus_ja::scenario_edit_menu_undo_redo)),
+            ("file_menu_save", Box::new(crate::menus_ja::scenario_file_menu_save)),
             (
                 "window_title_identity",
                 Box::new(crate::menus_window::scenario_window_title_identity),

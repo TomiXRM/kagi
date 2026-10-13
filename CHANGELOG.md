@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Native menus follow the English/Japanese display language, including standard Edit items. Window's AppKit role remains independent of its translated title. Edit Undo/Redo route to focused text input or the same available repository-history plan as their shortcuts, never from Terminal or historical snapshots. File Save exposes the existing ⌘S action only for a saveable dirty live Editor buffer. (#1438, #1439, #1440)
+  - Review: Japanese Undo uses macOS-standard 「取り消す」; history target labels remain stable during modal, busy and Home availability changes, avoiding unnecessary native-menu rebuilds.
+- Restore `filter_menu_over_modal` coverage to the existing covered-dismissal policy: an arriving modal dismisses the filter menu, and Escape cancels the modal without writing. (#1457)
 - Clicking or right-clicking a Graph commit returns keyboard ownership to the Graph; arrows and Copy no longer stay in the previous filter, sidebar row or toolbar control, and Escape from the context menu returns to the Graph. Graph Copy now uses the same visible-center/front-layer guard as commit navigation, so takeovers and modals cannot copy a hidden commit; foreground TextView and diff selections retain their copy paths. (#1447, #1448)
 - Relative ages follow the EN/JA UI language, including fully spoken accessibility units, without reloading repository models. Branch Cleanup merge dates now share Detail's local, per-instant DST-aware calendar; stored timestamps, staleness and deletion eligibility are unchanged. (#1454, #1455)
   - Review: Japanese Graph ages use short unit forms that fit the fixed column; visible and AX ages share one reference-clock read per list render.

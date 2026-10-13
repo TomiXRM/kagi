@@ -31,6 +31,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -50,6 +51,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -68,6 +70,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -86,6 +89,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -104,6 +108,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -499,7 +504,13 @@ impl Render for KagiApp {
                     return None;
                 };
                 Some(conflict_view::render_file_menu(
-                    entity, &mode, idx, pos, window, cx,
+                    entity,
+                    &mode,
+                    idx,
+                    pos,
+                    self.window_active,
+                    window,
+                    cx,
                 ))
             })
         } else {
@@ -508,7 +519,14 @@ impl Render for KagiApp {
         let editor_tree_menu_overlay = if self.editor_tree_menu_visible(cx) {
             self.ui().editor_workspace.as_ref().and_then(|entity| {
                 let (target, pos) = entity.read(cx).tree_menu?;
-                editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
+                editor_tree_menu::render_editor_tree_menu(
+                    entity,
+                    target,
+                    pos,
+                    self.window_active,
+                    window,
+                    cx,
+                )
             })
         } else {
             None
@@ -801,7 +819,7 @@ impl Render for KagiApp {
             .map(|el| self.register_menu_actions(el, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // Document tabs are separate from the unified native top frame.
             .children(self.render_tab_strip(window, cx))
             // ── Operation strip (#704) — while a merge / rebase / cherry-pick
@@ -875,7 +893,7 @@ impl Render for KagiApp {
             // ── W3-NOTIFY: toast stack (above everything) ──────
             .children(self.render_toasts(cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
-            .children(self.render_platform_menu_dropdown(cx))
+            .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();
         self.attach_active_modal_key_routing(content, true, cx)
     }

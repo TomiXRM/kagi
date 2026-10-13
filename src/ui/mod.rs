@@ -3605,7 +3605,7 @@ impl KagiApp {
                 .bg(rgb(theme().bg_base))
                 .children(self.render_platform_titlebar(cx))
                 .child(div().flex_1().min_h(px(0.0)).child(content))
-                .children(self.render_platform_menu_dropdown(cx))
+                .children(self.render_platform_menu_dropdown(self.window_active, cx))
                 .into_any()
         }
 

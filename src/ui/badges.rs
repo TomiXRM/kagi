@@ -177,6 +177,7 @@ pub(crate) fn render_badges_column(
         let is_primary = i == 0;
         let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
         let badge_foreground = selected_presentation
+            .filter(|active| theme().selection_uses_on_accent(true, *active))
             .map(|active| theme().selection_foreground(active))
             .unwrap_or_else(|| rgb(badge_text).into());
         let name_el = div().min_w(px(0.)).truncate().child(name).when(

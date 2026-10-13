@@ -721,11 +721,13 @@ fn palette_row_shortcut(
             )))
         })
         .text_xs()
-        .text_color(if is_selected {
-            theme().selection_secondary_foreground(window_active)
-        } else {
-            rgb(theme().text_muted).into()
-        })
+        .text_color(
+            if theme().selection_uses_on_accent(is_selected, window_active) {
+                theme().selection_secondary_foreground(window_active)
+            } else {
+                rgb(theme().text_muted).into()
+            },
+        )
         .child(super::e2e::palette::shortcut(index, keystroke.to_string()))
 }
 
@@ -736,7 +738,8 @@ fn palette_row_label(
     is_selected: bool,
     window_active: bool,
 ) -> gpui::Div {
-    let label_color = if is_selected {
+    let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+    let label_color = if uses_on_accent {
         theme().selection_foreground(window_active)
     } else {
         rgb(if row.enabled {
@@ -761,7 +764,7 @@ fn palette_row_label(
         label = label.child(
             div()
                 .text_xs()
-                .text_color(if is_selected {
+                .text_color(if uses_on_accent {
                     theme().selection_secondary_foreground(window_active)
                 } else {
                     rgb(theme().text_muted).into()

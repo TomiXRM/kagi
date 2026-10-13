@@ -31,189 +31,193 @@ pub(crate) fn render_smart_commit_modal(
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
-    let card =
-        match modal {
-            smart_commit::SmartCommitModal::Consent => {
-                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.cancel_smart_modal(cx);
-                });
-                let confirm = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                    this.confirm_smart_consent(window, cx);
-                });
-                let mut lines_col = div().flex().flex_col().gap_1();
-                for line in smart_commit::CONSENT_LINES {
-                    lines_col = lines_col.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_1()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().color_branch))
-                                    .child(SharedString::from("•")),
-                            )
-                            .child(
-                                div()
-                                    .text_color(rgb(current_theme().text_main))
-                                    .child(SharedString::from(line.t())),
-                            ),
-                    );
-                }
-                // The short intro and four fixed `CONSENT_LINES` are bounded;
-                // this card needs no scrolling body (#454).
-                modal_card(MODAL_W_MD)
-                    .child(div().flex_shrink_0().child(render_modal_title_row(
-                        SharedString::from(Msg::SmartConsentTitle.t()),
-                        Some((
-                            ModalIcon::Path("icons/sparkles.svg"),
-                            current_theme().color_success,
-                        )),
-                    )))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_sub))
-                            .child(SharedString::from(Msg::SmartConsentIntro.t())),
-                    )
-                    .child(lines_col)
-                    .child(
-                        div().flex_shrink_0().child(
-                            super::button_style::modal_button_row()
-                                .child(modal_button(
-                                    "smart-consent-cancel",
-                                    Msg::PlanCancel.t(),
-                                    ModalButtonKind::Cancel,
-                                    None,
-                                    cancel,
-                                    cx,
-                                ))
-                                .child(modal_button(
-                                    "smart-consent-confirm",
-                                    Msg::SmartConsentEnable.t(),
-                                    ModalButtonKind::Primary,
-                                    None,
-                                    confirm,
-                                    cx,
-                                )),
+    let card = match modal {
+        smart_commit::SmartCommitModal::Consent => {
+            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.cancel_smart_modal(cx);
+            });
+            let confirm = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
+                this.confirm_smart_consent(window, cx);
+            });
+            let mut lines_col = div().flex().flex_col().gap_1();
+            for line in smart_commit::CONSENT_LINES {
+                lines_col = lines_col.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_1()
+                        .text_sm()
+                        .child(
+                            div()
+                                .text_color(rgb(current_theme().color_branch))
+                                .child(SharedString::from("•")),
+                        )
+                        .child(
+                            div()
+                                .text_color(rgb(current_theme().text_main))
+                                .child(SharedString::from(line.t())),
                         ),
-                    )
+                );
             }
-            smart_commit::SmartCommitModal::ModelPicker { models } => {
-                let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                    this.cancel_smart_modal(cx);
-                });
-                let state = &app.smart_model_focus;
-                let scroll = super::keyboard_nav::RowScroll::List(state.scroll.clone());
-                let rows = std::rc::Rc::new(state.focus.borrow_mut().rows(
-                    state.keys.clone(),
-                    &scroll,
-                    app.root_focus.as_ref(),
-                    window,
-                    cx,
-                ));
-                if state.focus_first.replace(false) {
-                    state.focus.borrow().focus_first(&scroll, window, cx);
-                }
-                let selected = state
-                    .focus
-                    .borrow()
-                    .focused(window)
-                    .and_then(|key| models.iter().position(|model| model == key));
-                let size = models.len();
-                let window_active = app.window_active;
-                let entity = cx.entity();
-                let wrapper = rows.list(super::list_a11y::list_box(
-                    "smart-model-list",
-                    div().id("smart-model-list").w_full().min_h_0(),
-                    Msg::SmartModelTitle.t(),
-                ));
-                let list = gpui::list(state.scroll.clone(), move |i, _window, _cx| {
-                    let model = models[i].clone();
-                    let entity = entity.clone();
-                    rows.row(
+            // The short intro and four fixed `CONSENT_LINES` are bounded;
+            // this card needs no scrolling body (#454).
+            modal_card(MODAL_W_MD)
+                .child(div().flex_shrink_0().child(render_modal_title_row(
+                    SharedString::from(Msg::SmartConsentTitle.t()),
+                    Some((
+                        ModalIcon::Path("icons/sparkles.svg"),
+                        current_theme().color_success,
+                    )),
+                )))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_sub))
+                        .child(SharedString::from(Msg::SmartConsentIntro.t())),
+                )
+                .child(lines_col)
+                .child(
+                    div().flex_shrink_0().child(
+                        super::button_style::modal_button_row()
+                            .child(modal_button(
+                                "smart-consent-cancel",
+                                Msg::PlanCancel.t(),
+                                ModalButtonKind::Cancel,
+                                None,
+                                cancel,
+                                cx,
+                            ))
+                            .child(modal_button(
+                                "smart-consent-confirm",
+                                Msg::SmartConsentEnable.t(),
+                                ModalButtonKind::Primary,
+                                None,
+                                confirm,
+                                cx,
+                            )),
+                    ),
+                )
+        }
+        smart_commit::SmartCommitModal::ModelPicker { models } => {
+            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
+                this.cancel_smart_modal(cx);
+            });
+            let state = &app.smart_model_focus;
+            let scroll = super::keyboard_nav::RowScroll::List(state.scroll.clone());
+            let rows = std::rc::Rc::new(state.focus.borrow_mut().rows(
+                state.keys.clone(),
+                &scroll,
+                app.root_focus.as_ref(),
+                window,
+                cx,
+            ));
+            if state.focus_first.replace(false) {
+                state.focus.borrow().focus_first(&scroll, window, cx);
+            }
+            let selected = state
+                .focus
+                .borrow()
+                .focused(window)
+                .and_then(|key| models.iter().position(|model| model == key));
+            let size = models.len();
+            let window_active = app.window_active;
+            let entity = cx.entity();
+            let wrapper = rows.list(super::list_a11y::list_box(
+                "smart-model-list",
+                div().id("smart-model-list").w_full().min_h_0(),
+                Msg::SmartModelTitle.t(),
+            ));
+            let list = gpui::list(state.scroll.clone(), move |i, _window, _cx| {
+                let model = models[i].clone();
+                let entity = entity.clone();
+                rows.row(
+                    i,
+                    super::list_a11y::list_option(
+                        "smart-model-list",
+                        div().id(("smart-model", i)),
                         i,
-                        super::list_a11y::list_option(
-                            "smart-model-list",
-                            div().id(("smart-model", i)),
-                            i,
-                            size,
-                            model.clone(),
-                            selected == Some(i),
-                        ),
-                    )
-                    .w_full()
-                    .h(theme::scaled_px(MODAL_LIST_ROW_H))
-                    .flex()
-                    .items_center()
-                    .px(super::keyboard_nav::inset(12.))
-                    .py_0()
-                    .rounded_sm()
-                    .bg(if selected == Some(i) {
-                        current_theme().selected_for_window(window_active)
-                    } else {
-                        rgb(current_theme().surface).into()
-                    })
-                    .text_xs()
-                    .line_height(
-                        theme::scaled_px(MODAL_LIST_ROW_H) - px(2. * super::keyboard_nav::RING),
-                    )
-                    .text_color(if selected == Some(i) {
+                        size,
+                        model.clone(),
+                        selected == Some(i),
+                    ),
+                )
+                .w_full()
+                .h(theme::scaled_px(MODAL_LIST_ROW_H))
+                .flex()
+                .items_center()
+                .px(super::keyboard_nav::inset(12.))
+                .py_0()
+                .rounded_sm()
+                .bg(if selected == Some(i) {
+                    current_theme().selected_for_window(window_active)
+                } else {
+                    rgb(current_theme().surface).into()
+                })
+                .text_xs()
+                .line_height(
+                    theme::scaled_px(MODAL_LIST_ROW_H) - px(2. * super::keyboard_nav::RING),
+                )
+                .text_color(
+                    if current_theme().selection_uses_on_accent(selected == Some(i), window_active)
+                    {
                         current_theme().selection_foreground(window_active)
                     } else {
                         rgb(current_theme().text_main).into()
-                    })
-                    .on_click(move |_, window, cx| {
-                        entity.update(cx, |app, cx| {
-                            app.choose_smart_model(model.clone(), window, cx)
-                        });
-                    })
-                    .cursor_pointer()
-                    .when(selected != Some(i), |row| {
-                        row.hover(|s| s.bg(rgb(current_theme().surface)))
-                    })
-                    .child(
-                        div()
-                            .w_full()
-                            .truncate()
-                            .child(SharedString::from(models[i].clone())),
-                    )
-                    .into_any_element()
+                    },
+                )
+                .on_click(move |_, window, cx| {
+                    entity.update(cx, |app, cx| {
+                        app.choose_smart_model(model.clone(), window, cx)
+                    });
                 })
-                .w_full()
-                .h(modal_list_max_h(size));
-                modal_card(MODAL_W_SM)
-                    .child(div().flex_shrink_0().child(render_modal_title_row(
-                        SharedString::from(Msg::SmartModelTitle.t()),
-                        Some((
-                            ModalIcon::Path("icons/sparkles.svg"),
-                            current_theme().color_branch,
-                        )),
-                    )))
-                    .child(
-                        modal_body()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_sm()
-                                    .text_color(rgb(current_theme().text_sub))
-                                    .child(Msg::SmartModelRemembered.t()),
-                            )
-                            .child(wrapper.child(list)),
-                    )
-                    .child(div().flex_shrink_0().child(
-                        super::button_style::modal_button_row().child(modal_button(
+                .cursor_pointer()
+                .when(selected != Some(i), |row| {
+                    row.hover(|s| s.bg(rgb(current_theme().surface)))
+                })
+                .child(
+                    div()
+                        .w_full()
+                        .truncate()
+                        .child(SharedString::from(models[i].clone())),
+                )
+                .into_any_element()
+            })
+            .w_full()
+            .h(modal_list_max_h(size));
+            modal_card(MODAL_W_SM)
+                .child(div().flex_shrink_0().child(render_modal_title_row(
+                    SharedString::from(Msg::SmartModelTitle.t()),
+                    Some((
+                        ModalIcon::Path("icons/sparkles.svg"),
+                        current_theme().color_branch,
+                    )),
+                )))
+                .child(
+                    modal_body()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(rgb(current_theme().text_sub))
+                                .child(Msg::SmartModelRemembered.t()),
+                        )
+                        .child(wrapper.child(list)),
+                )
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .child(super::button_style::modal_button_row().child(modal_button(
                             "smart-model-cancel",
                             Msg::PlanCancel.t(),
                             ModalButtonKind::Cancel,
                             None,
                             cancel,
                             cx,
-                        )),
-                    ))
-            }
-        };
+                        ))),
+                )
+        }
+    };
 
     modal_overlay(card)
 }

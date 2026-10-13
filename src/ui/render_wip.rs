@@ -262,16 +262,20 @@ impl KagiApp {
     ) -> gpui::AnyElement {
         let color = theme().lane_color(color_idx);
         let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
+        let is_selected = is_commit_panel && commit_panel_open;
+        let uses_on_accent = theme().selection_uses_on_accent(is_selected, self.window_active);
         let dark = theme().dark;
         // Tinted chip built from the worktree's lane colour (badge_style only
         // takes a packed u32; lane_color is Hsla, so build the tint directly).
         // Stronger fill than a ref badge so the WIP rows read loudly.
         let chip_bg = gpui::hsla(color.h, color.s, color.l, if dark { 0.32 } else { 1.0 });
         let chip_border = gpui::hsla(color.h, color.s, color.l, if dark { 0.60 } else { 1.0 });
-        let chip_text = if dark {
-            rgb(0xffffff)
+        let chip_text = if dark && uses_on_accent {
+            theme().selection_foreground(self.window_active)
+        } else if dark {
+            rgb(0xffffff).into()
         } else {
-            rgb(theme().bg_base)
+            rgb(theme().bg_base).into()
         };
         // Whole-row background: a subtle wash of the worktree colour so each WIP
         // row is distinguishable at a glance (user request), with a bold colour
@@ -290,7 +294,6 @@ impl KagiApp {
         let glyph = if is_worktree { "🌲" } else { "✏️" };
         let chip_label = SharedString::from(format!("{glyph} {label}"));
 
-        let is_selected = is_commit_panel && commit_panel_open;
         let mut row = super::list_a11y::list_option(
             "commit-list",
             div().id(SharedString::from(format!("wip-row-{label}"))),
@@ -489,7 +492,7 @@ impl KagiApp {
                     .child(
                         div()
                             .flex_1()
-                            .text_color(if is_selected {
+                            .text_color(if uses_on_accent {
                                 theme().selection_secondary_foreground(self.window_active)
                             } else {
                                 rgb(theme().text_muted).into()
@@ -501,7 +504,8 @@ impl KagiApp {
                     .when_some(diffstat, |el, stat| {
                         el.child(render_wip_diffstat(
                             stat,
-                            is_selected.then(|| theme().selection_foreground(self.window_active)),
+                            uses_on_accent
+                                .then(|| theme().selection_foreground(self.window_active)),
                         ))
                     }),
             )

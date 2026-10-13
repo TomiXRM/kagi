@@ -560,6 +560,7 @@ fn render_table_row(
     // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
     // width and the fixed columns land at a different x on each row (user
     // report).
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let cells = div()
         .flex_1()
         .min_w(px(0.))
@@ -568,7 +569,7 @@ fn render_table_row(
         .flex_row()
         .items_center()
         .text_xs()
-        .text_color(if selected && window_active {
+        .text_color(if selection_on_accent {
             theme().selection_secondary_foreground(window_active)
         } else {
             rgb(theme().text_muted).into()
@@ -611,7 +612,7 @@ fn render_table_row(
                         .w_full()
                         .truncate()
                         .text_sm()
-                        .text_color(if selected {
+                        .text_color(if selection_on_accent {
                             theme().selection_foreground(window_active)
                         } else {
                             rgb(theme().text_main).into()
@@ -637,7 +638,7 @@ fn render_table_row(
                         pr.number
                     )))
                 })
-                .text_color(if selected && window_active {
+                .text_color(if selection_on_accent {
                     theme().selection_foreground(window_active)
                 } else {
                     rgb(if matches!(why, PrReason::Draft) {
@@ -667,7 +668,7 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_CHECKS))
                 .flex_shrink_0()
-                .text_color(if selected && window_active {
+                .text_color(if selection_on_accent {
                     theme().selection_foreground(window_active)
                 } else {
                     rgb(if pr.failed_checks() > 0 {
@@ -731,7 +732,9 @@ fn render_table_row(
     })
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
-            .text_color(theme().selection_foreground(window_active))
+    })
+    .when(selection_on_accent, |row| {
+        row.text_color(theme().selection_foreground(window_active))
     })
     .items_center()
     .flex_shrink_0()

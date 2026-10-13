@@ -437,13 +437,7 @@ impl KagiApp {
             .rounded_lg()
             .bg(rgb(theme().panel));
         for (slot, cell) in cells.into_iter().enumerate() {
-            row = row.child(pane_cell(
-                &tabs,
-                slot,
-                cell,
-                cell.0 == active,
-                self.window_active,
-            ));
+            row = row.child(pane_cell(&tabs, slot, cell, cell.0 == active));
         }
         row.into_any_element()
     }
@@ -459,7 +453,6 @@ fn pane_cell(
     slot: usize,
     cell: (HomePane, &'static str, Option<usize>, bool),
     active: bool,
-    window_active: bool,
 ) -> AnyElement {
     let (pane, label, count, loading) = cell;
     let id = match pane {
@@ -471,11 +464,11 @@ fn pane_cell(
         Some(count) => format!("{label} {count}"),
         None => label.to_string(),
     };
-    let fg = if active {
-        theme().selection_foreground(window_active)
+    let fg = rgb(if active {
+        theme().text_main
     } else {
-        rgb(theme().text_muted).into()
-    };
+        theme().text_muted
+    });
     let badge = match count {
         Some(count) => Some(
             div()
@@ -483,15 +476,11 @@ fn pane_cell(
                 .px(theme::scaled_px(6.))
                 .rounded_md()
                 .bg(if active {
-                    theme().selected_for_window(window_active)
+                    theme().segment_selected_bg()
                 } else {
                     rgb(theme().surface).into()
                 })
-                .text_color(if active {
-                    theme().selection_secondary_foreground(window_active)
-                } else {
-                    rgb(theme().text_sub).into()
-                })
+                .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(count.to_string()))
                 .into_any_element(),
         ),
@@ -500,7 +489,7 @@ fn pane_cell(
             super::render_overlay::sync_spinner(
                 12.,
                 if active {
-                    u32::from(theme().selection_foreground(window_active).to_rgb()) >> 8
+                    theme().text_main
                 } else {
                     theme().text_muted
                 },
@@ -523,7 +512,7 @@ fn pane_cell(
         .text_sm()
         .text_color(fg)
         .when(active, |el| {
-            el.bg(theme().selected_for_window(window_active))
+            el.bg(theme().segment_selected_bg())
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.hover(|s| s.bg(rgb(theme().surface))))

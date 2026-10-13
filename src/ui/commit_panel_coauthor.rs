@@ -206,6 +206,7 @@ fn render_option(
 ) -> AnyElement {
     let is_selected = selected == Some(index);
     let window_active = window.is_window_active();
+    let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
     if selected == Some(index) {
         if let Some(handle) = window.focused(cx) {
             labels::focus(&row.id, &handle);
@@ -248,7 +249,7 @@ fn render_option(
                 .w_full()
                 .truncate()
                 .text_xs()
-                .text_color(if is_selected {
+                .text_color(if uses_on_accent {
                     theme().selection_foreground(window_active)
                 } else {
                     rgb(theme().text_main).into()
@@ -260,7 +261,7 @@ fn render_option(
                 .w_full()
                 .truncate()
                 .text_xs()
-                .text_color(if is_selected {
+                .text_color(if uses_on_accent {
                     theme().selection_secondary_foreground(window_active)
                 } else {
                     rgb(theme().text_muted).into()

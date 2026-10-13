@@ -1541,11 +1541,16 @@ fn render_center(
                     div()
                         .text_xs()
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(if selected_commit.is_none() {
-                            theme().selection_foreground(app.window_active)
-                        } else {
-                            rgb(theme().text_muted).into()
-                        })
+                        .text_color(
+                            if theme().selection_uses_on_accent(
+                                selected_commit.is_none(),
+                                app.window_active,
+                            ) {
+                                theme().selection_foreground(app.window_active)
+                            } else {
+                                rgb(theme().text_muted).into()
+                            },
+                        )
                         .child(SharedString::from(format!(
                             "{} ({})",
                             Msg::PrModeCommits.t(),
@@ -1558,6 +1563,7 @@ fn render_center(
                 this.pr_mode_select_commit(Some(i), cx);
             });
             let sel = selected_commit == Some(i);
+            let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
             strip = strip.child(
                 div()
                     .id(("pr-mode-commit", i))
@@ -1579,7 +1585,7 @@ fn render_center(
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_color(if sel && app.window_active {
+                            .text_color(if selection_on_accent {
                                 theme().selection_foreground(app.window_active)
                             } else {
                                 rgb(theme().accent_text_on(theme().bg_base)).into()
@@ -1591,7 +1597,7 @@ fn render_center(
                             .flex_shrink_0()
                             .font_family(super::MONO_FONT)
                             .text_xs()
-                            .text_color(if sel && app.window_active {
+                            .text_color(if selection_on_accent {
                                 theme().selection_secondary_foreground(app.window_active)
                             } else {
                                 rgb(theme().text_muted).into()
@@ -1603,7 +1609,7 @@ fn render_center(
                             .flex_1()
                             .min_w(px(0.))
                             .truncate()
-                            .text_color(if sel {
+                            .text_color(if selection_on_accent {
                                 theme().selection_foreground(app.window_active)
                             } else {
                                 rgb(theme().text_main).into()
@@ -1614,7 +1620,7 @@ fn render_center(
                         div()
                             .flex_shrink_0()
                             .text_xs()
-                            .text_color(if sel {
+                            .text_color(if selection_on_accent {
                                 theme().selection_secondary_foreground(app.window_active)
                             } else {
                                 rgb(theme().text_sub).into()
@@ -1625,7 +1631,7 @@ fn render_center(
                         div()
                             .flex_shrink_0()
                             .text_xs()
-                            .text_color(if sel && app.window_active {
+                            .text_color(if selection_on_accent {
                                 theme().selection_secondary_foreground(app.window_active)
                             } else {
                                 rgb(theme().text_muted).into()
@@ -1850,6 +1856,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
             }
         });
         let sel = selected_file == Some(i);
+        let selection_on_accent = theme().selection_uses_on_accent(sel, app.window_active);
         let is_viewed = marks.map(|v| v.is_viewed(&f.path));
         let name = f
             .path
@@ -1890,7 +1897,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                     div()
                         .w(theme::scaled_px(14.))
                         .flex_shrink_0()
-                        .text_color(if sel && app.window_active {
+                        .text_color(if selection_on_accent {
                             theme().selection_foreground(app.window_active)
                         } else {
                             rgb(color).into()
@@ -1900,7 +1907,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_color(if sel {
+                        .text_color(if selection_on_accent {
                             theme().selection_foreground(app.window_active)
                         } else {
                             rgb(theme().text_main).into()
@@ -1913,7 +1920,7 @@ fn render_file_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElemen
                         .min_w(px(0.))
                         .truncate()
                         .text_xs()
-                        .text_color(if sel && app.window_active {
+                        .text_color(if selection_on_accent {
                             theme().selection_secondary_foreground(app.window_active)
                         } else {
                             rgb(theme().text_muted).into()

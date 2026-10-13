@@ -277,6 +277,7 @@ pub fn render_editor_tree_menu(
     entity: &Entity<EditorWorkspaceView>,
     target: TreeMenuTarget,
     pos: Point<Pixels>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<gpui::AnyElement> {
@@ -312,6 +313,7 @@ pub fn render_editor_tree_menu(
         on_dismiss,
         on_select,
         None,
+        window_active,
         window,
         cx,
     ))

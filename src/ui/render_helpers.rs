@@ -98,17 +98,18 @@ pub(crate) fn render_rows(
             } else {
                 rgb(theme().bg_row_alt).into()
             };
-            let foreground = if is_selected {
+            let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+            let foreground = if uses_on_accent {
                 theme().selection_foreground(window_active)
             } else {
                 rgb(theme().text_main).into()
             };
-            let secondary_foreground = if is_selected {
+            let secondary_foreground = if uses_on_accent {
                 theme().selection_secondary_foreground(window_active)
             } else {
                 rgb(theme().text_sub).into()
             };
-            let muted_foreground = if is_selected {
+            let muted_foreground = if uses_on_accent {
                 theme().selection_secondary_foreground(window_active)
             } else {
                 rgb(theme().text_muted).into()

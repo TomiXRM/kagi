@@ -142,14 +142,13 @@ fills, actual summary/ref-chip/secondary label paint, non-key grey/normal row
 labels, retained identity/geometry and native primary-button labels across all
 presets. Sidebar and Commit Panel selected segments must instead paint neutral
 grey (not accent) and retain ordinary foregrounds in both activation states.
-Apple on-accent uses the
-owner's Finder policy: white at ≥3.0:1, black below (not a WCAG AA 4.5:1 claim);
-inactive text retains AA. Other presets/custom themes keep their existing
-selection and accent label colors. Pair with UI-core `selection_on_accent` /
-`finder_accent` and the existing system-accent injection tests.
+See [ADR-0125 amendment](../../../docs/adr/0125-apple-hig-themes.md#amendment--2026-10-13-finder-style-on-accent-labels-1468).
+Pair with UI-core `selection_on_accent` / `finder_accent` and system-accent
+injection tests. The scenario also exercises selected PR sidebar cards and
+enabled menu hover/keyboard highlights, including explicit child-label paint.
 Tier B uses the plain build, isolated profile and a copy of the stress fixture:
-Apple Light/Dark selected Graph/file rows, neutral sidebar modes/segments and
-accent-filled primary-button PNGs,
+Apple Light/Dark selected Graph/file/PR sidebar rows, neutral segments,
+accent-filled primary buttons and menu-hover PNGs,
 plus one owned Finder list window/file selection captured by window ID and
 closed afterward. Active-window screenshots require owner-authorized brief
 activation of only the launched PID, with the prior foreground app restored.

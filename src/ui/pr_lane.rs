@@ -489,16 +489,18 @@ fn render_lane_row(
                 .when(cfg!(feature = "gui-e2e"), |el| {
                     el.child(super::e2e::measure_inside(format!("pr-lane-label-{ix}")))
                 })
-                .text_color(if is_mine && selected {
-                    theme().selection_foreground(active)
-                } else {
-                    rgb(if is_mine {
-                        theme().text_main
+                .text_color(
+                    if theme().selection_uses_on_accent(is_mine && selected, active) {
+                        theme().selection_foreground(active)
                     } else {
-                        theme().text_muted
-                    })
-                    .into()
-                })
+                        rgb(if is_mine {
+                            theme().text_main
+                        } else {
+                            theme().text_muted
+                        })
+                        .into()
+                    },
+                )
                 .child(safe_text(&row.summary)),
         );
     #[cfg(feature = "gui-e2e")]

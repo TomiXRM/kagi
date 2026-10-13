@@ -1085,7 +1085,7 @@ pub fn render_body(
     let center = match mode.selected_file.and_then(|i| mode.session.files.get(i)) {
         Some(file) if file.kind == ConflictKind::Content => {
             let path = file.path.clone();
-            super::conflict_editor::render_editor(mode, chrome, &path, window_active, cx)
+            super::conflict_editor::render_editor(mode, chrome, &path, cx)
         }
         _ => render_center(mode, chrome.writer_busy, &chrome.raw_preview_scroll, cx),
     };
@@ -1457,7 +1457,9 @@ fn card_icon<H>(
 where
     H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 {
-    let foreground = if selected_active == Some(true) {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
         theme().selection_secondary_foreground(true)
     } else {
         rgb(theme().text_sub).into()
@@ -1506,11 +1508,13 @@ enum ConflictFileAction {
 /// its `on_select` may call the parent's conflict actions directly without
 /// leasing the entity. The owning `file_menu` state lives on the entity, so the
 /// dismiss/select close over the entity handle to clear it via `entity.update`.
+#[allow(clippy::too_many_arguments)]
 pub fn render_file_menu(
     entity: &Entity<ConflictView>,
     mode: &ConflictMode,
     idx: usize,
     pos: gpui::Point<gpui::Pixels>,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -1588,6 +1592,7 @@ pub fn render_file_menu(
         on_dismiss,
         on_select,
         None,
+        window_active,
         window,
         cx,
     )
@@ -1701,6 +1706,7 @@ fn section(
     for (position, &idx) in indices.iter().enumerate() {
         let file = &mode.session.files[idx];
         let selected = mode.selected_file == Some(idx);
+        let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
         let path_str = SharedString::from(file.path.to_string_lossy().into_owned());
         let kind = file.kind;
         let (status_color, status_text) = match file.status {
@@ -1744,7 +1750,9 @@ fn section(
             .cursor_pointer()
             .when(selected, |s| {
                 s.bg(theme().selected_for_window(window_active))
-                    .text_color(theme().selection_foreground(window_active))
+            })
+            .when(selection_on_accent, |s| {
+                s.text_color(theme().selection_foreground(window_active))
             })
             .when(!selected, |s| s.hover(|s| s.bg(rgb(theme().bg_row_alt))))
             .on_click(row_click)
@@ -1759,7 +1767,7 @@ fn section(
                     .child(
                         div()
                             .text_size(theme::scaled_px(12.))
-                            .text_color(if selected {
+                            .text_color(if selection_on_accent {
                                 theme().selection_foreground(window_active)
                             } else {
                                 rgb(theme().text_main).into()
@@ -1776,7 +1784,7 @@ fn section(
                             .child(
                                 div()
                                     .text_size(theme::scaled_px(10.))
-                                    .text_color(if selected && window_active {
+                                    .text_color(if selection_on_accent {
                                         theme().selection_secondary_foreground(window_active)
                                     } else {
                                         rgb(status_color).into()
@@ -1825,7 +1833,9 @@ fn section(
 
 /// A conflict-type badge (ADR-0065): both modified / rename-delete / etc.
 fn kind_badge(kind: ConflictKind, selected_active: Option<bool>) -> gpui::AnyElement {
-    let foreground = if selected_active == Some(true) {
+    let foreground = if theme()
+        .selection_uses_on_accent(selected_active.is_some(), selected_active.unwrap_or(false))
+    {
         theme().selection_secondary_foreground(true)
     } else {
         rgb(theme().text_muted).into()

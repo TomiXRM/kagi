@@ -313,12 +313,14 @@ pub fn log_commit_menu(row_index: usize, groups: &[MenuGroup]) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_commit_menu_overlay(
     state: CommitMenuState,
     target: CommitId,
     header: SharedString,
     groups: Vec<MenuGroup>,
     keys: &super::menu_keys::MenuKeys,
+    window_active: bool,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
@@ -343,6 +345,7 @@ pub fn render_commit_menu_overlay(
         on_dismiss,
         on_select,
         Some(keys),
+        window_active,
         window,
         cx,
     )

@@ -707,6 +707,7 @@ pub(super) fn render_menu(
             }
         },
         Some(&app.ui().filter_controls.menu_keys),
+        app.window_active_for_render(window),
         window,
         cx,
     ))

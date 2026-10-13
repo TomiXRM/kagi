@@ -285,9 +285,15 @@ impl Theme {
         })
     }
 
+    /// Only opaque, active Apple selections replace ordinary/semantic labels.
+    #[inline]
+    pub fn selection_uses_on_accent(&self, selected: bool, window_active: bool) -> bool {
+        selected && window_active && matches!(&*self.slug, "apple-light" | "apple-dark")
+    }
+
     /// Primary selected label: on-accent in key Apple windows, normal otherwise.
     pub fn selection_foreground(&self, active: bool) -> Hsla {
-        if active && matches!(&*self.slug, "apple-light" | "apple-dark") {
+        if self.selection_uses_on_accent(true, active) {
             to_hsla(self.on_accent())
         } else {
             to_hsla(self.text_main)
@@ -296,7 +302,7 @@ impl Theme {
 
     /// Secondary selected label: 70% on-accent, with normal non-key labels.
     pub fn selection_secondary_foreground(&self, active: bool) -> Hsla {
-        if active && matches!(&*self.slug, "apple-light" | "apple-dark") {
+        if self.selection_uses_on_accent(true, active) {
             self.selection_foreground(true).alpha(0.7)
         } else {
             to_hsla(self.text_sub)
@@ -2308,6 +2314,16 @@ mod tests {
     fn selection_on_accent_matches_activation_and_theme_identity() {
         for t in THEMES {
             let apple = matches!(&*t.slug, "apple-light" | "apple-dark");
+            for selected in [false, true] {
+                for window_active in [false, true] {
+                    assert_eq!(
+                        t.selection_uses_on_accent(selected, window_active),
+                        apple && selected && window_active,
+                        "{} selected={selected} window_active={window_active}",
+                        t.slug
+                    );
+                }
+            }
             let active = u32::from(t.selection_foreground(true).to_rgb()) >> 8;
             assert!(
                 contrast_ratio(t.ui_selected(), active) >= 3.0,

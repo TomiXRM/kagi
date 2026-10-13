@@ -352,6 +352,7 @@ fn file_row(
     let (badge, color, _) = status_badge(Some(&file.change), false);
     let focus = rows.clone();
     let selected = presentation.selected == Some(index);
+    let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
     let row = super::list_a11y::list_option(
         LIST,
         rows.row(slot, div().id(("inspector-file", index))),
@@ -391,7 +392,7 @@ fn file_row(
             .w(theme::scaled_px(14.))
             .flex_shrink_0()
             .text_sm()
-            .text_color(if selected && presentation.active {
+            .text_color(if selection_on_accent {
                 theme().selection_foreground(presentation.active)
             } else {
                 rgb(color).into()
@@ -403,7 +404,7 @@ fn file_row(
             .flex_1()
             .min_w(px(0.))
             .text_sm()
-            .text_color(if selected {
+            .text_color(if selection_on_accent {
                 theme().selection_foreground(presentation.active)
             } else {
                 rgb(theme().text_main).into()
@@ -414,8 +415,7 @@ fn file_row(
     .child(super::diffstat_bar::diffstat_unit(
         index,
         file.stat.as_ref(),
-        (selected && presentation.active)
-            .then(|| theme().selection_secondary_foreground(presentation.active)),
+        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active)),
     ));
     super::e2e::measure_control(format!("inspector-file-{index}"), row)
 }

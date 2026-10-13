@@ -2804,6 +2804,7 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let (badge, badge_color, _) = status_badge(change.as_ref(), false);
             let is_selected = view.selected == Some(file_index);
+            let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
             // T-WS-EDITOR-005 finding #8: stripe by visible position, not the
             // base tree index — collapsing a directory must not leave the
             // remaining visible rows with a broken (skip-a-beat) checkerboard.
@@ -2861,7 +2862,7 @@ fn render_tree_row(
                         .w(theme::scaled_px(12.))
                         .flex_shrink_0()
                         .text_xs()
-                        .text_color(if is_selected {
+                        .text_color(if uses_on_accent {
                             theme().selection_foreground(window_active)
                         } else {
                             rgb(badge_color).into()
@@ -2873,7 +2874,7 @@ fn render_tree_row(
                         .flex_1()
                         .min_w(px(0.))
                         .text_xs()
-                        .text_color(if is_selected {
+                        .text_color(if uses_on_accent {
                             theme().selection_foreground(window_active)
                         } else {
                             rgb(theme().text_main).into()
@@ -2887,7 +2888,7 @@ fn render_tree_row(
                             .flex_shrink_0()
                             .pl(theme::scaled_px(4.))
                             .text_xs()
-                            .text_color(if is_selected {
+                            .text_color(if uses_on_accent {
                                 theme().selection_foreground(window_active)
                             } else {
                                 rgb(theme().color_warning).into()

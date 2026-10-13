@@ -516,16 +516,18 @@ fn render_directory_list(
             .rounded_sm()
             .text_sm()
             .overflow_hidden()
-            .text_color(if selected == Some(ix) {
-                current_theme().selection_foreground(window_active)
-            } else {
-                rgb(if navigable {
-                    current_theme().text_main
+            .text_color(
+                if current_theme().selection_uses_on_accent(selected == Some(ix), window_active) {
+                    current_theme().selection_foreground(window_active)
                 } else {
-                    current_theme().text_muted
-                })
-                .into()
-            })
+                    rgb(if navigable {
+                        current_theme().text_main
+                    } else {
+                        current_theme().text_muted
+                    })
+                    .into()
+                },
+            )
             .when(selected == Some(ix), |row| {
                 row.bg(current_theme().selected_for_window(window_active))
             })

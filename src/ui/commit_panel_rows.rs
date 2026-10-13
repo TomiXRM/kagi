@@ -149,6 +149,7 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let selected = (is_sel || wip_hit) && !is_conflicted;
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let row_bg = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else if is_sel || wip_hit {
@@ -197,7 +198,7 @@ fn render_cp_file_row(
                 .w(theme::scaled_px(12.))
                 .flex_shrink_0()
                 .text_xs()
-                .text_color(if selected && window_active {
+                .text_color(if selection_on_accent {
                     theme().selection_foreground(window_active)
                 } else {
                     rgb(badge_color).into()
@@ -221,7 +222,7 @@ fn render_cp_file_row(
                         "cp-selected-unstaged-label"
                     }))
                 })
-                .text_color(if selected {
+                .text_color(if selection_on_accent {
                     theme().selection_foreground(window_active)
                 } else {
                     rgb(theme().text_main).into()
@@ -251,8 +252,7 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
-            (selected && window_active)
-                .then(|| theme().selection_secondary_foreground(window_active)),
+            selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
         ));
     file_row = super::super::commit_panel_navigation::file_row(
         view,

@@ -240,7 +240,6 @@ impl KagiApp {
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -312,8 +311,6 @@ impl KagiApp {
         let pr_mode_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.activate_toolbar(9, None, window, cx);
         });
-
-        let window_active = self.window_active_for_render(window);
 
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
@@ -588,13 +585,7 @@ impl KagiApp {
                     el.bg(theme().segment_selected_bg()).text_color(text_color)
                 })
                 .when(!mode_selected, |el| {
-                    el.hover(|style| {
-                        style.bg(rgb(if window_active {
-                            theme().selected
-                        } else {
-                            theme().surface
-                        }))
-                    })
+                    el.hover(|style| style.bg(rgb(theme().surface)))
                 })
                 .cursor(gpui::CursorStyle::Arrow)
                 .child(icon_cell)
@@ -775,14 +766,7 @@ impl KagiApp {
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
                             .rounded_md()
-                            .hover(|st| {
-                                st.bg(rgb(if window_active {
-                                    theme().selected
-                                } else {
-                                    theme().surface
-                                }))
-                                .cursor_default()
-                            })
+                            .hover(|st| st.bg(rgb(theme().surface)).cursor_default())
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
                         let refresh = refresh.on_key_down(|event, _, _| {

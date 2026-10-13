@@ -1122,6 +1122,16 @@ accent row shows through their semantic tint. Independently opaque status
 chips retain their own fills and contrast labels. Primary accent buttons reuse
 the on-accent bridge; menu/list highlights remain row-selection presentation.
 
+**Semantic foreground guard:** `selection_uses_on_accent(selected, active)`
+is the single predicate for every row/menu foreground override. Only a selected,
+key-window Apple row replaces semantic status/check/warning/diffstat colors
+and muted labels. Inactive and non-Apple selections keep each original role,
+not a generic text-main/text-sub replacement. PR/Issue sidebar cards apply the
+guard to their explicit child labels; translucent selected WIP chips do likewise.
+Drag-over feedback uses the separate neutral segment/tint fill and retains its
+ordinary foreground. Toolbar hover uses `surface`, distinct from current-mode
+selection. Home pane and Conflict Preview/Edit switches are segments, not rows.
+
 **Screenshot review correction:** selected segmented controls are not active
 list rows. `segment_selected_bg()` therefore supplies the existing Apple
 neutral grey (other presets keep their selected tint), independent of window
@@ -1141,6 +1151,13 @@ Metal fills, renderer-inherited and painted summary-label foregrounds,
 retained selection/geometry, primary-button pixels and all-preset contrast.
 Its segment leg checks actual sidebar and Commit Panel fill pixels are neutral,
 not accent, and their labels remain ordinary in key and non-key windows.
+PR-card and menu-highlight legs additionally inspect native fill and actual
+child-label foregrounds, including muted/semantic retention outside the guard.
+Enabled custom-menu hover and keyboard highlights share the selected fill and
+foreground pair; shortcut text inherits 70% on-accent only when highlighted.
+Shortcut labels retain element identity so GPUI resolves their group-hover
+foreground during text layout, not only paint-time style refinement.
+Disabled actions keep their existing subdued/danger presentation.
 Existing activation and selected-hover oracles remain alongside it; their
 active selection expectations now deliberately follow the opaque accent,
 not the former wash. Tier B compares the plain app and Finder separately;

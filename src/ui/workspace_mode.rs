@@ -167,8 +167,11 @@ pub(super) fn sidebar_list_row(active: bool, window_active: bool) -> gpui::Div {
         .border_color(rgb(theme::theme().surface))
         .when(active, |el| {
             el.bg(theme::theme().selected_for_window(window_active))
-                .text_color(theme::theme().selection_foreground(window_active))
         })
+        .when(
+            theme::theme().selection_uses_on_accent(active, window_active),
+            |el| el.text_color(theme::theme().selection_foreground(window_active)),
+        )
         .when(!active, |el| {
             el.hover(|s| s.bg(rgb(theme::theme().surface)))
         })

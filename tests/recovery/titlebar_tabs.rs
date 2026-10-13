@@ -40,7 +40,7 @@ pub fn scenario_titlebar_tabs(cx: &mut VisualTestAppContext) {
                         settle(cx, win);
                         let toolbar = e2e::control_bounds(win.window_id(), "toolbar-row").unwrap();
                         assert!(toolbar.top() > px(0.), "toolbar must be below the always-visible titlebar tabs (#1462), got {toolbar:?}");
-                        check_chrome(win, "toolbar-row", "toolbar-drag-region", zoom);
+                        check_chrome(win, "toolbar-row", "toolbar-drag-region", zoom, true);
                         assert!(
                             kagi::ui::tab_panel_a11y::recorded_tab_panel("repo-tab-panel")
                                 .is_some()
@@ -51,7 +51,7 @@ pub fn scenario_titlebar_tabs(cx: &mut VisualTestAppContext) {
                         cx.run_until_parked();
                         assert!(app.read_with(cx, |app, _| app.home_in_front()));
                         settle(cx, win);
-                        check_chrome(win, "home-frame", "home-drag-region", zoom);
+                        check_chrome(win, "home-frame", "home-drag-region", zoom, true);
                         check_tab(win, "home-tab");
                         assert!(
                             kagi::ui::tab_panel_a11y::recorded_tab_panel("home-tab-panel")
@@ -95,10 +95,67 @@ pub fn scenario_titlebar_tabs(cx: &mut VisualTestAppContext) {
                             e2e::control_bounds(win.window_id(), "home-tab-close").is_none(),
                             "permanent Home has no inert close control"
                         );
-                        check_chrome(win, "home-frame", "home-drag-region", zoom);
+                        check_chrome(win, "home-frame", "home-drag-region", zoom, false);
                         unmount(cx, app, win);
                     }
                 }
+            }
+        }
+    }
+}
+
+/// #1339/#1462: resizing must not make content width its own overflow budget.
+pub fn scenario_titlebar_tabs_resize(cx: &mut VisualTestAppContext) {
+    let _restore = crate::toolbar_overflow::ToolbarRestore::capture(cx);
+    let first = build_fixture();
+    let second = build_fixture();
+    for slug in ["apple-light", "apple-dark"] {
+        for language in ["en", "ja"] {
+            std::env::set_var("KAGI_LANG", language);
+            i18n::init_lang();
+            for zoom in [1., 1.67] {
+                theme::set_zoom(zoom);
+                let state = e2e::app_state(first.path()).unwrap();
+                let captured = Rc::new(RefCell::new(None));
+                let output = captured.clone();
+                let win: AnyWindowHandle = crate::macos::open_offscreen(
+                    cx,
+                    size(px(1392.), px(660.)),
+                    move |window, cx| e2e::mount_root(state, window, cx, &output),
+                )
+                .into();
+                let app = captured.borrow().clone().unwrap();
+                app.update(cx, |app, cx| {
+                    app.set_theme(slug, cx);
+                    assert!(app.open_repository(second.path().to_path_buf(), cx));
+                    for (index, tab) in app.tabs.iter_mut().enumerate() {
+                        tab.name = format!("repository-titlebar-resize-{index}-with-long-title");
+                    }
+                    cx.notify();
+                });
+                settle(cx, win);
+                let natural = e2e::control_bounds(win.window_id(), "repo-tab-0").unwrap();
+                crate::toolbar_overflow::resize_overflow_window(cx, win, 300. * zoom);
+                settle(cx, win);
+                assert!(
+                    e2e::control_bounds(win.window_id(), "tab-overflow").is_some(),
+                    "narrow titlebar must overflow"
+                );
+                let narrow = e2e::control_bounds(win.window_id(), "repo-tab-0").unwrap();
+                crate::toolbar_overflow::resize_overflow_window(cx, win, 1392.);
+                e2e::clear_control_bounds(win.window_id(), "tab-overflow");
+                settle(cx, win);
+                assert!(
+                    e2e::control_bounds(win.window_id(), "tab-overflow").is_none(),
+                    "widening the titlebar must retire » without changing the tab signature"
+                );
+                let wide = e2e::control_bounds(win.window_id(), "repo-tab-0").unwrap();
+                assert!(
+                    wide.size.width > narrow.size.width,
+                    "restore natural tab width"
+                );
+                assert_eq!(wide.size.width, natural.size.width);
+                unmount(cx, app, win);
             }
         }
     }
@@ -152,7 +209,7 @@ fn check_tab(win: AnyWindowHandle, id: &str) {
     );
 }
 
-fn check_chrome(win: AnyWindowHandle, row_id: &str, drag_id: &str, zoom: f32) {
+fn check_chrome(win: AnyWindowHandle, row_id: &str, drag_id: &str, zoom: f32, has_add: bool) {
     let bounds = |id| e2e::control_bounds(win.window_id(), id).unwrap();
     let strip = bounds("repo-tab-strip");
     let row = bounds(row_id);
@@ -169,18 +226,21 @@ fn check_chrome(win: AnyWindowHandle, row_id: &str, drag_id: &str, zoom: f32) {
     if zoom == 1. {
         assert!(row.size.height <= px(54.), "toolbar heights unchanged");
     }
-    let add = bounds("tab-add");
-    contained(strip, add, "+ belongs to the document strip");
+    let add = e2e::control_bounds(win.window_id(), "tab-add");
+    assert_eq!(add.is_some(), has_add, "bare Home has no inert +");
     let title_drag = bounds("titlebar-drag-region");
     let toolbar_drag = bounds(drag_id);
     contained(strip, title_drag, "blank titlebar drag target");
     contained(row, toolbar_drag, "blank toolbar drag target");
     assert!(title_drag.size.width > px(0.));
     assert!(toolbar_drag.size.width > px(0.));
-    assert!(
-        title_drag.left() >= add.right(),
-        "+ precedes the blank titlebar spacer"
-    );
+    if let Some(add) = add {
+        contained(strip, add, "+ belongs to the document strip");
+        assert!(
+            title_drag.left() >= add.right(),
+            "+ precedes the blank titlebar spacer"
+        );
+    }
     for id in [
         "repo-tab-0",
         "repo-tab-1",

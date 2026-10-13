@@ -1660,6 +1660,10 @@ mod macos {
                 Box::new(crate::titlebar_tabs::scenario_titlebar_tabs),
             ),
             (
+                "titlebar_tabs_resize",
+                Box::new(crate::titlebar_tabs::scenario_titlebar_tabs_resize),
+            ),
+            (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
             ),

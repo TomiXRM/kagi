@@ -21,6 +21,9 @@ impl KagiApp {
             self.tabs.get(self.active_tab).map(|_| self.active_tab)
         };
         let list = self.document_tab_list(keys, selected, repos, cx);
+        let has_add = !self.tabs.is_empty() || self.remote_view.is_some();
+        let reserved_space = theme::scaled_px(if has_add { 36. } else { 8. })
+            + gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. });
         self.tab_strip_focus
             .release_closed(self.root_focus.as_ref(), window, cx);
         let focused = self.tab_strip_focus.focused(window);
@@ -39,6 +42,7 @@ impl KagiApp {
             repos + usize::from(home_slot.is_some()),
             width.is_none(),
             has_overflow,
+            reserved_space,
             window,
             cx,
         );
@@ -66,12 +70,20 @@ impl KagiApp {
                     .min_w_0()
                     .h_full()
                     .flex_shrink(1.)
+                    .when(has_overflow, |tabs| tabs.flex_1())
                     .child(viewport)
-                    .children(menu)
-                    .child(probe),
+                    .children(menu),
             )
-            .child(self.render_tab_add(cx))
-            .child(self.render_chrome_spacer("titlebar-drag-region", cx))
+            .child(probe)
+            .when(has_add, |bar| bar.child(self.render_tab_add(cx)))
+            .child(
+                self.render_chrome_spacer("titlebar-drag-region", cx)
+                    // Overflow needs the full remaining tab budget, not half
+                    // of it shared with a second growing flex item.
+                    .when(has_overflow, |spacer| {
+                        spacer.flex_none().w(theme::scaled_px(8.))
+                    }),
+            )
             .into_any_element()
     }
 

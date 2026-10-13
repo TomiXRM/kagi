@@ -1106,10 +1106,11 @@ and Home alike. This supersedes #1179's unified frame and single-document hiding
 it is an explicit layout reversal, not a theme-specific exception.
 
 The first row starts at y=0 and is a 36-reference-px titlebar. Native macOS traffic
-lights retain their GPUI owner and (9,16) logical-px position, with an unscaled
-80px exclusion in this row only. Repository and Home document tabs are always
-visible, including a single repository or Home-only document. The titlebar owns
-the trailing + and tab overflow, including the Home-only document.
+lights retain their GPUI owner and return to the pre-#1179 (9,9) logical-px
+position, centering them in the 100% titlebar, with an unscaled 80px exclusion
+in this row only. Repository and Home document tabs are always visible, including
+a single repository or Home-only document. The titlebar owns trailing + and tab
+overflow; Home-only windows without a remote repository omit the inert +.
 Home-only windows omit the inert × because there is no document behind Home.
 The old #1180 40px strip geometry is superseded by this 36px titlebar, while its
 always-visible single-document policy is restored.
@@ -1138,6 +1139,14 @@ documents to one must not hide the remaining tab or release its focus merely
 because the count changed; #1179's hidden-strip focus and ordinary-content
 TabPanel expectations are historical. Closing the final document still releases
 focus through the existing owner, and keyed close/reindex behavior remains.
+
+Overflow measures the outer titlebar's remaining width, excluding native lights,
+the available + and the 8-reference-px blank-spacer minimum. Only while overflow
+is needed does the tab group/viewport grow to that budget; the spacer stays at
+its minimum. Widening the same window retires » and returns to intrinsic tab
+widths without opening/closing documents or changing their cache signature.
+Chrome hairline oracles sample toolbar fill below the titlebar and body fill
+below the toolbar/Home frame, matching the restored row order.
 
 Native desktop `commit_panel_viewport` measures **408 logical px** for the file
 list at 1392×883@100%: #1179's historical 440.5px minus the restored titlebar's

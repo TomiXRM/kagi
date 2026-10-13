@@ -71,7 +71,7 @@ fn window_options(cx: &App) -> WindowOptions {
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(Msg::SettingsTitle.t().into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(9.), px(16.))),
+            traffic_light_position: Some(point(px(9.), px(9.))),
         }),
         app_owns_titlebar_drag: true,
         is_resizable: false,

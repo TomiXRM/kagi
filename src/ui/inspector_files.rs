@@ -5,7 +5,7 @@ use super::{
     KagiApp,
 };
 use gpui::{
-    actions, div, prelude::*, px, rgb, App, Context, KeyBinding, ListState, MouseButton,
+    actions, div, prelude::*, px, relative, rgb, App, Context, KeyBinding, ListState, MouseButton,
     SharedString, Window,
 };
 use kagi_ui_core::{
@@ -17,6 +17,14 @@ use std::{cell::RefCell, rc::Rc};
 
 const LIST: &str = "inspector-files-scroll";
 const FOLD: &str = "\0generated";
+const ROW_HEIGHT: f32 = 20.;
+
+#[cfg(feature = "gui-e2e")]
+impl KagiApp {
+    pub fn inspector_row_height_for_e2e() -> gpui::Pixels {
+        theme::scaled_px(ROW_HEIGHT)
+    }
+}
 actions!(kagi_inspector_files, [ExpandGenerated, CollapseGenerated]);
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -129,7 +137,7 @@ impl InspectorKeyboard {
         let scroll = state
             .scroll
             .clone()
-            .with_uniform_item_height(theme::scaled_px(24.));
+            .with_uniform_item_height(theme::scaled_px(ROW_HEIGHT));
         let keys = state.keys.clone();
         let row_scroll = if matches!(state.entries.last(), Some(Entry::More(_))) {
             RowScroll::ListWithTail(scroll.clone(), keys.last().unwrap().1)
@@ -273,21 +281,30 @@ fn render_entry(
             .aria_label(name.clone())
             .aria_level(depth + 1)
             .aria_expanded(true)
+            .h(theme::scaled_px(ROW_HEIGHT))
+            .flex()
+            .items_center()
             .pl(theme::scaled_px(*depth as f32 * 12.))
-            .mb_px()
-            .text_sm()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().change_dir))
             .child(name.clone())
+            .when(cfg!(feature = "gui-e2e"), |row| {
+                row.relative()
+                    .child(super::e2e::measure_inside(format!("inspector-dir-{ix}")))
+            })
             .into_any_element(),
         Entry::More(count) => super::e2e::measure_control(
             "inspector-files-more",
             div()
-                .text_sm()
+                .h(theme::scaled_px(ROW_HEIGHT))
+                .flex()
+                .items_center()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .text_color(rgb(theme().text_muted))
                 .child(i18n::and_n_more(*count)),
         ),
         Entry::Unavailable => div()
-            .text_sm()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().text_muted))
             .child(Msg::DiffUnavailable.t())
             .into_any_element(),
@@ -315,9 +332,9 @@ fn generated_row(
         })
         .flex()
         .items_center()
-        .mt_1()
-        .mb_px()
-        .text_sm()
+        .h(theme::scaled_px(ROW_HEIGHT))
+        .line_height(relative(1.))
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
         .text_color(rgb(theme().text_sub))
         .on_click(cx.listener(move |this, _, window, cx| {
             focus.focus_row(slot, window, cx);
@@ -367,7 +384,8 @@ fn file_row(
     .items_center()
     .gap_1()
     .pl(theme::scaled_px(*depth as f32 * 12.))
-    .mb_px()
+    .h(theme::scaled_px(ROW_HEIGHT))
+    .line_height(relative(1.))
     .hover(|s| s.bg(rgb(theme().surface)))
     .when(selected, |el| {
         el.bg(theme().selected_for_window(presentation.active))
@@ -388,20 +406,30 @@ fn file_row(
     )
     .child(
         div()
-            .w(theme::scaled_px(14.))
+            .w(theme::scaled_px(16.))
             .flex_shrink_0()
-            .text_sm()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
             .text_color(rgb(color))
-            .child(SharedString::from(badge)),
+            .child(SharedString::from(badge))
+            .when(cfg!(feature = "gui-e2e"), |badge| {
+                badge.relative().child(super::e2e::measure_inside(format!(
+                    "inspector-file-badge-{index}"
+                )))
+            }),
     )
     .child(
         div()
             .flex_1()
             .min_w(px(0.))
-            .text_sm()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().text_main))
             .truncate()
-            .child(row.name.clone()),
+            .child(row.name.clone())
+            .when(cfg!(feature = "gui-e2e"), |name| {
+                name.relative().child(super::e2e::measure_inside(format!(
+                    "inspector-file-name-{index}"
+                )))
+            }),
     )
     .child(super::diffstat_bar::diffstat_unit(
         index,

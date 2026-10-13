@@ -70,3 +70,61 @@ reached, without turning the note into another Tab stop or replacing the
 file's real entry index. Regression coverage uses a viewport-exceeding
 Generated fixture and freshly cleared overflow probes after measured-row
 arrow navigation, so old offscreen probe bounds cannot satisfy the check.
+
+## Amendment — 2026-10-13: sidebar-density Inspector (#1464 / #1467)
+
+The Inspector is a dense contextual list. Row density follows Kagi's sidebar;
+the owner's Finder list reference (#1467) supersedes the initial `text_xs`
+request with a 13-reference-pixel font and 16-reference-pixel badge column.
+UI-core's `theme::FILE_TREE_FONT_PX` is shared through the existing
+`text_size(scaled_px(token))` convention. Other file/ref surfaces adopt it
+independently; this amendment changes only Inspector.
+Files, directories, Generated disclosure and the unfocusable More note share
+one explicit 20-reference-pixel height with the native list's unmeasured extent.
+No per-row margins inflate the scroll estimate. File badges/names and Generated
+text use single-line leading so the existing fixed focus ring fits inside the
+dense frame. Tree indentation remains 12 reference pixels. At 167%, rows exceed
+20 logical pixels. Finder's grouping, font family and selection policy are not
+copied by this size-only change.
+
+Top padding is halved (`pt_2` → `pt_1`); metadata, co-author/trailer and action
+bottom margins use `mb_1` rather than `mb_2`. Comparing uses `py_px`/`mb_1`.
+Title leading, avatar/hash sizing and message/files split semantics are unchanged.
+Rest, hover, selected and focus-visible states retain their existing colours
+and shared RowFocus ring; disclosure/Enter/Space, overflow reveal, localized
+full-path AX names, unavailable reads and the 100-file cap are unchanged.
+No Git operation or confirmation policy changes.
+
+`inspector_scale` records the old 24-reference-pixel estimate as a failing
+oracle and pins native row geometry, badge/name typography, first-file offset
+against frozen before measurements, directory/disclosure/More heights,
+keyboard activation and preferred widths. It covers 1392×883 / 940×660,
+100% / 167%, EN / JA and Apple Light / Dark. Existing #1375 keyboard and
+#1355 pane-fit coverage remain authoritative. Current narrow presentation
+keeps the fitted right slot: below-center placement is unmerged #1225 and
+is intentionally not introduced by this scale-only amendment.
+
+Native regression evidence: the original estimate failed at 21.599998 logical
+pixels (24 reference × 0.9 base) versus the required 18 (20 reference × 0.9).
+Actual old file frames were 25.5 / 39 logical pixels at 100% / 167%;
+explicit new frames measure 18 / 30, including the fixed focus border.
+First-file offsets from the header top changed 416.5 → 410 (wide, 100%),
+338.5 → 332 (940px, 100%), 487.5 → 476 (wide, 167%), and
+436.5 → 425 (940px, 167%); both languages/themes gave identical geometry.
+The scoped Inspector/File History/Changes/pane-budget/graph-fit run passed
+all 17 scenarios without changing an existing neighboring oracle. These
+are renderer/simulated-keyboard measurements, not VoiceOver or real-app FPS.
+
+Tier B: default-feature builds captured the same fixture commit `1955d837`
+at 1392×883, EN, Apple Light/Dark and 100%/167%, using isolated PID-targeted
+input and window-ID captures. Native-scale before/after crops and a Finder
+list-view/Kagi side-by-side comparison are retained outside Git under
+`/tmp/kagi-hig-audit-20261008/inspector-scale-tierb/`. The Finder comparison
+does not resample either image; Kagi's existing 0.9 density base remains,
+so 20/13 reference pixels are 18/11.7 logical pixels at 100%.
+The narrow 940px/167% attempt delivered selection but retained an occluded
+stale frame; PM explicitly accepted the wide matrix plus Finder comparison
+instead of requiring activation or a narrow screenshot. Native Tier A still
+covers all narrow geometry/keyboard legs. All launched processes exited, and
+only the newly created Finder reference window was closed after capture.
+VoiceOver delivery, IME and real-app FPS were not exercised.

@@ -710,6 +710,10 @@ mod perf_oplog_detail;
 mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inspector_scale.rs"]
+mod inspector_scale;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/text_caps.rs"]
 mod text_caps;
 
@@ -3928,6 +3932,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "inspector_scale",
+                Box::new(crate::inspector_scale::scenario),
             ),
             (
                 "graph_subject_identity",

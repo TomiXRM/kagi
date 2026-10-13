@@ -215,7 +215,7 @@ pub fn render_commit_row(
             .px_2()
             .py_1()
             .gap_1()
-            .child(fixed_col(14., model.badge_color, true, model.badge.into()))
+            .child(fixed_col(14., model.badge_color, model.badge.into()))
             .child(
                 div()
                     .flex_1()
@@ -245,8 +245,7 @@ pub fn render_commit_row(
     }
 }
 
-/// Table columns inherit File History's Finder font and leading. Keep the
-/// Editor History card's smaller metadata typography in `fixed_col` unchanged.
+/// Table columns inherit File History's Finder font and leading.
 fn table_text(ix: usize, part: &'static str, color: u32, text: SharedString) -> Div {
     let col = div().text_color(rgb(color)).truncate().child(text);
     #[cfg(feature = "gui-e2e")]
@@ -263,17 +262,14 @@ fn table_col(ix: usize, part: &'static str, width: f32, color: u32, text: Shared
 }
 
 /// One fixed-width, non-shrinking, truncating column.
-fn fixed_col(width: f32, color: u32, large: bool, text: SharedString) -> Div {
-    let col = div()
+fn fixed_col(width: f32, color: u32, text: SharedString) -> Div {
+    div()
         .w(theme::scaled_px(width))
         .flex_shrink_0()
         .text_color(rgb(color))
-        .truncate();
-    if large {
-        col.text_sm().child(text)
-    } else {
-        col.text_xs().child(text)
-    }
+        .truncate()
+        .text_sm()
+        .child(text)
 }
 
 /// Actual table paint geometry for native File History density/containment tests.

@@ -288,7 +288,7 @@ pub fn scenario_commit_row_layout(cx: &mut VisualTestAppContext) {
             for layout in [
                 CommitRowLayout::Card,
                 CommitRowLayout::Table {
-                    row_height: 29. * zoom,
+                    row_height: theme::scaled(20.),
                 },
             ] {
                 for (name, text) in inputs() {

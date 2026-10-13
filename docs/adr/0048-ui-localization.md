@@ -142,3 +142,21 @@ Visual review fixes the shared block's hierarchy as a pane-centered vertical
 icon/title/hint/action stack (`flex_col`, `items_center`, `justify_center`).
 Native geometry assertions pin vertical order, both center axes and containment
 for Graph and Terminal, including JA at 167% zoom.
+
+## Amendment — 2026-10-13: Relative ages (#1454)
+
+Relative-time explanation words are not Git domain terms. The parameterized
+`i18n::time::relative_age` helper owns EN/JA compact, short and fully spoken
+accessibility wording. All forms use the same count/unit calculation in `time`;
+future timestamps still clamp to “now”, and minute/hour/day/30-day month/365-day
+year boundaries are unchanged. Japanese uses 「たった今」「N分前」 etc.
+Graph reads retain author timestamps instead of localized date strings; language
+switches render the retained model without a repository reload. PR row AX names
+use full unit descriptions, while their visible column remains compact.
+The fixed-width Graph column uses 「今」「N分」「N時間」「N日」「Nか月」「N年」
+without 「前」; full Compact/AX wording retains it. Graph rendering samples its
+reference instant once per list render and passes it to both visible and AX
+formatters. The short text is moved directly into SharedString, without cloning.
+Native font shaping checks the actual drawn 12-month label against the fixed
+column at Japanese high zoom.
+

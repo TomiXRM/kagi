@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Relative ages follow the EN/JA UI language, including fully spoken accessibility units, without reloading repository models. Branch Cleanup merge dates now share Detail's local, per-instant DST-aware calendar; stored timestamps, staleness and deletion eligibility are unchanged. (#1454, #1455)
+  - Review: Japanese Graph ages use short unit forms that fit the fixed column; visible and AX ages share one reference-clock read per list render.
 - Terminal plain clipboard paste now requires explicit approval for ASCII control bytes (except Tab) even without a newline. English/Japanese warnings name invisible control characters; Cancel sends zero bytes, while approved contents, ordinary Japanese text and clipboard Tab are delivered exactly once. Tab does not replace the newline warning. Bracketed-paste filtering and raw completion keys remain unchanged. (#1437)
 - Analyze Reset asks before discarding an unsaved draft and writing defaults; Cancel/Return preserve both draft and disk. Save is disabled for unchanged patterns, with localized saved/unsaved status. Settings render important help under controls as secondary text while retaining long-form tooltips and switch accessibility descriptions. (#1404, #1415, #1416)
   - Review: Reset approval is owned by the Settings form, preserving the main window's existing/pending plan and remaining visible in the portable overlay. Escape cancels only the alert; switch help is announced once rather than duplicated by its Group.

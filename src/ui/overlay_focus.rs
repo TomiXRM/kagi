@@ -253,8 +253,7 @@ impl KagiApp {
                 }
             }
         }
-        // Focus-owning overlays retain their opener until they close; Info
-        // alone continues routing its keys through the root.
+        // Focus-owning overlays retain their opener until they close.
         if !menu_visible
             && !matches!(
                 self.menu_overlay,
@@ -262,6 +261,7 @@ impl KagiApp {
                     MenuOverlay::Settings
                         | MenuOverlay::CommandPalette
                         | MenuOverlay::BranchPicker { .. }
+                        | MenuOverlay::Info { .. }
                 )
             )
         {

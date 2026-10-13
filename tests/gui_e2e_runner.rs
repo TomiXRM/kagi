@@ -94,6 +94,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_ja.rs"]
+mod menus_ja;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
 mod plan_labels;
 
@@ -132,6 +136,16 @@ mod settings_window;
 #[cfg(target_os = "macos")]
 #[path = "recovery/window_restore.rs"]
 mod window_restore;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/close_window_initial_home.rs"]
+mod close_window_initial_home;
+#[cfg(target_os = "macos")]
+#[path = "recovery/shortcuts_panel_scroll.rs"]
+mod shortcuts_panel_scroll;
+#[cfg(target_os = "macos")]
+#[path = "recovery/tab_restore_active_identity.rs"]
+mod tab_restore_active_identity;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
@@ -406,6 +420,9 @@ mod settings_controls;
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_groups.rs"]
+mod sidebar_groups;
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_identity.rs"]
 mod sidebar_identity;
 #[cfg(target_os = "macos")]
@@ -498,6 +515,10 @@ mod file_history_open;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_history_keyboard.rs"]
 mod inspector_history_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_density.rs"]
+mod commit_panel_density;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
@@ -712,6 +733,10 @@ mod perf_oplog_detail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_metadata.rs"]
 mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_scale.rs"]
+mod inspector_scale;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/text_caps.rs"]
@@ -1568,6 +1593,9 @@ mod macos {
                 "system_reduce_transparency",
                 Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
+            ("menus_localized", Box::new(crate::menus_ja::scenario_menus_localized)),
+            ("edit_menu_undo_redo", Box::new(crate::menus_ja::scenario_edit_menu_undo_redo)),
+            ("file_menu_save", Box::new(crate::menus_ja::scenario_file_menu_save)),
             (
                 "window_title_identity",
                 Box::new(crate::menus_window::scenario_window_title_identity),
@@ -1587,6 +1615,18 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "tab_restore_active_identity",
+                Box::new(crate::tab_restore_active_identity::scenario_tab_restore_active_identity),
+            ),
+            (
+                "close_window_initial_home",
+                Box::new(crate::close_window_initial_home::scenario_close_window_initial_home),
+            ),
+            (
+                "shortcuts_panel_scroll",
+                Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
             ),
             (
                 "window_restore_position",
@@ -2647,6 +2687,18 @@ mod macos {
                 Box::new(crate::tab_panels::scenario_tab_panels),
             ),
             (
+                "sidebar_keyboard_collapse",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse),
+            ),
+            (
+                "sidebar_keyboard_collapse_card",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse_card),
+            ),
+            (
+                "sidebar_filtered_disclosure",
+                Box::new(crate::sidebar_groups::scenario_sidebar_filtered_disclosure),
+            ),
+            (
                 "sidebar_rows",
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows),
             ),
@@ -3065,6 +3117,7 @@ mod macos {
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
             ),
+            ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             (
                 "inspector_files_keyboard",
                 Box::new(crate::inspector_history_keyboard::inspector),
@@ -3940,6 +3993,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "inspector_scale",
+                Box::new(crate::inspector_scale::scenario),
             ),
             (
                 "graph_subject_identity",

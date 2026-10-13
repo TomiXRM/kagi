@@ -3569,7 +3569,10 @@ impl KagiApp {
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, suppress_drag)
                     .on_click(click)
-                    .child(SharedString::from(section.label)),
+                    .child(SharedString::from(i18n::menu_heading(
+                        section.label,
+                        i18n::lang(),
+                    ))),
             );
         }
 

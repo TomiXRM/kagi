@@ -1898,7 +1898,7 @@ impl KagiApp {
             "file.newTab" => self.open_home_tab(window, cx),
             "file.openRepository" => self.pick_repository(window, cx),
             "file.closeTab" => {
-                if self.home.is_some() && self.home_in_front() {
+                if !self.tabs.is_empty() && self.home.is_some() && self.home_in_front() {
                     self.close_home_tab(cx);
                 } else if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);

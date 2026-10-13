@@ -72,3 +72,8 @@ With no document it requests host closure through `hold_host_close`, exactly
 like Window > Close Window. Closing the last repository still returns to Home;
 a subsequent Cmd-W closes that window. A running/background clone or retained
 write lease continues to hold host closure.
+When the final repository closes while Home is retained in the strip, Home
+becomes window content rather than another document to close. The contextual
+Close command therefore uses the host path whenever repository tabs are empty,
+even if that retained Home descriptor still exists. One Cmd-W closes the idle
+host; busy host closure remains held.

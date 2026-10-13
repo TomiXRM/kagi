@@ -275,7 +275,6 @@ pub enum Msg {
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
-    NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
     /// ADR-0124: diff-header selected mode segments.
@@ -2426,8 +2425,6 @@ impl Msg {
             (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
-            (En, NoTabsOpen) => "no open tabs",
-            (Ja, NoTabsOpen) => "開いているタブがありません",
             (En, NoCommitSelected) => "no commit selected",
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",

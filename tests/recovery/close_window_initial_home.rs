@@ -43,6 +43,7 @@ fn close(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 pub fn scenario_close_window_initial_home(cx: &mut VisualTestAppContext) {
     check_initial_home(cx);
     check_clean_repository(cx);
+    check_home_takes_window(cx);
     check_documents(cx);
     check_busy_home(cx);
 }
@@ -157,4 +158,33 @@ fn check_clean_repository(cx: &mut VisualTestAppContext) {
     assert!(open(cx, window));
     assert!(app.read_with(cx, |a, _| a.tabs.is_empty() && a.home_in_front()));
     crate::macos::unmount(cx, app, window);
+}
+
+fn check_home_takes_window(cx: &mut VisualTestAppContext) {
+    let fixture = crate::macos::build_fixture();
+    let (app, window) = mount(cx, e2e::app_state(fixture.path()).unwrap(), 940., 660.);
+    cx.update_window(window, |_, w, cx| {
+        app.update(cx, |a, cx| a.open_home_tab(w, cx));
+    })
+    .unwrap();
+    cx.update_window(window, |_, w, cx| {
+        app.update(cx, |a, cx| {
+            a.handle_menu_command("window.previousTab", w, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(app.read_with(cx, |a, _| a.home.is_some() && !a.home_in_front()));
+    close(cx, window);
+    assert!(open(cx, window));
+    assert!(app.read_with(cx, |a, _| a.tabs.is_empty()
+        && a.home.is_some()
+        && a.home_in_front()));
+    close(cx, window);
+    assert!(
+        !open(cx, window),
+        "one Cmd-W closes document-free Home after a retained Home tab takes the window"
+    );
+    drop(app);
+    cx.run_until_parked();
 }

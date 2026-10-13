@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ref_validation.rs"]
+mod ref_validation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -103,6 +107,10 @@ mod worktree_inspection_actions;
 mod system_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/system_accessibility.rs"]
+mod system_accessibility;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_quiet.rs"]
 mod settings_quiet;
 
@@ -147,6 +155,10 @@ mod smart_picker;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/dnd_self.rs"]
+mod dnd_self;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
 
@@ -169,6 +181,10 @@ mod activity_a11y;
 #[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/terminal_keys.rs"]
+mod recovery_terminal_keys;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/unborn_empty.rs"]
@@ -227,6 +243,10 @@ mod app_remove;
 #[cfg(target_os = "macos")]
 #[path = "recovery/app_stash.rs"]
 mod app_stash;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/stash_entry_identity.rs"]
+mod stash_entry_identity;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
@@ -499,6 +519,10 @@ mod recovery_modal_compact;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_card_994.rs"]
 mod recovery_plan_card_994;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_preview_files.rs"]
+mod recovery_plan_preview_files;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1304,6 +1328,9 @@ mod macos {
                 "unborn_empty_state",
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
+            ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
+            ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
@@ -1355,6 +1382,14 @@ mod macos {
             (
                 "plan_heading_chipless",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
+            ),
+            (
+                "plan_preview_files",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
             ),
             (
                 "plan_recovery_noop",
@@ -1483,6 +1518,14 @@ mod macos {
             (
                 "system_accent_chrome",
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
+            ),
+            (
+                "system_reduce_motion",
+                Box::new(crate::system_accessibility::scenario_system_reduce_motion),
+            ),
+            (
+                "system_reduce_transparency",
+                Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
             (
                 "window_title_identity",
@@ -1820,6 +1863,14 @@ mod macos {
                 Box::new(
                     crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
                 ),
+            ),
+            (
+                "create_ref_collision_blockers",
+                Box::new(crate::ref_validation::scenario_create_ref_collision_blockers),
+            ),
+            (
+                "set_upstream_missing_blocker",
+                Box::new(crate::ref_validation::scenario_set_upstream_missing_blocker),
             ),
             (
                 "create_branch_execution_failure_keeps_input",
@@ -2782,6 +2833,10 @@ mod macos {
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
             ),
             (
+                "stash_entry_identity",
+                Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
+            ),
+            (
                 "stash_push_plan_accuracy",
                 Box::new(crate::app_stash::scenario_stash_push_plan_accuracy),
             ),
@@ -3354,6 +3409,14 @@ mod macos {
             (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
+            (
+                "branch_drag_self_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_self_target),
+            ),
+            (
+                "branch_drag_detached_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_detached_target),
             ),
             (
                 "cross_worktree_merge",

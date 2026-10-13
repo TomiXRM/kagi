@@ -900,11 +900,26 @@ pub fn init_auto_fetch() {
 /// reduce-motion API — the pinned build's animation element does not honor it).
 static REDUCE_MOTION: AtomicBool = AtomicBool::new(false);
 
-/// The currently-active reduce-motion flag (read every render frame that draws
-/// a looping animation, e.g. the tab-loading dots).
+/// Effective Reduce Motion: neither app-off nor system-off overrides an opt-in.
 #[inline]
 pub fn reduce_motion() -> bool {
+    crate::accessibility::system_display().0 || app_reduce_motion()
+}
+
+/// The app-only opt-in displayed and edited by the Appearance switch.
+pub fn app_reduce_motion() -> bool {
     REDUCE_MOTION.load(Ordering::Relaxed)
+}
+
+pub fn reduce_transparency() -> bool {
+    crate::accessibility::system_display().1
+}
+
+/// Fully opaque equivalent of the dashboard's 35%-black overlay on the page.
+pub fn pr_card_opaque_bg() -> u32 {
+    let base = theme().bg_base;
+    let channel = |shift: u32| (((base >> shift) & 255) * 65 + 50) / 100;
+    (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
 /// Set + persist the reduce-motion flag to `settings.json` (key `reduce_motion`).

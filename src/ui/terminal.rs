@@ -26,6 +26,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
 
+pub(crate) mod input;
 use gpui::{px, AppContext, Context, Entity, Window};
 use gpui_terminal::{ColorPalette, TerminalConfig, TerminalView};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
@@ -205,8 +206,8 @@ pub struct KagiTerminalSession {
     pub state: TerminalState,
     /// Repository root — used as the working directory for spawned shells.
     pub repo_path: PathBuf,
-    /// Second handle to the PTY writer, used by the cmd-v paste path
-    /// (gpui-terminal 0.1.0 has no built-in paste; we write directly).
+    /// Second PTY writer handle for raw key input (Tab / Shift-Tab).
+    /// Clipboard paste belongs to TerminalView, which owns the parsed modes.
     pub paste_writer: Option<SharedWriter>,
     /// #772: the shell process this session owns — PID, spawn generation and
     /// the wait result delivered off the render path. `None` before the first
@@ -334,7 +335,7 @@ impl Future for ShellWait {
 /// Cloneable wrapper around the single PTY writer.
 ///
 /// `portable_pty::take_writer` can only be called once, but both the
-/// `TerminalView` (keystrokes) and the cmd-v paste path need to write.
+/// `TerminalView` and the app's raw Tab/Shift-Tab actions need to write.
 /// All writes go through one mutex-guarded handle.
 #[derive(Clone)]
 pub struct SharedWriter(Arc<Mutex<Box<dyn std::io::Write + Send>>>);
@@ -344,8 +345,8 @@ impl SharedWriter {
         SharedWriter(Arc::new(Mutex::new(inner)))
     }
 
-    /// Write the given text to the PTY (used by paste).
-    pub fn paste_text(&self, text: &str) {
+    /// Send raw terminal input, never clipboard text.
+    pub fn write_input(&self, text: &str) {
         if let Ok(mut w) = self.0.lock() {
             let _ = w.write_all(text.as_bytes());
             let _ = w.flush();

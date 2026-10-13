@@ -487,11 +487,7 @@ fn build_local_branch_leaf(
             .overflow_hidden()
             .on_click(head_click)
             .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                style
-                    .bg(rgb(theme().ui_selected()))
-                    .border_color(rgb(theme().ui_accent()))
-            })
+            .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
             .on_drop::<BranchDrag>(drop_handler)
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(name_tooltip(full_name))
@@ -552,11 +548,7 @@ fn build_local_branch_leaf(
             .overflow_hidden()
             .on_click(click_handler)
             .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .drag_over::<BranchDrag>(|style, _drag, _window, _cx| {
-                style
-                    .bg(rgb(theme().ui_selected()))
-                    .border_color(rgb(theme().ui_accent()))
-            })
+            .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
             .on_drop::<BranchDrag>(drop_handler)
             .on_drag(
                 BranchDrag {

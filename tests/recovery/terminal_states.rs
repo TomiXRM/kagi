@@ -100,7 +100,7 @@ fn exit_three(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit 3\n");
+            .write_input("exit 3\n");
     });
     wait_for_report(cx, app, ShellExit::Exited { code: 3 });
     let lines = kagi_ui_core::klog::tail();
@@ -269,7 +269,7 @@ fn unknown_wait_recovers(
     window: AnyWindowHandle,
     lang: Lang,
 ) {
-    let _shell = crate::gui_isolation::StandInShell::install();
+    // Use the scenario's shell guard, which outlives the restarted child.
     exit_three(cx, app);
     draw(cx, window);
     let reason = "wait: Interrupted system call (os error 4)";
@@ -285,7 +285,7 @@ fn unknown_wait_recovers(
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit 3\n")
+            .write_input("exit 3\n")
     });
     wait_for_report(cx, app, ShellExit::Unknown(reason.into()));
     assert_block(

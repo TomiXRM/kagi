@@ -97,6 +97,7 @@ impl KagiApp {
                 | M::EditorDirtyGuard(_)
                 | M::EditorDeleteConfirm(_)
                 | M::RemoveWorktree(_)
+                | M::TerminalPaste(_)
                 | M::PruneWorktrees(_),
             ) => true,
             Some(M::Checkout(m)) => danger_plan(&m.plan),
@@ -211,6 +212,7 @@ impl KagiApp {
                 | M::RepoHealth(_)
                 | M::StashApply(_)
                 | M::ConflictContinue(_)
+                | M::TerminalPaste(_)
                 | M::TrustRepo(_),
             ) => false,
         }

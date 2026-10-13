@@ -395,6 +395,10 @@ pub enum Msg {
     TerminalNotStartedHint,
     TerminalRestartHint,
     TerminalRestart,
+    TerminalPasteTitle,
+    TerminalPasteBody,
+    TerminalPasteConfirm,
+    TerminalFocusDescription,
     UnbornEmptyTitle,
     UnbornEmptyHint,
     BusyMerge,
@@ -702,6 +706,9 @@ pub enum Msg {
     PrSectionAssigned,
     /// Swimlane pane (ADR-0200).
     PrLaneTitle,
+    PrLaneLoaded,
+    PrLaneCommit,
+    PrLaneContext,
     PrNavigator,
     PrSwimlane,
     NoPrOpen,
@@ -2594,6 +2601,14 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
+            (En, TerminalPasteTitle) => "Paste multiple lines into Terminal?",
+            (Ja, TerminalPasteTitle) => "Terminal に複数行を Paste しますか？",
+            (En, TerminalPasteBody) => "This shell has not enabled bracketed paste. Newlines in this text may execute commands immediately. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteBody) => "この shell は bracketed paste を有効にしていません。テキストの改行でコマンドが直ちに実行される場合があります。clipboard の内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteConfirm) => "Paste",
+            (Ja, TerminalPasteConfirm) => "Paste",
+            (En, TerminalFocusDescription) => "Terminal input. Tab and Shift-Tab send shell completion keys. Press Control-Shift-Tab or Command-Shift-J to focus the bottom-panel tabs; use Left or Right, then Return to switch tabs.",
+            (Ja, TerminalFocusDescription) => "Terminal 入力。Tab と Shift-Tab は shell の補完キーを送信します。Control-Shift-Tab または Command-Shift-J で下部パネルのタブに移動し、左右キーと Return でタブを切り替えます。",
             (En, UnbornEmptyTitle) => "No commits yet",
             (Ja, UnbornEmptyTitle) => "まだ commit がありません",
             (En, UnbornEmptyHint) => "Add files and create the first commit",
@@ -3062,6 +3077,12 @@ impl Msg {
             (Ja, PrSectionAssigned) => "担当",
             (En, PrLaneTitle) => "SWIMLANE",
             (Ja, PrLaneTitle) => "SWIMLANE",
+            (En, PrLaneLoaded) => "{} loaded",
+            (Ja, PrLaneLoaded) => "{} 読み込み済み",
+            (En, PrLaneCommit) => "{}; SHA {}; PR #{}",
+            (Ja, PrLaneCommit) => "{}、SHA {}、PR #{}",
+            (En, PrLaneContext) => "{}; SHA {}; read-only context",
+            (Ja, PrLaneContext) => "{}、SHA {}、読み取り専用の周辺履歴",
             (En, PrNavigator) => "Navigator",
             (Ja, PrNavigator) => "ナビゲーター",
             (En, PrSwimlane) => "Swimlane / Files",
@@ -3637,10 +3658,10 @@ impl Msg {
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
-                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+                "Stop decorative animations. macOS Reduce Motion is also respected, even when this switch is off."
             }
             (Ja, SettingsReduceMotionDesc) => {
-                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+                "装飾的なアニメーションを静止させます。オフでも macOS の「視差効果を減らす」を尊重します。"
             }
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",

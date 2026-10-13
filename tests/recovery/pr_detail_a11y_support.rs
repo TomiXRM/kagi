@@ -17,13 +17,13 @@ use kagi::ui::{
 use kagi_ui_core::{i18n, theme};
 use std::{cell::RefCell, rc::Rc};
 
-pub(super) struct Cell {
-    pub(super) app: Entity<KagiApp>,
-    pub(super) win: AnyWindowHandle,
-    pub(super) dimensions: (f32, f32),
+pub(crate) struct Cell {
+    pub(crate) app: Entity<KagiApp>,
+    pub(crate) win: AnyWindowHandle,
+    pub(crate) dimensions: (f32, f32),
 }
 impl Cell {
-    pub(super) fn paint(&self, cx: &mut VisualTestAppContext) {
+    pub(crate) fn paint(&self, cx: &mut VisualTestAppContext) {
         pr_detail::clear_controls();
         for _ in 0..3 {
             cx.run_until_parked();
@@ -31,7 +31,7 @@ impl Cell {
         }
     }
 
-    pub(super) fn bounds(&self, id: &str) -> gpui::Bounds<gpui::Pixels> {
+    pub(crate) fn bounds(&self, id: &str) -> gpui::Bounds<gpui::Pixels> {
         e2e::control_bounds(self.win.window_id(), id).unwrap_or_else(|| panic!("missing {id}"))
     }
 
@@ -167,6 +167,15 @@ pub(super) fn matrix_langs(
     languages: &[Lang],
     check: impl Fn(&mut VisualTestAppContext, &Cell, &std::path::Path),
 ) {
+    matrix_commit_count(cx, languages, 1, check);
+}
+
+pub(crate) fn matrix_commit_count(
+    cx: &mut VisualTestAppContext,
+    languages: &[Lang],
+    count: usize,
+    check: impl Fn(&mut VisualTestAppContext, &Cell, &std::path::Path),
+) {
     let _restore = GlobalSettings::capture();
     let _saved_theme = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     let original_theme = theme::theme().slug.to_string();
@@ -195,7 +204,11 @@ pub(super) fn matrix_langs(
             url,
         ],
     );
-    let head = push_pr_head(&repo, &remote, "main", &[("s.txt", "one\ntwo\nthree\n")]);
+    let mut head = push_pr_head(&repo, &remote, "main", &[("s.txt", "one\ntwo\nthree\n")]);
+    for ix in 1..count {
+        let text = format!("one\ntwo\nthree\n{ix}\n");
+        head = push_pr_head(&repo, &remote, &head, &[("s.txt", &text)]);
+    }
     // Apply plans must be allowed to open against the actual head blob.
     git(&repo, &["checkout", "-q", "-b", "feature", &head]);
     for &lang in languages {

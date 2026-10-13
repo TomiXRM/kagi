@@ -6,6 +6,18 @@
 
 use crate::commit::CommitId;
 
+/// Merge-into destinations prefer an exact local name; remote-only names
+/// address the local branch after the remote prefix (ADR-0144).
+/// The caller supplies its read-only inventory, so UI feedback and Git planning
+/// share this identity rule without doing Git I/O during pointer movement.
+pub fn merge_into_target_name(target: &str, is_local: bool, is_remote: bool) -> &str {
+    if !is_local && is_remote {
+        target.split_once('/').map_or(target, |(_, name)| name)
+    } else {
+        target
+    }
+}
+
 // ────────────────────────────────────────────────────────────
 // Branch / UpstreamInfo
 // ────────────────────────────────────────────────────────────
@@ -167,7 +179,7 @@ pub struct Worktree {
 
 #[cfg(test)]
 mod tests {
-    use super::WorktreeWip;
+    use super::{merge_into_target_name, WorktreeWip};
 
     #[test]
     fn wip_total_sums_all_buckets() {
@@ -185,6 +197,23 @@ mod tests {
         let wip = WorktreeWip::default();
         assert_eq!(wip.total(), 0);
         assert!(!wip.is_dirty());
+    }
+
+    #[test]
+    fn merge_destination_preserves_local_precedence_and_nested_names() {
+        assert_eq!(
+            merge_into_target_name("origin/topic/x", false, true),
+            "topic/x"
+        );
+        assert_eq!(
+            merge_into_target_name("origin/topic/x", true, true),
+            "origin/topic/x"
+        );
+        assert_eq!(merge_into_target_name("topic/x", true, false), "topic/x");
+        assert_eq!(
+            merge_into_target_name("missing/x", false, false),
+            "missing/x"
+        );
     }
 }
 

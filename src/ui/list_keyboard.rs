@@ -82,6 +82,9 @@ impl ListKeyboard {
 impl super::KagiApp {
     pub fn list_row_focused_for_e2e(&self, list: &str, window: &Window) -> Option<String> {
         match list {
+            "pr-lane-body" => self
+                .pr_mode()
+                .and_then(|mode| mode.lane_navigation.keyboard.focused(window)),
             "restore-refs" => self
                 .oplog_restore_modal()
                 .and_then(|modal| modal.inspection.refs.focused(window)),

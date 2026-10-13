@@ -785,6 +785,9 @@ fn render_plan_modal_card_styled(
         modal_body().id("plan-body")
     }
     .child(div().flex_shrink_0().child(render_current_predicted(&plan)));
+    if let Some(entry) = super::modal_renderers_stash::stash_entry_label(&plan) {
+        body = body.child(entry);
+    }
     if show_files {
         body = body.child(super::modal_preview_files::render(&plan));
     }

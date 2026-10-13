@@ -177,6 +177,20 @@ impl KagiApp {
             }
         })
         .detach();
+        // Native Save and history availability belong to the parent dispatch
+        // tree. Child edits/selection changes must invalidate it too.
+        cx.observe(&view, move |app, view, cx| {
+            if app.active_session() == Some(owner)
+                && app
+                    .ui()
+                    .editor_workspace
+                    .as_ref()
+                    .is_some_and(|current| current == &view)
+            {
+                cx.notify();
+            }
+        })
+        .detach();
         if let Some(ui) = self.ui_mut() {
             ui.editor_workspace = Some(view.clone());
         }
@@ -664,19 +678,31 @@ impl KagiApp {
         }
     }
 
+    pub(super) fn editor_save_available(&self, cx: &gpui::App) -> bool {
+        self.workspace_mode() == WorkspaceMode::Editor
+            && !self.home_in_front()
+            && !self.has_active_modal()
+            && !self.op_latched()
+            && self.ui().editor_workspace.as_ref().is_some_and(|editor| {
+                let view = editor.read(cx);
+                view.dirty
+                    && !view.showing_history_commit()
+                    && !view.external_changed
+                    && view.open_path.is_some()
+                    && view.editor.is_some()
+            })
+    }
+
     /// Cmd-S root handler (T-WS-EDITOR-002 §3): save the Editor Workspace's
     /// buffer if it's open and dirty; no-op otherwise (closed workspace,
     /// clean buffer, or the "Save" keystroke firing on the wrong tab).
     pub fn save_editor_file(&mut self, cx: &mut Context<Self>) {
+        if !self.editor_save_available(cx) {
+            return;
+        }
         let Some(ev) = self.ui().editor_workspace.clone() else {
             return;
         };
-        let view = ev.read(cx);
-        if (self.workspace_mode() == WorkspaceMode::Editor && view.showing_history_commit())
-            || !view.dirty
-        {
-            return;
-        }
         ev.update(cx, |v, cx| v.save(cx));
     }
 

@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/time_locale.rs"]
+mod time_locale;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/open_picker.rs"]
 mod open_picker;
 
@@ -88,6 +92,10 @@ mod theme_custom;
 #[cfg(target_os = "macos")]
 #[path = "recovery/menus_window.rs"]
 mod menus_window;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/menus_ja.rs"]
+mod menus_ja;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
@@ -168,6 +176,10 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/graph_focus.rs"]
+mod graph_focus;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
@@ -396,6 +408,9 @@ mod overlay_focus;
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
 #[cfg(target_os = "macos")]
+#[path = "recovery/settings_analyze.rs"]
+mod settings_analyze;
+#[cfg(target_os = "macos")]
 #[path = "recovery/settings_appearance_ax.rs"]
 mod settings_appearance_ax;
 #[cfg(target_os = "macos")]
@@ -404,6 +419,9 @@ mod settings_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_groups.rs"]
+mod sidebar_groups;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_identity.rs"]
 mod sidebar_identity;
@@ -1352,6 +1370,7 @@ mod macos {
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
             ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_paste_control", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_control)),
             ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
             ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
@@ -1483,6 +1502,14 @@ mod macos {
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
             ),
             (
+                "relative_time_ja",
+                Box::new(crate::time_locale::scenario_relative_time_ja),
+            ),
+            (
+                "cleanup_local_date",
+                Box::new(crate::time_locale::scenario_cleanup_local_date),
+            ),
+            (
                 "pr_dashboard_responsive",
                 Box::new(crate::recovery_layout::scenario_pr_dashboard_responsive),
             ),
@@ -1558,6 +1585,9 @@ mod macos {
                 "system_reduce_transparency",
                 Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
+            ("menus_localized", Box::new(crate::menus_ja::scenario_menus_localized)),
+            ("edit_menu_undo_redo", Box::new(crate::menus_ja::scenario_edit_menu_undo_redo)),
+            ("file_menu_save", Box::new(crate::menus_ja::scenario_file_menu_save)),
             (
                 "window_title_identity",
                 Box::new(crate::menus_window::scenario_window_title_identity),
@@ -2597,6 +2627,26 @@ mod macos {
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
             (
+                "settings_analyze_reset_confirm",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_confirm),
+            ),
+            (
+                "settings_analyze_portable_reset",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_portable_reset),
+            ),
+            (
+                "settings_analyze_reset_preserves_plan",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_reset_preserves_plan),
+            ),
+            (
+                "settings_help_text",
+                Box::new(crate::settings_analyze::scenario_settings_help_text),
+            ),
+            (
+                "settings_analyze_save_state",
+                Box::new(crate::settings_analyze::scenario_settings_analyze_save_state),
+            ),
+            (
                 "settings_switches",
                 Box::new(crate::settings_switches::scenario_settings_switches),
             ),
@@ -2615,6 +2665,18 @@ mod macos {
             (
                 "tab_panels",
                 Box::new(crate::tab_panels::scenario_tab_panels),
+            ),
+            (
+                "sidebar_keyboard_collapse",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse),
+            ),
+            (
+                "sidebar_keyboard_collapse_card",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse_card),
+            ),
+            (
+                "sidebar_filtered_disclosure",
+                Box::new(crate::sidebar_groups::scenario_sidebar_filtered_disclosure),
             ),
             (
                 "sidebar_rows",
@@ -3789,6 +3851,14 @@ mod macos {
                 Box::new(crate::graph_column_divider::scenario_graph_columns_inspector_fit),
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
+            (
+                "graph_pointer_focus",
+                Box::new(crate::graph_focus::scenario_graph_pointer_focus),
+            ),
+            (
+                "graph_copy_foreground",
+                Box::new(crate::graph_focus::scenario_graph_copy_foreground),
+            ),
             (
                 "diff_survives_reload",
                 Box::new(scenario_diff_survives_reload),

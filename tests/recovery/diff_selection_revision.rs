@@ -99,6 +99,25 @@ fn graph_copy(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyW
     );
 }
 
+fn root_without_graph_copy(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    draw(cx, app, window);
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("sentinel".into()));
+    })
+    .unwrap();
+    keys(cx, window, "cmd-c");
+    assert_eq!(
+        clipboard(cx),
+        "sentinel",
+        "an unfocused diff and the covered Graph cannot own root Copy"
+    );
+}
+
 pub fn scenario_diff_selection_revision(cx: &mut VisualTestAppContext) {
     let _globals = GlobalSettings::capture();
     let _saved =
@@ -187,8 +206,8 @@ fn revision_cell(
     assert!(clipboard(cx).contains("NEW"));
     assert!(!clipboard(cx).contains("OLD"));
 
-    // Root focus must use Graph even while a live diff selection remains.
-    graph_copy(cx, &app, window);
+    // Root focus alone cannot expose a saved diff range or the covered Graph.
+    root_without_graph_copy(cx, &app, window);
     focus_body(cx, &app, window, new);
     keys(cx, window, "cmd-a cmd-c");
     app.update(cx, |app, cx| {
@@ -295,6 +314,6 @@ fn owner_cell(cx: &mut VisualTestAppContext) {
         0,
         "returning to retained owner does not resurrect selection"
     );
-    graph_copy(cx, &app, window);
+    root_without_graph_copy(cx, &app, window);
     unmount(cx, app, window);
 }

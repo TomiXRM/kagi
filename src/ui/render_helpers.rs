@@ -76,6 +76,8 @@ pub(crate) fn render_rows(
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
+    // One reference instant for visible ages and their accessibility descriptions.
+    let now = kagi_ui_core::time::now_unix_secs();
 
     range
         .filter_map(|i| rows.get(i).map(|row| (i, row)))
@@ -129,8 +131,12 @@ pub(crate) fn render_rows(
             // This replaces the old MAX_LANES-based clipping.
             let visible_lanes = graph_view::lanes_for_width(theme::scaled(graph_col_w));
 
-            // on_click handler: update the session's selection via cx.listener.
-            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+            // Pointer selection hands keyboard ownership to the Graph, never
+            // during rendering or while the user is typing in another field.
+            let click_handler = cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+                if let Some(root) = &this.root_focus {
+                    root.focus(window, cx);
+                }
                 this.commit_menu = None;
                 this.select(ix);
                 // ADR-0089 Phase 2c: kick off the remote changed-files load now
@@ -142,7 +148,11 @@ pub(crate) fn render_rows(
                 cx.notify();
             });
             let context_click_handler =
-                cx.listener(move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    // MenuKeys captures Graph as its Escape return target.
+                    if let Some(root) = &this.root_focus {
+                        root.focus(window, cx);
+                    }
                     this.open_commit_menu(ix, event.position);
                     cx.stop_propagation();
                     cx.notify();
@@ -198,7 +208,7 @@ pub(crate) fn render_rows(
                 div().id(ix),
                 a11y_offset_size.0 + ix,
                 a11y_offset_size.1,
-                super::list_a11y::commit_label(row),
+                super::list_a11y::commit_label(row, now),
                 is_selected,
             )
             .relative()
@@ -451,7 +461,7 @@ pub(crate) fn render_rows(
                 el.child(badges::render_provenance_badge(prov, ix))
             })
             .child(metadata::author(row, ix))
-            .child(metadata::age(row, ix))
+            .child(metadata::age(row, ix, now))
         })
         .collect()
 }

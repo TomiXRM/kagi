@@ -94,7 +94,8 @@ Selection is bound to the existing diff-list owner and content-source revision,
 not a title/row-count hash. Replacement, close and repository-owner departure
 retire the selection. Syntax/theme-only row allocations preserve the source
 revision and valid selection. The focused body handles Copy using only its
-matching selection; root Graph Copy cannot be hijacked by a saved diff range.
+matching selection. Root Graph Copy additionally requires the visible, uncovered
+commit list to own focus (ADR-0170); a saved diff range cannot hijack that action.
 The existing inclusive, code-only extraction policy remains unchanged.
 
 Both Unified rows and Split cells use one unsafe-Unicode badge/Tooltip helper.

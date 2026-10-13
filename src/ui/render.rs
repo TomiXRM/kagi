@@ -9,7 +9,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::workspace_mode::WorkspaceMode;
 use super::*;
 
 impl KagiApp {
@@ -566,7 +565,9 @@ impl Render for KagiApp {
         // Diff bodies handle their own focused, revision-valid selection.
         // The root never reads another surface's saved text.
         let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, window, cx| {
-            if this.root_has_focus(window) {
+            // Only the visible, uncovered Graph owns the root Copy action.
+            // Focused diff bodies have already handled their valid selections.
+            if this.commit_list_has_focus(window, cx) {
                 if let Some(i) = this.ui().selected {
                     this.copy_graph_selection(i, cx);
                     return;
@@ -661,7 +662,9 @@ impl Render for KagiApp {
             )
             .on_action(copy_diff_selection)
             .on_action(diff_selection_copied)
-            .on_action(save_editor_file)
+            .when(self.editor_save_available(cx), |el| {
+                el.on_action(save_editor_file)
+            })
             .on_action(
                 cx.listener(|this, _: &menu_keys::ContextMenuKey, window, cx| {
                     this.open_context_menu_from_key(window, cx);
@@ -744,51 +747,23 @@ impl Render for KagiApp {
             .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
                 this.checkout_selected_commit(window, cx);
             }))
-            // ADR-0084: Cmd+Z / Cmd+Shift+Z app history undo/redo. Mirrors the
-            // toolbar undo/redo buttons: open the plan→confirm modal when there
-            // is something to (un)do, else surface a "nothing to" footer. The
-            // keybinding's `!Input && !Terminal` predicate already keeps these
-            // off text fields and the terminal.
-            .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
-                if this.workspace_mode() == WorkspaceMode::Editor
-                    && this
-                        .ui()
-                        .editor_workspace
-                        .as_ref()
-                        .is_some_and(|view| view.read(cx).showing_history_commit())
-                {
-                    return;
-                }
-                if this.ui().operation_history.can_undo() {
-                    if !this.reject_if_busy(cx) {
+            // Menus and shortcuts share the same handler and focus/history gate.
+            .when(self.history_menu_available(false, window, cx), |el| {
+                el.on_action(cx.listener(|this, _: &commands::HistoryUndo, window, cx| {
+                    if this.history_menu_available(false, window, cx) {
                         this.open_history_undo_modal();
+                        cx.notify();
                     }
-                } else {
-                    this.status_footer =
-                        FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
-                }
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
-                if this.workspace_mode() == WorkspaceMode::Editor
-                    && this
-                        .ui()
-                        .editor_workspace
-                        .as_ref()
-                        .is_some_and(|view| view.read(cx).showing_history_commit())
-                {
-                    return;
-                }
-                if this.ui().operation_history.can_redo() {
-                    if !this.reject_if_busy(cx) {
+                }))
+            })
+            .when(self.history_menu_available(true, window, cx), |el| {
+                el.on_action(cx.listener(|this, _: &commands::HistoryRedo, window, cx| {
+                    if this.history_menu_available(true, window, cx) {
                         this.open_history_redo_modal();
+                        cx.notify();
                     }
-                } else {
-                    this.status_footer =
-                        FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
-                }
-                cx.notify();
-            }))
+                }))
+            })
             // ── W5-MENU / ADR-0029: conditional command handlers ──────────
             // Each menu action's handler is registered on the focused root ONLY
             // when `command_state == Enabled`.  gpui's macOS menu validation

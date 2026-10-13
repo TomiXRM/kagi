@@ -466,10 +466,11 @@ impl KagiApp {
             v.state.staged.is_empty() && v.state.unstaged.is_empty()
         });
         let has_draft = entity.read_with(cx, |panel, cx| {
-            panel.pending_smart_msg.as_ref().map_or_else(
-                || !panel.committable_message(cx).trim().is_empty(),
-                |pending| !pending.trim().is_empty(),
-            )
+            !panel.pending_message_clear
+                && panel.pending_smart_msg.as_ref().map_or_else(
+                    || !panel.committable_message(cx).trim().is_empty(),
+                    |pending| !pending.trim().is_empty(),
+                )
         });
         if nothing_left && !has_draft {
             if let Some(ui) = self.ui_mut() {

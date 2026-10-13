@@ -109,7 +109,7 @@ impl OplogPanelMsg {
             (Lang::En, RestoreAfter) => "AFTER",
             (Lang::Ja, RestoreAfter) => "戻した後",
             (Lang::En, RestoreWorkingTree) => "working tree",
-            (Lang::Ja, RestoreWorkingTree) => "作業ツリー",
+            (Lang::Ja, RestoreWorkingTree) => "working tree",
             (Lang::En, RestoreIndex) => "index",
             (Lang::Ja, RestoreIndex) => "index",
             (Lang::En, RestoreUntracked) => "untracked",
@@ -194,7 +194,7 @@ pub fn restore_checked_out(branch: &str, dirty: bool) -> String {
     };
     match lang() {
         Lang::En => format!("{branch} is checked out · {}", suffix.t_for(Lang::En)),
-        Lang::Ja => format!("{branch} はチェックアウト中 · {}", suffix.t_for(Lang::Ja)),
+        Lang::Ja => format!("{branch} は checkout 中 · {}", suffix.t_for(Lang::Ja)),
     }
 }
 

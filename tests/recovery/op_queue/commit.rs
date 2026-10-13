@@ -661,7 +661,7 @@ fn commit_identity_unavailable_plan(cx: &mut VisualTestAppContext, lang: kagi_ui
     let index = std::fs::read(repo.join(".git/index")).unwrap();
     let reason = match lang {
         Lang::En => "Git author or committer identity is unavailable. Set user.name and user.email before committing.",
-        Lang::Ja => "Git の作者またはコミッターの情報が設定されていません。コミットする前に user.name と user.email を設定してください。",
+        Lang::Ja => "Git の作者または committer の情報が設定されていません。commit する前に user.name と user.email を設定してください。",
     };
     let note = PlanNote::Commit(CommitNote::IdentityUnavailable);
     assert_eq!(i18n::plan_note_text(&note), reason);

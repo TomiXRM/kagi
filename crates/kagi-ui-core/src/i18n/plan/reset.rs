@@ -5,7 +5,7 @@ use kagi_domain::plan_note::{ResetNote, ResetRecovery, ResetTitle};
 use crate::i18n::Msg;
 
 pub(crate) const ADVICE_RESET_REF_ONLY_SOFT_RESET: &str =
-    "branch ポインタだけを移動します(`git reset --soft` 相当)。作業ツリーと stage 済みの変更は残り、新しい HEAD への差分として表示されます。";
+    "branch ポインタだけを移動します(`git reset --soft` 相当)。working tree と stage 済みの変更は残り、新しい HEAD への差分として表示されます。";
 pub(crate) const ADVICE_RESET_ABANDONS_COMMITS: &str =
     "{} 件の commit が到達不能になります(GC まで reflog から復元可能)。\nbranch `{}`";
 pub(crate) const ADVICE_RESET_TARGET_NOT_ANCESTOR: &str =
@@ -43,7 +43,7 @@ pub fn title_ja(title: &ResetTitle) -> String {
 pub fn recovery_ja(recovery: &ResetRecovery) -> String {
     match recovery {
         ResetRecovery::ResetCurrentToHead { branch, from } => format!(
-            "元に戻すには branch を以前の先端へ:\n  git update-ref refs/heads/{} {}\nref だけの変更で、作業ツリーと index は変わりません。",
+            "元に戻すには branch を以前の先端へ:\n  git update-ref refs/heads/{} {}\nref だけの変更で、working tree と index は変わりません。",
             branch, from
         ),
     }

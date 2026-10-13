@@ -517,6 +517,10 @@ mod file_history_open;
 mod inspector_history_keyboard;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_density.rs"]
+mod commit_panel_density;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
 mod editor_snapshot_readonly;
 
@@ -729,6 +733,10 @@ mod perf_oplog_detail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_metadata.rs"]
 mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_scale.rs"]
+mod inspector_scale;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/text_caps.rs"]
@@ -3109,6 +3117,7 @@ mod macos {
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
             ),
+            ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             (
                 "inspector_files_keyboard",
                 Box::new(crate::inspector_history_keyboard::inspector),
@@ -3984,6 +3993,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "inspector_scale",
+                Box::new(crate::inspector_scale::scenario),
             ),
             (
                 "graph_subject_identity",

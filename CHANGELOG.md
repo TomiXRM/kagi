@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Create Worktree ignores late folder-picker answers after its requesting form is replaced or its repository tab is left, including departure and return. The surviving form still plans `<chosen parent>/<branch>` exactly once; cancelling or choosing a folder creates no directory or branch. (#1383)
 - Branch and Tag creation plans block existing names and parent/child ref namespace collisions, including packed refs, before confirmation. Existing invalid-name validation remains in place. (#1379)
 - Set Upstream blocks nonexistent remote-tracking branches and explains in English/Japanese that they must be fetched before setting upstream, rather than offering confirmation for an operation that cannot execute. (#1380)
 - Merge, Cherry-pick and Revert confirmation cards show the computed files to change with status glyphs, a localized count and bounded preview. Long paths use middle ellipsis with their full sanitized path in tooltips/accessibility names; the shared scrolling body keeps actions pinned at small-window/high-zoom sizes. Plan computations and confirmation policy are unchanged. (#1381)

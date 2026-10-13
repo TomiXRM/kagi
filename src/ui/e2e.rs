@@ -1289,22 +1289,28 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static GITHUB_NAV: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static FOLDER_ANSWER: RefCell<Option<std::path::PathBuf>> = const { RefCell::new(None) };
+    static FOLDER_ANSWER: RefCell<Option<gpui::Task<Option<std::path::PathBuf>>>> =
+        const { RefCell::new(None) };
 }
 
-/// #1043: the system folder dialog cannot be driven from the GUI runner. A
-/// request is recorded under its prompt and answered with the folder set by
-/// [`answer_folder_prompt`]; with none set it is cancelled.
+/// #1043 / #1383: record the native folder request and await its answer through
+/// the same completion task as production. An unqueued request is cancelled.
 #[cfg(feature = "gui-e2e")]
-pub(crate) fn take_folder_prompt(prompt: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn take_folder_prompt(prompt: &str) -> Option<gpui::Task<Option<std::path::PathBuf>>> {
     FOLDER_PROMPTS.with(|prompts| prompts.borrow_mut().push(prompt.to_string()));
     FOLDER_ANSWER.with(|answer| answer.borrow_mut().take())
+}
+
+/// Queue the next dialog's answer using the shared task-deferral transport.
+#[cfg(feature = "gui-e2e")]
+pub fn queue_folder_answer(task: gpui::Task<Option<std::path::PathBuf>>) {
+    FOLDER_ANSWER.with(|answer| assert!(answer.borrow_mut().replace(task).is_none()));
 }
 
 /// The folder the next dialog request chooses (`None`: it is cancelled).
 #[cfg(feature = "gui-e2e")]
 pub fn answer_folder_prompt(folder: Option<std::path::PathBuf>) {
-    FOLDER_ANSWER.with(|answer| *answer.borrow_mut() = folder);
+    queue_folder_answer(gpui::Task::ready(folder));
 }
 
 /// The prompts of the folder dialogs requested since the last call.

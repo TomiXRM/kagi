@@ -182,6 +182,14 @@ fn client_membership_active(ui: &TabUiState) -> bool {
 /// is on screen or the neighbour a gesture is sliding toward, so it must stay a
 /// pure read of `ui().github_issues`.
 pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    render_list(app, false, cx)
+}
+
+pub(super) fn render_compact_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
+    render_list(app, true, cx)
+}
+
+fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> AnyElement {
     let ui = app.ui();
     let issue_count = ui.github_issues.len();
     let selected = ui.selected_github_issue;
@@ -356,6 +364,17 @@ pub(super) fn render_issue_list(app: &KagiApp, cx: &mut Context<KagiApp>) -> Any
                             .id(("issue-mode-card", number as usize))
                             .on_click(select)
                             .child(content);
+                    let row = if compact {
+                        super::compact_sidebar::Leaf {
+                            id: ("compact-issue-row", number as usize).into(),
+                            label: format!("#{number} {}", safe_text(&issue.title)),
+                            row,
+                            app: cx.weak_entity(),
+                        }
+                        .into_any_element()
+                    } else {
+                        row.into_any_element()
+                    };
                     body = body.child(super::e2e::measure_control(
                         format!("issue-mode-card-{number}"),
                         row,
@@ -585,14 +604,17 @@ pub fn render_issues_mode(
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
     app.ensure_issue_avatars(cx);
-    let left = super::e2e::measure_control(
-        "issue-mode-left-pane",
-        super::workspace_mode::render_sidebar_pages(
-            app,
-            super::workspace_mode::WorkspaceMode::Issues,
-            cx,
-        ),
-    );
+    let compact = super::compact::for_window(window);
+    let left = (!compact).then(|| {
+        super::e2e::measure_control(
+            "issue-mode-left-pane",
+            super::workspace_mode::render_sidebar_pages(
+                app,
+                super::workspace_mode::WorkspaceMode::Issues,
+                cx,
+            ),
+        )
+    });
     let center = render_center(app, window, cx);
     let center = match panel {
         None => center,
@@ -615,8 +637,8 @@ pub fn render_issues_mode(
         .min_h(px(0.))
         .h_full()
         .bg(rgb(theme().bg_base))
-        .child(left)
-        .child(divider())
+        .children(left)
+        .when(!compact, |el| el.child(divider()))
         .child(center)
         .into_any_element()
 }

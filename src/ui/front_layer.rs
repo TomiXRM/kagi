@@ -194,14 +194,20 @@ impl KagiApp {
 
     pub(crate) fn coauthor_menu_visible(&self, cx: &App) -> bool {
         self.workspace_body_drawn()
-            && self.ui().commit_panel_open
+            && self.commit_panel_surface_open()
             && self
                 .ui()
                 .commit_panel
                 .as_ref()
                 .is_some_and(|panel| panel.read(cx).coauthor_menu_visible())
-            && super::workspace::resolve_workspace(&self.workspace_inputs(true, true, false)).right
-                == super::workspace::RightPane::CommitPanel
+            && if self.compact.enabled {
+                self.compact.popup_owner == self.active_session()
+                    && self.compact.popup_owner.is_some()
+                    && !self.compact.suspended
+            } else {
+                super::workspace::resolve_workspace(&self.workspace_inputs(true, true, false)).right
+                    == super::workspace::RightPane::CommitPanel
+            }
     }
 
     pub(crate) fn visible_platform_menu_section(
@@ -211,10 +217,10 @@ impl KagiApp {
         Some((ix, super::commands::linux_menu_sections().nth(ix)?))
     }
     /// The Commit Panel's plan confirmation, only where it is drawn: not with
-    /// Home in front, and only while the panel is open.
+    /// Home in front, and only while a desktop panel or pinned composer is open.
     pub(crate) fn commit_plan_visible(&self, cx: &App) -> bool {
         !self.home_in_front()
-            && self.ui().commit_panel_open
+            && self.commit_panel_surface_open()
             && self
                 .ui()
                 .commit_panel

@@ -32,7 +32,7 @@ pub(super) fn pointer_selector(cx: &mut VisualTestAppContext) {
     std::fs::write(fixture.path().join("selection.txt"), "second staged diff\n").unwrap();
     git(fixture.path(), &["add", "README.md", "selection.txt"]);
     for case in matrix() {
-        let (app, window) = open(cx, fixture.path(), case);
+        let (app, window) = open_changes(cx, fixture.path(), case);
         let panel = cx
             .read(|cx| app.read(cx).ui().commit_panel.clone())
             .unwrap();
@@ -84,6 +84,7 @@ pub(super) fn pointer_selector(cx: &mut VisualTestAppContext) {
     }
 }
 
+#[track_caller]
 fn assert_root_focus(
     cx: &mut VisualTestAppContext,
     window: AnyWindowHandle,
@@ -95,7 +96,7 @@ fn assert_root_focus(
     assert!(
         cx.update_window(window, |_, window, _| root.is_focused(window))
             .unwrap(),
-        "selector pointer click must release to actual root focus"
+        "pointer control must release to actual root focus"
     );
 }
 
@@ -138,7 +139,7 @@ pub(super) fn pointer_bulk(cx: &mut VisualTestAppContext) {
     )
     .unwrap();
     for case in matrix() {
-        let (app, window) = open(cx, fixture.path(), case);
+        let (app, window) = open_changes(cx, fixture.path(), case);
         let panel = cx
             .read(|cx| app.read(cx).ui().commit_panel.clone())
             .unwrap();
@@ -257,7 +258,11 @@ pub(super) fn hidden_bulk_focus(cx: &mut VisualTestAppContext) {
                 cx.notify();
             });
             paint(cx, window);
-            assert_focus(cx, window, "cp-view-list");
+            let retained = case.dimensions.0 < 1000. && id == "cp-stage-all";
+            assert_focus(cx, window, if retained { id } else { "cp-view-list" });
+            if retained {
+                assert_eq!(labels::accessible_disabled(id), Some(true));
+            }
             panel.update(cx, |panel, cx| {
                 panel.state.unstaged = unstaged.clone();
                 cx.notify();
@@ -292,7 +297,7 @@ pub(super) fn bulk_keys(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     std::fs::write(fixture.path().join("README.md"), "keyboard bulk edit\n").unwrap();
     for case in matrix() {
-        let (app, window) = open(cx, fixture.path(), case);
+        let (app, window) = open_changes(cx, fixture.path(), case);
         let panel = cx
             .read(|cx| app.read(cx).ui().commit_panel.clone())
             .unwrap();
@@ -325,7 +330,7 @@ pub(super) fn bulk_keys(cx: &mut VisualTestAppContext) {
             );
             assert_eq!(cx.read(|cx| panel.read(cx).state.staged.len()), 1);
             assert!(cx.read(|cx| panel.read(cx).state.unstaged.is_empty()));
-            assert_focus(cx, window, "cp-view-list");
+            after_bulk_focus(cx, window, case, fixture.path(), true);
             ax(
                 "cp-unstage-all",
                 Role::Button,
@@ -342,7 +347,7 @@ pub(super) fn bulk_keys(cx: &mut VisualTestAppContext) {
             );
             assert!(cx.read(|cx| panel.read(cx).state.staged.is_empty()));
             assert_eq!(cx.read(|cx| panel.read(cx).state.unstaged.len()), 1);
-            assert_focus(cx, window, "cp-view-list");
+            after_bulk_focus(cx, window, case, fixture.path(), false);
             press(cx, window, "shift-tab");
             assert_focus(cx, window, "cp-discard-all");
             press(cx, window, key);
@@ -358,4 +363,124 @@ pub(super) fn bulk_keys(cx: &mut VisualTestAppContext) {
         labels::clear();
         unmount(cx, app, window);
     }
+}
+
+fn after_bulk_focus(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    case: Case,
+    repo: &std::path::Path,
+    staged: bool,
+) {
+    if case.dimensions.0 < 1000. {
+        // Compact headers keep empty-column actions visible and inert; wide
+        // headers hide them and retain their original selected-tab fallback.
+        let id = if staged {
+            "cp-stage-all"
+        } else {
+            "cp-unstage-all"
+        };
+        let reason = if staged {
+            Msg::CommitPanelNothingUnstaged
+        } else {
+            Msg::AdviceCommitNothingStaged
+        };
+        assert_focus(cx, window, id);
+        assert_eq!(labels::accessible_disabled(id), Some(true));
+        assert_eq!(
+            labels::accessible_description(id).as_deref(),
+            Some(reason.t())
+        );
+        let index = std::fs::read(repo.join(".git/index")).unwrap();
+        let stage_count = contract_count("[kagi] staged-all: 1 file(s)");
+        let unstage_count = contract_count("[kagi] unstaged-all: 1 file(s)");
+        for key in ["enter", "space"] {
+            press(cx, window, key);
+            assert_focus(cx, window, id);
+            assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
+            assert_eq!(contract_count("[kagi] staged-all: 1 file(s)"), stage_count);
+            assert_eq!(
+                contract_count("[kagi] unstaged-all: 1 file(s)"),
+                unstage_count
+            );
+        }
+        press(cx, window, "tab");
+        if !staged {
+            assert_focus(cx, window, "cp-staged-view-list");
+            press(cx, window, "shift-tab");
+            assert_focus(cx, window, id);
+            press(cx, window, "shift-tab");
+            // The restored left file-row Stage SDK Button precedes the right
+            // column header. Verify its actual native focus paint before
+            // returning to the left List tab; do not erase that Tab stop.
+            assert_row_stage_focus(cx, window);
+        }
+    }
+    assert_focus(cx, window, "cp-view-list");
+}
+
+fn open_changes(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+    case: Case,
+) -> (Entity<KagiApp>, AnyWindowHandle) {
+    let (app, window) = open(cx, repo, case);
+    if case.dimensions.0 < 1000. {
+        let owner = cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id());
+        bounds(window, "compact-composer");
+        // Exercise Changes headers independently of the pinned composer.
+        // Dismiss the composer with the real window Escape route first.
+        let keystroke = gpui::Keystroke::parse("escape").unwrap();
+        cx.dispatch_keystroke(window, keystroke.clone());
+        cx.simulate_event(window, gpui::KeyUpEvent { keystroke });
+        e2e::clear_control_bounds(window.window_id(), "compact-composer");
+        paint(cx, window);
+        assert!(e2e::control_bounds(window.window_id(), "compact-composer").is_none());
+        assert_root_focus(cx, window, &app);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+            owner
+        );
+    }
+    (app, window)
+}
+
+fn assert_row_stage_focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+    let button = bounds(window, "cp-first-row-stage");
+    let (focused, scale) = cx
+        .update_window(window, |_, window, _| {
+            (window.render_to_image().unwrap(), window.scale_factor())
+        })
+        .unwrap();
+    press(cx, window, "shift-tab");
+    assert_focus(cx, window, "cp-us-row-0");
+    press(cx, window, "shift-tab");
+    assert_focus(cx, window, "cp-view-list");
+    let unfocused = cx
+        .update_window(window, |_, window, _| window.render_to_image().unwrap())
+        .unwrap();
+    let left = f32::from(button.left()) * scale;
+    let right = f32::from(button.right()) * scale;
+    let top = f32::from(button.top()) * scale;
+    let bottom = f32::from(button.bottom()) * scale;
+    let margin = 2. * scale;
+    let mut ring_pixels = 0;
+    for y in (top - margin).max(0.) as u32..(bottom + margin).min(focused.height() as f32) as u32 {
+        for x in (left - margin).max(0.) as u32..(right + margin).min(focused.width() as f32) as u32
+        {
+            if x as f32 >= left && (x as f32) < right && y as f32 >= top && (y as f32) < bottom {
+                continue;
+            }
+            ring_pixels += usize::from(
+                focused.get_pixel(x, y).0[..3]
+                    .iter()
+                    .zip(&unfocused.get_pixel(x, y).0[..3])
+                    .any(|(a, b)| a.abs_diff(*b) >= 3),
+            );
+        }
+    }
+    assert!(
+        ring_pixels as f32 >= 4. * scale * scale,
+        "the measured file-row Stage SDK Button must paint its native focus ring before Shift-Tab returns to List; changed {ring_pixels} perimeter pixels"
+    );
 }

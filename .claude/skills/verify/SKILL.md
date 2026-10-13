@@ -56,6 +56,14 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1225 compact layout integration, use
+`KAGI_GUI_E2E_ONLY='compact_layout_,commit_panel_,home_,toolbar_overflow,bottom_panel,analyze_a11y_,pr_detail_a11y_'`
+with KEEP_GOING and the unchanged 120s per-scenario deadline.
+The geometry matrix is partitioned across `compact_layout_geometry` (660px,
+100%), `_zoom167` (660px, 167%), `_tall` (1000px, 100%) and `_tall_zoom167`
+(1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
+same assertions and real rail interactions; the broad filter selects every
+partition. This bounds process runtime without dropping matrix cells.
 For #1417/#1418 use
 `KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
 The in-memory system-display injection never writes macOS preferences. Both
@@ -216,16 +224,16 @@ the resolver, inspect keyboard-only rings, Down/Right/Enter and both orders,
 and read live EN/JA adoption names in Accessibility Inspector. Do not Save
 while comparing buffer-only adoption with pointer behavior.
 For #1317 use `KAGI_GUI_E2E_ONLY='graph_'` with KEEP_GOING.
-`graph_columns_fit` reproduces the default-column 940×660/167% zero-width
-subject, then requires a scaled 120px subject minimum, contained author/time,
+`graph_columns_fit` covers both the exact 1000×660/167% desktop breakpoint and
+the 940×660/167% compact rail, requiring a scaled 120px subject minimum, contained author/time,
 native author middle-ellipsis styling and an actually painted graph lane in EN/JA.
 It pins the before x positions at 1392×883/100%, preserves saved width keys
 and preferred widths through resize/zoom, and leaves existing divider-drag,
 subject-tooltip, copy, selection and worktree scenarios in the neighbor selection.
-Before: subject x=886.5 width=0, author ends at 1031 and time starts there.
-After: subject x=547 width=180.5; author x=727.5..850 and time x=850..922.
+The pre-compact 940px reproduction had subject x=886.5 width=0, author ending at
+1031 and time starting there; these historical positions are not compact pins.
 `graph_columns_compressed_drag` delivers positive native drags to both capped
-dividers, requires preferred widths/settings to stay unchanged, then widens and
+dividers at 1000px/167%, requires preferred widths/settings to stay unchanged, then widens and
 pins the original x positions. `graph_columns_inspector_fit` covers 1440px/167%
 with sidebar 240px and Inspector 360px in EN/JA: subject floor yields below 120px
 while author/time remain contained. Before review: GRAPH preference fell from
@@ -234,6 +242,12 @@ subject floor instead of yielding. Both review regressions pass after correction
 Tier B: compare the two real viewports with a long author in EN/JA, resize/zoom
 back and forth, drag both column dividers, relaunch to check saved preferences,
 and scroll a many-lane graph. Renderer probes do not prove native AX or screenshots.
+
+For #1355 use `KAGI_GUI_E2E_ONLY='pane_budget_'` with KEEP_GOING.
+The desktop fit and sidebar-anchor scenarios use the exact 1000px breakpoint
+at 167% after compact integration; the 700px leg requires a contained rail and
+no desktop side-pane clips, with preferred widths unchanged. Pure unit tests
+retain the sub-minimum non-collapsed fit cases.
 
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome

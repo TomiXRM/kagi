@@ -86,6 +86,9 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         let (entity, is_new) = self.attach_commit_panel_at(repo_path, foreign, cx);
+        if is_new {
+            self.compact.wip_bounds.set(None);
+        }
         let repo_path = entity.read(cx).repo_path.clone();
 
         // T026: lazy-create the InputStates (requires &mut Window) inside the
@@ -111,6 +114,7 @@ impl KagiApp {
             }
         });
         self.finish_commit_panel_open(entity, repo_path, is_new, window, cx);
+        self.pin_compact_composer(window, cx, is_new);
     }
 
     /// Attach or refresh the panel without its Window-bound inputs (also used by GUI E2E).
@@ -909,6 +913,10 @@ impl KagiApp {
                     if let Some(entity) = self.ui().commit_panel.clone() {
                         entity.update(cx, |v, _| v.state.plan_modal = None);
                     }
+                } else if self.compact.enabled && self.commit_plan_visible(cx) {
+                    // The plan suspends the pinned composer, unmounting its
+                    // focused footer/input. Keep Enter/Escape on the drawn root.
+                    self.focus_root_for_modal();
                 }
             }
             Err(e) => {
@@ -1140,6 +1148,7 @@ impl KagiApp {
                     ui.conflict_merge_pending = false;
                     ui.commit_panel_open = false;
                 });
+                self.compact.popup_owner = None;
                 if let Some(entity) = self.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| v.state.plan_modal = None);
                 }
@@ -1206,6 +1215,11 @@ impl KagiApp {
             }
         };
         self.open_amend_modal(mode, cx);
+        if self.compact.enabled && self.amend_modal().is_some() {
+            // Amend suspends the pinned composer and unmounts its focused
+            // footer. Route Enter/Escape through the still-drawn modal root.
+            self.focus_root_for_modal();
+        }
         cx.notify();
     }
 }

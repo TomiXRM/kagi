@@ -266,7 +266,7 @@ pub fn scenario_graph_columns_fit(cx: &mut VisualTestAppContext) {
     theme::set_reduce_motion(true);
     for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
         kagi::ui::i18n::set_lang(lang);
-        for (width, height, zoom) in [(1392., 883., 1.), (940., 660., 1.67)] {
+        for (width, height, zoom) in [(1392., 883., 1.), (1000., 660., 1.67), (940., 660., 1.67)] {
             theme::set_zoom(zoom);
             resize(cx, window, width, height);
             assert_columns(window, lang, width, height, zoom);
@@ -342,7 +342,7 @@ pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     theme::set_zoom(1.67);
-    resize(cx, window, 940., 660.);
+    resize(cx, window, 1000., 660.);
     for name in ["divider-graph-col", "divider-badge-col"] {
         capped_drag(cx, &app, window, name);
     }

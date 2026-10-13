@@ -96,11 +96,38 @@ fn focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     paint(cx, window);
 }
 
+#[track_caller]
 fn assert_focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+    let (focused, actual, handle, expected) = cx
+        .update_window(window, |_, window, cx| {
+            let actual = [
+                "cp-stage-all",
+                "cp-discard-all",
+                "cp-view-list",
+                "cp-view-tree",
+                "cp-unstage-all",
+                "cp-staged-view-list",
+                "cp-staged-view-tree",
+                "cp-template-toggle",
+                "cp-smart-suggest",
+                "cp-coauthor",
+                "cp-amend-btn",
+                "cp-commit-btn",
+            ]
+            .into_iter()
+            .find(|candidate| labels::focused(candidate, window));
+            let focused = labels::focused(id, window);
+            (
+                focused,
+                actual,
+                window.focused(cx),
+                labels::focus_handle(id),
+            )
+        })
+        .unwrap();
     assert!(
-        cx.update_window(window, |_, window, _| labels::focused(id, window))
-            .unwrap(),
-        "{id} must own window focus after real keyboard input"
+        focused,
+        "{id} must own window focus after real keyboard input; actual control={actual:?}, handle={handle:?}, expected={expected:?}"
     );
 }
 
@@ -234,6 +261,9 @@ pub fn scenario_commit_panel_footer_tab_order(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
     enabled_footer(cx);
+    // Model-picker activation above keeps its real online admission contract.
+    // The remaining phases exercise local Git/keyboard state, not networking.
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
     focus_regressions::bulk_keys(cx);
     disabled_bulk_keys(cx);
     focus_regressions::pointer_bulk(cx);
@@ -266,10 +296,24 @@ fn author_fixture(repo: &std::path::Path) {
 
 pub fn scenario_commit_panel_coauthor_keys(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
     let fixture = build_fixture();
     author_fixture(fixture.path());
     let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     for case in matrix() {
+        // A compact composer is anchored to real WIP, unlike the wide panel.
+        // Keep the author history clean in wide cases and add only an owned,
+        // unstaged file for each narrow case (never synthetic panel rows).
+        let compact_wip =
+            (case.dimensions.0 < 1000.).then(|| fixture.path().join("coauthor-keyboard-wip.txt"));
+        if let Some(path) = &compact_wip {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap();
+            std::fs::write(path, "Real WIP for the compact co-author composer\n").unwrap();
+        }
         let (app, window) = open(cx, fixture.path(), case);
         let panel = cx
             .read(|cx| app.read(cx).ui().commit_panel.clone())
@@ -286,6 +330,9 @@ pub fn scenario_commit_panel_coauthor_keys(cx: &mut VisualTestAppContext) {
         drop(panel);
         labels::clear();
         unmount(cx, app, window);
+        if let Some(path) = compact_wip {
+            std::fs::remove_file(path).unwrap();
+        }
     }
     empty_coauthors(cx);
     eprintln!("[gui-e2e] PASS commit_panel_coauthor_keys");

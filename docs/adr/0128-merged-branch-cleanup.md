@@ -158,3 +158,14 @@ PR ベースの開発では merge 済みブランチがローカル/リモート
 - oplog + OID 記録により、削除は全クラスで復元可能な操作になる。
 - preflight の OID 再検証により、リスト表示中にブランチが進んだ場合は
   削除が拒否され、リストの再読込を促す。
+
+## Amendment — 2026-10-13: Local merge calendar dates (#1455)
+
+The merged-at column uses Detail's `format_local` path, including the local
+offset at the particular instant (not today's offset). It renders only that
+local calendar date and recomputes on render rather than storing a timezone-
+dependent string. Raw merged timestamps, branch identity, classification,
+staleness and deletion eligibility remain unchanged. Regression coverage compares
+JST, UTC and US DST transition instants, UTC midnight edges, negative epoch
+seconds and leap day against Detail's date portion.
+

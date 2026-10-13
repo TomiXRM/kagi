@@ -1748,6 +1748,10 @@ mod macos {
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
             ),
             (
+                "graph_wip_hover_wash",
+                Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
+            ),
+            (
                 "repo_tabs_neutral",
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
             ),

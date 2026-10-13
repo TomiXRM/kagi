@@ -372,7 +372,15 @@ impl KagiApp {
         };
         row = row
             .when(!is_selected, |row| {
-                row.hover(|s| s.bg(rgb(theme().selected)))
+                let palette = theme();
+                let hover = if palette.selection_uses_on_accent(true, true) {
+                    let base: gpui::Hsla = rgb(palette.bg_base).into();
+                    let accent: gpui::Hsla = rgb(palette.ui_accent()).into();
+                    base.blend(row_wash).blend(accent.alpha(0.15))
+                } else {
+                    rgb(palette.selected).into()
+                };
+                row.hover(move |s| s.bg(hover))
             })
             .cursor_pointer();
 

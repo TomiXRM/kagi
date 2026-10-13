@@ -557,8 +557,14 @@ mod recovery_diff_presentation;
 mod recovery_commit_panel_viewport;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_layout.rs"]
+mod compact_layout;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_polish.rs"]
 mod recovery_commit_panel_polish;
 
@@ -749,6 +755,18 @@ mod perf_oplog_detail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_metadata.rs"]
 mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_editor.rs"]
+mod finder_scale_editor;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_history.rs"]
+mod finder_scale_history;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_rest.rs"]
+mod finder_scale_rest;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
@@ -3191,6 +3209,42 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             (
+                "compact_layout_rail",
+                Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
+            ),
+            (
+                "compact_layout_changes",
+                Box::new(crate::compact_layout::changes::scenario_compact_layout_changes),
+            ),
+            (
+                "compact_layout_geometry",
+                Box::new(crate::compact_layout::scenario_compact_layout_geometry),
+            ),
+            (
+                "compact_layout_geometry_zoom167",
+                Box::new(crate::compact_layout::scenario_compact_layout_geometry_zoom167),
+            ),
+            (
+                "compact_layout_geometry_tall",
+                Box::new(crate::compact_layout::scenario_compact_layout_geometry_tall),
+            ),
+            (
+                "compact_layout_geometry_tall_zoom167",
+                Box::new(crate::compact_layout::scenario_compact_layout_geometry_tall_zoom167),
+            ),
+            (
+                "compact_layout_popup",
+                Box::new(crate::compact_layout::popup::scenario_compact_layout_popup),
+            ),
+            (
+                "compact_layout_state",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state),
+            ),
+            (
+                "compact_layout_lifecycle",
+                Box::new(crate::compact_layout::lifecycle::scenario_compact_layout_lifecycle),
+            ),
+            (
                 "commit_panel_i18n",
                 Box::new(crate::recovery_commit_panel_i18n::scenario_commit_panel_i18n),
             ),
@@ -4045,6 +4099,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "finder_scale_rest",
+                Box::new(crate::finder_scale_rest::scenario),
             ),
             (
                 "inspector_scale",

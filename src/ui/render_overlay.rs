@@ -270,7 +270,7 @@ impl KagiApp {
     ) -> gpui::Div {
         let (commit_panel_open, commit_panel, file_menu) = if repo_popovers {
             (
-                self.ui().commit_panel_open,
+                self.commit_panel_surface_open(),
                 self.ui().commit_panel.clone(),
                 self.file_menu
                     .as_ref()

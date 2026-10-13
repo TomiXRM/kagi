@@ -22,6 +22,8 @@ pub enum BottomTab {
     Terminal,
     /// Commit-activity line chart + contributor ranking.
     Activity,
+    /// Shared staging lists in the compact allocation.
+    Changes,
 }
 
 impl BottomTab {
@@ -30,6 +32,7 @@ impl BottomTab {
             BottomTab::OperationLog => super::i18n::Msg::BottomTabOperationLog.t(),
             BottomTab::Terminal => super::i18n::Msg::ToolbarTerminal.t(),
             BottomTab::Activity => super::i18n::Msg::BottomTabActivity.t(),
+            BottomTab::Changes => super::i18n::Msg::BottomTabChanges.t(),
         }
     }
 }

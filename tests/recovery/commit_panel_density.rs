@@ -56,8 +56,25 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         cx.run_until_parked();
                         draw(cx, window.into(), (width, height));
                     }
+                    if width < 1000. {
+                        // Changes is a separate surface. At 167% the pinned
+                        // composer's shadow reaches these rows, so dismiss it
+                        // through its real control before sampling their rings.
+                        let close = e2e::control_bounds(window.window_id(), "compact-popup-close")
+                            .expect("compact composer close button");
+                        cx.simulate_click(window.into(), close.center(), gpui::Modifiers::none());
+                        e2e::clear_control_bounds(window.window_id(), "compact-composer");
+                        for _ in 0..4 {
+                            cx.run_until_parked();
+                            draw(cx, window.into(), (width, height));
+                        }
+                        assert!(
+                            e2e::control_bounds(window.window_id(), "compact-composer").is_none(),
+                            "density samples the uncovered Changes lists"
+                        );
+                    }
                     for staged in [false, true] {
-                        check(window.into(), staged, tree, zoom);
+                        check(window.into(), staged, tree, zoom, width < 1000.);
                         if !tree {
                             check_focus_ring(cx, window.into(), staged, (width, height));
                         }
@@ -70,7 +87,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS commit_panel_density");
 }
 
-fn check(window: AnyWindowHandle, staged: bool, tree: bool, zoom: f32) {
+fn check(window: AnyWindowHandle, staged: bool, tree: bool, zoom: f32, compact: bool) {
     let section = if staged { "st" } else { "us" };
     let bounds = |id: &str| {
         e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| panic!("missing {id}"))
@@ -84,16 +101,49 @@ fn check(window: AnyWindowHandle, staged: bool, tree: bool, zoom: f32) {
     });
     let viewport = bounds(&format!("cp-{section}-viewport"));
     assert!(viewport.top() - header.bottom() <= px(1.));
-    if staged {
-        let heading = bounds("cp-staged-heading");
+    if staged || compact {
+        let heading = bounds(if staged {
+            "cp-staged-heading"
+        } else {
+            "cp-unstaged-heading"
+        });
         assert!(
-            heading.top() - header.top() <= px(1.5),
-            "compact header top padding"
+            (heading.top() - header.top() - px(1.)).abs() <= px(0.5),
+            "header retains literal 1px top padding"
         );
-        assert!(
-            header.bottom() - heading.bottom() <= px(1.5),
-            "compact header bottom padding"
-        );
+        if compact {
+            // Changes intentionally wraps the heading above the action row.
+            // Pin both rows and their gap instead of applying the wide panel's
+            // single-line heading-to-bottom oracle to the whole header.
+            let action = bounds(if staged {
+                "cp-unstage-all"
+            } else {
+                "cp-stage-all"
+            });
+            let selector = bounds(if staged {
+                "cp-staged-view-list-label"
+            } else {
+                "cp-view-list-label"
+            });
+            let gap = action.top().min(selector.top()) - heading.bottom();
+            assert!(
+                (gap - px(theme::rem_size_px() * 0.25)).abs() <= px(1.5),
+                "Changes header keeps one gap_1 between heading and controls: {gap:?}"
+            );
+            let row_bottom = action.bottom().max(selector.bottom());
+            assert!(
+                (header.bottom() - row_bottom - px(2.)).abs() <= px(0.5),
+                "Changes header bottom retains 1px padding plus selector border"
+            );
+            for (name, control) in [("bulk action", action), ("List selector", selector)] {
+                crate::recovery_layout::contained(header, control, name);
+            }
+        } else {
+            assert!(
+                header.bottom() - heading.bottom() <= px(1.5),
+                "single-line header bottom padding"
+            );
+        }
     }
     if tree {
         // The narrow/high-zoom viewport may show only the root directory.

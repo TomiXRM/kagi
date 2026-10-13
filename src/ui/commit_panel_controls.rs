@@ -143,6 +143,13 @@ pub(super) fn inline_file_action(
         action_id,
         keyboard_nav::RING,
     ))
+    .when(fi == 0, |button| {
+        button.child(e2e::measure_inside(if staged {
+            "cp-first-row-unstage"
+        } else {
+            "cp-first-row-stage"
+        }))
+    })
     .on_click(action_click)
 }
 
@@ -228,20 +235,31 @@ pub(super) fn footer_button(
     ))
 }
 
-/// Release only a focused bulk action whose section no longer renders it.
+/// Release hidden bulk actions, or empty actions reached by pointer, to navigation.
 /// Like `release_closed` / `yield_focus`, unrelated input or modal focus stays put.
 pub(super) fn reconcile_bulk_focus(
     view: &CommitPanelView,
     window: &mut Window,
     cx: &mut Context<CommitPanelView>,
 ) {
-    let hidden = match view.controls_focus.focused(window) {
-        Some(0 | 1) => view.state.unstaged.is_empty(),
-        Some(2) => view.state.staged.is_empty(),
+    let compact = super::compact::for_window(window);
+    let keyboard = window.last_input_was_keyboard();
+    if !compact && view.staged_view_focus.focused(window).is_some() {
+        let handles = view.view_focus.sync(&[0, 1], cx);
+        view.staged_view_focus.yield_focus(
+            Some(&handles[usize::from(view.state.tree_view)]),
+            window,
+            cx,
+        );
+    }
+    let release = match view.controls_focus.focused(window) {
+        Some(0) => (!compact || !keyboard) && view.state.unstaged.is_empty(),
+        Some(1) => view.state.unstaged.is_empty(),
+        Some(2) => (!compact || !keyboard) && view.state.staged.is_empty(),
         _ => false,
     };
-    if hidden {
-        if !window.last_input_was_keyboard() {
+    if release {
+        if !keyboard {
             if let Some(root) = &view.pointer_root_focus {
                 root.focus(window, cx);
                 return;
@@ -254,11 +272,16 @@ pub(super) fn reconcile_bulk_focus(
 
 pub(super) fn view_selector(
     view: &CommitPanelView,
+    staged: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Stateful<gpui::Div> {
     let weak = cx.entity().downgrade();
     let tabs = keyboard_nav::TabList::new(
-        &view.view_focus,
+        if staged {
+            &view.staged_view_focus
+        } else {
+            &view.view_focus
+        },
         keyboard_nav::slot_keys(2),
         vec![0, 1],
         Some(usize::from(view.state.tree_view)),
@@ -310,9 +333,14 @@ pub(super) fn view_selector(
                 ),
         )
     };
+    let group_id = if staged {
+        "cp-staged-view-group"
+    } else {
+        "cp-view-group"
+    };
     tabs.list(
         div()
-            .id("cp-view-group")
+            .id(group_id)
             .flex()
             .flex_row()
             .flex_shrink_0()
@@ -321,16 +349,29 @@ pub(super) fn view_selector(
             .border_color(rgb(theme().surface)),
     )
     .key_context("KagiTabList KagiCommitPanelView")
-    .role(e2e::commit_panel_labels::role(
-        "cp-view-group",
-        Role::TabList,
-    ))
+    .role(e2e::commit_panel_labels::role(group_id, Role::TabList))
     .aria_label(e2e::commit_panel_labels::name(
-        "cp-view-group",
+        group_id,
         Msg::CommitPanelTitle.t(),
     ))
-    .child(cell(0, "cp-view-list", Msg::CommitPanelList.t()))
-    .child(cell(1, "cp-view-tree", Msg::CommitPanelTree.t()))
+    .child(cell(
+        0,
+        if staged {
+            "cp-staged-view-list"
+        } else {
+            "cp-view-list"
+        },
+        Msg::CommitPanelList.t(),
+    ))
+    .child(cell(
+        1,
+        if staged {
+            "cp-staged-view-tree"
+        } else {
+            "cp-view-tree"
+        },
+        Msg::CommitPanelTree.t(),
+    ))
 }
 
 fn generation_glyph(accent: u32) -> gpui::AnyElement {
@@ -577,6 +618,7 @@ fn bulk_button(
 
 pub(super) fn unstaged_header(
     view: &CommitPanelView,
+    compact: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Div {
     let count = view.state.unstaged.len();
@@ -592,6 +634,7 @@ pub(super) fn unstaged_header(
         .flex()
         .flex_row()
         .flex_wrap()
+        .when(compact, |el| el.gap_1())
         .items_center()
         .px_2()
         .py_px()
@@ -600,6 +643,7 @@ pub(super) fn unstaged_header(
             div()
                 .flex_grow(1.)
                 .flex_shrink_0()
+                .when(compact, |el| el.w_full().flex_none())
                 .relative()
                 .child(e2e::measure_inside("cp-unstaged-heading"))
                 .text_sm()
@@ -609,40 +653,50 @@ pub(super) fn unstaged_header(
                     crate::ui::i18n::commit_panel_section(false, count),
                 )),
         );
-    let header = if count > 0 {
+    let header = if compact || count > 0 {
         let stage = bulk_button(
             view,
             "cp-stage-all",
             0,
             Msg::CommitPanelStageAll,
             eligible > 0,
-            (eligible == 0).then(|| Msg::CommitPanelNoStageTargets.t()),
+            (eligible == 0).then(|| {
+                if count == 0 {
+                    Msg::CommitPanelNothingUnstaged.t()
+                } else {
+                    Msg::CommitPanelNoStageTargets.t()
+                }
+            }),
             theme().color_success,
             cx,
             |view, window, cx| view.defer_stage_all(window, cx),
         )
         .mr_2();
-        let discard = bulk_button(
-            view,
-            "cp-discard-all",
-            1,
-            Msg::CommitPanelDiscardAll,
-            eligible > 0,
-            (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t()),
-            theme().color_blocker,
-            cx,
-            |view, window, cx| view.defer_open_discard_all(window, cx),
-        )
-        .mr_2();
-        header.child(stage).child(discard)
+        header.child(stage).when(count > 0, |el| {
+            el.child(
+                bulk_button(
+                    view,
+                    "cp-discard-all",
+                    1,
+                    Msg::CommitPanelDiscardAll,
+                    eligible > 0,
+                    (eligible == 0).then(|| Msg::ModalNoDiscardTargets.t()),
+                    theme().color_blocker,
+                    cx,
+                    |view, window, cx| view.defer_open_discard_all(window, cx),
+                )
+                .mr_2(),
+            )
+        })
     } else {
         header
     };
-    header.child(view_selector(view, cx))
+    header.child(view_selector(view, false, cx))
 }
 
 pub(super) fn staged_header(
     view: &CommitPanelView,
+    compact: bool,
     cx: &mut Context<CommitPanelView>,
 ) -> gpui::Div {
     let count = view.state.staged.len();
@@ -652,6 +706,7 @@ pub(super) fn staged_header(
         .flex()
         .flex_row()
         .flex_wrap()
+        .when(compact, |el| el.gap_1())
         .items_center()
         .px_2()
         .py_px()
@@ -660,6 +715,7 @@ pub(super) fn staged_header(
             div()
                 .flex_grow(1.)
                 .flex_shrink_0()
+                .when(compact, |el| el.w_full().flex_none())
                 .relative()
                 .child(e2e::measure_inside("cp-staged-heading"))
                 .text_sm()
@@ -669,21 +725,22 @@ pub(super) fn staged_header(
                     crate::ui::i18n::commit_panel_section(true, count),
                 )),
         );
-    if count > 0 {
+    let header = if compact || count > 0 {
         header.child(bulk_button(
             view,
             "cp-unstage-all",
             2,
             Msg::CommitPanelUnstageAll,
-            true,
-            None,
+            count > 0,
+            (count == 0).then(|| Msg::AdviceCommitNothingStaged.t()),
             theme().color_warning,
             cx,
             |view, window, cx| view.defer_unstage_all(window, cx),
         ))
     } else {
         header
-    }
+    };
+    header.when(compact, |el| el.child(view_selector(view, true, cx)))
 }
 
 /// Error-only recovery row: use the pinned keyboard-capable Button, with a

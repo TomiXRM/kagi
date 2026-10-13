@@ -1386,6 +1386,11 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         CloseMainDiff,
         Some("!Terminal && !SearchPanel"),
     )]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-enter",
+        super::compact::OpenCommitComposer,
+        Some("!Terminal"),
+    )]);
     // R1: ⌘C copies the diff line selection. Gated on !Input so a focused
     // text field keeps its own copy; no-ops when nothing is selected.
     cx.bind_keys([KeyBinding::new(

@@ -15,25 +15,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::commit_panel::CommitPanelView;
-use super::render_helpers::*;
+use super::commit_panel_controls as controls;
+use super::commit_panel_rows::*;
 use super::*;
-use gpui::Focusable as _;
-use gpui_component::ActiveTheme as _;
-
-#[path = "commit_panel_controls.rs"]
-mod controls;
-#[path = "commit_panel_rows.rs"]
-mod rows;
-use rows::*;
-
-// ──────────────────────────────────────────────────────────────
-// Commit Panel — virtualized per-row builders (PERF)
-// ──────────────────────────────────────────────────────────────
-//
-// These free functions build a SINGLE file row, reading live data from the
-// `CommitPanelView` entity (NOT a captured-by-value clone). They are invoked
-// from the `uniform_list` processors below for only the visible `range`, so the
-// commit panel costs O(visible rows) per frame instead of O(all files).
 
 /// The co-author popover, or `None` when the picker is closed.
 ///
@@ -41,7 +25,7 @@ use rows::*;
 /// a downward menu would open off-screen) and wrapped in `gpui::deferred` so it
 /// paints after all of its ancestors. Without that the body box's own border is
 /// drawn over the menu, which overflows that box (user report).
-fn render_coauthor_menu(
+pub(super) fn render_coauthor_menu(
     view: &CommitPanelView,
     window: &Window,
     cx: &mut Context<CommitPanelView>,
@@ -122,29 +106,34 @@ impl CommitPanelView {
         .detach();
     }
 
-    fn defer_stage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_stage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, move |app, owner, _w, cx| {
             app.do_stage_file(owner, fi, cx)
         });
     }
 
-    fn defer_unstage_file(&self, fi: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_unstage_file(
+        &self,
+        fi: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.defer_owned(window, cx, move |app, owner, _w, cx| {
             app.do_unstage_file(owner, fi, cx)
         });
     }
 
-    fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_stage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| app.do_stage_all(owner, cx));
     }
 
-    fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_unstage_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.do_unstage_all(owner, cx)
         });
     }
 
-    fn defer_select_file(
+    pub(super) fn defer_select_file(
         &self,
         file_ref: CommitPanelFileRef,
         window: &mut Window,
@@ -187,13 +176,13 @@ impl CommitPanelView {
         });
     }
 
-    fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_open_commit_plan_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.open_commit_plan_modal(owner, cx)
         });
     }
 
-    fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_open_discard_all(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.open_discard_all_modal(owner, cx)
         });
@@ -226,19 +215,19 @@ impl CommitPanelView {
         .detach();
     }
 
-    fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_amend(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, _w, cx| {
             app.commit_panel_amend(owner, cx)
         });
     }
 
-    fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_smart_suggest(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, window, cx| {
             app.smart_suggest(owner, window, cx);
         });
     }
 
-    fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn defer_smart_generate(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.defer_owned(window, cx, |app, owner, window, cx| {
             app.smart_generate(owner, window, cx)
         });
@@ -251,6 +240,15 @@ impl CommitPanelView {
 
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.prepare_render(window, cx);
+        self.reconcile_coauthor_menu(window, cx);
+        let panel_width = self.panel_render_width;
+        self.render_panel(panel_width, window, cx)
+    }
+}
+
+impl CommitPanelView {
+    pub(super) fn prepare_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.window_activation_subscription.is_none() {
             self.window_activation_subscription =
                 Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
@@ -264,7 +262,6 @@ impl Render for CommitPanelView {
         // render path (with `&mut Window`), never as a parent per-frame read of
         // the child's input.
         self.sync_inputs(window, cx);
-        self.reconcile_coauthor_menu(window, cx);
         controls::reconcile_bulk_focus(self, window, cx);
         self.refresh_tree_layout();
         self.unstaged_navigation.reconcile(
@@ -283,12 +280,8 @@ impl Render for CommitPanelView {
             window,
             cx,
         );
-        let panel_width = self.panel_render_width;
-        self.render_panel(panel_width, window, cx)
     }
-}
 
-impl CommitPanelView {
     /// Keep the accessible sibling positions in sync with the displayed tree.
     /// The virtual list can render many batches for one scroll; each batch
     /// only indexes the layout cached here.
@@ -321,188 +314,8 @@ impl CommitPanelView {
         window: &Window,
         cx: &mut Context<CommitPanelView>,
     ) -> impl IntoElement {
-        let panel = &self.state;
-        let title_input = self.title_input.clone();
-        let body_input = self.body_input.clone();
-        let smart_status = self.smart_status.clone();
-        let unstaged_scroll_handle = self.unstaged_scroll_handle.clone();
-        let staged_scroll_handle = self.staged_scroll_handle.clone();
-        // #476 slice 3: every commit-panel write — stage, commit, amend,
-        // discard — now resolves the PANEL's repository, so nothing is hidden
-        // on a linked worktree's panel any more. `foreign` is left as what it
-        // always was underneath: the header chip's label + lane colour.
-        let foreign = self.foreign.clone();
-        let tree_view = panel.tree_view;
-        let unstaged_count = panel.unstaged.len();
-        let staged_count = panel.staged.len();
-        // T026: the subject line alone decides whether there is a message —
-        // a body without a subject is not a commit.
-        let input_msg_nonempty = title_input
-            .as_ref()
-            .map(|e| !e.read(cx).value().trim().is_empty())
-            .unwrap_or(!panel.commit_msg.trim().is_empty());
-        let can_commit = !panel.staged.is_empty() && input_msg_nonempty;
-        let has_unstaged_warning = !panel.unstaged.is_empty() && staged_count > 0;
-        // PERF: selected_file is read per visible row from the entity inside the
-        // uniform_list processors, not captured here.
-
-        // ── Helper: build file rows for a section ────────────────
-        // Returns a Vec of (element, depth, name, is_conflicted) as IntoElement.
-        // We render inline to avoid capture issues.
-
-        // ── Unstaged section ─────────────────────────────────────
-        // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
-
-        let unstaged_header = controls::unstaged_header(self, cx);
-
-        // PERF: unstaged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading the entity), not a prebuilt div.
-        let unstaged_row_count = if tree_view {
-            panel.unstaged_tree.len()
-        } else {
-            panel.unstaged_normal_files.len()
-        } + panel.generated_extra_rows(false)
-            + panel.agent_extra_rows(false);
-
-        // ── Staged section ───────────────────────────────────────
-        // T027: ヘッダ行は箱の外に固定し、ファイル行のみをスクロールボックス内に入れる
-
-        let staged_header = controls::staged_header(self, cx);
-
-        // PERF: staged file rows are virtualized via `uniform_list` (built from
-        // free row functions reading the entity), not a prebuilt div.
-        let staged_row_count = if tree_view {
-            panel.staged_tree.len()
-        } else {
-            panel.staged_normal_files.len()
-        } + panel.generated_extra_rows(true)
-            + panel.agent_extra_rows(true);
-
-        let commit_btn = controls::commit_button(self, can_commit, cx);
-        let icon_row = div()
-            .relative()
-            .child(controls::icon_row(self, cx))
-            .children(render_coauthor_menu(self, window, cx));
-
-        // The radius `Input` gives itself, read once so both boxes match.
-        let input_radius = gpui_component::ActiveTheme::theme(&**cx).radius;
-
-        let template_toggle = controls::template_toggle(self, cx);
-
-        // ── Commit message: subject + body (ADR-0134) ─────────────────
-        // Two inputs mirroring git's own shape, replacing the single field and
-        // the six-field template mode. The body is seeded from the user's
-        // `commit.template` on first open and holds the co-author trailers.
-        //
-        // The icon row lives INSIDE the body's box: the box is a plain div
-        // wearing the Input's own border/background, with an unstyled `Input`
-        // and the icons stacked in it. Drawn as a real row rather than absolutely
-        // positioned so it can never overlap a long body.
-        // AutoGrow's inner minimum prevents flex shrinking at high zoom. Keep
-        // its cached visual-row measurement, without imposing that minimum.
-        let body_rows = body_input
-            .as_ref()
-            .map_or(3, |body| body.read(cx).wrap_row_count().clamp(3, 12));
-        let body_height = px(body_rows as f32 * theme::rem_size_px() * 1.25)
-            + gpui_component::Size::Medium.input_py() * 2.;
-        let body_min_height = theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.);
-        let message_min_height = body_min_height + px(theme::rem_size_px() * 2.5);
-        // py_2, gap_2 and Small Commit's h_6/mt_1 plus its fixed focus border.
-        // Optional status/warning lines each also own their gap.
-        let footer_min_height = message_min_height
-            + px(theme::rem_size_px() * 3.25 + 4.)
-            + px(theme::rem_size_px() * 1.75)
-                * (usize::from(smart_status.is_some()) + usize::from(has_unstaged_warning)) as f32;
-        let msg_inputs: gpui::AnyElement = match (&title_input, &body_input) {
-            (Some(title), Some(body)) => div()
-                .flex()
-                .flex_col()
-                // Medium subject (h_8), gap_2 and the body's action-row floor
-                // must fit together before the message group yields height.
-                .min_h(message_min_height)
-                .flex_shrink(1.)
-                .overflow_hidden()
-                .gap_2()
-                .child(
-                    Input::new(title)
-                        .aria_label(Msg::A11yCommitSummary.t())
-                        .appearance(true)
-                        .bordered(true),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        // As in Issues composer: Tab traverses controls, while
-                        // Cmd+] / Cmd+[ retain the editor's explicit indentation.
-                        .capture_action(cx.listener(
-                            |_, _: &gpui_component::input::IndentInline, window, cx| {
-                                window.focus_next(cx);
-                                cx.stop_propagation();
-                            },
-                        ))
-                        .capture_action(cx.listener(
-                            |_, _: &gpui_component::input::OutdentInline, window, cx| {
-                                window.focus_prev(cx);
-                                cx.stop_propagation();
-                            },
-                        ))
-                        // Icon, its p_1, row pb_1, and the body's two borders.
-                        .min_h(body_min_height)
-                        .flex_shrink(1.)
-                        // Same radius the `Input` gives itself, so the two boxes
-                        // do not have visibly different corners.
-                        .rounded(input_radius)
-                        .border_1()
-                        .border_color(cx.theme().input)
-                        .when(body.read(cx).focus_handle(cx).is_focused(window), |el| {
-                            el.border_color(cx.theme().ring)
-                        })
-                        .bg(rgb(theme().bg_base))
-                        .child(
-                            div()
-                                .h(body_height)
-                                .min_h(px(0.))
-                                .flex_shrink(1.)
-                                .overflow_hidden()
-                                .relative()
-                                .child(super::e2e::measure_inside("cp-body-input"))
-                                .child(
-                                    Input::new(body)
-                                        .aria_label(Msg::A11yCommitDescription.t())
-                                        .h_full()
-                                        .appearance(false)
-                                        .bordered(false),
-                                ),
-                        )
-                        .relative()
-                        .child(super::e2e::measure_inside("cp-body"))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .justify_between()
-                                .flex_shrink_0()
-                                .px_1()
-                                .pb_1()
-                                .relative()
-                                .child(super::e2e::measure_inside("cp-footer-tools"))
-                                .child(template_toggle)
-                                .child(icon_row),
-                        ),
-                )
-                .into_any_element(),
-            // No window yet (headless); the message still flows through
-            // `state.commit_msg`, so this is a placeholder, not a failure.
-            _ => div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(rgb(theme().text_muted))
-                .child(SharedString::from("(commit message input unavailable)"))
-                .into_any_element(),
-        };
+        let unstaged_header = controls::unstaged_header(self, false, cx);
+        let staged_header = controls::staged_header(self, false, cx);
 
         // ── Assemble panel ───────────────────────────────────────
         // T-UI-003: diff ボックス廃止。Unstaged/Staged 箱が flex_1 で全体を占める(1:1)。
@@ -518,39 +331,7 @@ impl CommitPanelView {
             // Header. #473: a worktree panel adds the worktree's chip, in the
             // WIP row's own lane colour, so it is obvious *which* working tree
             // the file list below belongs to.
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .bg(rgb(theme().surface))
-                    .text_sm()
-                    .text_color(rgb(theme().text_main))
-                    .child(super::e2e::commit_panel_labels::caption(
-                        "cp-title",
-                        Msg::CommitPanelTitle.t(),
-                    ))
-                    .when_some(foreign.clone(), |el, (label, color_idx)| {
-                        let color = theme().lane_color(color_idx);
-                        el.child(
-                            div()
-                                .px_1()
-                                .rounded_sm()
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .truncate()
-                                .border_1()
-                                .border_color(color)
-                                .text_xs()
-                                .text_color(color)
-                                .child(SharedString::from(format!("🌲 {label}"))),
-                        )
-                    }),
-            )
+            .child(self.render_panel_header())
             // File lists share the remaining height with the shrinking composer.
             .child(
                 div()
@@ -565,207 +346,49 @@ impl CommitPanelView {
                     // Unstaged ヘッダ (固定)
                     .child(unstaged_header)
                     // Unstaged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(
-                        div()
-                            .id("cp-unstaged-scroll")
-                            .relative()
-                            .when_some(self.unstaged_navigation.rows.as_ref(), |el, rows| {
-                                rows.list(el)
-                            })
-                            .when(!tree_view, |el| {
-                                el.role(gpui::Role::ListBox)
-                                    .aria_label(Msg::A11yUnstagedTree.t())
-                            })
-                            .child(super::e2e::measure_inside("cp-us-viewport"))
-                            .flex_1()
-                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
-                            .mx_1()
-                            .mb_px()
-                            .border_1()
-                            .border_color(rgb(theme().surface))
-                            .rounded_sm()
-                            .flex()
-                            .flex_col()
-                            .child({
-                                let handle = unstaged_scroll_handle.clone();
-                                let list = with_vertical_scrollbar(
-                                    "cp-unstaged-list-scroll",
-                                    &handle,
-                                    uniform_list(
-                                        "cp-unstaged-list",
-                                        unstaged_row_count,
-                                        cx.processor(
-                                            move |view,
-                                                  range: std::ops::Range<usize>,
-                                                  _window,
-                                                  cx| {
-                                                let rows = view
-                                                    .unstaged_navigation
-                                                    .drawn(&range, _window, cx);
-                                                let layout = view.state.tree_view.then_some(
-                                                    view.unstaged_tree_layout.as_slice(),
-                                                );
-                                                range
-                                                    .filter_map(|i| match &layout {
-                                                        Some(layout) => render_unstaged_tree_row(
-                                                            view,
-                                                            &rows,
-                                                            i,
-                                                            cp_tree_slot(
-                                                                layout,
-                                                                "cp-unstaged-tree",
-                                                                i,
-                                                            ),
-                                                            cx,
-                                                        ),
-                                                        None => render_unstaged_flat_row(
-                                                            view, &rows, i, cx,
-                                                        ),
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        ),
-                                    )
-                                    .track_scroll(&unstaged_scroll_handle)
-                                    .flex_1()
-                                    .min_h(px(0.)),
-                                    false,
-                                );
-                                if tree_view {
-                                    kagi_ui_core::tree_a11y::tree(
-                                        "cp-unstaged-tree",
-                                        list,
-                                        Msg::A11yUnstagedTree.t(),
-                                    )
-                                } else {
-                                    list
-                                }
-                            }),
-                    )
+                    .child(self.render_unstaged_list(cx))
                     // Staged ヘッダ (固定)
                     .child(staged_header)
                     // Staged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(
-                        div()
-                            .id("cp-staged-scroll")
-                            .relative()
-                            .when_some(self.staged_navigation.rows.as_ref(), |el, rows| {
-                                rows.list(el)
-                            })
-                            .when(!tree_view, |el| {
-                                el.role(gpui::Role::ListBox)
-                                    .aria_label(Msg::A11yStagedTree.t())
-                            })
-                            .child(super::e2e::measure_inside("cp-st-viewport"))
-                            .flex_1()
-                            .min_h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)) + px(4.))
-                            .mx_1()
-                            .mb_px()
-                            .border_1()
-                            .border_color(rgb(theme().surface))
-                            .rounded_sm()
-                            .flex()
-                            .flex_col()
-                            .child({
-                                let handle = staged_scroll_handle.clone();
-                                let list = with_vertical_scrollbar(
-                                    "cp-staged-list-scroll",
-                                    &handle,
-                                    uniform_list(
-                                        "cp-staged-list",
-                                        staged_row_count,
-                                        cx.processor(
-                                            move |view,
-                                                  range: std::ops::Range<usize>,
-                                                  _window,
-                                                  cx| {
-                                                let rows = view
-                                                    .staged_navigation
-                                                    .drawn(&range, _window, cx);
-                                                let layout = view
-                                                    .state
-                                                    .tree_view
-                                                    .then_some(view.staged_tree_layout.as_slice());
-                                                range
-                                                    .filter_map(|i| match &layout {
-                                                        Some(layout) => render_staged_tree_row(
-                                                            view,
-                                                            &rows,
-                                                            i,
-                                                            cp_tree_slot(
-                                                                layout,
-                                                                "cp-staged-tree",
-                                                                i,
-                                                            ),
-                                                            cx,
-                                                        ),
-                                                        None => render_staged_flat_row(
-                                                            view, &rows, i, cx,
-                                                        ),
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        ),
-                                    )
-                                    .track_scroll(&staged_scroll_handle)
-                                    .flex_1()
-                                    .min_h(px(0.)),
-                                    false,
-                                );
-                                if tree_view {
-                                    kagi_ui_core::tree_a11y::tree(
-                                        "cp-staged-tree",
-                                        list,
-                                        Msg::A11yStagedTree.t(),
-                                    )
-                                } else {
-                                    list
-                                }
-                            }),
-                    ),
+                    .child(self.render_staged_list(cx)),
             )
             // Commit footer: subject + body, icon actions, commit button.
             // #476 slices 2–3: shown on a worktree panel too — every control in
             // it writes into that worktree.
-            .child(
-                div()
-                    .flex_shrink(1.)
-                    .min_h(footer_min_height)
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .bg(rgb(theme().surface))
-                    // Subject + body (the icon actions live inside the body box)
-                    .child(msg_inputs)
-                    .relative()
-                    .child(super::e2e::measure_inside("cp-footer"))
-                    .children(controls::draft_save_feedback(self, cx))
-                    // Transient smart-commit status. Its own full-width line:
-                    // inside the right-aligned icon group it pushed the icons
-                    // sideways as the text appeared (user report).
-                    .when_some(smart_status, |el, status| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().text_muted))
-                                .child(SharedString::from(status)),
-                        )
-                    })
-                    // Unstaged warning
-                    .when(has_unstaged_warning, |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(rgb(theme().color_warning))
-                                .child(SharedString::from(i18n::unstaged_not_included(
-                                    unstaged_count,
-                                ))),
-                        )
-                    })
-                    .child(commit_btn),
-            )
+            .child(self.render_composer(false, window, cx))
+    }
+
+    pub(super) fn render_panel_header(&self) -> gpui::Div {
+        div()
+            .flex_shrink_0()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .bg(rgb(theme().surface))
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .child(super::e2e::commit_panel_labels::caption(
+                "cp-title",
+                Msg::CommitPanelTitle.t(),
+            ))
+            .when_some(self.foreign.clone(), |el, (label, color_idx)| {
+                let color = theme().lane_color(color_idx);
+                el.child(
+                    div()
+                        .px_1()
+                        .rounded_sm()
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .truncate()
+                        .border_1()
+                        .border_color(color)
+                        .text_xs()
+                        .text_color(color)
+                        .child(SharedString::from(format!("🌲 {label}"))),
+                )
+            })
     }
 }

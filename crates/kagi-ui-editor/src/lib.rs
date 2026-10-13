@@ -39,6 +39,10 @@ mod snapshot;
 mod tabs;
 use tabs::render_tab_strip;
 mod tree_layout;
+#[cfg(feature = "gui-e2e")]
+mod tree_probes;
+#[cfg(feature = "gui-e2e")]
+pub use tree_probes::{EditorTreeCellProbe, EditorTreeRowProbe};
 mod watcher;
 
 pub use bottom_panel::EditorWorkspaceElement;
@@ -517,6 +521,8 @@ pub struct EditorWorkspaceView {
 
     /// Scroll handle for the virtualized left tree list.
     pub tree_scroll: UniformListScrollHandle,
+    #[cfg(feature = "gui-e2e")]
+    tree_probes: tree_probes::TreeProbes,
     /// Native variable-height measurements for the right hunks list.
     pub diff_scroll: gpui::ListState,
     pub diff_layout: kagi_ui_core::diff_list::DiffListLayout,
@@ -587,6 +593,8 @@ impl EditorWorkspaceView {
             hunks_w: HUNKS_PANE_DEFAULT_W,
             collapsed: HashSet::new(),
             tree_layout: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            tree_probes: Default::default(),
             loading: false,
             error: None,
             generation: 0,
@@ -2627,6 +2635,8 @@ fn render_tree_pane(
     width: gpui::Pixels,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    view.tree_probes.0.borrow_mut().clear();
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
     // whole pane while loading/empty) opens the menu targeting the repo root
     // (New File… / New Folder…). File/dir rows below stop propagation on
@@ -2755,31 +2765,50 @@ fn render_tree_row(
                 .flex_row()
                 .items_center()
                 .pl(theme::scaled_px(8.0 + indent))
-                .py_px()
+                .h(theme::scaled_px(20.))
+                .py_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(gpui::relative(1.2))
                 .cursor_pointer()
                 .hover(|s| s.bg(rgb(theme().surface)))
                 .on_click(click)
                 .on_mouse_down(MouseButton::Right, right_click)
                 .child(
                     div()
-                        .w(theme::scaled_px(12.))
+                        .w(theme::scaled_px(16.))
                         .flex_shrink_0()
-                        .text_xs()
                         .text_color(rgb(theme().text_muted))
                         .child(SharedString::from(if is_collapsed {
                             "\u{25b8}" // ▸
                         } else {
                             "\u{25be}" // ▾
-                        })),
+                        }))
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Badge,
+                            ));
+                            el
+                        }),
                 )
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_xs()
                         .text_color(rgb(theme().change_dir))
                         .truncate()
-                        .child(name),
+                        .child(name)
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Name,
+                            ));
+                            el
+                        }),
                 );
             Some(
                 tree_a11y::tree_item(
@@ -2792,6 +2821,15 @@ fn render_tree_row(
                     None,
                     a11y.position,
                 )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.relative().child(tree_probes::measure(
+                        &view.tree_probes,
+                        index,
+                        tree_probes::Part::Row,
+                    ));
+                    el
+                })
                 .into_any_element(),
             )
         }
@@ -2851,7 +2889,10 @@ fn render_tree_row(
                 .items_center()
                 .pl(theme::scaled_px(8.0 + indent))
                 .pr(theme::scaled_px(4.0))
-                .py_px()
+                .h(theme::scaled_px(20.))
+                .py_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(gpui::relative(1.2))
                 .bg(row_bg)
                 .when(!is_selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                 .on_click(click)
@@ -2859,35 +2900,50 @@ fn render_tree_row(
                 .cursor_pointer()
                 .child(
                     div()
-                        .w(theme::scaled_px(12.))
+                        .w(theme::scaled_px(16.))
                         .flex_shrink_0()
-                        .text_xs()
                         .text_color(if uses_on_accent {
                             theme().selection_foreground(window_active)
                         } else {
                             rgb(badge_color).into()
                         })
-                        .child(SharedString::from(badge)),
+                        .child(SharedString::from(badge))
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Badge,
+                            ));
+                            el
+                        }),
                 )
                 .child(
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_xs()
                         .text_color(if uses_on_accent {
                             theme().selection_foreground(window_active)
                         } else {
                             rgb(theme().text_main).into()
                         })
                         .truncate()
-                        .child(name),
+                        .child(name)
+                        .when(cfg!(feature = "gui-e2e"), |el| {
+                            #[cfg(feature = "gui-e2e")]
+                            let el = el.relative().child(tree_probes::measure(
+                                &view.tree_probes,
+                                index,
+                                tree_probes::Part::Name,
+                            ));
+                            el
+                        }),
                 )
                 .when(show_dirty_dot, |el| {
                     el.child(
                         div()
                             .flex_shrink_0()
                             .pl(theme::scaled_px(4.))
-                            .text_xs()
                             .text_color(if uses_on_accent {
                                 theme().selection_foreground(window_active)
                             } else {
@@ -2907,6 +2963,15 @@ fn render_tree_row(
                     Some(is_selected),
                     a11y.position,
                 )
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = el.relative().child(tree_probes::measure(
+                        &view.tree_probes,
+                        index,
+                        tree_probes::Part::Row,
+                    ));
+                    el
+                })
                 .into_any_element(),
             )
         }

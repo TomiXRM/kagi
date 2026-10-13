@@ -935,6 +935,14 @@ impl KagiApp {
         let Some(path) = file.map(|f| f.path.clone()) else {
             return;
         };
+        // Compact files outlive the main-diff presentation and move into the
+        // desktop panel on resize; retain their existing owner-local selection.
+        if self.compact.enabled {
+            entity.update(cx, |panel, pcx| {
+                panel.state.selected_file = Some(file_ref);
+                pcx.notify();
+            });
+        }
         let read = super::main_diff_pane::MainDiffRead::Wip {
             staged,
             refresh: false,

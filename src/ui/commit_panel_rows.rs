@@ -1,6 +1,6 @@
 //! Virtualized Commit Panel file rows and accessible tree positions.
 #![allow(clippy::too_many_arguments)]
-use super::super::commit_panel_navigation::{row_name, ChangesRows};
+use super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
 
 // Uniform slots must not inherit the inline button's natural outer height.
@@ -266,7 +266,7 @@ fn render_cp_file_row(
             stat,
             selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
         ));
-    file_row = super::super::commit_panel_navigation::file_row(
+    file_row = super::commit_panel_navigation::file_row(
         view,
         drawn,
         staged,
@@ -303,7 +303,7 @@ fn render_cp_file_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
-    file_row.child(super::controls::inline_file_action(
+    file_row.child(super::commit_panel_controls::inline_file_action(
         view, drawn, staged, fi, btn_id, cx,
     ))
 }

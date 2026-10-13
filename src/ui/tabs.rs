@@ -52,9 +52,8 @@ pub struct RepoTab {
     pub is_worktree: bool,
 }
 
-/// Height of the tab strip in pixels. The strip doubles as the themed title bar
-/// (the OS bar is transparent), so it carries a little extra height for padding
-/// around the tabs and the traffic lights.
+/// Fixed logical titlebar height, independent of UI zoom and shared density.
+/// Native macOS traffic lights remain at (9,9); document labels cap at 14px.
 pub(crate) const TAB_STRIP_H: f32 = 36.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
@@ -1011,9 +1010,10 @@ impl KagiApp {
                 .items_center()
                 .justify_center()
                 .w(theme::scaled_px(28.))
-                .h(theme::scaled_px(24.))
+                .h(px(f32::from(theme::scaled_px(24.)).min(24.)))
                 .flex_shrink_0()
                 .rounded_md()
+                .text_size(px(f32::from(theme::scaled_px(14.)).min(14.)))
                 .text_color(rgb(theme().text_main))
                 .hover(|style| style.bg(rgb(theme().surface)))
                 .cursor_pointer()

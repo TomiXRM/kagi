@@ -17,7 +17,8 @@ pub(super) fn max_body_height(window: &Window, editor: bool) -> f32 {
         // and two source lines must fit together, even after a desktop resize.
         const EDITOR_MIN_BODY_H: f32 = 200.;
         let shell_height = f32::from(super::render_header::chrome_frame_height())
-            + theme::scaled(super::tabs::TAB_STRIP_H + STATUS_BAR_H);
+            + super::tabs::TAB_STRIP_H
+            + theme::scaled(STATUS_BAR_H);
         let editor_cap = (viewport_height - shell_height) / scale
             - EDITOR_MIN_BODY_H
             - BOTTOM_PANEL_DIVIDER_H

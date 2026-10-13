@@ -1749,6 +1749,10 @@ mod macos {
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
             ),
             (
+                "graph_wip_hover_wash",
+                Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
+            ),
+            (
                 "repo_tabs_neutral",
                 Box::new(crate::inactive_selection::scenario_repo_tabs_neutral),
             ),
@@ -3246,6 +3250,14 @@ mod macos {
             (
                 "compact_inspector_columns",
                 Box::new(crate::compact_layout::inspector::scenario_compact_inspector_columns),
+            ),
+            (
+                "compact_inspector_segment_keys",
+                Box::new(crate::compact_layout::inspector::scenario_compact_inspector_segment_keys),
+            ),
+            (
+                "commit_panel_bulk_hover",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
             ),
             (
                 "compact_bottom_third",

@@ -931,7 +931,6 @@ impl KagiApp {
         {
             self.ui()
                 .inspector_model
-                .keyboard
                 .yield_focus(self.root_focus.as_ref(), window, cx);
         }
         if let Some(el) = right_element {

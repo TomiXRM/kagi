@@ -178,6 +178,75 @@ pub fn scenario_graph_selection_wash(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+pub fn scenario_graph_wip_hover_wash(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "accent_source", "accent"]);
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("README.md"), "WIP hover changed\n").unwrap();
+    let (app, window) = mount(cx, fixture.path());
+    for slug in ["apple-light", "apple-dark"] {
+        for accent in [theme::SystemAccent::Blue, theme::SystemAccent::Yellow] {
+            let _accent = theme::AccentInjection::new(accent, Some(true));
+            for zoom in [1000, 1670] {
+                theme::set_zoom(zoom as f32 / 1000.);
+                app.update(cx, |app, cx| {
+                    app.set_theme(slug, cx);
+                    app.select_headless(0);
+                    app.set_window_active_for_e2e(true, cx);
+                    cx.notify();
+                });
+                cx.simulate_mouse_move(
+                    window,
+                    gpui::point(gpui::px(1.), gpui::px(1.)),
+                    None,
+                    Modifiers::none(),
+                );
+                draw(cx, window);
+                let base = pixel(cx, window, "graph-wip-row");
+                let row = e2e::control_bounds(window.window_id(), "graph-wip-row").unwrap();
+                let ink = e2e::control_paint(window.window_id(), "graph-wip-note")
+                    .unwrap()
+                    .text_color;
+                cx.simulate_mouse_move(window, row.center(), None, Modifiers::none());
+                draw(cx, window);
+                let palette = theme::theme();
+                assert_rgb(
+                    pixel(cx, window, "graph-wip-row"),
+                    composite(palette.ui_accent(), 0.15, base),
+                    "WIP hover wash over lane tint",
+                );
+                assert_eq!(
+                    cx.read(|cx| app.read(cx).ui().selected),
+                    Some(0),
+                    "hover must not select WIP"
+                );
+                assert_eq!(
+                    e2e::control_paint(window.window_id(), "graph-wip-note")
+                        .unwrap()
+                        .text_color,
+                    ink
+                );
+                cx.simulate_click(window, row.center(), Modifiers::none());
+                cx.run_until_parked();
+                draw(cx, window);
+                assert_rgb(
+                    pixel(cx, window, "graph-wip-row"),
+                    composite(palette.ui_accent(), 0.30, base),
+                    "clicked WIP retains selection wash under pointer",
+                );
+                assert_eq!(
+                    e2e::control_paint(window.window_id(), "graph-wip-note")
+                        .unwrap()
+                        .text_color,
+                    ink
+                );
+            }
+        }
+    }
+    unmount(cx, app, window);
+}
+
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.refresh();

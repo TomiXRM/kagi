@@ -424,3 +424,17 @@ suspend their duplicate strips until dismissal; otherwise one focused handle
 would produce two real AX nodes and simultaneous Input projections. The filter
 value is never copied.
 
+## Amendment — 2026-10-14: shared Inspector segments and bulk hover (#1495, #1496)
+
+Historical Changes and the wide Inspector use the same session-owned roving
+`keyboard_nav::TabList` for Path/Tree. Arrows select automatically; Enter/Space
+explicitly set the focused mode, including reactivation of the selected mode.
+Expose two named, selected Tabs and one Tab stop, preserving the neutral
+`segment_selected_bg()` fill and existing selected-file/diff ownership. Hidden
+Inspector controls yield focus through the existing root fallback.
+
+Bulk Stage all / Unstage all / Discard all retain their success/warning/danger
+captions on neutral `surface` hover. These secondary operation controls do not
+borrow opaque active-row accent fill, so no on-accent replacement is necessary.
+Disabled controls never acquire accent hover or execute keyboard activation.
+Existing confirmation, staging and repository ownership are unchanged.

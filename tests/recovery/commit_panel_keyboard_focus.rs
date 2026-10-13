@@ -419,7 +419,7 @@ fn after_bulk_focus(
     assert_focus(cx, window, "cp-view-list");
 }
 
-fn open_changes(
+pub(super) fn open_changes(
     cx: &mut VisualTestAppContext,
     repo: &std::path::Path,
     case: Case,

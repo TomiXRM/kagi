@@ -178,8 +178,8 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
         }
         HistoryRecovery::Amend { sha, blocked: false } => format!(
             "amend は履歴を書き換えます。新しい SHA が付き、元の commit `{}` は branch から到達不能になります(reflog には残ります)。\n\
-                         working tree と index を変えずに元に戻すには:\n  git reset --soft {}\n\
-                         HEAD 移動は reflog に残ります:\n  git reflog",
+             working tree と index を変えずに元に戻すには:\n  git reset --soft {}\n\
+             HEAD 移動は reflog に残ります:\n  git reflog",
             sha, sha
         ),
         HistoryRecovery::HistoryMove {

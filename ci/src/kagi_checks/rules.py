@@ -344,6 +344,7 @@ JA_GIT_TERMS = (
     "ヘッド",
     "アップストリーム",
     "衝突",
+    "コンフリクト",
     "競合",
 )
 
@@ -352,7 +353,14 @@ RULES: tuple[Rule, ...] = (
     Rule(
         name="ja-git-terms",
         summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",
-        pattern="|".join(JA_GIT_TERMS) + r"|(?<![ァ-ヶー])プル",
+        pattern="|".join(
+            {
+                "マージ": r"マージ(?!ン)",
+                "ステージ": r"ステージ(?!マネージャ)",
+                "リモート": r"リモート(?!デスクトップ)",
+            }.get(term, re.escape(term))
+            for term in JA_GIT_TERMS
+        ) + r"|(?<![ァ-ヶー])プル(?!ダウン)",
         globs=("crates/kagi-ui-core/src/i18n/**/*.rs",),
         select_source=_ja_git_literals,
         message=(
@@ -419,6 +427,10 @@ RULES: tuple[Rule, ...] = (
             'let quoted_source = r#"Lang::Ja => "コミット""#;',
             'Lang::Ja => "パープル",',
             'Lang::Ja => "サンプル",',
+            'Lang::Ja => "マージン",',
+            'Lang::Ja => "ステージマネージャ",',
+            'Lang::Ja => "プルダウン",',
+            'Lang::Ja => "リモートデスクトップ",',
             'Lang::Ja => "既存の ref `{}` と名前空間が競合しています。",',
             'fn name_error_ja() -> String { "ref namespace が競合しています".into() }',
             'const ADVICE_NAME: &str = "ref の名前空間が競合しています";',

@@ -2496,7 +2496,7 @@ impl Msg {
                 "applied with conflicts — the stash was KEPT. Resolve the conflicts, then drop the stash manually."
             }
             (Ja, StashPopConflictedKept) => {
-                "コンフリクトありで適用しました — stash は保持されています。コンフリクトを解決してから手動で drop してください。"
+                "conflict ありで適用しました — stash は保持されています。conflict を解決してから手動で drop してください。"
             }
             (En, BusyStashDrop) => "stash drop in progress…",
             (Ja, BusyStashDrop) => "stash drop 実行中…",
@@ -3140,7 +3140,7 @@ impl Msg {
             (En, PrWhyChangesRequested) => "Changes requested",
             (Ja, PrWhyChangesRequested) => "修正依頼",
             (En, PrWhyConflicting) => "Conflicts",
-            (Ja, PrWhyConflicting) => "コンフリクト",
+            (Ja, PrWhyConflicting) => "conflict",
             (En, PrWhyCiRunning) => "CI running",
             (Ja, PrWhyCiRunning) => "CI 実行中",
             (En, PrWhyReadyToMerge) => "Ready to merge",
@@ -3878,11 +3878,11 @@ impl Msg {
             (En, A11ySidebarRemote) => "Remote Branches",
             (Ja, A11ySidebarRemote) => "remote branch",
             (En, A11ySidebarWorktrees) => "Worktrees",
-            (Ja, A11ySidebarWorktrees) => "Worktrees",
+            (Ja, A11ySidebarWorktrees) => "worktree",
             (En, A11ySidebarTags) => "Tags",
             (Ja, A11ySidebarTags) => "tag",
             (En, A11ySidebarStashes) => "Stashes",
-            (Ja, A11ySidebarStashes) => "Stash",
+            (Ja, A11ySidebarStashes) => "stash",
             (En, A11ySidebarGroup) => "{}, {} items",
             (Ja, A11ySidebarGroup) => "{}、{} 件",
             (En, A11ySidebarBranch) => "Branch {}",

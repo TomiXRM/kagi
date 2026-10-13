@@ -82,7 +82,7 @@ pub fn recovery_ja(recovery: &PushRecovery) -> String {
         }
         PushRecovery::PushBranch => {
             "push は remote へ commit を送るだけで、working tree は変更しません。\
-                         拒否された場合は先に fetch か pull してから再度プランしてください。"
+             拒否された場合は先に fetch か pull してから再度プランしてください。"
                 .to_string()
         }
         PushRecovery::SetUpstream { branch } => format!(

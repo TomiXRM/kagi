@@ -186,14 +186,14 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
         }
         PullRecovery::PullCurrentFf { branch } => format!(
             "refs/heads/{} を fast-forward し、この checkout の index と working tree を安全に更新します。\
-                         履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
-                         Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
-                         以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
+             履歴が乖離している場合は拒否し、merge commit は作成しません。更新が未 commit の変更パスに触れる場合は pull を拒否して変更を保持します。\n\
+             Partial では、branch が以前の先端のままで index とファイルだけ更新された可能性があります。再試行前に操作ログの実行後状態とエラーを確認し、incoming の stage 済み変更をローカルの作業として commit しないでください。\n\
+             以前の先端は git reflog show refs/heads/{} で確認できます。不要な incoming commit は履歴を書き換えず git revert で取り消せます。",
             branch, branch
         ),
         PullRecovery::PullBranchFf { branch } => format!(
             "fast-forward を確認後、refs/heads/{} のみを更新します。working tree は変更されません。\n\
-                         以前の先端に戻すには:\n  git branch -f {} <old-sha>",
+             以前の先端に戻すには:\n  git branch -f {} <old-sha>",
             branch, branch
         ),
     }

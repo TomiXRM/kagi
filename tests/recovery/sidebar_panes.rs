@@ -423,9 +423,9 @@ pub fn scenario_sidebar_panes(cx: &mut VisualTestAppContext) {
                         [
                             "ローカル branch",
                             "remote branch",
-                            "Worktrees",
+                            "worktree",
                             "tag",
-                            "Stash",
+                            "stash",
                         ]
                     };
                     let tree = list_a11y::recorded_list(PANES[index]).expect("pane Tree");

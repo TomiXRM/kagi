@@ -230,6 +230,9 @@ fn japanese_git_terms_preserve_operation_names_and_working_tree_meaning() {
         (Msg::ToolbarPop, "Pop", "Pop"),
         (Msg::InputStash, "Stash", "Stash"),
         (Msg::InputStashTitle, "Stash changes", "変更を stash する"),
+        (Msg::A11ySidebarWorktrees, "Worktrees", "worktree"),
+        (Msg::A11ySidebarStashes, "Stashes", "stash"),
+        (Msg::PrWhyConflicting, "Conflicts", "conflict"),
         (
             Msg::StashClean,
             "Stash: working tree is clean — nothing to stash",
@@ -249,6 +252,10 @@ fn japanese_git_terms_preserve_operation_names_and_working_tree_meaning() {
         assert_eq!(message.t_for(Lang::En), english);
         assert_eq!(message.t_for(Lang::Ja), japanese);
     }
+    assert_eq!(
+        Msg::StashPopConflictedKept.t_for(Lang::Ja),
+        "conflict ありで適用しました — stash は保持されています。conflict を解決してから手動で drop してください。",
+    );
     assert!(plan::rebase::ADVICE_REBASE_DIRTY_WORKING_TREE.starts_with("working tree "));
     assert!(plan::worktree::ADVICE_WORKTREE_CREATES_LINKED_WORKTREE.contains("worktree"));
     assert!(plan::branch::ADVICE_BRANCH_DELETE_SQUASH_MERGED.contains("merge 先に反映済み"));

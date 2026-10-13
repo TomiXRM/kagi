@@ -170,9 +170,10 @@ column at Japanese high zoom.
   cherry-pick / revert / amend / squash / stage / index / HEAD / upstream /
   conflict / submodule / committer. English translations remain byte-identical.
 - Verbs retain Japanese grammar and ASCII spacing: 「commit する」
-  「stash する」「未 commit の変更」「stage 済み」. Operation and feature
-  captions retain their established capitalization: `Stash`, `Branch`, `Pop`,
-  `Worktrees`, `Stash Apply`, `Commit Panel`.
+  「stash する」「未 commit の変更」「stage 済み」. Newly translated toolbar
+  captions use `Stash`, `Branch`, `Pop`; existing English labels retain their
+  established case and number (`worktree` / `stash` sidebar headings and
+  `stash apply` / `stash push` operation labels). `Commit Panel` stays English.
 - `worktree` names a checkout (including a linked checkout), while
   `working tree` describes on-disk files, dirty status and preservation versus
   index/ref-only changes. Replay's warning about leaving a checkout behind
@@ -189,3 +190,7 @@ column at Japanese high zoom.
   rejects translated Git vocabulary inside JA localization string literals.
   Comments, EN arms, negative assertions and ordinary namespace collisions
   are not translation candidates.
+- Review preserves already-English captions rather than changing casing during
+  terminology migration. `コンフリクト` is also forbidden; ordinary compounds
+  such as 「マージン」「ステージマネージャ」「プルダウン」
+  「リモートデスクトップ」 are not Git translations and stay permissible.

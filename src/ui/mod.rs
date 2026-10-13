@@ -3007,9 +3007,9 @@ impl KagiApp {
     /// Cmd+C on the Graph: copy the selected row's branch name or full SHA per
     /// the `graph_copy_target` setting (ADR-0170). A `Branch` target with no
     /// local branch on the row falls back to the SHA — the copy never yields
-    /// nothing. Only reached when the root (Graph) holds focus and a row is
-    /// selected; the `!Terminal && !Input` keybinding + the diff-selection
-    /// guard keep it off text selections.
+    /// nothing. Only reached when the visible, uncovered CommitList owns root
+    /// focus and a row is selected; takeovers/front layers propagate Copy to
+    /// the text owner, and diff selection keeps its existing priority.
     fn copy_graph_selection(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(row) = self.view().rows.get(index) else {
             return;
@@ -3279,6 +3279,11 @@ impl KagiApp {
                 == workspace::CenterPane::CommitList
     }
 
+    #[cfg(feature = "gui-e2e")]
+    pub fn commit_list_has_focus_for_e2e(&self, window: &Window, cx: &Context<Self>) -> bool {
+        self.commit_list_has_focus(window, cx)
+    }
+
     /// Commit list coordinates and rendered row height for the GUI viewport
     /// assertion (the shared list may include WIP and stash rows before commits).
     #[cfg(feature = "gui-e2e")]
@@ -3477,11 +3482,11 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
 fn main_window_titlebar() -> Option<gpui::TitlebarOptions> {
     // Themed title bar: make the native bar transparent so kagi's own top
     // content fills the title-bar area. macOS still draws the traffic lights,
-    // positioned over the unified frame, which reserves an unscaled 80px inset.
+    // positioned over the document titlebar's unscaled 80px exclusion.
     Some(gpui::TitlebarOptions {
         title: Some("Kagi".into()),
         appears_transparent: true,
-        traffic_light_position: Some(gpui::point(px(9.0), px(16.0))),
+        traffic_light_position: Some(gpui::point(px(9.0), px(9.0))),
     })
 }
 
@@ -3564,7 +3569,10 @@ impl KagiApp {
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, suppress_drag)
                     .on_click(click)
-                    .child(SharedString::from(section.label)),
+                    .child(SharedString::from(i18n::menu_heading(
+                        section.label,
+                        i18n::lang(),
+                    ))),
             );
         }
 

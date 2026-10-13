@@ -54,3 +54,36 @@ as its description and the pinned Tooltip reveals it on hover. Title shrink
 priority, mode/action/stat geometry and the hunk viewport do not change.
 Renderer-fed metadata and invoked-tooltip/native-bound Tier A coverage do
 not claim native VoiceOver delivery.
+
+## Amendment — 2026-10-13: Commit Panel file-list density (#1463)
+
+Staged and Unstaged retain the existing virtualized `uniform_list`, retained
+RowFocus, row/action Tab stops and TreeItem level/sibling metadata. All file,
+directory and disclosure slots are explicitly 22 reference px, scaled once at
+render time with a 20-logical-px floor, rather than inheriting the inline
+Stage/Unstage button's natural height. Directory labels are vertically centered
+in that same slot: a shorter top-aligned label previously left its spare height
+only below the directory.
+The native regression recorded the old file pitch as 26px at 100%.
+
+Inline Stage/Unstage uses a scaled 20-reference-px height with its existing
+20-logical-px minimum and no extra vertical padding. Its reserved 2px
+focus-visible border is inside the same clickable frame: the kit's outside
+ring would extend into, and be overpainted by, the next uniform slot.
+Badge, filename, directory, disclosure and shared diffstat numbers use
+`FILE_TREE_FONT_PX` (13 reference px), with a compact 16-reference-px line height
+and badge column. The shared diffstat change also makes Inspector's diffstat
+numbers 13 reference px, consistent with `hig/inspector-scale`'s shared token;
+Inspector layout and Graph density are otherwise unchanged. Section-header
+padding becomes 1px per side instead of `py_1`; the first list row still starts
+immediately inside the list's existing border.
+
+Role/reference: dense changed-file list; take Finder list view's 20pt pitch,
+13pt type and 16px icon rhythm, not its operation semantics or selection policy.
+Reuse the native uniform-list, shared KagiButton, RowList and tree accessibility helpers rather than another
+scroll/focus owner. Rest/hover/selected/focus-visible/conflicted/empty states,
+localized names, session-owned reads and staging approval/execution are unchanged.
+`commit_panel_density` measures both sections in List/Tree at 940×660 and
+1392×883, 100%/167%, EN/JA, and checks native pixels of the remembered row's
+inline action's lower focus edge after Tab, with the adjacent row also painted.
+Native attribute bounds are not VoiceOver evidence.

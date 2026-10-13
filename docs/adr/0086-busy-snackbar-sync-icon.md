@@ -71,3 +71,17 @@
   auto-dismiss(4s)するため違和感は小さい。将来「静止アイコンにしたい」要望が
   来たら `Sync` の描画だけ差し替えればよい(他は不変)。
 - i18n: `AlreadyUpToDatePull` / `AlreadyUpToDatePush`(en/ja)を追加、`Started*` を削除。
+
+## Amendment (2026-10-13): hidden clone progress entrance (#1452)
+
+The existing busy snackbar also reads `home_github.cloning`, the sole owner
+of a clone without a repository session. It displays a compact localized
+Status naming the full clone source. While its running card is hidden, a
+pinned-kit ghost Button, Show Progress, is a normal keyboard stop and restores
+that owner's card through the single modal slot. This remains present on a
+different repository and on Home regardless of its selected pane or query.
+The button does not confirm, acquire a writer lease, or dispatch another task.
+No percentage or Cancel is introduced. Only the existing terminal-report
+callback clears the clone owner, so status and write exclusion end together.
+Existing write/read labels and slow-read Skip behavior are unchanged.
+

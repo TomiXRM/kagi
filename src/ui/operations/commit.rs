@@ -229,7 +229,10 @@ impl KagiApp {
                         let (title, body) = kagi_git::split_title_body(&d.message);
                         title_input.update(cx, |s, cx| s.set_value(title, window, cx));
                         body_input.update(cx, |s, cx| s.set_value(body, window, cx));
-                        entity.update(cx, |v, _| v.last_draft_value = d.message);
+                        entity.update(cx, |v, _| {
+                            v.draft_edit_value = d.message.clone();
+                            v.last_draft_value = d.message;
+                        });
                     } else if let Some(tpl) = entity.read(cx).commit_template.clone() {
                         if commit_panel::template_enabled() {
                             klog!("commit template: loaded");
@@ -341,29 +344,7 @@ impl KagiApp {
     /// decided to (rule-based/LLM both call this to *insert* the draft).
     fn smart_commit_set_msg(&mut self, msg: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entity) = self.ui().commit_panel.clone() {
-            let (title, body) = kagi_git::split_title_body(msg);
-            let v = entity.read(cx);
-            let (title_input, body_input) = (v.title_input.clone(), v.body_input.clone());
-            if let Some(input) = title_input {
-                input.update(cx, |state, cx| state.set_value(title, window, cx));
-            }
-            if let Some(input) = body_input {
-                // Keep a loaded commit.template's comment block: the generated
-                // body goes above it rather than replacing it.
-                let existing = input.read(cx).value().to_string();
-                let comments = existing
-                    .lines()
-                    .skip_while(|l| !l.trim_start().starts_with('#'))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let next = match (body.trim().is_empty(), comments.trim().is_empty()) {
-                    (_, true) => body,
-                    (true, false) => existing,
-                    (false, false) => format!("{}\n\n{}", body.trim_end(), comments),
-                };
-                input.update(cx, |state, cx| state.set_value(next, window, cx));
-            }
-            entity.update(cx, |v, _| v.state.commit_msg = msg.to_string());
+            entity.update(cx, |view, cx| view.replace_smart_message(msg, window, cx));
         }
     }
 

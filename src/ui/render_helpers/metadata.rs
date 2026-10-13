@@ -88,7 +88,12 @@ pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
         .child(row.author.clone())
 }
 
-pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
+pub(super) fn age(row: &CommitRow, ix: usize, now: i64) -> impl IntoElement {
+    let text = kagi_ui_core::time::relative_time_short(row.author_secs, now);
+    #[cfg(feature = "gui-e2e")]
+    if ix == 0 {
+        super::super::e2e::record_graph_age_text(&text);
+    }
     div()
         .w(theme::scaled_px(super::super::graph_columns::TIME_WIDTH))
         .flex_shrink_0()
@@ -102,5 +107,5 @@ pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-time"))
         })
-        .child(row.date_short.clone())
+        .child(SharedString::from(text))
 }

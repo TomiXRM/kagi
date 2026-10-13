@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/time_locale.rs"]
+mod time_locale;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/open_picker.rs"]
 mod open_picker;
 
@@ -52,6 +56,9 @@ mod ref_validation;
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
+#[cfg(target_os = "macos")]
+#[path = "recovery/pr_dashboard_hover_selected.rs"]
+mod pr_dashboard_hover_selected;
 #[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_keyboard.rs"]
 mod pr_dashboard_keyboard;
@@ -90,6 +97,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_ja.rs"]
+mod menus_ja;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
 mod plan_labels;
 
@@ -101,6 +112,9 @@ mod toast_dismiss;
 #[path = "recovery/feedback_status.rs"]
 mod feedback_status;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/clone_hidden_status.rs"]
+mod clone_hidden_status;
 #[cfg(target_os = "macos")]
 #[path = "recovery/clone_progress_status.rs"]
 mod clone_progress_status;
@@ -128,6 +142,16 @@ mod settings_window;
 #[cfg(target_os = "macos")]
 #[path = "recovery/window_restore.rs"]
 mod window_restore;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/close_window_initial_home.rs"]
+mod close_window_initial_home;
+#[cfg(target_os = "macos")]
+#[path = "recovery/shortcuts_panel_scroll.rs"]
+mod shortcuts_panel_scroll;
+#[cfg(target_os = "macos")]
+#[path = "recovery/tab_restore_active_identity.rs"]
+mod tab_restore_active_identity;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/primary_button.rs"]
@@ -168,6 +192,10 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/graph_focus.rs"]
+mod graph_focus;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
@@ -297,6 +325,9 @@ mod commit_paging;
 #[path = "recovery/context_menu_keys.rs"]
 mod context_menu_keys;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_empty_section_wording.rs"]
+mod home_empty_section_wording;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_github.rs"]
 mod home_github;
 #[cfg(target_os = "macos")]
@@ -398,6 +429,9 @@ mod settings_controls;
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
 #[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_groups.rs"]
+mod sidebar_groups;
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_identity.rs"]
 mod sidebar_identity;
 #[cfg(target_os = "macos")]
@@ -416,6 +450,9 @@ mod status_chips;
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_controls.rs"]
 mod status_controls;
+#[cfg(target_os = "macos")]
+#[path = "recovery/titlebar_tabs.rs"]
+mod titlebar_tabs;
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_overflow.rs"]
 mod toolbar_overflow;
@@ -490,6 +527,10 @@ mod file_history_open;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_history_keyboard.rs"]
 mod inspector_history_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_density.rs"]
+mod commit_panel_density;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
@@ -704,6 +745,10 @@ mod perf_oplog_detail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_metadata.rs"]
 mod inspector_metadata;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_scale.rs"]
+mod inspector_scale;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/text_caps.rs"]
@@ -1345,6 +1390,7 @@ mod macos {
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
             ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_paste_control", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_control)),
             ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
             ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
@@ -1472,8 +1518,20 @@ mod macos {
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_dashboard_keyboard),
             ),
             (
+                "pr_dashboard_hover_selected",
+                Box::new(crate::pr_dashboard_hover_selected::scenario_pr_dashboard_hover_selected),
+            ),
+            (
                 "pr_filter_strip_keyboard",
                 Box::new(crate::pr_dashboard_keyboard::scenario_pr_filter_strip_keyboard),
+            ),
+            (
+                "relative_time_ja",
+                Box::new(crate::time_locale::scenario_relative_time_ja),
+            ),
+            (
+                "cleanup_local_date",
+                Box::new(crate::time_locale::scenario_cleanup_local_date),
             ),
             (
                 "pr_dashboard_responsive",
@@ -1551,6 +1609,9 @@ mod macos {
                 "system_reduce_transparency",
                 Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
+            ("menus_localized", Box::new(crate::menus_ja::scenario_menus_localized)),
+            ("edit_menu_undo_redo", Box::new(crate::menus_ja::scenario_edit_menu_undo_redo)),
+            ("file_menu_save", Box::new(crate::menus_ja::scenario_file_menu_save)),
             (
                 "window_title_identity",
                 Box::new(crate::menus_window::scenario_window_title_identity),
@@ -1570,6 +1631,18 @@ mod macos {
             (
                 "about_dialog",
                 Box::new(crate::menus_window::scenario_about_dialog),
+            ),
+            (
+                "tab_restore_active_identity",
+                Box::new(crate::tab_restore_active_identity::scenario_tab_restore_active_identity),
+            ),
+            (
+                "close_window_initial_home",
+                Box::new(crate::close_window_initial_home::scenario_close_window_initial_home),
+            ),
+            (
+                "shortcuts_panel_scroll",
+                Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
             ),
             (
                 "window_restore_position",
@@ -1640,8 +1713,12 @@ mod macos {
                 Box::new(crate::tab_strip::scenario_tab_close_names),
             ),
             (
-                "unified_toolbar",
-                Box::new(crate::toolbar_overflow::scenario_unified_toolbar),
+                "titlebar_tabs",
+                Box::new(crate::titlebar_tabs::scenario_titlebar_tabs),
+            ),
+            (
+                "titlebar_tabs_resize",
+                Box::new(crate::titlebar_tabs::scenario_titlebar_tabs_resize),
             ),
             (
                 "dialog_a11y_roles",
@@ -1721,6 +1798,10 @@ mod macos {
             (
                 "home_github",
                 Box::new(crate::home_github::scenario_home_github),
+            ),
+            (
+                "home_empty_section_wording",
+                Box::new(crate::home_empty_section_wording::scenario_home_empty_section_wording),
             ),
             (
                 "home_work",
@@ -1853,6 +1934,10 @@ mod macos {
             (
                 "clone_completion_navigation",
                 Box::new(crate::clone_owner::scenario_clone_completion_navigation),
+            ),
+            (
+                "clone_hidden_status",
+                Box::new(crate::clone_hidden_status::scenario_clone_hidden_status),
             ),
             (
                 "smart_commit_generation_owner",
@@ -2630,6 +2715,18 @@ mod macos {
                 Box::new(crate::tab_panels::scenario_tab_panels),
             ),
             (
+                "sidebar_keyboard_collapse",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse),
+            ),
+            (
+                "sidebar_keyboard_collapse_card",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse_card),
+            ),
+            (
+                "sidebar_filtered_disclosure",
+                Box::new(crate::sidebar_groups::scenario_sidebar_filtered_disclosure),
+            ),
+            (
                 "sidebar_rows",
                 Box::new(crate::sidebar_rows::scenario_sidebar_rows),
             ),
@@ -3048,6 +3145,7 @@ mod macos {
                 "file_history_open_file",
                 Box::new(crate::file_history_open::scenario),
             ),
+            ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             (
                 "inspector_files_keyboard",
                 Box::new(crate::inspector_history_keyboard::inspector),
@@ -3119,6 +3217,22 @@ mod macos {
             (
                 "smart_commit_footer_provider",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_commit_footer_provider),
+            ),
+            (
+                "smart_generation_commit_boundary",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_generation_commit_boundary),
+            ),
+            (
+                "smart_generation_replaced_panel",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_generation_replaced_panel),
+            ),
+            (
+                "commit_draft_save_failure",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_draft_save_failure),
+            ),
+            (
+                "smart_replace_undo",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_replace_undo),
             ),
             (
                 "commit_panel_coauthor_keys",
@@ -3791,6 +3905,14 @@ mod macos {
             ),
             ("graph_copy", Box::new(scenario_graph_copy)),
             (
+                "graph_pointer_focus",
+                Box::new(crate::graph_focus::scenario_graph_pointer_focus),
+            ),
+            (
+                "graph_copy_foreground",
+                Box::new(crate::graph_focus::scenario_graph_copy_foreground),
+            ),
+            (
                 "diff_survives_reload",
                 Box::new(scenario_diff_survives_reload),
             ),
@@ -3915,6 +4037,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "inspector_scale",
+                Box::new(crate::inspector_scale::scenario),
             ),
             (
                 "graph_subject_identity",

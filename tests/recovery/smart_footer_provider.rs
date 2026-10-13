@@ -78,6 +78,7 @@ fn freeze_then_change_provider(
         let ui = app.ui_mut().unwrap();
         ui.smart_commit_generating = true;
         ui.smart_commit_generation = Some(kagi::ui::smart_commit::SmartGeneration {
+            request: (ui.commit_panel.as_ref().unwrap().entity_id(), 0),
             provider,
             model: (provider == SmartProvider::Ollama).then(|| "fixture-model".into()),
         });

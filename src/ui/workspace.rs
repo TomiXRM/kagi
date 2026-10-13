@@ -446,6 +446,7 @@ pub(super) fn render_inspector_body(
     app: &mut KagiApp,
     selected: Option<usize>,
     compare_title: Option<SharedString>,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> Option<AnyElement> {
     // During the exit clip `selected` is the last drawn row; the app's active
@@ -518,8 +519,9 @@ pub(super) fn render_inspector_body(
             // W11-AVATAR: resolved avatar images so the inspector can swap
             // the initial circle for a real image.
             &app.avatars.images,
-            &app.ui().inspector_files_scroll,
+            app.root_focus.as_ref(),
             &app.ui().inspector_message_scroll,
+            window,
             cx,
         )
         .into_any_element(),
@@ -547,14 +549,14 @@ impl WorkspaceItem for InspectorItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // Changed files + diffstat for the selected commit (vs parent). A cache
         // miss or an unavailable diff both derive to "(diff unavailable)".
         let selected = app.ui().selected?;
         app.ui_mut()?.sync_inspector_commit_files(selected);
-        render_inspector_body(app, Some(selected), None, cx)
+        render_inspector_body(app, Some(selected), None, window, cx)
     }
 }
 
@@ -580,7 +582,7 @@ impl WorkspaceItem for CompareItem {
         app: &mut KagiApp,
         _layout: &WorkspaceLayout,
         _panel: Option<AnyElement>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<KagiApp>,
     ) -> Option<AnyElement> {
         // No per-file diffstat — W16-DIFFSTAT keeps compare out of scope.
@@ -594,7 +596,7 @@ impl WorkspaceItem for CompareItem {
         app.ui_mut()?.inspector_model.sync_files(source, || {
             Some(InspectorFiles::derive(&compare.view().files, None, None))
         });
-        render_inspector_body(app, app.ui().selected, Some(title), cx)
+        render_inspector_body(app, app.ui().selected, Some(title), window, cx)
     }
     // Per-repo: the compared base/files belong to the previous repo; drop the
     // entity on repo/tab switch like the other registered panes.

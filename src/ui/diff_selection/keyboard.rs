@@ -6,14 +6,16 @@ use gpui::{
 use std::sync::Arc;
 
 const CONTEXT: &str = "KagiDiffSelection";
+const SPLIT_CONTEXT: &str = "KagiSplitDiffSelection";
 
 #[derive(Clone, Debug, PartialEq, gpui::Action)]
 #[action(namespace = kagi_diff, no_json)]
 pub(crate) struct SelectRows {
-    step: i8,
-    extend: bool,
-    boundary: bool,
-    all: bool,
+    pub(super) step: i8,
+    pub(super) extend: bool,
+    pub(super) boundary: bool,
+    pub(super) all: bool,
+    page: bool,
 }
 
 pub(crate) fn bind_keys(cx: &mut App) {
@@ -33,8 +35,31 @@ pub(crate) fn bind_keys(cx: &mut App) {
                 extend,
                 boundary,
                 all,
+                page: false,
             },
             Some(CONTEXT),
+        )]);
+    }
+    for (key, step, extend, boundary, page) in [
+        ("home", -1, false, true, false),
+        ("end", 1, false, true, false),
+        ("shift-home", -1, true, true, false),
+        ("shift-end", 1, true, true, false),
+        ("pageup", -1, false, false, true),
+        ("pagedown", 1, false, false, true),
+        ("shift-pageup", -1, true, false, true),
+        ("shift-pagedown", 1, true, false, true),
+    ] {
+        cx.bind_keys([KeyBinding::new(
+            key,
+            SelectRows {
+                step,
+                extend,
+                boundary,
+                all: false,
+                page,
+            },
+            Some(SPLIT_CONTEXT),
         )]);
     }
 }
@@ -47,6 +72,8 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub rows: Arc<Vec<DiffRow>>,
     pub scroll: ListState,
     pub item_index: F,
+    pub projection: Option<Arc<super::super::diff_split::cache::SplitProjection>>,
+    pub items: Option<std::rc::Rc<Vec<super::super::render_helpers::row_overlay::Item>>>,
 }
 
 impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
@@ -78,7 +105,11 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                         .border_color(gpui::rgb(super::super::theme::theme().ui_accent())),
                 )
             })
-            .key_context(CONTEXT)
+            .key_context(if self.projection.is_some() {
+                "KagiDiffSelection KagiSplitDiffSelection"
+            } else {
+                CONTEXT
+            })
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx);
             })
@@ -88,14 +119,24 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                     cx.propagate();
                     return;
                 }
-                if let Some(cursor) = super::move_rows(
-                    self.key,
-                    &self.rows,
-                    action.step,
-                    action.extend,
-                    action.boundary,
-                    action.all,
-                ) {
+                let cursor = if let Some(projection) = &self.projection {
+                    let distance = if action.page {
+                        page_distance(&self.scroll, self.items.as_deref().map(Vec::as_slice))
+                    } else {
+                        1
+                    };
+                    super::move_split_rows(self.key, &self.rows, &projection.rows, action, distance)
+                } else {
+                    super::move_rows(
+                        self.key,
+                        &self.rows,
+                        action.step,
+                        action.extend,
+                        action.boundary,
+                        action.all,
+                    )
+                };
+                if let Some(cursor) = cursor {
                     super::super::keyboard_nav::reveal_list_row(
                         &self.scroll,
                         (self.item_index)(cursor),
@@ -104,4 +145,28 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                 }
             })
     }
+}
+
+/// Count actual fully visible aligned rows; expansion items consume height,
+/// but must never become keyboard caret stops.
+fn page_distance(
+    scroll: &ListState,
+    items: Option<&[super::super::render_helpers::row_overlay::Item]>,
+) -> usize {
+    use super::super::render_helpers::row_overlay::Item;
+    let top = scroll.logical_scroll_top().item_ix;
+    let bottom = scroll.viewport_bounds().bottom();
+    let mut visible = 0usize;
+    for item in top..scroll.item_count() {
+        let Some(bounds) = scroll.bounds_for_item(item) else {
+            break;
+        };
+        if bounds.bottom() > bottom {
+            break;
+        }
+        if items.is_none_or(|items| matches!(items.get(item), Some(Item::Row(_)))) {
+            visible += 1;
+        }
+    }
+    visible.saturating_sub(1).max(1)
 }

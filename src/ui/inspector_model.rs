@@ -24,6 +24,7 @@ use gpui::SharedString;
 use kagi_domain::trailers::{parse_coauthors, parse_trailers, CoAuthor, Trailer};
 use kagi_git::{find_stat, ChangeKind, FileDiffStat, FileStatus};
 use kagi_ui_core::file_tree::{self, TreeRow};
+use std::rc::Rc;
 
 use super::tab_view::TabUiState;
 
@@ -131,9 +132,10 @@ struct InspectorMessage {
 #[derive(Default)]
 pub(super) struct InspectorModel {
     /// `None` inside = the source list is unavailable ("(diff unavailable)").
-    files: Option<(FilesSource, Option<InspectorFiles>)>,
+    files: Option<(FilesSource, Option<Rc<InspectorFiles>>)>,
     /// `(full SHA, complete-message display derivations)`.
     message: Option<(SharedString, InspectorMessage)>,
+    pub(super) keyboard: super::inspector_files::InspectorKeyboard,
 }
 
 impl InspectorModel {
@@ -146,7 +148,8 @@ impl InspectorModel {
         if self.files.as_ref().is_some_and(|(key, _)| *key == source) {
             return;
         }
-        self.files = Some((source, derive()));
+        self.files = Some((source, derive().map(Rc::new)));
+        self.keyboard.invalidate();
     }
 
     /// Re-derive the message HTML iff it was built for another commit.
@@ -175,7 +178,12 @@ impl InspectorModel {
 
     /// The synced file list; `None` = unavailable.
     pub(super) fn files(&self) -> Option<&InspectorFiles> {
-        self.files.as_ref().and_then(|(_, files)| files.as_ref())
+        self.files.as_ref().and_then(|(_, files)| files.as_deref())
+    }
+
+    /// Immutable ownership for lazy row processors, without copying file stats.
+    pub(super) fn files_snapshot(&self) -> Option<Rc<InspectorFiles>> {
+        self.files.as_ref().and_then(|(_, files)| files.clone())
     }
 
     pub(super) fn message_html(&self) -> SharedString {

@@ -14,7 +14,9 @@
 //! opaque `AnyView` (`diff_pane`) that this crate embeds below the commit list.
 
 mod detail;
+mod keyboard;
 mod render;
+pub use keyboard::bind_keys;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -196,6 +198,7 @@ pub struct FileHistoryView {
     /// narrow for their labels. Its measured bounds are what the layout
     /// scenario reads.
     pub header_fit: kagi_ui_core::header_fit::HeaderFit,
+    pub(crate) keyboard: keyboard::HistoryKeyboard,
 }
 
 impl EventEmitter<FileHistoryEvent> for FileHistoryView {}
@@ -221,7 +224,18 @@ impl FileHistoryView {
             list_scroll: UniformListScrollHandle::new(),
             last_built_range: 0..0,
             header_fit: Default::default(),
+            keyboard: Default::default(),
         }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn header_focused_for_e2e(
+        &self,
+        slot: usize,
+        window: &gpui::Window,
+        cx: &gpui::App,
+    ) -> bool {
+        self.keyboard.header_focused(slot, window, cx)
     }
 
     /// Ask the host to run the async history load for the current `rel_path` /
@@ -265,6 +279,7 @@ impl FileHistoryView {
                     klog!("file-history: loaded {} entries", history.entries.len());
                 }
                 let initial = Self::pick_initial_index(&history, &origin);
+                self.keyboard.seed(&history);
                 self.data.history = Some(history);
                 self.data.error = None;
                 self.data.selected = initial;

@@ -509,6 +509,12 @@ pub enum Msg {
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
+    /// Computed plan file preview; `{}` is the full count.
+    ModalFilesToChange,
+    /// Bounded preview remainder; `{}` is the omitted count.
+    ModalFilesMore,
+    /// Preview producer reached its cap; the true omitted count is unknown.
+    ModalFilesMoreUnknown,
 
     // ── W30-CONFLICT-UI: Conflict Mode (banner / list / choose / preview) ──
     // Operation headings (domain words rebase/merge/cherry-pick/revert kept
@@ -653,6 +659,8 @@ pub enum Msg {
     MenuOpenInEditor,
     /// Inspector file context menu: show this file's history.
     MenuShowFileHistory,
+    A11yInspectorFiles,
+    A11yFileHistory,
     /// Context menus: open the file in the user's external editor.
     OpenInExternalEditor,
     DiffStageHunk,
@@ -1731,6 +1739,8 @@ pub enum Msg {
     /// issue #350: blame legend tooltip for the `?` marker on an unblamable
     /// (uncommitted) line.
     BlameUnblamableMarkTip,
+    /// Live buffer text with no unchanged HEAD line attribution.
+    BlameUncommitted,
     /// issue #350: the Editor Workspace's inline-blame toggle chip. "Blame"
     /// is a Git term of art (ADR-0048) — verbatim in both languages.
     EditorWorkspaceBlame,
@@ -2762,6 +2772,12 @@ impl Msg {
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
             (Ja, OpenedInFinder) => "Finder で開きました",
+            (En, ModalFilesToChange) => "Files to change ({})",
+            (Ja, ModalFilesToChange) => "変更するファイル ({})",
+            (En, ModalFilesMore) => "…and {} more",
+            (Ja, ModalFilesMore) => "…ほか {} 件",
+            (En, ModalFilesMoreUnknown) => "…and more files",
+            (Ja, ModalFilesMoreUnknown) => "…ほかにもファイルがあります",
 
             // ── W30-CONFLICT-UI: Conflict Mode ──────────────────────
             (En, ConflictContinue) => "Continue",
@@ -2982,6 +2998,10 @@ impl Msg {
             (En, MenuOpenInEditor) => "Open in Editor",
             (Ja, MenuOpenInEditor) => "エディタで開く",
             (En, MenuShowFileHistory) => "Show File History",
+            (En, A11yInspectorFiles) => "Changed files",
+            (Ja, A11yInspectorFiles) => "変更されたファイル",
+            (En, A11yFileHistory) => "File History",
+            (Ja, A11yFileHistory) => "ファイルの履歴",
             (En, OpenInExternalEditor) => "Open in External Editor",
             (En, DiffStageHunk) => "Stage hunk",
             (En, DiffUnstageHunk) => "Unstage hunk",
@@ -4249,6 +4269,8 @@ impl Msg {
             (Ja, BlameIgnoredMarkTip) => "* commit は .git-blame-ignore-revs に含まれます",
             (En, BlameUnblamableMarkTip) => "? line is not yet committed",
             (Ja, BlameUnblamableMarkTip) => "? まだ commit されていない行",
+            (En, BlameUncommitted) => "Uncommitted",
+            (Ja, BlameUncommitted) => "未 commit",
             (En, EditorWorkspaceBlame) => "Blame",
             (Ja, EditorWorkspaceBlame) => "Blame",
             // #1016 PR B — modal controls, validation and AFTER-state chips.

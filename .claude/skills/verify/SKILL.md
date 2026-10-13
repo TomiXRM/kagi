@@ -56,6 +56,12 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1498/#1499, `KAGI_GUI_E2E_ONLY='oplog_,issues_'` retains the existing
+expansion/copy/keyboard oracles and adds `oplog_row_typography` and
+`issues_row_secondary_text` (`tests/recovery/density_rest.rs`). Their paint-stage
+font and vertical glyph-mask assertions cover EN/JA, Apple Light/Dark and
+100%/167%. Tier B compares the live Operation Log and Issues navigator.
+
 For #1225 compact layout integration, use
 `KAGI_GUI_E2E_ONLY='compact_layout_,commit_panel_,home_,toolbar_overflow,bottom_panel,analyze_a11y_,pr_detail_a11y_'`
 with KEEP_GOING and the unchanged 120s per-scenario deadline.

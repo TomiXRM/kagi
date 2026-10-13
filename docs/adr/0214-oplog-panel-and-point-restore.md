@@ -363,3 +363,12 @@ operation state is added.
 Empty/unavailable previews keep their existing explanation rather than an empty
 Tab stop. The canonical refs, Copy all, two-stage approval, execution plan and
 backend write pipeline are unchanged.
+
+## Amendment — 2026-10-14: dense summary typography (#1498)
+
+Operation Log summary time, operation and outcome use the existing
+`FILE_TREE_FONT_PX` 13px identity role, preserving the 22px summary floor,
+RowFocus space, variable-height expanded details and full-entry copy.
+Long operation names truncate inside their fixed column rather than wrapping
+past the summary mask. No global text helper or density setting changes.
+

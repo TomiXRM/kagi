@@ -866,7 +866,7 @@ pub fn mount_root(
     cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
 }
 
-/// Exact text consumed by the real busy snackbar renderer (#607).
+/// Static write/planning snackbar label (#607); clone's source-named label has its own renderer probe.
 #[cfg(feature = "gui-e2e")]
 pub fn busy_snackbar_label(app: &KagiApp) -> Option<&'static str> {
     app.busy_snackbar_label()
@@ -1324,6 +1324,9 @@ thread_local! {
     static FOLDER_PROMPTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static FOLDER_ANSWER: RefCell<Option<gpui::Task<Result<Option<std::path::PathBuf>, String>>>> = const { RefCell::new(None) };
     static CLONE_RUN: RefCell<Option<gpui::Task<()>>> = const { RefCell::new(None) };
+    static CLONE_DISPATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CLONE_BUSY_STATUS: RefCell<Option<(gpui::Role, String)>> = const { RefCell::new(None) };
+    static CLONE_BUSY_FOCUS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// #1043 / #1383: record the native folder request and await its answer through
@@ -1354,7 +1357,49 @@ pub fn queue_clone_run(task: gpui::Task<()>) {
 
 #[cfg(feature = "gui-e2e")]
 pub(crate) fn take_clone_run() -> Option<gpui::Task<()>> {
+    CLONE_DISPATCHES.with(|count| count.set(count.get() + 1));
     CLONE_RUN.with(|slot| slot.borrow_mut().take())
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_dispatches() -> usize {
+    CLONE_DISPATCHES.with(|count| count.replace(0))
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_clone_busy_status(role: gpui::Role, name: &str) {
+    CLONE_BUSY_STATUS.with(|status| *status.borrow_mut() = Some((role, name.to_owned())));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_busy_status() -> Option<(gpui::Role, String)> {
+    CLONE_BUSY_STATUS.with(|status| status.borrow_mut().take())
+}
+
+/// Observe the pinned Button's existing keyed focus owner, not a second handle.
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn probe_clone_busy_button(button: gpui_component::button::Button) -> gpui::AnyElement {
+    use gpui::IntoElement as _;
+    #[derive(gpui::IntoElement)]
+    struct Probe(gpui_component::button::Button);
+    impl gpui::RenderOnce for Probe {
+        fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+            let focus = window
+                .use_keyed_state("clone-busy-show", cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone();
+            if focus.is_focused(window) {
+                CLONE_BUSY_FOCUS.with(|slot| slot.set(true));
+            }
+            self.0.render(window, cx)
+        }
+    }
+    Probe(button).into_any_element()
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_clone_busy_focus() -> bool {
+    CLONE_BUSY_FOCUS.with(|focus| focus.replace(false))
 }
 
 /// The prompts of the folder dialogs requested since the last call.

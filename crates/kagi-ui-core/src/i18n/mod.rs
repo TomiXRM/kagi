@@ -240,6 +240,7 @@ pub enum Msg {
     MenuHideOthers,
     MenuShowAll,
     MenuServices,
+    ShortcutsRemapHelp,
     MenuUndo,
     MenuRedo,
     MenuCut,
@@ -284,7 +285,6 @@ pub enum Msg {
     RemoteOpAwaitingCompletion,
     TransportRetryHeld,
     NoRepoOpen,
-    NoTabsOpen,
     NoCommitSelected,
     DiffNotOpen,
     /// ADR-0124: diff-header selected mode segments.
@@ -662,6 +662,9 @@ pub enum Msg {
     CommitTitle,
     /// Commit panel: body input placeholder.
     CommitBody,
+    /// Commit draft persistence failure, followed by the I/O detail.
+    CommitDraftSaveFailed,
+    CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
     /// Commit panel: tooltip on the person+ (co-author) icon.
@@ -799,7 +802,10 @@ pub enum Msg {
     /// `{}` = why the read failed.
     HomeGithubRefreshFailed,
     HomeGithubFailedHint,
-    HomeGithubEmpty,
+    /// `{owner}` = section heading; `{host}` = host this list was read from.
+    HomeGithubSectionEmpty,
+    /// `{host}` = host the user's successfully empty list was read from.
+    HomeGithubMineEmpty,
     HomeGithubNoMatch,
     /// `{}` = how many were read.
     HomeGithubTruncated,
@@ -846,6 +852,9 @@ pub enum Msg {
     /// `{}` = the host it downloads from.
     CloneRunningHint,
     CloneHide,
+    /// `{}` = the full source of the single running clone.
+    CloneHiddenRunning,
+    CloneShowProgress,
     IssuePostedAs,
     IssueNewFieldsTitle,
     IssueReply,
@@ -2402,6 +2411,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "ブランチの ruleset に違反する可能性があります:",
 
+            (En, ShortcutsRemapHelp) => "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\": \"secondary-shift-b\" で変更できます（\"\" は割り当て解除）。再起動すると反映されます。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",
@@ -2459,8 +2470,6 @@ impl Msg {
             (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
-            (En, NoTabsOpen) => "no open tabs",
-            (Ja, NoTabsOpen) => "開いているタブがありません",
             (En, NoCommitSelected) => "no commit selected",
             (Ja, NoCommitSelected) => "commit が選択されていません",
             (En, DiffNotOpen) => "no diff is open",
@@ -3051,6 +3060,10 @@ impl Msg {
             (Ja, CommitTitle) => "概要",
             (En, CommitBody) => "Description (optional)",
             (Ja, CommitBody) => "説明(任意)",
+            (En, CommitDraftSaveFailed) => "Draft could not be saved",
+            (Ja, CommitDraftSaveFailed) => "下書きを保存できません",
+            (En, CommitDraftSaveRetry) => "Save Draft",
+            (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
             (En, AddCoAuthor) => "Add co-author",
@@ -3270,8 +3283,10 @@ impl Msg {
             (Ja, HomeGithubFailedHint) => {
                 "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
             }
-            (En, HomeGithubEmpty) => "You have no repositories on GitHub.",
-            (Ja, HomeGithubEmpty) => "GitHub にリポジトリがありません。",
+            (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
+            (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
+            (En, HomeGithubMineEmpty) => "You have no repositories to display on {host}.",
+            (Ja, HomeGithubMineEmpty) => "{host} に表示できるあなたのリポジトリはありません。",
             (En, HomeGithubNoMatch) => "No repository matches the filter.",
             (Ja, HomeGithubNoMatch) => "絞り込みに一致するリポジトリはありません。",
             (En, HomeGithubTruncated) => {
@@ -3348,6 +3363,10 @@ impl Msg {
             }
             (En, CloneHide) => "Continue in background",
             (Ja, CloneHide) => "バックグラウンドで続ける",
+            (En, CloneHiddenRunning) => "Cloning {}…",
+            (Ja, CloneHiddenRunning) => "{} を clone 中…",
+            (En, CloneShowProgress) => "Show Progress",
+            (Ja, CloneShowProgress) => "進捗を表示",
             (En, IssuePostedAs) => "Posted as {}",
             (Ja, IssuePostedAs) => "{} として投稿",
             (En, IssueNewFieldsTitle) => "New issue",

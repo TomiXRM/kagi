@@ -18,6 +18,25 @@ fn diff_line_ending_annotations_are_localized_in_both_languages() {
 }
 
 #[test]
+fn shortcuts_remap_help_localizes_prose_and_preserves_config_syntax() {
+    let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
+    let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);
+    assert_ne!(english, japanese);
+    for text in [english, japanese] {
+        for syntax in [
+            "~/.kagi/settings.json",
+            "keybinding.<command id>",
+            "secondary-shift-b",
+            "\"\"",
+        ] {
+            assert!(text.contains(syntax));
+        }
+    }
+    assert!(english.contains("restart"));
+    assert!(japanese.contains("再起動"));
+}
+
+#[test]
 fn palette_descriptions_use_localized_sentence_boundaries() {
     assert_eq!(
         command_palette_description(Lang::En, "Actions", Some("Unavailable")),

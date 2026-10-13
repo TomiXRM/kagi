@@ -65,23 +65,30 @@ pub fn scenario_tab_strip_overflow(cx: &mut VisualTestAppContext) {
     draw(cx, window);
     for index in 0..12 {
         let bounds = e2e::control_bounds(window.window_id(), &format!("repo-tab-{index}")).unwrap();
-        assert!(
-            bounds.left() >= px(0.) && bounds.right() <= px(940.),
-            "tab {index} runs outside window: {bounds:?}"
-        );
+        // The native-light exclusion pushes twelve minimum-width tabs beyond
+        // one viewport. Offscreen recorded cells are clipped by the real
+        // horizontal scroll owner; selected/focused cells must be revealed.
+        assert!(bounds.size.width > px(0.) && bounds.size.width <= theme::scaled_px(200.));
         assert!(
             e2e::control_paint(window.window_id(), &format!("repo-tab-label-{index}"))
                 .unwrap()
                 .middle_ellipsis
         );
     }
+    let first = e2e::control_bounds(window.window_id(), "repo-tab-0").unwrap();
+    crate::recovery_layout::contained(
+        e2e::tab_strip::scroll().unwrap().bounds(),
+        first,
+        "active first tab revealed",
+    );
     app.update(cx, |app, cx| app.switch_repo(11, cx));
     cx.run_until_parked();
     draw(cx, window);
     let last = e2e::control_bounds(window.window_id(), "repo-tab-11").unwrap();
-    assert!(
-        last.left() >= px(0.) && last.right() <= px(940.),
-        "active last tab not revealed: {last:?}"
+    crate::recovery_layout::contained(
+        e2e::tab_strip::scroll().unwrap().bounds(),
+        last,
+        "active last tab revealed",
     );
     click(cx, window, "tab-overflow");
     cx.run_until_parked();
@@ -353,14 +360,14 @@ fn two_tab_pin(
         let image = window.render_to_image().unwrap();
         let scale = window.scale_factor();
         for (x, color, label) in [
-            (8., theme::theme().surface, "inactive repository"),
+            (88., theme::theme().surface, "inactive repository"),
             (
-                220.,
+                300.,
                 theme::theme().bg_base,
                 "Home at its baseline position",
             ),
             (
-                380.,
+                460.,
                 theme::theme().chrome_surface(),
                 "natural-width trailing chrome",
             ),

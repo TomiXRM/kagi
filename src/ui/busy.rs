@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::Sizable as _;
-use kagi_ui_core::i18n;
+use gpui_component::{Disableable as _, Sizable as _};
+use kagi_ui_core::i18n::{self, Msg};
 use kagi_ui_core::slow_read::{is_slow, SlowRead};
 
 use super::theme::{self, theme};
@@ -109,8 +109,22 @@ impl KagiApp {
         let slow = self.slow_read_shown();
         let write = self.slow_write_shown(cx.background_executor().now());
         let label = self
-            .busy_snackbar_label()
-            .or(slow.map(i18n::slow_read_label));
+            .home_github
+            .cloning
+            .as_ref()
+            .and_then(|card| card.target.as_ref())
+            .map(|target| {
+                super::render_helpers::safe_text(
+                    &Msg::CloneHiddenRunning
+                        .t()
+                        .replace("{}", &target.request.source),
+                )
+            })
+            .or_else(|| {
+                self.busy_snackbar_label()
+                    .or(slow.map(i18n::slow_read_label))
+                    .map(SharedString::from)
+            });
         if let Some(label) = label {
             stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
         }
@@ -129,19 +143,21 @@ impl KagiApp {
     /// read and, when its result can be shown as unknown, Skip (#355).
     fn render_busy_snackbar(
         &self,
-        label: &'static str,
+        label: SharedString,
         slow: Option<SlowRead>,
         write: Option<(&'static str, u64)>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let accent = theme().ui_accent();
         let icon = render_overlay::big_sync_icon(accent, "kagi-busy-snackbar-spin");
+        let caption = self.busy_caption(label);
         let mut text = div()
             .flex_1()
+            .min_w(gpui::px(0.))
             .overflow_hidden()
             .flex()
             .flex_col()
-            .child(SharedString::from(label));
+            .child(caption);
         if let Some((kind, elapsed)) = write {
             let advice = i18n::slow_write_advice(kind, elapsed);
             #[cfg(feature = "gui-e2e")]
@@ -194,7 +210,52 @@ impl KagiApp {
             .child(div().flex_shrink_0().child(icon))
             .child(text)
             .children(skip)
+            .children(self.render_clone_progress_action(cx))
             .into_any()
+    }
+
+    fn busy_caption(&self, label: SharedString) -> gpui::AnyElement {
+        if self.home_github.cloning.is_none() {
+            return div().child(label).into_any();
+        }
+        let role = gpui::Role::Status;
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_clone_busy_status(role, &label);
+        super::e2e::measure_control(
+            "clone-busy-status",
+            div()
+                .id("clone-busy-status")
+                .role(role)
+                .aria_label(label.clone())
+                .text_ellipsis()
+                .child(label),
+        )
+        .into_any()
+    }
+
+    fn render_clone_progress_action(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.home_github.cloning.is_none() || self.clone_modal().is_some() {
+            return None;
+        }
+        let button = Button::new("clone-busy-show")
+            .label(Msg::CloneShowProgress.t())
+            .small()
+            .ghost()
+            .flex_shrink_0()
+            .disabled(self.has_active_modal())
+            .on_click(cx.listener(|this, _, window, cx| {
+                // Restore the existing task, never construct or confirm a new clone.
+                if this.has_active_modal() {
+                    return;
+                }
+                if let Some(card) = this.home_github.cloning.as_ref() {
+                    this.home_github_pick(card.listing.clone(), cx);
+                    this.focus_after_pick(window, cx);
+                }
+            }));
+        #[cfg(feature = "gui-e2e")]
+        let button = super::e2e::probe_clone_busy_button(button);
+        Some(super::e2e::measure_control("clone-busy-show", button).into_any())
     }
 }
 

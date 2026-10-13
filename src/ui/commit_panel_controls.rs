@@ -526,12 +526,14 @@ pub(super) fn unstaged_header(
         .filter(|f| !view.state.is_conflicted(&f.path))
         .count();
     let header = div()
+        .relative()
+        .child(e2e::measure_inside("cp-unstaged-header"))
         .flex()
         .flex_row()
         .flex_wrap()
         .items_center()
         .px_2()
-        .py_1()
+        .py_px()
         .flex_shrink_0()
         .child(
             div()
@@ -584,12 +586,14 @@ pub(super) fn staged_header(
 ) -> gpui::Div {
     let count = view.state.staged.len();
     let header = div()
+        .relative()
+        .child(e2e::measure_inside("cp-staged-header"))
         .flex()
         .flex_row()
         .flex_wrap()
         .items_center()
         .px_2()
-        .py_1()
+        .py_px()
         .flex_shrink_0()
         .child(
             div()
@@ -619,4 +623,52 @@ pub(super) fn staged_header(
     } else {
         header
     }
+}
+
+/// Error-only recovery row: use the pinned keyboard-capable Button, with a
+/// bounded caption and full persistence detail in AX/tooltip.
+pub(super) fn draft_save_feedback(
+    view: &CommitPanelView,
+    cx: &mut Context<CommitPanelView>,
+) -> Option<gpui::Div> {
+    let detail = view.draft_save_error.as_ref()?;
+    let full: gpui::SharedString = format!("{}: {}", Msg::CommitDraftSaveFailed.t(), detail).into();
+    Some(
+        div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .gap_1()
+            .child(
+                div()
+                    .id("cp-draft-save-error")
+                    .text_xs()
+                    .text_color(rgb(theme().color_blocker))
+                    .role(e2e::commit_panel_labels::role(
+                        "cp-draft-save-error",
+                        Role::Status,
+                    ))
+                    .aria_label(e2e::commit_panel_labels::name(
+                        "cp-draft-save-error",
+                        full.clone(),
+                    ))
+                    .tooltip(move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+                    })
+                    .child(Msg::CommitDraftSaveFailed.t()),
+            )
+            .child(
+                Button::new("cp-draft-save-retry")
+                    .ghost()
+                    .small()
+                    .label(Msg::CommitDraftSaveRetry.t())
+                    .aria_label(e2e::commit_panel_labels::name(
+                        "cp-draft-save-retry",
+                        Msg::CommitDraftSaveRetry.t(),
+                    ))
+                    .relative()
+                    .child(e2e::measure_inside("cp-draft-save-retry"))
+                    .on_click(cx.listener(|view, _, _, cx| view.retry_draft_save(cx))),
+            ),
+    )
 }

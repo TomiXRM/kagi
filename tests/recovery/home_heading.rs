@@ -180,8 +180,8 @@ fn check_narrow(
             let action_id = format!("home-gh-acme/gpui-component:{}", Msg::HomeGithubClone.t());
             let action = e2e::control_bounds(window.window_id(), &action_id).unwrap();
             // #1212 window containment uses the first repository row
-            // (home-recent-0 above), not virtual-list overdraw. #1179's taller
-            // Home viewport can mount this GitHub row partially below the fold.
+            // (home-recent-0 above), not virtual-list overdraw. The restored
+            // titlebar and toolbar can leave this GitHub row below the fold.
             // Its action must still fit the row, independently of clipping.
             if zoom > 1. {
                 let row =

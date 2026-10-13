@@ -4,6 +4,9 @@ use super::super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
 use crate::ui::button_style::{ButtonRole, KagiButton};
 
+// Uniform slots must not inherit the inline button's natural outer height.
+pub(super) const FILE_ROW_HEIGHT: f32 = 22.;
+
 /// Where a tree-view row sits in its section's `Tree` (#354): the tree id, the
 /// flattened row index, its 1-based level and 1-based sibling position/size.
 /// Flat view passes `None` and stays a plain run of rows.
@@ -168,6 +171,8 @@ fn render_cp_file_row(
         })
         .aria_description(full_path.clone())
         .w_full()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
         .flex()
         .flex_row()
         .items_center()
@@ -179,7 +184,7 @@ fn render_cp_file_row(
                 el.px_2()
             }
         })
-        .py_px()
+        .py_0()
         .bg(row_bg)
         .relative()
         .child(super::e2e::measure_inside(if staged {
@@ -187,15 +192,22 @@ fn render_cp_file_row(
         } else {
             "cp-selected-unstaged-row"
         }))
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(format!(
+                "cp-{}-density-file-{fi}",
+                if staged { "st" } else { "us" }
+            )))
+        })
         .when(!is_sel && !wip_hit && !is_conflicted, |el| {
             el.hover(|s| s.bg(rgb(theme().surface)))
         })
         .on_click(file_click)
         .child(
             div()
-                .w(theme::scaled_px(12.))
+                .w(theme::scaled_px(16.))
                 .flex_shrink_0()
-                .text_xs()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
                 .text_color(rgb(badge_color))
                 .child(SharedString::from(badge)),
         )
@@ -208,7 +220,8 @@ fn render_cp_file_row(
                 .tooltip(move |window, cx| {
                     gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
                 })
-                .text_xs()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
                 .text_color(rgb(theme().text_main))
                 .overflow_hidden()
                 .truncate()
@@ -278,6 +291,11 @@ fn render_cp_file_row(
     } else {
         (Msg::CommitPanelStage.t(), ButtonRole::Success)
     };
+    let action_id = if staged {
+        "cp-row-unstage"
+    } else {
+        "cp-row-stage"
+    };
     let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
         if staged {
             view.defer_unstage_file(fi, window, cx);
@@ -288,18 +306,20 @@ fn render_cp_file_row(
     file_row.child(
         KagiButton::styled(
             (btn_id, fi),
-            super::e2e::commit_panel_labels::caption(
-                if staged {
-                    "cp-row-unstage"
-                } else {
-                    "cp-row-stage"
-                },
-                label,
-            ),
+            super::e2e::commit_panel_labels::caption(action_id, label),
             role,
             cx,
         )
         .xsmall()
+        .h(theme::scaled_px(20.))
+        .py_0()
+        .text_xs()
+        .line_height(theme::scaled_px(16.))
+        // Keep focus inside the slot, clear of the next row's opaque paint.
+        .border_2()
+        .border_color(gpui::transparent_black())
+        .overflow_hidden()
+        .focus_visible(|s| s.border_color(rgb(theme().ui_accent())))
         // Only the remembered row's inline action participates in Tab;
         // preceding rows must not intercept Shift+Tab out of the section.
         .tab_stop(super::super::commit_panel_navigation::action_tab_stop(
@@ -309,11 +329,10 @@ fn render_cp_file_row(
         .ml_2()
         .flex_shrink_0()
         .relative()
-        .child(super::e2e::measure_inside(if staged {
-            "cp-row-unstage"
-        } else {
-            "cp-row-stage"
-        }))
+        .child(super::e2e::commit_panel_labels::measure_hit_box(
+            action_id,
+            super::super::keyboard_nav::RING,
+        ))
         .on_click(action_click),
     )
 }
@@ -338,10 +357,32 @@ fn render_cp_dir_row(
             )
         })
         .pl(theme::scaled_px(8.0 + (depth as f32) * 12.0))
-        .py_px()
-        .text_xs()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
+        .flex()
+        .items_center()
+        .py_0()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(theme::scaled_px(16.))
         .text_color(rgb(theme().change_dir))
-        .child(name.clone())
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(format!(
+                "{prefix}-{}",
+                name.as_ref()
+            )))
+        })
+        .child(
+            div()
+                .relative()
+                .child(name.clone())
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(format!(
+                        "{prefix}-label-{}",
+                        name.as_ref()
+                    )))
+                }),
+        )
         .into_any_element()
 }
 
@@ -431,18 +472,21 @@ fn render_cp_fold_header(
             )
         })
         .w_full()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
         .flex()
         .flex_row()
         .items_center()
         .px_2()
-        .py_px()
+        .py_0()
         .hover(|s| s.bg(rgb(theme().surface)).cursor_default())
         .on_click(toggle)
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .text_xs()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
                 .text_color(rgb(theme().text_label))
                 .truncate()
                 .child(SharedString::from(label)),

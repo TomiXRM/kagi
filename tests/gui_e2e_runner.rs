@@ -94,6 +94,10 @@ mod theme_custom;
 mod menus_window;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/menus_ja.rs"]
+mod menus_ja;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
 mod plan_labels;
 
@@ -415,6 +419,9 @@ mod settings_controls;
 #[cfg(target_os = "macos")]
 #[path = "recovery/settings_switches.rs"]
 mod settings_switches;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_groups.rs"]
+mod sidebar_groups;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_identity.rs"]
 mod sidebar_identity;
@@ -1578,6 +1585,9 @@ mod macos {
                 "system_reduce_transparency",
                 Box::new(crate::system_accessibility::scenario_system_reduce_transparency),
             ),
+            ("menus_localized", Box::new(crate::menus_ja::scenario_menus_localized)),
+            ("edit_menu_undo_redo", Box::new(crate::menus_ja::scenario_edit_menu_undo_redo)),
+            ("file_menu_save", Box::new(crate::menus_ja::scenario_file_menu_save)),
             (
                 "window_title_identity",
                 Box::new(crate::menus_window::scenario_window_title_identity),
@@ -2667,6 +2677,18 @@ mod macos {
             (
                 "tab_panels",
                 Box::new(crate::tab_panels::scenario_tab_panels),
+            ),
+            (
+                "sidebar_keyboard_collapse",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse),
+            ),
+            (
+                "sidebar_keyboard_collapse_card",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse_card),
+            ),
+            (
+                "sidebar_filtered_disclosure",
+                Box::new(crate::sidebar_groups::scenario_sidebar_filtered_disclosure),
             ),
             (
                 "sidebar_rows",

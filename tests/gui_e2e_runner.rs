@@ -2347,6 +2347,14 @@ mod macos {
                 Box::new(crate::open_picker::scenario_open_repository_picker_error),
             ),
             (
+                "open_repository_picker_home_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_home_owner),
+            ),
+            (
+                "open_repository_picker_frozen_owner",
+                Box::new(crate::open_picker::scenario_open_repository_picker_frozen_owner),
+            ),
+            (
                 "worktree_folder_picker",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_folder_picker),
             ),

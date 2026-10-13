@@ -149,3 +149,57 @@ pub fn scenario_open_repository_picker_error(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS open_repository_picker_error");
 }
+
+pub fn scenario_open_repository_picker_home_owner(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let before = kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100).len();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_home_tab(window, cx));
+    })
+    .unwrap();
+    let owner = cx.read(|cx| app.read(cx).repository_picker_owner_for_e2e());
+    app.update(cx, |app, cx| {
+        app.deliver_owned_repository_picker_for_e2e(
+            owner,
+            "Home foreground picker failure".into(),
+            cx,
+        )
+    });
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100).len(),
+        before,
+        "Home foreground must not record against hidden repository"
+    );
+    unmount(cx, app, window);
+}
+
+pub fn scenario_open_repository_picker_frozen_owner(cx: &mut VisualTestAppContext) {
+    let a = build_fixture();
+    let b = build_fixture();
+    let (app, window) = mount(cx, a.path());
+    let before_a = kagi_git::oplog::read_oplog_tail_for_repo(a.path(), 100).len();
+    let before_b = kagi_git::oplog::read_oplog_tail_for_repo(b.path(), 100).len();
+    let owner = cx.read(|cx| app.read(cx).repository_picker_owner_for_e2e());
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(b.path().to_path_buf(), cx))
+    });
+    app.update(cx, |app, cx| {
+        app.deliver_owned_repository_picker_for_e2e(
+            owner,
+            "A picker after switching to B".into(),
+            cx,
+        )
+    });
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(a.path(), 100).len(),
+        before_a + 1,
+        "picker receipt must belong to launch repository"
+    );
+    assert_eq!(
+        kagi_git::oplog::read_oplog_tail_for_repo(b.path(), 100).len(),
+        before_b,
+        "later tab must not receive another repository's failure"
+    );
+    unmount(cx, app, window);
+}

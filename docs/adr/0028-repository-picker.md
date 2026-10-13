@@ -30,9 +30,10 @@ exposed. The optional native explanatory message is outside this correction
 (PM decision), avoiding a second platform wrapper or dependency fork.
 
 Cancellation (`Ok(None)`) remains silent. Both platform errors and a dropped
-response channel produce the existing bounded error toast. With an active local
-repository, its context owns a Failed receipt retaining the complete diagnostic.
-Without a repository (Home), only the toast and process diagnostic are emitted;
-no empty/fabricated repository receipt is allowed (PM decision). A failed dialog
-does not observe or mutate Git state.
+response channel produce the existing bounded error toast. The foreground local
+repository context is frozen before opening the nonmodal native dialog and owns
+the Failed receipt even if the user switches tabs while it is pending. With Home
+in front (including retained background tabs), only the toast and process
+diagnostic are emitted; no empty/fabricated repository receipt is allowed.
+A failed dialog does not observe or mutate Git state.
 

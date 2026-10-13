@@ -42,3 +42,13 @@ mode parser or Kagi-specific modal dependency is introduced into the vendor.
 Review: enabled bracketed payloads remove ESC and ETX, matching alacritty's
 paste policy so clipboard content cannot terminate its own paste bracket.
 CR/LF and all other UTF-8 bytes are retained; raw keystrokes are unfiltered.
+
+## Amendment — 2026-10-13: plain clipboard control-byte guard (#1437)
+
+`TerminalView::paste_text` refuses unapproved plain clipboard text containing
+CR/LF or ASCII control bytes other than Tab without writing any PTY bytes.
+The allocation-free `paste_contains_control_characters` predicate is shared
+with the app's localized warning selection; CR/LF have the existing newline
+warning and clipboard Tab remains ordinary text. Vendor modifications retain
+the `kagi:` provenance marker. Approval/session ownership stays in Kagi, while
+the vendor's existing mode recheck and bracketed ESC/ETX stripping are unchanged.

@@ -135,6 +135,13 @@ impl SettingsWindow {
             {
                 stack.update(cx, |stack, _| stack.forget_window(id));
             }
+            if let Some(owner) = this.owner.upgrade() {
+                owner.update(cx, |app, cx| {
+                    if app.clear_analyze_reset_alert(id) {
+                        cx.notify();
+                    }
+                });
+            }
         })
         .detach();
         Self {
@@ -273,6 +280,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::window_menu::publish_settings_edit_state(window, cx);
         keyboard_nav::forget_roving_without_focus(window);
         let Some(owner) = self.owner.upgrade() else {
             close(window);
@@ -338,6 +346,10 @@ impl Render for SettingsWindow {
             .when_some(owner.read(cx).toast_stack.clone(), |el, stack| {
                 el.child(super::busy::toast_container().child(stack))
             })
+            .when_some(
+                owner.read(cx).analyze_reset_alert().cloned(),
+                |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
+            )
             .into_any_element()
     }
 }

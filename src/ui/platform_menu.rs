@@ -64,29 +64,50 @@ impl KagiApp {
                            row_ix: usize,
                            id: &'static str|
          -> gpui::AnyElement {
-            let command = commands::command(id);
-            let state = commands::command_state(this, id);
+            let state = if id == "editor.save" {
+                if this.editor_save_available(cx) {
+                    commands::CommandState::Enabled
+                } else {
+                    commands::CommandState::Disabled(Msg::NothingToSave.t())
+                }
+            } else {
+                commands::command_state(this, id)
+            };
             let enabled = matches!(state, commands::CommandState::Enabled);
             // `platform_menu_label` adds the "✓ " active marker for the current
             // language (no-op for ordinary commands).
             let state_label = super::window_menu::state_label(
                 id,
-                super::window_menu::ViewMenuState {
+                &super::window_menu::ViewMenuState {
                     sidebar_visible: this.sidebar.visible,
                     ..super::window_menu::current_state(cx)
                 },
             );
             let label = platform_menu_label(
                 id,
-                state_label.unwrap_or_else(|| command.map(|c| c.label).unwrap_or(id)),
+                state_label.unwrap_or_else(|| {
+                    if id == "editor.save" {
+                        Msg::MenuSave.t()
+                    } else {
+                        super::command_palette::command_label(id, i18n::lang())
+                    }
+                }),
             );
             // Render the stored `secondary-*` notation as a platform label
             // (Ctrl+J on Linux), so the menu matches what the user must press.
-            let key = commands::effective_keystroke(id)
-                .map(|k| commands::display_keystroke(&k))
-                .unwrap_or_default();
+            let key = if id == "editor.save" {
+                commands::display_keystroke("secondary-s")
+            } else {
+                commands::effective_keystroke(id)
+                    .map(|k| commands::display_keystroke(&k))
+                    .unwrap_or_default()
+            };
             let invoke = cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
-                if commands::is_enabled(this, id) {
+                if id == "editor.save" && this.editor_save_available(cx) {
+                    this.close_platform_menu(cx);
+                    this.save_editor_file(cx);
+                    cx.notify();
+                } else if commands::is_enabled(this, id) {
                     this.close_platform_menu(cx);
                     this.handle_menu_command(id, window, cx);
                     cx.notify();
@@ -158,6 +179,10 @@ impl KagiApp {
                 }
                 commands::MenuNode::Command(id) => {
                     panel = panel.child(command_row(self, cx, row_ix, id));
+                    row_ix += 1;
+                }
+                commands::MenuNode::EditorSave => {
+                    panel = panel.child(command_row(self, cx, row_ix, "editor.save"));
                     row_ix += 1;
                 }
                 // ADR-0085 §3: the dropdown has no nested-panel support, so the

@@ -526,12 +526,14 @@ pub(super) fn unstaged_header(
         .filter(|f| !view.state.is_conflicted(&f.path))
         .count();
     let header = div()
+        .relative()
+        .child(e2e::measure_inside("cp-unstaged-header"))
         .flex()
         .flex_row()
         .flex_wrap()
         .items_center()
         .px_2()
-        .py_1()
+        .py_px()
         .flex_shrink_0()
         .child(
             div()
@@ -584,12 +586,14 @@ pub(super) fn staged_header(
 ) -> gpui::Div {
     let count = view.state.staged.len();
     let header = div()
+        .relative()
+        .child(e2e::measure_inside("cp-staged-header"))
         .flex()
         .flex_row()
         .flex_wrap()
         .items_center()
         .px_2()
-        .py_1()
+        .py_px()
         .flex_shrink_0()
         .child(
             div()

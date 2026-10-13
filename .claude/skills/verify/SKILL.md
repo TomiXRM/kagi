@@ -3306,6 +3306,26 @@ before completion in both languages, and checks release after completion.
 Build only when PM owns execution. For M, verify Fetch, Commit, Stash, Discard,
 branch deletion and editor Save show an operation label, never `app-writer`.
 
+### Selection, hidden clone and scoped Home empty wording (#1451–#1453)
+
+Tier A filter:
+`KAGI_GUI_E2E_ONLY='pr_dashboard_hover_selected,clone_hidden_status,home_empty_section_wording,pr_dashboard_keyboard,clone_,home_'`
+with KEEP_GOING. Dashboard coverage samples native selected-row fills before
+and during hover in active/inactive windows, retains PR-number focus/AX identity
+and checks one Enter/Space activation. Apple Dark's active and inactive tokens
+can legitimately match; each state must still match its own resolved token.
+The hidden-clone scenario holds production dispatch before a real fixture clone,
+hides its card and opens repository B. The rendered Status names the frozen
+source; Tab reaches the pinned Button's existing keyed focus owner and
+Enter/Space restores the same request without another dispatch or lease.
+Home pane/query changes cannot hide this entrance; only terminal-report delivery
+removes it and releases the latch. Successful empty sections name owner/host in
+EN/JA, including Enterprise and all-zero fixtures; failed owners retain failure
+notes. Renderer AX/probe assertions do not claim native VoiceOver delivery.
+Tier B remains PM-owned: compare selected-row hover and inactive fills, hidden
+clone Show Progress on another repository and filtered Home, and mixed owner
+empty/failure wording in real EN/JA windows. No percent or Cancel is introduced.
+
 ### Slow-read advice (#355, ADR-0206)
 
 G: `cargo test -p kagi-ui-core -- slow_read busy` (the 2 s boundary and EN/JA

@@ -188,13 +188,8 @@ impl KagiApp {
             .min_h(px(0.))
             .child(self.render_home_sidebar(sidebar, window, cx))
             .child(self.render_home_main(sidebar, compact, window, cx));
-        // Home's content is the Home cell's panel while the strip is drawn
-        // (#983); with no tab there is no strip, so no tab list.
-        let body = if !self.tab_strip_visible() {
-            body
-        } else {
-            super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t())
-        };
+        // Home is a document even when it is the window's only tab.
+        let body = super::tab_panel_a11y::tab_panel(body, "home-tab-panel", Msg::HomeTabTitle.t());
         let home = div()
             .id("home")
             .flex()
@@ -203,19 +198,15 @@ impl KagiApp {
             .font_family(super::UI_FONT)
             .bg(rgb(theme().bg_base))
             .when_some(self.root_focus.clone(), |el, fh| el.track_focus(&fh))
-            // Home shares the native frame; document tabs never host the lights.
+            .child(self.render_tab_strip(window, cx))
+            // Home uses the same two-row titlebar/toolbar composition.
             .child(
                 div()
                     .flex()
                     .items_center()
                     .w_full()
                     .h(super::render_header::chrome_frame_height())
-                    .pl(if cfg!(target_os = "macos") {
-                        px(80.)
-                    } else {
-                        theme::scaled_px(12.)
-                    })
-                    .pr_3()
+                    .px_3()
                     .flex_shrink_0()
                     .bg(rgb(theme().chrome_surface()))
                     .when(theme().slug == "apple-dark", |bar| {
@@ -231,12 +222,8 @@ impl KagiApp {
                             .font_weight(gpui::FontWeight::BOLD)
                             .child(Msg::HomeTabTitle.t()),
                     )
-                    .child(self.render_chrome_spacer("home-drag-region", cx))
-                    .when(!self.tabs.is_empty() || self.remote_view.is_some(), |el| {
-                        el.child(self.render_tab_add(cx))
-                    }),
+                    .child(self.render_chrome_spacer("home-drag-region", cx)),
             )
-            .children(self.render_tab_strip(window, cx))
             .child(body);
         // A flex box, as the Welcome screen's root was: the window-global
         // modals attached below are absolute overlays, and in a plain block

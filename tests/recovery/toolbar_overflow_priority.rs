@@ -84,9 +84,7 @@ pub fn scenario_toolbar_overflow_priority(cx: &mut VisualTestAppContext) {
                         let overflow = e2e::control_bounds(win.window_id(), "tb-overflow").unwrap();
                         let workspace = f32::from(graph.size.width + overflow.size.width);
                         let old_required =
-                            f32::from(repo.size.width) + 2. * 100. * zoom + 24. * zoom + 80.
-                                - 12. * zoom
-                                + 28. * zoom;
+                            f32::from(repo.size.width) + 2. * 100. * zoom + 24. * zoom;
                         selected_only_reclaims_git_width |=
                             workspace < 100. * zoom && width.round() < old_required - 1.;
                     }

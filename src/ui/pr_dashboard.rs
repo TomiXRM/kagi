@@ -507,6 +507,8 @@ fn render_table_row(
 ) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-home-row-{}", open.number));
         this.pr_mode_open(&open, cx);
     });
     let menu_pr = pr.clone();
@@ -530,8 +532,13 @@ fn render_table_row(
         PrDetailAvailability::Stale => format!("{}*", Msg::PrWhyPending.t()),
     };
     // An age needs an instant; the list's stamp is text (see `PullRequest`).
-    let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
-        .map(|at| kagi_ui_core::time::relative_time(at, now))
+    let (age, age_description) = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
+        .map(|at| {
+            (
+                kagi_ui_core::time::relative_time(at, now),
+                kagi_ui_core::time::relative_time_description(at, now),
+            )
+        })
         .unwrap_or_default();
     use kagi_domain::github::IssueState;
     let state = match pr.state {
@@ -541,7 +548,14 @@ fn render_table_row(
         IssueState::Open => reason_text(why),
     };
     let label = super::list_a11y::pr_row_label(
-        pr.number, &pr.title, &state, &pr.author, &pr.head, &pr.base, &checks, &age,
+        pr.number,
+        &pr.title,
+        &state,
+        &pr.author,
+        &pr.head,
+        &pr.base,
+        &checks,
+        &age_description,
     );
     // The cells fill everything right of the shared row's avatar column. The
     // strip must take the table's width, not its own content's: without
@@ -678,13 +692,14 @@ fn render_table_row(
         );
     super::list_a11y::list_option(
         "pr-list",
-        super::timeline_row::clickable(super::timeline_row::row(
+        super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
             &pr.author,
             kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
-        )),
+        )
+        .when(!selected, super::timeline_row::clickable),
         position,
         size,
         label,
@@ -699,6 +714,7 @@ fn render_table_row(
     })
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
+            .cursor_pointer()
     })
     .items_center()
     .flex_shrink_0()

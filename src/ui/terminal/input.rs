@@ -93,16 +93,22 @@ pub(crate) fn render_paste_confirmation(
         cx.notify();
     });
     let confirm = cx.listener(|app, _: &gpui::ClickEvent, _, cx| app.confirm_terminal_paste(cx));
+    let description = SharedString::from(
+        if gpui_terminal::TerminalView::paste_contains_control_characters(&modal.text) {
+            Msg::TerminalPasteControlBody
+        } else {
+            Msg::TerminalPasteBody
+        }
+        .t(),
+    );
+    #[cfg(feature = "gui-e2e")]
+    PASTE_DESCRIPTION.with(|slot| *slot.borrow_mut() = Some(description.clone()));
     let body = modal_shell::modal_scroll_body()
         .child(render_modal_title_row(
             SharedString::from(Msg::TerminalPasteTitle.t()),
             None,
         ))
-        .child(
-            div()
-                .text_sm()
-                .child(SharedString::from(Msg::TerminalPasteBody.t())),
-        )
+        .child(div().text_sm().child(description.clone()))
         .child(
             div()
                 .text_sm()
@@ -113,7 +119,7 @@ pub(crate) fn render_paste_confirmation(
         .id("terminal-paste-dialog")
         .role(gpui::Role::AlertDialog)
         .aria_label(SharedString::from(Msg::TerminalPasteTitle.t()))
-        .aria_description(SharedString::from(Msg::TerminalPasteBody.t()))
+        .aria_description(description)
         .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
             builder.parent_node().set_modal()
         })
@@ -149,6 +155,7 @@ pub(crate) fn render_paste_confirmation(
 #[cfg(feature = "gui-e2e")]
 thread_local! {
     static DESCRIPTION: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
+    static PASTE_DESCRIPTION: std::cell::RefCell<Option<SharedString>> = const { std::cell::RefCell::new(None) };
 }
 pub(crate) fn focus_description() -> SharedString {
     let description = SharedString::from(Msg::TerminalFocusDescription.t());
@@ -160,5 +167,8 @@ pub(crate) fn focus_description() -> SharedString {
 impl KagiApp {
     pub fn terminal_description_for_e2e(&self) -> Option<SharedString> {
         DESCRIPTION.with(|slot| slot.borrow().clone())
+    }
+    pub fn terminal_paste_description_for_e2e(&self) -> Option<SharedString> {
+        PASTE_DESCRIPTION.with(|slot| slot.borrow().clone())
     }
 }

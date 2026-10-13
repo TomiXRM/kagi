@@ -2,6 +2,7 @@
 //! bin's `src/ui/commit_list.rs` (ADR-0121 C3) so extracted pane crates can
 //! reuse them. The bin re-exports them from `commit_list` (shim).
 
+use crate::i18n::time::{relative_age, AgeStyle, AgeUnit};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Return the current time as seconds since Unix epoch.
@@ -24,41 +25,52 @@ pub fn now_unix_secs() -> i64 {
 /// | < 12 months    | `"4mo ago"`    |
 /// | ≥ 12 months    | `"2y ago"`     |
 pub fn relative_time(epoch_secs: i64, now_secs: i64) -> String {
-    let diff = now_secs.saturating_sub(epoch_secs).max(0);
-    match age_parts(diff) {
-        Some((count, unit)) => format!("{count}{unit} ago"),
-        None => "just now".to_string(),
-    }
+    relative_age(
+        crate::i18n::lang(),
+        age_parts(epoch_secs, now_secs),
+        AgeStyle::Compact,
+    )
 }
 
 /// Compact relative age for the Graph column; the verbose form remains in AX labels.
 pub fn relative_time_short(epoch_secs: i64, now_secs: i64) -> String {
-    let diff = now_secs.saturating_sub(epoch_secs).max(0);
-    match age_parts(diff) {
-        Some((count, unit)) => format!("{count}{unit}"),
-        None => "now".to_string(),
-    }
+    relative_age(
+        crate::i18n::lang(),
+        age_parts(epoch_secs, now_secs),
+        AgeStyle::Short,
+    )
 }
 
-fn age_parts(diff: i64) -> Option<(i64, &'static str)> {
+/// Fully spoken units for accessibility, using the same age boundaries.
+pub fn relative_time_description(epoch_secs: i64, now_secs: i64) -> String {
+    relative_age(
+        crate::i18n::lang(),
+        age_parts(epoch_secs, now_secs),
+        AgeStyle::Description,
+    )
+}
+
+fn age_parts(epoch_secs: i64, now_secs: i64) -> Option<(i64, AgeUnit)> {
+    let diff = now_secs.saturating_sub(epoch_secs).max(0);
     if diff < 60 {
         None
     } else if diff < 3_600 {
-        Some((diff / 60, "m"))
+        Some((diff / 60, AgeUnit::Minute))
     } else if diff < 86_400 {
-        Some((diff / 3_600, "h"))
+        Some((diff / 3_600, AgeUnit::Hour))
     } else if diff < 86_400 * 30 {
-        Some((diff / 86_400, "d"))
+        Some((diff / 86_400, AgeUnit::Day))
     } else if diff < 86_400 * 365 {
-        Some((diff / (86_400 * 30), "mo"))
+        Some((diff / (86_400 * 30), AgeUnit::Month))
     } else {
-        Some((diff / (86_400 * 365), "y"))
+        Some((diff / (86_400 * 365), AgeUnit::Year))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{relative_time, relative_time_short};
+    use super::{age_parts, relative_age, AgeStyle};
+    use crate::i18n::Lang;
 
     #[test]
     fn compact_age_changes_units_at_the_same_boundaries_as_verbose_age() {
@@ -75,10 +87,26 @@ mod tests {
             (86_400 * 365 - 1, "12mo", "12mo ago"),
             (86_400 * 365, "1y", "1y ago"),
         ] {
-            assert_eq!(relative_time_short(0, seconds), short, "{seconds}s");
-            assert_eq!(relative_time(0, seconds), verbose, "{seconds}s");
+            assert_eq!(
+                relative_age(Lang::En, age_parts(0, seconds), AgeStyle::Short),
+                short,
+                "{seconds}s"
+            );
+            assert_eq!(
+                relative_age(Lang::En, age_parts(0, seconds), AgeStyle::Compact),
+                verbose,
+                "{seconds}s"
+            );
         }
-        assert_eq!(relative_time_short(60, 0), "now", "future timestamp");
-        assert_eq!(relative_time(60, 0), "just now", "future timestamp");
+        assert_eq!(
+            relative_age(Lang::En, age_parts(60, 0), AgeStyle::Short),
+            "now",
+            "future timestamp"
+        );
+        assert_eq!(
+            relative_age(Lang::En, age_parts(60, 0), AgeStyle::Compact),
+            "just now",
+            "future timestamp"
+        );
     }
 }

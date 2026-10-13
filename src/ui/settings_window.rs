@@ -135,6 +135,13 @@ impl SettingsWindow {
             {
                 stack.update(cx, |stack, _| stack.forget_window(id));
             }
+            if let Some(owner) = this.owner.upgrade() {
+                owner.update(cx, |app, cx| {
+                    if app.clear_analyze_reset_alert(id) {
+                        cx.notify();
+                    }
+                });
+            }
         })
         .detach();
         Self {
@@ -339,6 +346,10 @@ impl Render for SettingsWindow {
             .when_some(owner.read(cx).toast_stack.clone(), |el, stack| {
                 el.child(super::busy::toast_container().child(stack))
             })
+            .when_some(
+                owner.read(cx).analyze_reset_alert().cloned(),
+                |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
+            )
             .into_any_element()
     }
 }

@@ -35,14 +35,34 @@ enum FocusScreen {
     None,
 }
 
+#[derive(Clone)]
 pub(super) struct PendingFocus {
     focus: FocusHandle,
     screen: FocusScreen,
 }
 
+#[derive(Clone)]
 pub(super) struct AlertReturnFocus {
     opener: Option<PendingFocus>,
     trap: FocusHandle,
+}
+
+impl AlertReturnFocus {
+    pub(super) fn for_settings(window: &Window, cx: &gpui::App, trap: FocusHandle) -> Self {
+        Self {
+            opener: window.focused(cx).map(|focus| PendingFocus {
+                focus,
+                screen: FocusScreen::None,
+            }),
+            trap,
+        }
+    }
+
+    pub(super) fn restore_settings(self, window: &mut Window, cx: &mut gpui::App) {
+        if let Some(opener) = self.opener {
+            window.focus(&opener.focus, cx);
+        }
+    }
 }
 
 impl KagiApp {
@@ -176,6 +196,9 @@ impl KagiApp {
                 .then(|| self.pending_root_focus())
                 .flatten();
         }
+        if !matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
+            self.clear_analyze_reset_alert(window.window_handle().window_id());
+        }
         // The menu sits above Settings and input modals. Release their focus
         // while it is open; when it closes, the existing pending/restored
         // membership checks return focus to the still-drawn owner.
@@ -216,7 +239,12 @@ impl KagiApp {
         // layer does focus belong in its trap. A gpui-component popup drawn
         // outside the app's tree is left alone.
         if self.front_layer(cx) == FrontLayer::Settings {
-            if let Some(trap) = self.settings_focus.clone() {
+            let trap = self
+                .analyze_reset_alert()
+                .filter(|alert| alert.window == window.window_handle().window_id())
+                .map(|alert| alert.focus.clone())
+                .or_else(|| self.settings_focus.clone());
+            if let Some(trap) = trap {
                 let behind = window.focused(cx).is_none()
                     || (self.root_focus.as_ref())
                         .is_some_and(|root| root.contains_focused(window, cx));

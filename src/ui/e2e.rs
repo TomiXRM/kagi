@@ -287,6 +287,18 @@ pub fn clear_control_bounds(id: gpui::WindowId, name: &str) {
     CONTROL_PAINTS.with(|map| map.borrow_mut().remove(&(id, name.to_string())));
 }
 #[cfg(feature = "gui-e2e")]
+thread_local! {
+    static GRAPH_AGE_TEXT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn record_graph_age_text(text: &str) {
+    GRAPH_AGE_TEXT.with(|slot| *slot.borrow_mut() = Some(text.to_owned()));
+}
+#[cfg(feature = "gui-e2e")]
+pub fn take_graph_age_text() -> Option<String> {
+    GRAPH_AGE_TEXT.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
 pub(crate) fn record_busy_advice(text: &str) {
     BUSY_ADVICE.with(|slot| *slot.borrow_mut() = Some(text.to_owned()));
 }

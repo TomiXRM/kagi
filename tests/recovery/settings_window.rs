@@ -31,8 +31,16 @@ pub(crate) struct SettingsHostGuard {
 
 impl SettingsHostGuard {
     pub(crate) fn native(cx: &mut VisualTestAppContext) -> Self {
+        Self::select(cx, true)
+    }
+
+    pub(crate) fn portable(cx: &mut VisualTestAppContext) -> Self {
+        Self::select(cx, false)
+    }
+
+    fn select(cx: &mut VisualTestAppContext, native: bool) -> Self {
         let previous = cx.read(|cx| cx.global::<SettingsHostForE2e>().native);
-        cx.update(|cx| cx.set_global(SettingsHostForE2e { native: true }));
+        cx.update(|cx| cx.set_global(SettingsHostForE2e { native }));
         Self {
             cx: cx.clone(),
             previous,

@@ -4390,8 +4390,14 @@ pub fn scenario_commit_list_roles(cx: &mut VisualTestAppContext) {
             row.summary.to_string(),
             row.short_id.to_string(),
             row.author.to_string(),
-            row.date.to_string(),
-            row.date_short.to_string(),
+            kagi_ui_core::time::relative_time_description(
+                row.author_secs,
+                kagi_ui_core::time::now_unix_secs(),
+            ),
+            kagi_ui_core::time::relative_time_short(
+                row.author_secs,
+                kagi_ui_core::time::now_unix_secs(),
+            ),
             row.badges.iter().any(|b| b.label.as_ref() == "v-mark"),
         )
     });

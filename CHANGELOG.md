@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- macOS Reduce Motion is read at startup and refreshed on display-accessibility notifications; system or app opt-in skips decorative animations. Reduce Transparency selects an opaque equivalent for dark PR tiles without changing their normal appearance. (#1417, #1418; refs #354)
 - Create Branch shows existing ruleset and Checkout After warnings before approval, with localized Note names and the shared warning icon/style inside the scrolling plan body. Create Worktree uses the same warning list. Advisory warnings keep Create enabled; blockers and the pinned footer retain their existing behavior. (#1385)
 - Inspector changed files are a stable-path keyboard list even before a diff is open: arrows/Home/End reveal rows, Enter/Space open the exact file, and the Generated disclosure expands from the keyboard. Localized accessibility names retain status and complete paths. (#1375)
   - Review: opening/closing Generated splices only its children, retaining the disclosure's scroll position and focus. Reaching the final row also reveals the unfocusable overflow notice, including after its rows have been measured.

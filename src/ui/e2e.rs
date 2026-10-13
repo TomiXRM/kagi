@@ -18,6 +18,8 @@ use std::path::Path;
 pub mod commit_panel_labels;
 pub mod palette;
 pub mod sidebar_labels;
+#[cfg(feature = "gui-e2e")]
+pub mod system_accessibility;
 
 #[cfg(feature = "gui-e2e")]
 pub mod activity;

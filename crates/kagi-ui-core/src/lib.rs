@@ -8,6 +8,7 @@
 #[macro_use]
 pub mod klog;
 
+pub mod accessibility;
 mod atomic_file;
 pub mod avatar;
 pub mod change_badge;

@@ -3625,10 +3625,10 @@ impl Msg {
             (En, SettingsReduceMotion) => "Reduce motion",
             (Ja, SettingsReduceMotion) => "モーションを減らす",
             (En, SettingsReduceMotionDesc) => {
-                "Render decorative animations static (e.g. the tab-loading dots stop bobbing)."
+                "Stop decorative animations. macOS Reduce Motion is also respected, even when this switch is off."
             }
             (Ja, SettingsReduceMotionDesc) => {
-                "装飾的なアニメーションを静止させます(タブ読み込み中のドットの揺れなど)。"
+                "装飾的なアニメーションを静止させます。オフでも macOS の「視差効果を減らす」を尊重します。"
             }
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",

@@ -34,9 +34,13 @@ fn page_bg() -> u32 {
 /// themes, and in dark ones plain black over the page. A partly transparent
 /// white still mixed with what was behind it and came out grey, which is why
 /// the light theme kept looking washed out.
-fn dash_card_bg() -> gpui::Hsla {
+pub(super) fn dash_card_bg() -> gpui::Hsla {
     if theme().dark {
-        gpui::hsla(0., 0., 0., 0.35)
+        if theme::reduce_transparency() {
+            rgb(theme::pr_card_opaque_bg()).into()
+        } else {
+            gpui::hsla(0., 0., 0., 0.35)
+        }
     } else {
         gpui::hsla(0., 0., 1., 1.)
     }
@@ -758,10 +762,16 @@ fn render_tiles(buckets: &[(PrAttention, Vec<(PullRequest, PrReason)>)]) -> gpui
         .flex_shrink_0()
         .px_4()
         .pt_3();
-    for (a, members) in buckets {
+    for (index, (a, members)) in buckets.iter().enumerate() {
         let c = attention_color(*a);
         row = row.child(
             div()
+                .relative()
+                .when(cfg!(feature = "gui-e2e"), |tile| {
+                    tile.child(super::e2e::measure_inside(format!(
+                        "pr-attention-tile-{index}"
+                    )))
+                })
                 .flex()
                 .flex_row()
                 .items_center()

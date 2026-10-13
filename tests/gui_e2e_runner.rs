@@ -42,6 +42,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/ref_validation.rs"]
+mod ref_validation;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -228,6 +232,10 @@ mod app_remove;
 #[cfg(target_os = "macos")]
 #[path = "recovery/app_stash.rs"]
 mod app_stash;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/stash_entry_identity.rs"]
+mod stash_entry_identity;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
@@ -500,6 +508,10 @@ mod recovery_modal_compact;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_card_994.rs"]
 mod recovery_plan_card_994;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_preview_files.rs"]
+mod recovery_plan_preview_files;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1358,6 +1370,14 @@ mod macos {
                 Box::new(crate::recovery_plan_card_994::scenario_plan_heading_chipless),
             ),
             (
+                "plan_preview_files",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "plan_preview_files_empty",
+                Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
+            ),
+            (
                 "plan_recovery_noop",
                 Box::new(crate::recovery_plan_card_994::scenario_plan_recovery_noop),
             ),
@@ -1829,6 +1849,14 @@ mod macos {
                 Box::new(
                     crate::recovery_operations::scenario_create_branch_presents_backend_receipt,
                 ),
+            ),
+            (
+                "create_ref_collision_blockers",
+                Box::new(crate::ref_validation::scenario_create_ref_collision_blockers),
+            ),
+            (
+                "set_upstream_missing_blocker",
+                Box::new(crate::ref_validation::scenario_set_upstream_missing_blocker),
             ),
             (
                 "create_branch_execution_failure_keeps_input",
@@ -2786,6 +2814,10 @@ mod macos {
             (
                 "stash_public_boundary",
                 Box::new(crate::app_stash::scenario_stash_public_boundary),
+            ),
+            (
+                "stash_entry_identity",
+                Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
             ),
             (
                 "stash_push_plan_accuracy",

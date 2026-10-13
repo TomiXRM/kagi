@@ -20,7 +20,6 @@ pub fn plan_set_upstream(
     // cross-op `CommonNote::BranchMissing { in_repo: false }` tail (shared in
     // English with rename); the rest are this op's own `PushNote` variants.
     let mut blockers: Vec<PlanNote> = Vec::new();
-    let mut warnings: Vec<PlanNote> = Vec::new();
 
     if repo.find_branch(branch_name, BranchType::Local).is_err() {
         blockers.push(PlanNote::Common(CommonNote::BranchMissing {
@@ -30,8 +29,10 @@ pub fn plan_set_upstream(
     }
     if upstream.trim().is_empty() || upstream.trim() != upstream {
         blockers.push(PlanNote::Push(PushNote::UpstreamFormatInvalid));
-    } else if repo.find_branch(upstream, BranchType::Remote).is_err() {
-        warnings.push(PlanNote::Push(PushNote::UpstreamNotPresentLocally {
+    } else if repo.find_branch(upstream, BranchType::Remote).is_err()
+        && repo.find_branch(upstream, BranchType::Local).is_err()
+    {
+        blockers.push(PlanNote::Push(PushNote::UpstreamNotPresentLocally {
             upstream: upstream.to_string(),
         }));
     }
@@ -49,7 +50,7 @@ pub fn plan_set_upstream(
             head: format!("branch: {} -> {}", branch_name, upstream),
             dirty: "working tree unchanged".to_string(),
         },
-        warnings,
+        warnings: Vec::new(),
         blockers,
         recovery: Some(PlanRecovery {
             kind: RecoveryKind::Push(PushRecovery::SetUpstream {

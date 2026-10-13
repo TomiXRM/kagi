@@ -72,6 +72,9 @@ mod gui_isolation;
 #[path = "recovery/pr_detail_a11y.rs"]
 mod pr_detail_a11y;
 #[cfg(target_os = "macos")]
+#[path = "recovery/pr_lane_keys.rs"]
+mod pr_lane_keys;
+#[cfg(target_os = "macos")]
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
@@ -155,6 +158,10 @@ mod smart_picker;
 mod recovery_sidebar_panes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/dnd_self.rs"]
+mod dnd_self;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
 
@@ -177,6 +184,10 @@ mod activity_a11y;
 #[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
 mod recovery_terminal_states;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/terminal_keys.rs"]
+mod recovery_terminal_keys;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/unborn_empty.rs"]
@@ -1320,6 +1331,9 @@ mod macos {
                 "unborn_empty_state",
                 Box::new(crate::recovery_unborn_empty::scenario_unborn_empty_state),
             ),
+            ("terminal_paste_bracketed", Box::new(crate::recovery_terminal_keys::scenario_terminal_paste_bracketed)),
+            ("terminal_focus_exit", Box::new(crate::recovery_terminal_keys::scenario_terminal_focus_exit)),
+            ("terminal_hide_focus", Box::new(crate::recovery_terminal_keys::scenario_terminal_hide_focus)),
             (
                 "terminal_states",
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
@@ -2707,6 +2721,9 @@ mod macos {
                 Box::new(crate::pr_same_number::scenario_pr_same_number),
             ),
             ("pr_viewed", Box::new(crate::pr_viewed::scenario_pr_viewed)),
+            ("pr_lane_keyboard", Box::new(crate::pr_lane_keys::scenario_pr_lane_keyboard)),
+            ("pr_lane_selected", Box::new(crate::pr_lane_keys::scenario_pr_lane_selected)),
+            ("pr_lane_count", Box::new(crate::pr_lane_keys::scenario_pr_lane_count)),
             (
                 "pr_detail_adaptive",
                 Box::new(crate::pr_detail_adaptive::scenario_pr_detail_adaptive),
@@ -3403,6 +3420,14 @@ mod macos {
             (
                 "remote_source_merge_into",
                 Box::new(crate::recovery_operations::scenario_remote_source_merge_into),
+            ),
+            (
+                "branch_drag_self_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_self_target),
+            ),
+            (
+                "branch_drag_detached_target",
+                Box::new(crate::dnd_self::scenario_branch_drag_detached_target),
             ),
             (
                 "cross_worktree_merge",

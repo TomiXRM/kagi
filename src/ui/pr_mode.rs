@@ -185,6 +185,7 @@ pub struct PrModeState {
     /// position, because a pane that scrolls back on its own cannot be
     /// scrolled. Opening another PR returns it to following.
     pub lane_scroll_x: Option<f32>,
+    pub(super) lane_navigation: super::pr_lane::Navigation,
     /// Presentation only; the tabs and their list/input owners never move.
     pub(super) companion: Option<super::pr_layout::Companion>,
     pub(super) lane_hidden: bool,
@@ -209,6 +210,7 @@ impl Default for PrModeState {
             dashboard_row_keys: Default::default(),
             sections_open: [true, false, false, false],
             lane_scroll_x: None,
+            lane_navigation: Default::default(),
             companion: None,
             lane_hidden: false,
         }
@@ -1145,6 +1147,13 @@ pub fn render_pr_mode(
     if let Some(mode) = app.pr_mode_mut() {
         mode.companion = layout.drawer;
     }
+    if !layout.swimlane && layout.drawer != Some(super::pr_layout::Companion::Swimlane) {
+        if let Some(mode) = app.pr_mode() {
+            mode.lane_navigation
+                .keyboard
+                .yield_focus(app.root_focus.as_ref(), window, cx);
+        }
+    }
     let drawer = match layout.drawer {
         Some(super::pr_layout::Companion::Navigator) => Some(super::pr_layout::drawer(
             super::workspace_mode::render_sidebar_pages(
@@ -1154,8 +1163,10 @@ pub fn render_pr_mode(
             ),
             super::pr_layout::Companion::Navigator,
         )),
-        Some(super::pr_layout::Companion::Swimlane) => super::pr_lane::render_pr_lane(app, cx)
-            .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane)),
+        Some(super::pr_layout::Companion::Swimlane) => {
+            super::pr_lane::render_pr_lane(app, window, cx)
+                .map(|pane| super::pr_layout::drawer(pane, super::pr_layout::Companion::Swimlane))
+        }
         None => None,
     };
     let left = layout.navigator.then(|| {
@@ -1198,7 +1209,7 @@ pub fn render_pr_mode(
     // PRs, not about the file being read, and it is absent with no tab open.
     let lane = layout
         .swimlane
-        .then(|| super::pr_lane::render_pr_lane(app, cx))
+        .then(|| super::pr_lane::render_pr_lane(app, window, cx))
         .flatten()
         .map(|pane| super::e2e::measure_control("pr-mode-lane-pane", pane));
     // No outer right pane: the checks, the facts and the file list moved

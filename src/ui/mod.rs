@@ -16,6 +16,7 @@ mod avatar_resolve;
 pub mod badges;
 pub mod blocking_ops;
 pub mod branch_cleanup;
+mod branch_drag;
 pub mod branch_menu;
 mod busy;
 pub mod button_style;
@@ -249,7 +250,9 @@ actions!(
         // wins in gpui's keymap), and their handlers write the terminal
         // bytes straight to the PTY.
         TerminalSendTab,
-        TerminalSendShiftTab
+        TerminalSendShiftTab,
+        /// Leave terminal input and focus the bottom-panel tab selector.
+        TerminalExitFocus
     ]
 );
 
@@ -346,10 +349,15 @@ fn validate_merge_into_from_drag(
     if busy {
         return Err(Msg::OpInProgress.t().to_string());
     }
-    if source == target {
+    let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
+    let resolved_target = kagi_domain::refs::merge_into_target_name(
+        target,
+        is_local(target),
+        remotes.iter().any(|name| name == target),
+    );
+    if source == target || source == resolved_target {
         return Err(format!("'{}' is already that branch.", source));
     }
-    let is_local = |n: &str| branches.iter().any(|(b, _)| b == n);
     if !is_local(source) && !remotes.iter().any(|n| n == source) {
         return Err(format!("Branch '{}' is not a branch.", source));
     }
@@ -3118,6 +3126,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
             M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
+            M::TerminalPaste(_) => self.confirm_terminal_paste(cx),
             M::TrustRepo(_) => self.confirm_trust_repo(cx),
         }
     }
@@ -3202,6 +3211,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
             M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),
+            M::TerminalPaste(_) => self.clear_terminal_paste_modal(),
             M::TrustRepo(_) => self.cancel_trust_repo_modal(),
         }
     }
@@ -3774,6 +3784,29 @@ mod drag_merge_into_validation_tests {
             false
         )
         .is_err());
+    }
+
+    #[test]
+    fn remote_target_alias_rejects_self_but_exact_local_name_wins() {
+        let remotes = vec!["origin/feature".to_string()];
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "origin/feature",
+            &branches(),
+            &remotes,
+            false,
+        )
+        .is_err());
+        let mut locals = branches();
+        locals.push(("origin/feature".to_string(), false));
+        assert!(validate_merge_into_from_drag(
+            "feature",
+            "origin/feature",
+            &locals,
+            &remotes,
+            false,
+        )
+        .is_ok());
     }
 }
 

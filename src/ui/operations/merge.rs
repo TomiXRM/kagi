@@ -9,13 +9,12 @@ use crate::ui::*;
 /// `plan_merge_into_branch` would operate on. The exact local name wins, just
 /// as it does in the backend, because a branch named `origin/feature` is valid.
 fn worktree_target_name(target: &str, branches: &[(String, bool)], remotes: &[String]) -> String {
-    if branches.iter().any(|(branch, _)| branch == target) {
-        return target.to_string();
-    }
-    if remotes.iter().any(|remote| remote == target) {
-        return default_tracking_branch_name(target);
-    }
-    target.to_string()
+    kagi_domain::refs::merge_into_target_name(
+        target,
+        branches.iter().any(|(branch, _)| branch == target),
+        remotes.iter().any(|remote| remote == target),
+    )
+    .to_string()
 }
 
 impl KagiApp {
@@ -112,6 +111,16 @@ impl KagiApp {
     /// thesis: drop is a trigger; `plan_merge_branch` remains authoritative for
     /// dirty-WT / ff / conflict prediction).
     pub fn start_merge_from_drag(&mut self, source: String, cx: &mut Context<Self>) {
+        if !self.merge_drag_target_valid(
+            &source,
+            self.view()
+                .branches
+                .iter()
+                .find(|(_, head)| *head)
+                .map_or("", |(name, _)| name),
+        ) {
+            return;
+        }
         let remotes: Vec<String> = self
             .view()
             .remote_branches
@@ -207,6 +216,9 @@ impl KagiApp {
         target: String,
         cx: &mut Context<Self>,
     ) {
+        if !self.merge_drag_target_valid(&source, &target) {
+            return;
+        }
         let remotes: Vec<String> = self
             .view()
             .remote_branches

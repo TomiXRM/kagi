@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- All five Graph sidebar panes collapse from their roving keyboard row with Left, returning focus to the header; Enter/Space now toggle empty headers like pointer clicks without changing saved weights. Filtered group disclosures explain in English/Japanese why matching groups stay expanded and never silently change the normal collapse choices. (#1449, #1450)
+  - Review: outline Left collapses an expanded group first, otherwise reveals its parent; only top-level rows collapse the pane. Worktree inspection-card controls are excluded and retain their card/focus.
 - Native menus follow the English/Japanese display language, including standard Edit items. Window's AppKit role remains independent of its translated title. Edit Undo/Redo route to focused text input or the same available repository-history plan as their shortcuts, never from Terminal or historical snapshots. File Save exposes the existing ⌘S action only for a saveable dirty live Editor buffer. (#1438, #1439, #1440)
   - Review: Japanese Undo uses macOS-standard 「取り消す」; history target labels remain stable during modal, busy and Home availability changes, avoiding unnecessary native-menu rebuilds.
 - Restore `filter_menu_over_modal` coverage to the existing covered-dismissal policy: an arriving modal dismisses the filter menu, and Escape cancels the modal without writing. (#1457)

@@ -18,6 +18,12 @@ pub(crate) struct SelectRows {
     page: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_diff, no_json)]
+pub(crate) struct SelectionCopied {
+    pub(crate) lines: usize,
+}
+
 pub(crate) fn bind_keys(cx: &mut App) {
     for (key, step, extend, boundary, all) in [
         ("up", -1, false, false, false),
@@ -67,7 +73,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
 #[derive(IntoElement)]
 pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub element: Stateful<Div>,
-    pub key: u64,
+    pub key: super::SelectionKey,
     pub focus_key: u64,
     pub rows: Arc<Vec<DiffRow>>,
     pub scroll: ListState,
@@ -87,10 +93,16 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
             .tab_index(0)
             .tab_stop(true);
         let key_focus = focus.clone();
+        let copy_focus = focus.clone();
+        let copy_key = self.key;
         let is_focused = focus.is_focused(window);
         let ring_visible = is_focused && window.last_input_was_keyboard();
         #[cfg(feature = "gui-e2e")]
-        super::super::e2e::diff_controls::note_body_focus(self.key, is_focused, ring_visible);
+        super::super::e2e::diff_controls::note_body_focus(
+            self.key.token(),
+            is_focused,
+            ring_visible,
+        );
         self.element
             .track_focus(&focus)
             .relative()
@@ -112,6 +124,19 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
             })
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx);
+            })
+            .on_action(move |_: &super::super::CopyDiffSelection, window, cx| {
+                if !copy_focus.is_focused(window) {
+                    cx.propagate();
+                    return;
+                }
+                let Some(text) = super::selected_text(copy_key) else {
+                    cx.propagate();
+                    return;
+                };
+                let lines = text.lines().count();
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                window.dispatch_action(Box::new(SelectionCopied { lines }), cx);
             })
             .on_action(move |action: &SelectRows, window, cx| {
                 // Descendant controls, especially hunk Buttons, own their keys.

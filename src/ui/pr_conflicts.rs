@@ -360,6 +360,8 @@ fn line(
         text: SharedString::from(format!("{sigil}{text}")),
         old_lineno,
         new_lineno,
+        line_ending: kagi_domain::diff::LineEnding::None,
+        line_ending_changed: false,
         highlights: Vec::new(),
     }
 }

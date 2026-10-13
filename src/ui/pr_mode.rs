@@ -592,6 +592,9 @@ impl KagiApp {
     /// Back to the dashboard. Deactivates the tab without closing it, so its
     /// loaded commits / files / conversation survive the round trip.
     pub fn pr_mode_home(&mut self, cx: &mut Context<Self>) {
+        if let Some(owner) = self.active_session() {
+            super::diff_selection::retire_owner(super::diff_selection::SelectionOwner::Pr(owner));
+        }
         if let Some(m) = self.pr_mode_mut() {
             m.active = None;
             m.focus = PrFocus::List;
@@ -612,6 +615,9 @@ impl KagiApp {
     pub fn pr_mode_close_tab(&mut self, ix: usize, cx: &mut Context<Self>) {
         if let Some(m) = self.pr_mode_mut() {
             if ix < m.tabs.len() {
+                let tab = &m.tabs[ix];
+                super::diff_selection::retire_surface(tab.diff_layout.selection_owner());
+                super::diff_selection::retire_surface(tab.conflict_layout.selection_owner());
                 m.tabs.remove(ix);
                 m.active = if m.tabs.is_empty() {
                     None
@@ -1055,11 +1061,11 @@ impl KagiApp {
         };
         let repo = session.backend();
         let Some(fi) = tab.selected_file else {
-            tab.diff = None;
+            super::diff_view::highlight::install(&mut tab.diff, None);
             return;
         };
         let Some(file) = tab.files.get(fi) else {
-            tab.diff = None;
+            super::diff_view::highlight::install(&mut tab.diff, None);
             return;
         };
         let path = file.path.clone();
@@ -1329,6 +1335,10 @@ fn render_center(
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    let selection_owner = super::diff_selection::SelectionOwner::Pr(
+        app.active_session()
+            .expect("PR mode requires an attached session"),
+    );
     let active: Option<usize> = app.pr_mode().and_then(|m| m.active);
     // No tab strip: the left PR list already highlights the active PR and
     // switching is one click there, so a second row of #N chips was pure
@@ -1688,6 +1698,9 @@ fn render_center(
         let conflict_selected = tab.conflict_selected;
         let conflict_scroll = tab.conflict_scroll.clone();
         let conflict_at = tab.conflict_at;
+        if !matches!(conflicts, Some(Ok(files)) if !files.is_empty()) {
+            super::diff_selection::retire_surface(tab.conflict_layout.selection_owner());
+        }
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),
             Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
@@ -1728,6 +1741,7 @@ fn render_center(
                     conflict_scroll,
                     &tab.conflict_layout,
                     None,
+                    selection_owner,
                     cx,
                 )
                 .into_any_element()
@@ -1745,13 +1759,22 @@ fn render_center(
                 let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
                     return content.into_any_element();
                 };
-                render_diff_list::<KagiApp>(dv, header, scroll, &tab.diff_layout, None, cx)
-                    .into_any_element()
+                render_diff_list::<KagiApp>(
+                    dv,
+                    header,
+                    scroll,
+                    &tab.diff_layout,
+                    None,
+                    selection_owner,
+                    cx,
+                )
+                .into_any_element()
             }
             None => {
                 let Some(tab) = app.pr_mode().and_then(|mode| mode.tabs.get(ix)) else {
                     return content.into_any_element();
                 };
+                super::diff_selection::retire_surface(tab.diff_layout.selection_owner());
                 tab.diff_layout.clear(&tab.diff_scroll);
                 div()
                     .flex_1()

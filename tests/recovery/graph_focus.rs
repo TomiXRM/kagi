@@ -4,7 +4,7 @@ use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, git, mount, repo_fingerprint, unmount};
 use crate::recovery_operations::paint;
 use gpui::{px, AnyWindowHandle, Entity, Focusable, Modifiers, MouseButton, VisualTestAppContext};
-use kagi::ui::{commit_list, e2e, i18n::Lang, settings, theme, KagiApp};
+use kagi::ui::{commit_list, e2e, i18n::Lang, settings, theme, DiffRow, KagiApp};
 
 fn root_focus(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
     cx.update_window(win, |_, window, cx| {
@@ -258,14 +258,7 @@ pub fn scenario_graph_copy_foreground(cx: &mut VisualTestAppContext) {
     paint(cx, win);
     root_focus(cx, &app, win);
     assert_copy(cx, &app, win, 0);
-    e2e::seed_diff_selection();
-    assert_eq!(
-        copy(cx, win).as_deref(),
-        Some("selected"),
-        "diff selected-text priority remains intact"
-    );
-    keys(cx, win, "escape");
-    assert!(!e2e::diff_selection_present());
+    focused_diff_copy(cx, &app, win);
     foreground_text(cx, &app, win);
     assert_eq!(
         repo_fingerprint(fixture.path()),
@@ -273,6 +266,60 @@ pub fn scenario_graph_copy_foreground(cx: &mut VisualTestAppContext) {
         "copy performs no Git writes"
     );
     unmount(cx, app, win);
+}
+
+fn focused_diff_copy(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
+    app.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+    cx.run_until_parked();
+    paint(cx, win);
+    let pane = cx.read(|cx| app.read(cx).ui().main_diff.clone().unwrap());
+    let expected: String = cx.read(|cx| {
+        pane.read(cx)
+            .view
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if let DiffRow::Line { text, .. } = row {
+                    Some(format!("{}\n", &text[1..]))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    assert!(
+        !expected.is_empty(),
+        "real commit fixture supplies diff code"
+    );
+    let before = copy_count();
+    crate::diff_split_unicode_badge::copy_body(cx, app, win);
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some(expected.as_str()),
+        "only the focused diff surface copies its valid code selection"
+    );
+    assert_eq!(copy_count(), before, "diff copy emits no Graph receipt");
+    root_focus(cx, app, win);
+    assert_eligible(cx, app, win, false);
+    assert_eq!(
+        copy(cx, win).as_deref(),
+        Some("foreground sentinel"),
+        "root focus cannot copy an unfocused diff or the covered Graph"
+    );
+    assert_eq!(copy_count(), before);
+    app.update(cx, |app, cx| {
+        app.close_main_diff();
+        cx.notify();
+    });
+    assert!(
+        !e2e::diff_selection_present(),
+        "close retires diff selection"
+    );
+    paint(cx, win);
+    root_focus(cx, app, win);
+    assert_copy(cx, app, win, 0);
 }
 
 fn takeover_copy(

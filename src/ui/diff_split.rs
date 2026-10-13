@@ -161,6 +161,8 @@ mod split_index_tests {
             text: "x".into(),
             old_lineno: None,
             new_lineno: None,
+            line_ending: kagi_domain::diff::LineEnding::None,
+            line_ending_changed: false,
             highlights: Vec::new(),
         }
     }
@@ -195,6 +197,15 @@ enum SplitSide {
     New,
 }
 
+impl SplitSide {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Old => "old",
+            Self::New => "new",
+        }
+    }
+}
+
 /// One half-width cell of a split row: line-number column + (highlighted)
 /// content, or an empty filler when `idx` is `None`. Mirrors the unified
 /// Line-arm styling in [`render_main_diff_row`] (wrap enabled, top-aligned).
@@ -202,7 +213,7 @@ fn split_cell(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     idx: Option<usize>,
     side: SplitSide,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
     emphasis: &[Range<usize>],
     moved: bool,
 ) -> gpui::AnyElement {
@@ -211,6 +222,8 @@ fn split_cell(
         text,
         old_lineno,
         new_lineno,
+        line_ending,
+        line_ending_changed,
         highlights,
     }) = idx.and_then(|i| rows.get(i))
     else {
@@ -307,7 +320,7 @@ fn split_cell(
         })
         .map(|el| {
             #[cfg(feature = "gui-e2e")]
-            let el = crate::ui::e2e::diff_controls::row(sel_key, row_ix, el);
+            let el = crate::ui::e2e::diff_controls::row(sel_key.token(), row_ix, el);
             #[cfg(feature = "gui-e2e")]
             let el = if idx.is_some() {
                 el.child(crate::ui::e2e::measure_inside(format!(
@@ -339,6 +352,19 @@ fn split_cell(
                 .child(SharedString::from(lineno_str)),
         )
         .child(content_el)
+        .when(kagi_domain::text_safety::has_unsafe_unicode(text), |el| {
+            el.child(super::diff_view::markers::unsafe_unicode(
+                side.name(),
+                row_ix,
+            ))
+        })
+        .when(*line_ending_changed, |el| {
+            el.child(super::diff_view::markers::line_ending(
+                side.name(),
+                row_ix,
+                *line_ending,
+            ))
+        })
         .into_any()
 }
 
@@ -433,7 +459,7 @@ pub(crate) fn render_main_diff_split_row(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     srows: &[SplitDiffRow],
     i: usize,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
     moved: &HashSet<usize>,
     gutters: Option<(gpui::AnyElement, gpui::AnyElement)>,
     hunk: Option<&super::diff_view::hunk_action::HunkAction>,
@@ -545,6 +571,8 @@ mod split_rows_tests {
             text: "x".into(),
             old_lineno: None,
             new_lineno: None,
+            line_ending: kagi_domain::diff::LineEnding::None,
+            line_ending_changed: false,
             highlights: Vec::new(),
         }
     }

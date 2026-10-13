@@ -9,6 +9,7 @@
 
 pub mod highlight;
 pub(crate) mod hunk_action;
+pub(crate) mod markers;
 
 use std::path::PathBuf;
 
@@ -19,7 +20,6 @@ use kagi_git::{CommitId, DiffLineKind, FileDiff, FileStatus};
 use super::theme;
 use super::{commit_panel, KagiApp, Msg};
 use gpui::Context;
-use gpui_component::tooltip::Tooltip;
 
 /// Per-row syntax-highlight spans: `(row_index, [(byte_range, style), …])`.
 /// Named to keep the diff-highlight signatures readable (clippy::type_complexity).
@@ -42,6 +42,10 @@ pub enum DiffRow {
         old_lineno: Option<u32>,
         /// New-side line number (None for Removed lines).
         new_lineno: Option<u32>,
+        /// Original source terminator, before display normalization.
+        line_ending: kagi_domain::diff::LineEnding,
+        /// Equal-body replacement with a different terminator on its paired side.
+        line_ending_changed: bool,
         /// T-UI-004: Pre-computed syntax highlight spans (byte ranges + styles).
         /// Empty when the file type is unknown or highlighting failed.
         highlights: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
@@ -98,9 +102,9 @@ impl FileDiffView {
                 let header = SharedString::from(format!("@@ -{},{} +{},{} @@", os, oc, ns, nc));
                 rows.push(DiffRow::HunkHeader(header));
 
-                for line in &hunk.lines {
-                    // Strip the trailing newline for display (keep content clean).
-                    let raw = line.content.trim_end_matches('\n').trim_end_matches('\r');
+                let ending_changes = kagi_domain::diff::line_ending_changes(&hunk.lines);
+                for (line_index, line) in hunk.lines.iter().enumerate() {
+                    let raw = line.display_content();
                     // Add leading sigil for clarity.
                     let text = match line.kind {
                         DiffLineKind::Added => SharedString::from(format!("+{}", raw)),
@@ -112,6 +116,8 @@ impl FileDiffView {
                         text,
                         old_lineno: line.old_lineno,
                         new_lineno: line.new_lineno,
+                        line_ending: line.line_ending(),
+                        line_ending_changed: ending_changes[line_index],
                         highlights: vec![],
                     });
                 }
@@ -493,11 +499,11 @@ pub(crate) fn attach_selection_handlers(
     el: gpui::Stateful<gpui::Div>,
     rows: &std::sync::Arc<Vec<DiffRow>>,
     i: usize,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
 ) -> gpui::Stateful<gpui::Div> {
     let rows_up = rows.clone();
     #[cfg(feature = "gui-e2e")]
-    let el = super::e2e::diff_controls::row(sel_key, i, el);
+    let el = super::e2e::diff_controls::row(sel_key.token(), i, el);
     el.on_mouse_down(
         gpui::MouseButton::Left,
         move |_e: &gpui::MouseDownEvent, window, _cx| {
@@ -529,7 +535,7 @@ pub(crate) fn attach_selection_handlers(
 pub(crate) fn render_main_diff_row(
     rows: &std::sync::Arc<Vec<DiffRow>>,
     i: usize,
-    sel_key: u64,
+    sel_key: super::diff_selection::SelectionKey,
     hunk: Option<&hunk_action::HunkAction>,
 ) -> gpui::AnyElement {
     let Some(row) = rows.get(i) else {
@@ -574,6 +580,8 @@ pub(crate) fn render_main_diff_row(
             text,
             old_lineno,
             new_lineno,
+            line_ending,
+            line_ending_changed,
             highlights,
         } => {
             let bg = match kind {
@@ -684,35 +692,13 @@ pub(crate) fn render_main_diff_row(
                 )
                 // Content (sigil + highlighted text)
                 .child(content_el)
-                // issue #356: line-level badge when the row carries bidi-control
-                // or zero-width codepoints (Trojan Source / invisible chars).
                 .when(
                     kagi_domain::text_safety::has_unsafe_unicode(text.as_ref()),
-                    |el| {
-                        // Same tinted-fill grammar as the provenance badge: a soft
-                        // warning-hue fill + border with theme-aware readable text,
-                        // so it stays legible in both light and dark themes.
-                        let (bg, border, text) = theme::badge_style(theme::theme().color_warning);
-                        el.child(
-                            div()
-                                .id(("diff-unsafe-badge", i))
-                                .flex_shrink_0()
-                                .ml_2()
-                                .px_1()
-                                .rounded_sm()
-                                .text_xs()
-                                .bg(gpui::rgba(bg))
-                                .border_1()
-                                .border_color(gpui::rgba(border))
-                                .text_color(rgb(text))
-                                .tooltip(|window, cx| {
-                                    Tooltip::new(SharedString::from(Msg::UnsafeUnicodeTooltip.t()))
-                                        .build(window, cx)
-                                })
-                                .child(SharedString::from(Msg::UnsafeUnicodeBadge.t())),
-                        )
-                    },
+                    |el| el.child(markers::unsafe_unicode("unified", i)),
                 )
+                .when(*line_ending_changed, |el| {
+                    el.child(markers::line_ending("unified", i, *line_ending))
+                })
                 .into_any()
         }
         DiffRow::Binary => super::render_helpers::diff_state::caption(Msg::DiffBinaryNoText)

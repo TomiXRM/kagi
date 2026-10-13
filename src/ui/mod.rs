@@ -2298,6 +2298,9 @@ impl KagiApp {
     /// follow-toggle / select now live on the entity (`reload` / `step` /
     /// `select`).
     pub fn close_file_history(&mut self) {
+        if let Some(owner) = self.active_session() {
+            diff_selection::retire_owner(diff_selection::SelectionOwner::History(owner));
+        }
         self.with_ui(|ui| ui.file_history = None);
     }
 

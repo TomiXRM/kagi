@@ -16,6 +16,13 @@ impl Default for DiffListSource {
     }
 }
 
+impl DiffListSource {
+    /// Opaque monotonic identity; never derived from a path or row count.
+    pub fn token(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct LayoutKey {
     source: DiffListSource,
@@ -26,11 +33,17 @@ struct LayoutKey {
 /// One memo per native list; heights and scroll position remain in ListState.
 #[derive(Default)]
 pub struct DiffListLayout {
+    selection_owner: DiffListSource,
     key: Cell<Option<LayoutKey>>,
     estimate: Cell<Option<(f32, Pixels)>>,
 }
 
 impl DiffListLayout {
+    /// Stable identity of this retained list, independent of its content.
+    pub fn selection_owner(&self) -> DiffListSource {
+        self.selection_owner
+    }
+
     pub fn sync(
         &self,
         list: &ListState,

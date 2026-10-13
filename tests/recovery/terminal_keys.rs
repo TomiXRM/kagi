@@ -251,12 +251,17 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
         });
         settle(cx, || shell.dir.path().join("disabled").exists());
         let before = shell.bytes();
-        paste(cx, win, "unsafe\ncommand\n");
+        paste(cx, win, "unsafe\t\ncommand\n");
         cx.run_until_parked();
         assert_eq!(
             shell.bytes(),
             before,
             "disabled multi-line paste must await explicit confirmation"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).terminal_paste_description_for_e2e().unwrap()),
+            i18n::Msg::TerminalPasteBody.t(),
+            "clipboard Tab must not hide the newline warning"
         );
         crate::keyboard_nav::keys(cx, win, "escape");
         assert_eq!(shell.bytes(), before, "Cancel must send no clipboard bytes");
@@ -283,7 +288,7 @@ pub fn scenario_terminal_paste_control(cx: &mut VisualTestAppContext) {
                 .write_input("\x04")
         });
         settle(cx, || shell.dir.path().join("disabled").exists());
-        for text in ["A\x03B", "\x1b[31m日本語", "A\x00B", "A\tB", "A\x7fB"] {
+        for text in ["A\x03B", "\x1b[31m日本語", "A\x00B", "A\x7fB"] {
             focus_terminal(cx, app, win);
             let before = shell.bytes();
             paste(cx, win, text);
@@ -324,15 +329,18 @@ pub fn scenario_terminal_paste_control(cx: &mut VisualTestAppContext) {
             "approved\x03\x1b[31m日本語".as_bytes(),
             "explicit approval sends the original clipboard exactly once"
         );
-        focus_terminal(cx, app, win);
-        let before = shell.bytes();
-        paste(cx, win, "normal text 日本語");
-        settle(cx, || shell.bytes().len() > before.len());
-        assert!(cx.read(|cx| app.read(cx).terminal_paste_modal().is_none()));
-        assert_eq!(
-            &shell.bytes()[before.len()..],
-            "normal text 日本語".as_bytes()
-        );
+        for text in ["normal text 日本語", "A\tB"] {
+            focus_terminal(cx, app, win);
+            let before = shell.bytes();
+            paste(cx, win, text);
+            settle(cx, || shell.bytes().len() > before.len());
+            assert!(cx.read(|cx| app.read(cx).terminal_paste_modal().is_none()));
+            assert_eq!(
+                &shell.bytes()[before.len()..],
+                text.as_bytes(),
+                "ordinary text and clipboard Tab must be sent exactly once without approval"
+            );
+        }
         assert_stale_paste_rejected(cx, app, win, shell, "stale\x03command");
     });
 }

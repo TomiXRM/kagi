@@ -1149,11 +1149,11 @@ impl TerminalView {
         &self.focus_handle
     }
 
-    /// Clipboard control bytes other than CR/LF, which have their own warning.
+    /// kagi: Clipboard control bytes other than Tab and separately warned CR/LF.
     /// UTF-8 continuation bytes are not controls; Japanese text stays unchanged.
     pub fn paste_contains_control_characters(text: &str) -> bool {
         text.bytes()
-            .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\n' | b'\r'))
+            .any(|byte| byte.is_ascii_control() && !matches!(byte, b'\t' | b'\n' | b'\r'))
     }
 
     /// kagi: Respect the emulator's parsed DECSET/DECRST ?2004 mode.

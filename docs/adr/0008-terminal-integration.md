@@ -65,10 +65,12 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
 
 ## Amendment — 2026-10-13: plain-paste control-byte approval (#1437)
 
-- Extend the existing plain-paste approval boundary to every ASCII C0 control
-  (`U+0000`–`U+001F`) and DEL (`U+007F`), including single-line ESC/ETX,
-  clipboard Tab, backspace and NUL. CR/LF still require the existing newline
-  approval. UTF-8 multibyte text, including Japanese, is not a control byte.
+- Extend the existing plain-paste approval boundary to ASCII C0 controls
+  (`U+0000`–`U+001F`) except Tab, and DEL (`U+007F`), including single-line
+  ESC/ETX, backspace and NUL. CR/LF still require the existing newline approval.
+  Clipboard Tab remains ordinary text, including indentation or tabular data,
+  and never replaces the newline warning. UTF-8 multibyte text, including
+  Japanese, is not a control byte.
 - The control-character warning explicitly says invisible control characters
   are present and may interrupt programs or execute commands, in EN and JA.
   The displayed warning and AlertDialog accessibility description share the
@@ -80,9 +82,10 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
   Enabled bracketed paste still removes ESC/ETX, and raw Tab/Shift-Tab still
   bypass clipboard approval.
 - Tier A `terminal_paste_control` drives production Cmd-V into the real capture
-  PTY after DECRST 2004, covering ETX, ESC sequences, NUL, Tab and DEL with
+  PTY after DECRST 2004, covering ETX, ESC sequences, NUL and DEL with
   zero bytes before approval/after Cancel; explicit approval, ordinary Japanese
-  text and stale control-paste approval after respawn. It runs at 940×660 /
+  text/clipboard Tab sent once without approval, and stale control-paste
+  approval after respawn. It runs at 940×660 /
   1392×883, 100% / 167%, EN / JA alongside the `terminal_` neighbors.
   Renderer-fed warning assertions are not native VoiceOver evidence; physical
   keyboard, IME and visible warning inspection remain PM-owned Tier B.

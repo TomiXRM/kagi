@@ -55,6 +55,7 @@ pub mod pr_threads;
 pub mod pr_viewed;
 pub mod queue;
 pub mod status_chips;
+pub mod time;
 pub use op::{
     auto_stash_identity_unverified, auto_stash_missing, auto_stash_restore_conflicted,
     auto_stash_restore_failed, op_failed, op_plan_failed, op_refused, oplog_write_failed,
@@ -239,6 +240,14 @@ pub enum Msg {
     MenuHideOthers,
     MenuShowAll,
     MenuServices,
+    MenuUndo,
+    MenuRedo,
+    MenuCut,
+    MenuCopy,
+    MenuPaste,
+    MenuSelectAll,
+    MenuSave,
+    NothingToSave,
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
@@ -399,6 +408,7 @@ pub enum Msg {
     TerminalRestart,
     TerminalPasteTitle,
     TerminalPasteBody,
+    TerminalPasteControlBody,
     TerminalPasteConfirm,
     TerminalFocusDescription,
     UnbornEmptyTitle,
@@ -1081,6 +1091,9 @@ pub enum Msg {
     SettingsAnalyzeIgnoreUnsaved,
     SettingsAnalyzeIgnoreSaved,
     SettingsAnalyzeIgnoreFailed,
+    SettingsAnalyzeIgnoreClean,
+    SettingsAnalyzeResetTitle,
+    SettingsAnalyzeResetDetail,
 
     // ── ADR-0090 / ADR-0099: Smart Commit section (prose localized; the
     //    domain words "commit" / "LLM" / "Ollama" / "CLI" stay English) ──────
@@ -1939,6 +1952,22 @@ impl Msg {
             (Ja, MenuShowAll) => "すべてを表示",
             (En, MenuServices) => "Services",
             (Ja, MenuServices) => "サービス",
+            (En, MenuUndo) => "Undo",
+            (Ja, MenuUndo) => "取り消す",
+            (En, MenuRedo) => "Redo",
+            (Ja, MenuRedo) => "やり直す",
+            (En, MenuCut) => "Cut",
+            (Ja, MenuCut) => "カット",
+            (En, MenuCopy) => "Copy",
+            (Ja, MenuCopy) => "コピー",
+            (En, MenuPaste) => "Paste",
+            (Ja, MenuPaste) => "ペースト",
+            (En, MenuSelectAll) => "Select All",
+            (Ja, MenuSelectAll) => "すべてを選択",
+            (En, MenuSave) => "Save",
+            (Ja, MenuSave) => "保存",
+            (En, NothingToSave) => "No editable unsaved file",
+            (Ja, NothingToSave) => "保存できる未保存のファイルがありません",
             (language, OplogPanel(key)) => key.t_for(language),
             (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
             (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
@@ -2609,10 +2638,12 @@ impl Msg {
             (Ja, TerminalRestartHint) => "再起動すると、このリポジトリで新しい shell が開きます。",
             (En, TerminalRestart) => "Restart",
             (Ja, TerminalRestart) => "Restart",
-            (En, TerminalPasteTitle) => "Paste multiple lines into Terminal?",
-            (Ja, TerminalPasteTitle) => "Terminal に複数行を Paste しますか？",
+            (En, TerminalPasteTitle) => "Paste into Terminal?",
+            (Ja, TerminalPasteTitle) => "Terminal に Paste しますか？",
             (En, TerminalPasteBody) => "This shell has not enabled bracketed paste. Newlines in this text may execute commands immediately. Paste only if you trust the clipboard contents.",
             (Ja, TerminalPasteBody) => "この shell は bracketed paste を有効にしていません。テキストの改行でコマンドが直ちに実行される場合があります。clipboard の内容を信頼できる場合だけ Paste してください。",
+            (En, TerminalPasteControlBody) => "This clipboard contains invisible control characters that may interrupt programs or execute commands. This shell has not enabled bracketed paste. Paste only if you trust the clipboard contents.",
+            (Ja, TerminalPasteControlBody) => "clipboard に不可視の制御文字が含まれています。プログラムの中断やコマンドの実行につながる場合があります。この shell は bracketed paste を有効にしていません。内容を信頼できる場合だけ Paste してください。",
             (En, TerminalPasteConfirm) => "Paste",
             (Ja, TerminalPasteConfirm) => "Paste",
             (En, TerminalFocusDescription) => "Terminal input. Tab and Shift-Tab send shell completion keys. Press Control-Shift-Tab or Command-Shift-J to focus the bottom-panel tabs; use Left or Right, then Return to switch tabs.",
@@ -3706,6 +3737,12 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreSaved) => "Analyze ignore を保存しました",
             (En, SettingsAnalyzeIgnoreFailed) => "Could not save Analyze ignore",
             (Ja, SettingsAnalyzeIgnoreFailed) => "Analyze ignore を保存できませんでした",
+            (En, SettingsAnalyzeIgnoreClean) => "Saved",
+            (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
+            (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
+            (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
+            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. The default patterns will replace the editor contents and the saved analyze_ignore file.",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。編集内容と保存済みの analyze_ignore ファイルをデフォルトのパターンに置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -4903,6 +4940,26 @@ pub fn worktree_path_error(e: &kagi_domain::plan::WorktreePathError) -> String {
 /// Localized graph label for a detached worktree HEAD.
 pub fn graph_detached_worktree_label(short_oid: &str) -> String {
     format!("{} {}", Msg::GraphDetachedWorktree.t(), short_oid)
+}
+
+/// Localized display heading; canonical section names remain stable identifiers.
+pub fn menu_heading(section: &str, language: Lang) -> &str {
+    if language == Lang::En {
+        return section;
+    }
+    match section {
+        "File" => "ファイル",
+        "Edit" => "編集",
+        "View" => "表示",
+        "Repository" => "リポジトリ",
+        "Branch" => "ブランチ",
+        "Commit" => "コミット",
+        "Window" => "ウインドウ",
+        "Help" => "ヘルプ",
+        "Theme" => "テーマ",
+        "Language" => "言語",
+        _ => section,
+    }
 }
 
 /// Japanese label for a command-registry id (issue #352, command palette).

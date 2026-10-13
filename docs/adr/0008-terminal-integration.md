@@ -62,3 +62,30 @@ Bottom Panel に埋め込み terminal が必要(requirements-shell.md §1)。4�
   `terminal_hide_focus` uses a real isolated PTY with a capture program and
   production Cmd-V/key handlers at 940×660 / 1392×883, 100% / 167%, EN / JA.
   Native VoiceOver and physical keyboard behavior remain Tier B evidence.
+
+## Amendment — 2026-10-13: plain-paste control-byte approval (#1437)
+
+- Extend the existing plain-paste approval boundary to ASCII C0 controls
+  (`U+0000`–`U+001F`) except Tab, and DEL (`U+007F`), including single-line
+  ESC/ETX, backspace and NUL. CR/LF still require the existing newline approval.
+  Clipboard Tab remains ordinary text, including indentation or tabular data,
+  and never replaces the newline warning. UTF-8 multibyte text, including
+  Japanese, is not a control byte.
+- The control-character warning explicitly says invisible control characters
+  are present and may interrupt programs or execute commands, in EN and JA.
+  The displayed warning and AlertDialog accessibility description share the
+  same text. The title no longer incorrectly calls a single-line paste
+  “multiple lines”. Clipboard contents remain available for inspection.
+- The guard runs before locking or writing the PTY. Cancel writes zero bytes;
+  explicit Paste sends the original plain payload once. It retains the single
+  active-modal owner, session/spawn identity check and current-mode recheck.
+  Enabled bracketed paste still removes ESC/ETX, and raw Tab/Shift-Tab still
+  bypass clipboard approval.
+- Tier A `terminal_paste_control` drives production Cmd-V into the real capture
+  PTY after DECRST 2004, covering ETX, ESC sequences, NUL and DEL with
+  zero bytes before approval/after Cancel; explicit approval, ordinary Japanese
+  text/clipboard Tab sent once without approval, and stale control-paste
+  approval after respawn. It runs at 940×660 /
+  1392×883, 100% / 167%, EN / JA alongside the `terminal_` neighbors.
+  Renderer-fed warning assertions are not native VoiceOver evidence; physical
+  keyboard, IME and visible warning inspection remain PM-owned Tier B.

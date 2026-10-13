@@ -35,6 +35,8 @@ use gpui_component::select::{Select, SelectItem, SelectState};
 use gpui_component::{Disableable as _, FocusTrapElement as _, IndexPath, Sizable as _};
 
 use super::i18n::{self, Lang, Msg};
+#[cfg(feature = "gui-e2e")]
+pub use super::keyboard_nav::recorded_switch_help;
 use super::theme::{self, theme};
 #[cfg(feature = "gui-e2e")]
 pub use super::theme_select::{appearance_ax_for_e2e, take_theme_option_ax_for_e2e};
@@ -178,6 +180,7 @@ pub(super) fn render_settings_overlay(
     analyze_ignore_input: Option<Entity<InputState>>,
     controls: &super::settings_controls::SettingsControls,
     analyze_dirty: bool,
+    reset: Option<super::settings_analyze::AnalyzeResetAlert>,
     scroll: gpui::ScrollHandle,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
@@ -313,6 +316,9 @@ pub(super) fn render_settings_overlay(
             Some(trap) => panel.focus_trap("settings-trap", &trap).into_any_element(),
             None => panel.into_any_element(),
         })
+        .when_some(reset, |el, reset| {
+            el.child(super::settings_analyze::reset_alert(&app, reset, cx))
+        })
         .into_any_element()
 }
 
@@ -415,9 +421,28 @@ fn setting_row_with_help(
     detail: Msg,
     control: AnyElement,
 ) -> impl IntoElement {
-    setting_row(first, title.t().into(), summary.t().into(), control)
+    let help = div()
+        .text_sm()
+        .text_color(rgb(theme().text_sub))
+        .child(detail.t());
+    #[cfg(feature = "gui-e2e")]
+    let help = help.child(super::e2e::measure_inside(format!("{id}-text")));
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .pb_2()
+        .child(setting_row(
+            first,
+            title.t().into(),
+            summary.t().into(),
+            control,
+        ))
+        .child(help)
         .child(super::e2e::measure_inside(id))
         .id(id)
+        .role(gpui::Role::Group)
+        .aria_label(title.t())
         .tooltip(move |window, cx| {
             #[cfg(feature = "gui-e2e")]
             record_settings_help(id, detail.t());
@@ -568,6 +593,7 @@ pub(super) fn appearance_section(
         "compact-toggle",
         switches.get(0, cx),
         title(Msg::SettingsCompact),
+        title(Msg::SettingsCompactDesc),
         theme::compact_graph(),
         move |on, _w, cx| {
             let _ = app_c.update(cx, |app, cx| {
@@ -588,6 +614,7 @@ pub(super) fn appearance_section(
         "lane-compact-toggle",
         switches.get(1, cx),
         title(Msg::SettingsLaneCompact),
+        title(Msg::SettingsLaneCompactDesc),
         theme::graph_lane_compact(),
         move |on, _w, cx| {
             let _ = app_lc.update(cx, |app, cx| {
@@ -604,6 +631,7 @@ pub(super) fn appearance_section(
         "auto-fetch-toggle",
         switches.get(2, cx),
         title(Msg::SettingsAutoFetch),
+        title(Msg::SettingsAutoFetchDesc),
         theme::auto_fetch(),
         move |on, _w, cx| {
             let _ = app_f.update(cx, |_app, cx| {
@@ -619,6 +647,7 @@ pub(super) fn appearance_section(
         "reduce-motion-toggle",
         switches.get(3, cx),
         title(Msg::SettingsReduceMotion),
+        title(Msg::SettingsReduceMotionDesc),
         theme::app_reduce_motion(),
         move |on, _w, cx| {
             let _ = app_rm.update(cx, |_app, cx| {
@@ -634,6 +663,7 @@ pub(super) fn appearance_section(
         "terminal-auto-lock-toggle",
         switches.get(4, cx),
         title(Msg::SettingsTerminalAutoLock),
+        title(Msg::SettingsTerminalAutoLockDesc),
         crate::ui::settings::terminal_auto_lock(),
         move |on, _w, cx| {
             let _ = app_al.update(cx, |_app, cx| {
@@ -681,7 +711,7 @@ pub(super) fn appearance_section(
             } else {
                 settings::ToolbarDisplay::IconAndText
             });
-            cx.set_menus(super::commands::build_menus(cx));
+            super::commands::publish_menus(cx);
             let _ = app_toolbar.update(cx, |_, cx| cx.notify());
         })
         .into_any_element();
@@ -969,6 +999,7 @@ pub(super) fn smart_commit_section(
         "smart-commit-enabled",
         switches.get(5, cx),
         SharedString::from(Msg::SettingsSmartEnable.t()),
+        SharedString::from(Msg::SettingsSmartEnableDesc.t()),
         smart.llm_enabled,
         move |on, _w, cx| {
             let _ = app_en.update(cx, |app, cx| {
@@ -1114,6 +1145,7 @@ pub(super) fn analyze_ignore_section(
             .label(Msg::SettingsAnalyzeIgnoreSave.t())
             .primary()
             .small()
+            .disabled(!dirty)
             .on_click(move |_, window, cx| {
                 let _ = app.update(cx, |app, cx| app.save_analyze_ignore(false, window, cx));
             })
@@ -1129,7 +1161,7 @@ pub(super) fn analyze_ignore_section(
             .outline()
             .small()
             .on_click(move |_, window, cx| {
-                let _ = app.update(cx, |app, cx| app.save_analyze_ignore(true, window, cx));
+                let _ = app.update(cx, |app, cx| app.request_analyze_reset(window, cx));
             })
     };
     let reset_btn =
@@ -1179,6 +1211,13 @@ pub(super) fn analyze_ignore_section(
                         "settings-analyze-editor",
                         editor,
                     ))
+                    .child(super::e2e::measure_control(
+                        "settings-analyze-help-text",
+                        div()
+                            .text_sm()
+                            .text_color(rgb(theme().text_sub))
+                            .child(Msg::SettingsAnalyzeIgnoreDesc.t()),
+                    ))
                     .when(dirty, |el| {
                         el.child(super::e2e::measure_control(
                             "settings-analyze-dirty",
@@ -1186,6 +1225,15 @@ pub(super) fn analyze_ignore_section(
                                 .text_sm()
                                 .text_color(rgb(theme().text_sub))
                                 .child(Msg::SettingsAnalyzeIgnoreUnsaved.t()),
+                        ))
+                    })
+                    .when(!dirty, |el| {
+                        el.child(super::e2e::measure_control(
+                            "settings-analyze-saved",
+                            div()
+                                .text_sm()
+                                .text_color(rgb(theme().text_sub))
+                                .child(Msg::SettingsAnalyzeIgnoreClean.t()),
                         ))
                     })
                     .when_some(error, |el, error| {

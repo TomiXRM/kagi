@@ -101,6 +101,13 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                     guide_link(),
                 )),
         )
+        .child(e2e::measure_control(
+            "settings-custom-themes-help-text",
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_sub))
+                .child(Msg::SettingsCustomThemesDesc.t()),
+        ))
 }
 
 /// TextView::html supports mouse selection; escape file names before parsing.

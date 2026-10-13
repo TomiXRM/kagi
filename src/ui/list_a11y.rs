@@ -155,9 +155,10 @@ pub fn commit_row_label(
 }
 
 /// [`commit_row_label`] for a graph row.
-pub(crate) fn commit_label(row: &super::commit_list::CommitRow) -> String {
+pub(crate) fn commit_label(row: &super::commit_list::CommitRow, now: i64) -> String {
     let refs: Vec<&str> = row.badges.iter().map(|b| b.label.as_ref()).collect();
-    commit_row_label(&row.summary, &row.author, &row.date, &row.short_id, &refs)
+    let age = kagi_ui_core::time::relative_time_description(row.author_secs, now);
+    commit_row_label(&row.summary, &row.author, &age, &row.short_id, &refs)
 }
 
 /// The WIP row of a working tree.

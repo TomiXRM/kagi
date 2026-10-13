@@ -74,7 +74,19 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
                 }
             });
             draw(cx, window);
-            crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
+            let before = crate::macos::repo_fingerprint(&repo);
+            let confirm = kagi::ui::button_style::recorded_modal_button("plan-confirm")
+                .expect("abort confirmation button is drawn");
+            assert_eq!(confirm.disabled, refusal.is_some(), "{lang:?}/{case}");
+            if let Some(reason) = refusal {
+                assert!(confirm.description.as_deref().unwrap().contains(reason));
+                // A blocked action is intentionally inert and has no Tab stop.
+                // Preserve the app-boundary refusal/receipt oracle separately,
+                // as the other blocked destructive confirmations do (#1277).
+                app.update(cx, |app, cx| app.confirm_conflict_abort(cx));
+            } else {
+                crate::destructive_modal_return::focused_confirm(cx, &app, window, "plan-confirm");
+            }
             wait_idle(cx, &app);
             let entries: Vec<_> = read_oplog_tail_for_repo(&repo, 100)
                 .into_iter()
@@ -85,6 +97,7 @@ pub fn scenario_cherry_pick_abort_sequence(cx: &mut VisualTestAppContext) {
             if let Some(reason) = refusal {
                 assert!(matches!(entries[0].outcome, OpOutcome::Refused { .. }));
                 assert!(repo.join(".git/sequencer").exists());
+                assert_eq!(crate::macos::repo_fingerprint(&repo), before);
                 cx.read(|cx| {
                     let state = app.read(cx);
                     let toast = state

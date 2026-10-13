@@ -68,3 +68,21 @@ unified と side-by-side(横並べ 2 カラム)の両方を提供する(ユー�
 - unified 行列が唯一のソースなので、今後の diff 機能(word-diff 等)は
   unified 側に足せば split にも波及する。
 - モード切替で ListState が reset され、スクロール位置は先頭に戻る(許容)。
+
+## Amendment — 2026-10-13: visual keyboard order (#1373)
+
+Split-body arrows, Home/End and viewport-sized PageUp/PageDown navigate the
+cached aligned visual rows captured by the rendered pane. The caret retains
+its left/right affinity; missing affinity-side cells in an unequal replacement
+are skipped symmetrically in both directions. Wholly one-sided add/delete
+runs remain navigable through their non-filler cells. Headers remain
+full-width caret targets. Selection still stores unified source indices:
+Shift retains the original anchor, and code-only clipboard extraction keeps ADR-0016's
+inclusive source-range semantics. Cmd+A still selects all source rows.
+Unified presentation and its existing bindings remain unchanged. The shared
+body and existing ListState own focus and reveal across all diff embeddings.
+Tier A `split_diff_keyboard_order` covers an unequal five-to-three replacement,
+right-affinity Shift extension, reverse Up traversal, a wrapped-row page and
+one-sided additions. Page distance walks only rendered list items beginning
+at the logical scroll top, counting fully visible Row bounds and stopping at
+the viewport bottom; expansion items consume space without becoming targets.

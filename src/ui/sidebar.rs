@@ -36,8 +36,8 @@ pub(super) const SIDEBAR_SECTION_HEADER_H: f32 = 28.0;
 pub(super) const SIDEBAR_WORKTREE_ROW_H: f32 = 24.0;
 
 /// Font size (unscaled) for auxiliary row text — commit age, upstream counts,
-/// PR badge, worktree path / port / inspection badge — one step under the
-/// rows' `text_xs` labels.
+/// PR badge, worktree path / port / inspection badge — quieter than the
+/// shared 13px file/ref identity role.
 pub(super) const SIDEBAR_AUX_TEXT: f32 = 11.0;
 
 /// Default sidebar width in pixels (T023). Previously `mod.rs::SIDEBAR_DEFAULT`.
@@ -482,7 +482,8 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_xs()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+            .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(head_click)
@@ -491,7 +492,19 @@ fn build_local_branch_leaf(
             .on_drop::<BranchDrag>(drop_handler)
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(name_tooltip(full_name))
-            .child(div().flex_auto().truncate().child(label))
+            .child(
+                div()
+                    .relative()
+                    .flex_auto()
+                    .truncate()
+                    .line_height(gpui::relative(1.2))
+                    .child(label)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "sidebar-local-name-{branch_name}"
+                        )))
+                    }),
+            )
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
             .into_any()
     } else {
@@ -543,7 +556,8 @@ fn build_local_branch_leaf(
             .items_center()
             .pl(left_pad)
             .pr_3()
-            .text_xs()
+            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+            .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
             .on_click(click_handler)
@@ -561,7 +575,19 @@ fn build_local_branch_leaf(
             )
             .hover(|style| style.bg(rgb(theme().surface)))
             .tooltip(name_tooltip(full_name))
-            .child(div().flex_auto().truncate().child(label))
+            .child(
+                div()
+                    .relative()
+                    .flex_auto()
+                    .truncate()
+                    .line_height(gpui::relative(1.2))
+                    .child(label)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "sidebar-local-name-{branch_name}"
+                        )))
+                    }),
+            )
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
             .child(
                 div()
@@ -630,13 +656,20 @@ fn build_remote_leaf(
 
     let base = div()
         .id(SharedString::from(format!("sidebar-remote-{}", display)))
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |row| {
+            row.child(super::e2e::measure_inside(format!(
+                "sidebar-remote-{display}"
+            )))
+        })
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
         .flex_row()
         .items_center()
         .pl(left_pad)
         .pr_3()
-        .text_xs()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(gpui::relative(1.2))
         .text_color(rgb(theme().color_remote))
         .overflow_hidden()
         .on_mouse_down(gpui::MouseButton::Right, menu_click)
@@ -652,7 +685,19 @@ fn build_remote_leaf(
         )
         .hover(|style| style.bg(rgb(theme().surface)))
         .tooltip(name_tooltip(full_name))
-        .child(div().flex_auto().truncate().child(label))
+        .child(
+            div()
+                .relative()
+                .flex_auto()
+                .truncate()
+                .line_height(gpui::relative(1.2))
+                .child(label)
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label.child(super::e2e::measure_inside(format!(
+                        "sidebar-remote-name-{display}"
+                    )))
+                }),
+        )
         .map(|el| branch_row_meta(el, age, None, None));
 
     if can_jump {

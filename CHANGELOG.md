@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Remaining Finder-inspired lists share 13-reference-pixel typography: sidebar branch/remote/tag/stash/worktree identities, File History rows and Editor file/directory tree rows. File History and Editor use 20-reference-pixel rows, 16px badge columns and descender-safe 1.2em leading. Sidebar group headings and 20px ref rows stay unchanged; worktree rows retain their 24px path/port wrapping contract. Inspector and Commit Panel retain their already-adopted sizing. (#1467)
 - Japanese UI keeps Git terms in English throughout menus, tooltips, accessibility names, plan cards and notifications. Stash/Branch/Pop retain their operation names; `working tree` describes files/index state and `worktree` identifies a checkout. A CI invariant prevents translated Git terms from returning; English strings and repository-owned text are unchanged. (#1465)
   - Review: conflict notifications and PR reasons also use `conflict`; already-English operation/sidebar labels keep their existing case and number. The CI gate distinguishes ordinary compounds such as margin, Stage Manager, pull-down and Remote Desktop from Git terms.
 - Commit paging's native viewport check uses fresh rendered selection-row bounds rather than accumulating nominal zoom-scaled heights, preserving full-row Home/End/Page reveal and wheel-scroll assertions at fractional zoom. Production selection and scrolling are unchanged. (#1458)

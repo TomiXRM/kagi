@@ -41,10 +41,7 @@ pub(crate) enum WipRowClick {
     },
 }
 
-pub(crate) fn render_wip_diffstat(
-    stat: WipDiffStat,
-    selected_foreground: Option<gpui::Hsla>,
-) -> impl IntoElement {
+pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
     div()
         .flex()
         .flex_row()
@@ -55,14 +52,12 @@ pub(crate) fn render_wip_diffstat(
         .font_weight(gpui::FontWeight::BOLD)
         .child(
             div()
-                .text_color(selected_foreground.unwrap_or_else(|| rgb(theme().change_added).into()))
+                .text_color(rgb(theme().change_added))
                 .child(SharedString::from(format!("+{}", stat.additions))),
         )
         .child(
             div()
-                .text_color(
-                    selected_foreground.unwrap_or_else(|| rgb(theme().change_deleted).into()),
-                )
+                .text_color(rgb(theme().change_deleted))
                 .child(SharedString::from(format!("-{}", stat.deletions))),
         )
 }

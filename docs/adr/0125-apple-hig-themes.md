@@ -1181,12 +1181,15 @@ below the fold to fit inside the window.
 
 Apple Light and Apple Dark's active list selection uses `ui_accent()` as
 an opaque fill, except Graph commit/WIP rows (**#1485**, 2026-10-14).
-Graph uses the Graph-only `selection_wash(active)` token: 30% accent over
+Apple Graph uses the Graph-only `selection_wash(active)` token: 30% accent over
 the default zebra stripe and lane tint, with normal text, badges and ref chips.
 The existing System/Theme accent-source choice remains authoritative;
 Dark's Theme default still uses its yellow accent. Non-key Graph selection
 retains the independent opaque neutral `inactive_selected` token.
 Selection identity, focus ownership, input behavior and row geometry do not change.
+Other theme presets retain `selected_for_window(active)` unchanged; the wash
+does not replace their selection identity. WIP diffstat keeps its ordinary
+added/deleted colours directly, without an unused selected-foreground override.
 
 `Theme::on_accent` and the existing primary-button bridge share one
 `on_accent_foreground` derivation for Apple accents: prefer white when its

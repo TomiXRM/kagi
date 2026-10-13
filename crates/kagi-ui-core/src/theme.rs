@@ -276,12 +276,12 @@ impl Theme {
     }
 
     /// Graph-only selection: accent over normal stripes/lane tints, normal ink.
-    /// Non-key windows retain the existing opaque neutral selection.
+    /// Other presets and non-key windows retain their existing selection fill.
     pub fn selection_wash(&self, active: bool) -> Hsla {
-        if active {
+        if active && matches!(&*self.slug, "apple-light" | "apple-dark") {
             to_hsla(self.ui_accent()).alpha(0.30)
         } else {
-            to_hsla(self.inactive_selected)
+            self.selected_for_window(active)
         }
     }
 
@@ -2382,6 +2382,23 @@ mod tests {
                 assert!(
                     contrast_ratio(t.text_main, selected_rgb) >= 4.5,
                     "{slug}: normal Graph primary ink on selected stripe"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn graph_selection_wash_keeps_non_apple_selection_colours() {
+        for t in THEMES
+            .iter()
+            .filter(|t| !matches!(&*t.slug, "apple-light" | "apple-dark"))
+        {
+            for active in [false, true] {
+                assert_eq!(
+                    t.selection_wash(active),
+                    t.selected_for_window(active),
+                    "{}",
+                    t.slug
                 );
             }
         }

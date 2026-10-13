@@ -279,11 +279,11 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// Is a layer drawn above the workspace context menus that leaves the
-    /// keyboard focus where it was — a modal, a notice, a commit plan,
-    /// another menu, an Info panel or the branch picker? Settings and the
-    /// command palette are not: they move the focus into themselves (a trap,
-    /// the search input) and give it back when they close (#991 review).
+    /// Does a higher layer retire the workspace context menus? Settings and
+    /// the command palette retain their existing temporary-cover policy.
+    /// Other higher layers close the covered menus; a focus-owning Info body
+    /// or branch picker keeps its own focus when the hidden menu releases it
+    /// (#991 review).
     pub(crate) fn workspace_menus_covered(&self, cx: &App) -> bool {
         let Some(at) = Z_ORDER
             .iter()

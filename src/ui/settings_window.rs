@@ -280,6 +280,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::window_menu::publish_settings_edit_state(window, cx);
         keyboard_nav::forget_roving_without_focus(window);
         let Some(owner) = self.owner.upgrade() else {
             close(window);

@@ -2,18 +2,31 @@
 
 use super::*;
 
-pub(super) fn subject(row: &CommitRow, ix: usize, min_width: f32) -> impl IntoElement {
+pub(super) fn subject(
+    row: &CommitRow,
+    ix: usize,
+    min_width: f32,
+    foreground: gpui::Hsla,
+) -> impl IntoElement {
     div()
         .id(("graph-subject", ix))
         .flex_1()
         .min_w(theme::scaled_px(min_width))
-        .text_color(rgb(theme().text_main))
+        .text_color(foreground)
         .truncate()
         .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-subject"))
         })
-        .child(row.summary.clone())
+        .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::super::e2e::measure_control(
+                "graph-commit-label",
+                row.summary.clone(),
+            ))
+        })
+        .when(ix != 0 || !cfg!(feature = "gui-e2e"), |el| {
+            el.child(row.summary.clone())
+        })
 }
 
 pub(crate) fn subject_tooltip(
@@ -60,7 +73,7 @@ impl gpui::Render for MeasuredSubjectTooltip {
     }
 }
 
-pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
+pub(super) fn author(row: &CommitRow, ix: usize, foreground: gpui::Hsla) -> impl IntoElement {
     // Preserve the full, sanitized author in the tooltip and AX row label.
     div()
         .id(("graph-author", ix))
@@ -71,7 +84,7 @@ pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
         .flex_shrink(1.)
         .pl(theme::scaled_px(8.))
         .text_xs()
-        .text_color(rgb(theme().text_sub))
+        .text_color(foreground)
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis_middle()
@@ -85,10 +98,28 @@ pub(super) fn author(row: &CommitRow, ix: usize) -> impl IntoElement {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-author"))
         })
-        .child(row.author.clone())
+        .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::super::e2e::measure_control(
+                "graph-commit-secondary",
+                row.author.clone(),
+            ))
+        })
+        .when(ix != 0 || !cfg!(feature = "gui-e2e"), |el| {
+            el.child(row.author.clone())
+        })
 }
 
-pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
+pub(super) fn age(
+    row: &CommitRow,
+    ix: usize,
+    now: i64,
+    foreground: gpui::Hsla,
+) -> impl IntoElement {
+    let text = kagi_ui_core::time::relative_time_short(row.author_secs, now);
+    #[cfg(feature = "gui-e2e")]
+    if ix == 0 {
+        super::super::e2e::record_graph_age_text(&text);
+    }
     div()
         .w(theme::scaled_px(super::super::graph_columns::TIME_WIDTH))
         .flex_shrink_0()
@@ -97,10 +128,10 @@ pub(super) fn age(row: &CommitRow, ix: usize) -> impl IntoElement {
         .justify_end()
         .font_family(super::super::MONO_FONT)
         .text_xs()
-        .text_color(rgb(theme().text_muted))
+        .text_color(foreground)
         .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-time"))
         })
-        .child(row.date_short.clone())
+        .child(SharedString::from(text))
 }

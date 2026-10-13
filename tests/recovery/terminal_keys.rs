@@ -184,9 +184,10 @@ fn assert_stale_paste_rejected(
     app: &Entity<KagiApp>,
     win: AnyWindowHandle,
     shell: &CaptureShell,
+    text: &str,
 ) {
     focus_terminal(cx, app, win);
-    paste(cx, win, "stale\ncommand\n");
+    paste(cx, win, text);
     let generation = cx.read(|cx| app.read(cx).terminal_paste_modal().unwrap().generation);
     let before = shell.bytes();
     stop_capture_shell(cx, app);
@@ -250,12 +251,17 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
         });
         settle(cx, || shell.dir.path().join("disabled").exists());
         let before = shell.bytes();
-        paste(cx, win, "unsafe\ncommand\n");
+        paste(cx, win, "unsafe\t\ncommand\n");
         cx.run_until_parked();
         assert_eq!(
             shell.bytes(),
             before,
             "disabled multi-line paste must await explicit confirmation"
+        );
+        assert_eq!(
+            cx.read(|cx| app.read(cx).terminal_paste_description_for_e2e().unwrap()),
+            i18n::Msg::TerminalPasteBody.t(),
+            "clipboard Tab must not hide the newline warning"
         );
         crate::keyboard_nav::keys(cx, win, "escape");
         assert_eq!(shell.bytes(), before, "Cancel must send no clipboard bytes");
@@ -264,7 +270,78 @@ pub fn scenario_terminal_paste_bracketed(cx: &mut VisualTestAppContext) {
         crate::app_conflict::click_control(cx, win, "terminal-paste-confirm");
         settle(cx, || shell.bytes().len() > before.len());
         assert_eq!(&shell.bytes()[before.len()..], b"approved\ncommand\n");
-        assert_stale_paste_rejected(cx, app, win, shell);
+        assert_stale_paste_rejected(cx, app, win, shell, "stale\ncommand\n");
+    });
+}
+
+pub fn scenario_terminal_paste_control(cx: &mut VisualTestAppContext) {
+    matrix(cx, |cx, app, win, shell| {
+        cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .terminal_session
+                .as_ref()
+                .unwrap()
+                .paste_writer
+                .as_ref()
+                .unwrap()
+                .write_input("\x04")
+        });
+        settle(cx, || shell.dir.path().join("disabled").exists());
+        for text in ["A\x03B", "\x1b[31m日本語", "A\x00B", "A\x7fB"] {
+            focus_terminal(cx, app, win);
+            let before = shell.bytes();
+            paste(cx, win, text);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            cx.run_until_parked();
+            assert_eq!(
+                shell.bytes(),
+                before,
+                "plain paste with invisible control characters must await approval: {text:?}"
+            );
+            assert_eq!(
+                cx.read(|cx| app
+                    .read(cx)
+                    .terminal_paste_modal()
+                    .unwrap()
+                    .text
+                    .to_string()),
+                text
+            );
+            assert_eq!(
+                cx.read(|cx| app.read(cx).terminal_paste_description_for_e2e().unwrap()),
+                i18n::Msg::TerminalPasteControlBody.t(),
+                "the rendered and accessible warning must name invisible control characters"
+            );
+            crate::app_conflict::click_control(cx, win, "terminal-paste-cancel");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            cx.run_until_parked();
+            assert!(cx.read(|cx| app.read(cx).terminal_paste_modal().is_none()));
+            assert_eq!(shell.bytes(), before, "Cancel must send zero bytes");
+        }
+        focus_terminal(cx, app, win);
+        let before = shell.bytes();
+        paste(cx, win, "approved\x03\x1b[31m日本語");
+        crate::app_conflict::click_control(cx, win, "terminal-paste-confirm");
+        settle(cx, || shell.bytes().len() > before.len());
+        assert_eq!(
+            &shell.bytes()[before.len()..],
+            "approved\x03\x1b[31m日本語".as_bytes(),
+            "explicit approval sends the original clipboard exactly once"
+        );
+        for text in ["normal text 日本語", "A\tB"] {
+            focus_terminal(cx, app, win);
+            let before = shell.bytes();
+            paste(cx, win, text);
+            settle(cx, || shell.bytes().len() > before.len());
+            assert!(cx.read(|cx| app.read(cx).terminal_paste_modal().is_none()));
+            assert_eq!(
+                &shell.bytes()[before.len()..],
+                text.as_bytes(),
+                "ordinary text and clipboard Tab must be sent exactly once without approval"
+            );
+        }
+        assert_stale_paste_rejected(cx, app, win, shell, "stale\x03command");
     });
 }
 pub fn scenario_terminal_focus_exit(cx: &mut VisualTestAppContext) {

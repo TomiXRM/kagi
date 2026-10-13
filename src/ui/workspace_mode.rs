@@ -34,7 +34,6 @@ fn sidebar_mode_nav_cell(
     id: &'static str,
     label: &'static str,
     active: bool,
-    window_active: bool,
 ) -> gpui::AnyElement {
     tabs.cell(slot, label, div().id(id))
         .flex_1()
@@ -45,17 +44,9 @@ fn sidebar_mode_nav_cell(
         .rounded(theme::scaled_px(4.))
         .cursor_pointer()
         .when(active, |el| {
-            el.bg(rgb(if window_active {
-                theme::theme().surface
-            } else {
-                theme::theme().inactive_selected
-            }))
-            .text_color(rgb(if window_active {
-                theme::theme().accent_text_on(theme::theme().surface)
-            } else {
-                theme::theme().text_main
-            }))
-            .font_weight(gpui::FontWeight::MEDIUM)
+            el.bg(theme::theme().segment_selected_bg())
+                .text_color(rgb(theme::theme().text_main))
+                .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
         // Measured (GUI E2E) so a scenario can check the padding the ring
@@ -176,9 +167,14 @@ pub(super) fn sidebar_list_row(active: bool, window_active: bool) -> gpui::Div {
         .border_color(rgb(theme::theme().surface))
         .when(active, |el| {
             el.bg(theme::theme().selected_for_window(window_active))
-                .text_color(rgb(theme::theme().text_main))
         })
-        .hover(|s| s.bg(rgb(theme::theme().surface)))
+        .when(
+            theme::theme().selection_uses_on_accent(active, window_active),
+            |el| el.text_color(theme::theme().selection_foreground(window_active)),
+        )
+        .when(!active, |el| {
+            el.hover(|s| s.bg(rgb(theme::theme().surface)))
+        })
 }
 
 /// Graph / PRs / Issues navigation, rendered in the sidebar but owned by
@@ -221,16 +217,8 @@ pub(super) fn render_sidebar_mode_nav(
         },
         cx,
     );
-    let cell = |slot: usize, id, label| {
-        sidebar_mode_nav_cell(
-            &tabs,
-            slot,
-            id,
-            label,
-            mode == MODES[slot],
-            app.window_active,
-        )
-    };
+    let cell =
+        |slot: usize, id, label| sidebar_mode_nav_cell(&tabs, slot, id, label, mode == MODES[slot]);
     super::e2e::measure_control(
         "sidebar-mode-nav",
         tabs.list(div().id("sidebar-mode-nav"))

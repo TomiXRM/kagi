@@ -2,7 +2,9 @@
 #![allow(clippy::too_many_arguments)]
 use super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
-use crate::ui::button_style::{ButtonRole, KagiButton};
+
+// Uniform slots must not inherit the inline button's natural outer height.
+pub(super) const FILE_ROW_HEIGHT: f32 = 22.;
 
 /// Where a tree-view row sits in its section's `Tree` (#354): the tree id, the
 /// flattened row index, its 1-based level and 1-based sibling position/size.
@@ -148,6 +150,8 @@ fn render_cp_file_row(
         view.defer_select_file(file_ref.clone(), window, cx);
     });
     // Row background: conflicted files get red tint
+    let selected = (is_sel || wip_hit) && !is_conflicted;
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let row_bg = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else if is_sel || wip_hit {
@@ -168,6 +172,8 @@ fn render_cp_file_row(
         })
         .aria_description(full_path.clone())
         .w_full()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
         .flex()
         .flex_row()
         .items_center()
@@ -179,7 +185,7 @@ fn render_cp_file_row(
                 el.px_2()
             }
         })
-        .py_px()
+        .py_0()
         .bg(row_bg)
         .relative()
         .child(super::e2e::measure_inside(if staged {
@@ -187,16 +193,27 @@ fn render_cp_file_row(
         } else {
             "cp-selected-unstaged-row"
         }))
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(format!(
+                "cp-{}-density-file-{fi}",
+                if staged { "st" } else { "us" }
+            )))
+        })
         .when(!is_sel && !wip_hit && !is_conflicted, |el| {
             el.hover(|s| s.bg(rgb(theme().surface)))
         })
         .on_click(file_click)
         .child(
             div()
-                .w(theme::scaled_px(12.))
+                .w(theme::scaled_px(16.))
                 .flex_shrink_0()
-                .text_xs()
-                .text_color(rgb(badge_color))
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(badge_color).into()
+                })
                 .child(SharedString::from(badge)),
         )
         .child(
@@ -208,8 +225,20 @@ fn render_cp_file_row(
                 .tooltip(move |window, cx| {
                     gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
                 })
-                .text_xs()
-                .text_color(rgb(theme().text_main))
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
+                .when(cfg!(feature = "gui-e2e") && selected, |el| {
+                    el.relative().child(super::e2e::measure_inside(if staged {
+                        "cp-selected-staged-label"
+                    } else {
+                        "cp-selected-unstaged-label"
+                    }))
+                })
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
                 .overflow_hidden()
                 .truncate()
                 .child(name),
@@ -235,6 +264,7 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
+            selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
         ));
     file_row = super::commit_panel_navigation::file_row(
         view,
@@ -273,56 +303,9 @@ fn render_cp_file_row(
         });
         file_row = file_row.on_mouse_down(MouseButton::Right, menu_click);
     }
-    let (label, role) = if staged {
-        (Msg::CommitPanelUnstage.t(), ButtonRole::Warning)
-    } else {
-        (Msg::CommitPanelStage.t(), ButtonRole::Success)
-    };
-    let action_click = cx.listener(move |view, _event: &gpui::ClickEvent, window, cx| {
-        if staged {
-            view.defer_unstage_file(fi, window, cx);
-        } else {
-            view.defer_stage_file(fi, window, cx);
-        }
-    });
-    file_row.child(
-        KagiButton::styled(
-            (btn_id, fi),
-            super::e2e::commit_panel_labels::caption(
-                if staged {
-                    "cp-row-unstage"
-                } else {
-                    "cp-row-stage"
-                },
-                label,
-            ),
-            role,
-            cx,
-        )
-        .xsmall()
-        // Only the remembered row's inline action participates in Tab;
-        // preceding rows must not intercept Shift+Tab out of the section.
-        .tab_stop(super::commit_panel_navigation::action_tab_stop(
-            view, drawn, staged, fi,
-        ))
-        .min_h(px(20.))
-        .ml_2()
-        .flex_shrink_0()
-        .relative()
-        .child(super::e2e::measure_inside(if staged {
-            "cp-row-unstage"
-        } else {
-            "cp-row-stage"
-        }))
-        .when(fi == 0, |button| {
-            button.child(super::e2e::measure_inside(if staged {
-                "cp-first-row-unstage"
-            } else {
-                "cp-first-row-stage"
-            }))
-        })
-        .on_click(action_click),
-    )
+    file_row.child(super::commit_panel_controls::inline_file_action(
+        view, drawn, staged, fi, btn_id, cx,
+    ))
 }
 
 /// A directory row in either tree list (`prefix` is the id namespace). Commit
@@ -345,10 +328,32 @@ fn render_cp_dir_row(
             )
         })
         .pl(theme::scaled_px(8.0 + (depth as f32) * 12.0))
-        .py_px()
-        .text_xs()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
+        .flex()
+        .items_center()
+        .py_0()
+        .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+        .line_height(theme::scaled_px(16.))
         .text_color(rgb(theme().change_dir))
-        .child(name.clone())
+        .relative()
+        .when(cfg!(feature = "gui-e2e"), |el| {
+            el.child(super::e2e::measure_inside(format!(
+                "{prefix}-{}",
+                name.as_ref()
+            )))
+        })
+        .child(
+            div()
+                .relative()
+                .child(name.clone())
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_inside(format!(
+                        "{prefix}-label-{}",
+                        name.as_ref()
+                    )))
+                }),
+        )
         .into_any_element()
 }
 
@@ -438,18 +443,21 @@ fn render_cp_fold_header(
             )
         })
         .w_full()
+        .h(theme::scaled_px(FILE_ROW_HEIGHT))
+        .min_h(px(20.))
         .flex()
         .flex_row()
         .items_center()
         .px_2()
-        .py_px()
+        .py_0()
         .hover(|s| s.bg(rgb(theme().surface)).cursor_default())
         .on_click(toggle)
         .child(
             div()
                 .flex_1()
                 .min_w(px(0.))
-                .text_xs()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .line_height(theme::scaled_px(16.))
                 .text_color(rgb(theme().text_label))
                 .truncate()
                 .child(SharedString::from(label)),

@@ -46,9 +46,10 @@ impl KagiApp {
             .window_control_area(gpui::WindowControlArea::Drag)
             .child(super::e2e::measure_inside(id))
             .when(cfg!(target_os = "macos"), |el| {
-                el.on_mouse_down_out(cx.listener(|this, _, _, _| {
-                    this.titlebar_should_move = false;
-                }))
+                el.on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.titlebar_should_move = false),
+                )
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, _| {
@@ -225,7 +226,7 @@ impl KagiApp {
         }));
         let el = el.on_action(cx.listener(|_, action: &cmds::SetToolbarDisplay, _, cx| {
             settings::set_toolbar_display(action.mode);
-            cx.set_menus(cmds::build_menus(cx));
+            cmds::publish_menus(cx);
             cx.notify();
         }));
         // W22-I18N: language switch actions (always enabled).
@@ -234,13 +235,12 @@ impl KagiApp {
         el
     }
 
-    /// Unified top frame: native traffic lights, repository identity, actions
-    /// and workspace group. Document tabs are a separate optional row below.
+    /// Second-row toolbar: repository identity, actions and workspace group.
+    /// Document tabs and native traffic lights belong to the titlebar above.
     pub(super) fn render_header_slot(
         &mut self,
         toolbar: ToolbarState,
         summary: StatusBarSummary,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // ── Click handlers ──────────────────────────────────────────────────
@@ -312,23 +312,6 @@ impl KagiApp {
         let pr_mode_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
             this.activate_toolbar(9, None, window, cx);
         });
-
-        // Active-mode highlight for the Graph/PRs/Editor group: a wash in the
-        // theme's primary colour, distinct from the neutral `selected` hover
-        // so "hovered" never reads as "current mode". `ui_accent()` is the same
-        // chrome role as the toolbar's count chips, following the Mac accent for
-        // Apple themes without recolouring Git ref chips or lanes.
-        let window_active = self.window_active_for_render(window);
-        let mode_on = |el: gpui::Stateful<gpui::Div>| {
-            if !window_active {
-                return el
-                    .bg(rgb(theme().inactive_selected))
-                    .text_color(rgb(theme().text_main));
-            }
-            let mut c: gpui::Hsla = rgb(theme().ui_accent()).into();
-            c.a = if theme().dark { 0.26 } else { 0.18 };
-            el.bg(c)
-        };
 
         // Branch — always enabled; use selected commit if any, else HEAD.
         let branch_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
@@ -460,6 +443,7 @@ impl KagiApp {
                 .iter()
                 .position(|candidate| *candidate == id)
                 .unwrap();
+            let mode_selected = index == selected;
             // Both variants carry the same "renders bright" bool as the old
             // `enabled` argument, so the palette is unchanged.
             let (enabled, unavailable) = button_flags(state);
@@ -495,18 +479,18 @@ impl KagiApp {
             // for the GUI E2E oracle (the AccessKit tree itself is only built
             // once assistive technology connects, which a test cannot force).
             toolbar_a11y::record_unavailable(id, unavailable);
-            let text_color = if enabled {
+            let text_color = rgb(if mode_selected || enabled {
                 theme().text_main
             } else {
                 theme().text_muted
-            };
+            });
             let chip_bg = theme().ui_accent();
 
             // The count is an overlay on the icon cell. Native probes stay
             // inside that cell so they do not change the toolbar's layout.
             let glyph = icon
                 .with_size(gpui_component::Size::Size(theme::scaled_px(20.0)))
-                .text_color(rgb(text_color));
+                .text_color(text_color);
             #[cfg(feature = "gui-e2e")]
             let glyph = super::e2e::measure_control(format!("{id}-glyph"), glyph);
             let mut icon_cell = div()
@@ -598,12 +582,11 @@ impl KagiApp {
                 // place while the extra fraction belongs to the ring.
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
-                .hover(|style| {
-                    style.bg(rgb(if window_active {
-                        theme().selected
-                    } else {
-                        theme().surface
-                    }))
+                .when(mode_selected, |el| {
+                    el.bg(theme().segment_selected_bg()).text_color(text_color)
+                })
+                .when(!mode_selected, |el| {
+                    el.hover(|style| style.bg(rgb(theme().surface)))
                 })
                 .cursor(gpui::CursorStyle::Arrow)
                 .child(icon_cell)
@@ -613,7 +596,7 @@ impl KagiApp {
                     el.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(text_color))
+                            .text_color(text_color)
                             .child(SharedString::from(accessible_label)),
                     )
                 })
@@ -687,7 +670,7 @@ impl KagiApp {
                 .flex_shrink_0()
         };
 
-        // The native lights stay unscaled; controls and frame follow UI zoom.
+        // Toolbar controls follow the separate titlebar strip.
         div()
             .id("toolbar-bar")
             .flex()
@@ -697,12 +680,7 @@ impl KagiApp {
             .overflow_hidden()
             .child(toolbar_overflow::probe(layout_app.clone(), None, style_key))
             .w_full()
-            .pr_3()
-            .pl(if cfg!(target_os = "macos") {
-                px(80.)
-            } else {
-                theme::scaled_px(12.)
-            })
+            .px_3()
             .h(chrome_frame_height())
             .flex_shrink_0()
             .bg(rgb(theme().chrome_surface()))
@@ -784,14 +762,7 @@ impl KagiApp {
                             .mr_2()
                             .p(keyboard_nav::inset(4.0))
                             .rounded_md()
-                            .hover(|st| {
-                                st.bg(rgb(if window_active {
-                                    theme().selected
-                                } else {
-                                    theme().surface
-                                }))
-                                .cursor_default()
-                            })
+                            .hover(|st| st.bg(rgb(theme().surface)).cursor_default())
                             .child(icon);
                         #[cfg(feature = "gui-e2e")]
                         let refresh = refresh.on_key_down(|event, _, _| {
@@ -1006,16 +977,6 @@ impl KagiApp {
                     .justify_end()
                     .flex_1()
                     .min_w(px(workspace_width))
-                    .when(!icon_only, |el| {
-                        // Balance the unscaled native-light exclusion against
-                        // trailing padding/+ when both side columns have room.
-                        let balance = if cfg!(target_os = "macos") {
-                            (80. - f32::from(theme::scaled_px(40.))).max(0.)
-                        } else {
-                            0.
-                        };
-                        el.flex_basis(px(balance))
-                    })
                     // Auto-update (ADR-0082): "↑ Update vX.Y.Z" chip when a newer
                     // release is available; click opens the update modal.
                     .when_some(
@@ -1103,7 +1064,6 @@ impl KagiApp {
                             None,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Graph, mode_on)
                         .on_click(graph_click),
                     )
                     .when(gap(0x100, 0xe00), |el| {
@@ -1120,7 +1080,6 @@ impl KagiApp {
                                 None,
                                 0,
                             )
-                            .when(mode == WorkspaceMode::Prs, mode_on)
                             .on_click(pr_mode_click),
                         )
                         .when(gap(0x200, 0xc00), |el| {
@@ -1137,7 +1096,6 @@ impl KagiApp {
                             no_repo_reason,
                             0,
                         )
-                        .when(mode == WorkspaceMode::Editor, mode_on)
                         .on_click(editor_ws_click),
                     )
                     .when(gap(0x400, 0x800), |el| {
@@ -1198,6 +1156,5 @@ impl KagiApp {
                         self.root_focus.clone(),
                     )),
             )
-            .child(self.render_tab_add(cx))
     }
 }

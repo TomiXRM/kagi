@@ -30,15 +30,15 @@ pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_KEPT: &str = "local branch を残し
 pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED: &str =
     "merge は完了しました。local branch は削除していません: {}";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_RANGE_GONE: &str =
-    "レビュー対象だった行が作業ツリーにありません。現在のファイルでレビューを開き直してください。\nfile `{}`";
+    "レビュー対象だった行が working tree にありません。現在のファイルでレビューを開き直してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_STALE: &str =
     "suggestion のレビュー後にファイルが変更されています。誤った行を書き換える恐れがあるため拒否します。現在のファイルでレビューを開き直してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_NOT_PR_HEAD: &str =
-    "作業ツリーのファイルが PR の head 版と一致しないため、レビューされた行番号が別の行を指すおそれがあります。適用を拒否します。このファイルが PR の head と同じ状態で適用してください。\nfile `{}`";
+    "working tree のファイルが PR の head 版と一致しないため、レビューされた行番号が別の行を指すおそれがあります。適用を拒否します。このファイルが PR の head と同じ状態で適用してください。\nfile `{}`";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_HEAD_UNAVAILABLE: &str =
-    "PR の head コミットがローカルにないため、レビューされた版とファイルを比較できません。PR を開き直して head を取得してから、もう一度試してください。";
+    "PR の head commit がローカルにないため、レビューされた版とファイルを比較できません。PR を開き直して head を取得してから、もう一度試してください。";
 pub(crate) const ADVICE_GITHUB_SUGGESTION_WORKING_TREE_ONLY: &str =
-    "作業ツリーだけを書き換えます(stage も commit もしません)。commit 前に Commit Panel で変更を確認してください。";
+    "working tree だけを書き換えます(stage も commit もしません)。commit 前に Commit Panel で変更を確認してください。";
 pub(crate) const ADVICE_GITHUB_COMMENT_BODY_EMPTY: &str =
     "コメント本文が空です。投稿する文章を入力してください。";
 pub(crate) const ADVICE_GITHUB_ISSUE_TITLE_EMPTY: &str =
@@ -225,7 +225,7 @@ pub fn recovery_ja(recovery: &GithubRecovery) -> String {
             number
         ),
         GithubRecovery::ApplySuggestion =>
-            "作業ツリーのファイルだけを書き換えます(stage も commit もしません)。適用前の内容は先に backup ref に保持し、oplog(op=\"apply-suggestion\")に記録します:\n  git cat-file blob <backup-ref>"
+            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容は先に backup ref に保持し、oplog(op=\"apply-suggestion\")に記録します:\n  git cat-file blob <backup-ref>"
                 .to_string(),
     }
 }

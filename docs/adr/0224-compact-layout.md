@@ -268,6 +268,34 @@ with the same data, inspect EN/JA/high zoom, and check focus, IME/accessibility.
 Bounds/pixel probes and prototype approval do not establish those manual results.
 Build/unit/clippy/invariant results belong to the functional handoff report.
 
+## Amendment — development cutover (2026-10-13)
+
+The owner approved integrating the feature into development. The restored
+document titlebar above the existing toolbar is authoritative in both compact
+and wide windows; the compact breakpoint and rail width remain unchanged.
+Shared Changes and desktop file lists use the development branch's 22-reference-px
+slots (20 logical px minimum), typography, header spacing and inset action focus
+rings. Their viewport floors account for the same slot plus border allowance.
+Selected WIP/file labels and diffstat use the shared on-accent foreground guard.
+The shared composer retains development's input/action minimum height and
+draft-save failure/retry feedback, rather than keeping pre-titlebar sizing in
+the compact-only adapter. ADR-0048's English Git terms apply to compact Japanese
+messages as well as the existing desktop messages.
+
+The density oracle distinguishes desktop's single-line header from Changes'
+two-line heading/control header, retaining literal 1px padding, its scaled
+`gap_1`, selector border and control containment. Native focus-ring pixels are
+sampled after clicking the pinned composer's real close button: at 167% its
+shadow reaches Changes, so a covered ring is not the file-row paint itself.
+The exact accent-pixel and 22px slot expectations remain intact.
+
+Development-cutover Tier A passes **36 passed, 0 failed of 36**, filtered to
+`compact,rail,sheet,titlebar_tabs,commit_panel_,commit_row_layout,selection_on_accent,sidebar_rows,pane_budget_`,
+with KEEP_GOING and the unchanged 120-second per-scenario deadline. This includes
+all nine `compact_layout_*` entries (the geometry matrix remains partitioned),
+both restored-titlebar scenarios, density/on-accent/sidebar/pane-budget neighbors,
+and shared composer/file-row keyboard, localization, reload and selection checks.
+
 ## Consequences
 
 Narrow windows gain graph space without changing toolbar or graph geometry.

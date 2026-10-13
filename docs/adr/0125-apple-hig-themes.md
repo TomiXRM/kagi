@@ -581,6 +581,14 @@ synced kit palette and scrollbar policy on Drop, including panic unwinding.
 
 ## Amendment — 2026-10-11: unified window frame (#1179)
 
+**Historical layout, superseded by the #1462 owner decision below.** The unified
+frame, below-toolbar document strip, single-document hiding, toolbar traffic-light
+and + reservations, hidden-cell focus/TabPanel policy and 440.5px viewport result
+in this amendment describe #1179, not the restored layout. The 52/60-reference-px
+toolbar heights, neutral paint, existing command owners and blank-only window
+gestures remain authoritative. Its native validation reports are historical,
+not verification of #1462.
+
 Every theme uses the same unified top-frame geometry, not an Apple-only fork.
 GPUI still owns native macOS traffic lights, positioned at (9,16) logical px;
 the frame reserves an unscaled 80px left exclusion. Repository name and branch
@@ -831,9 +839,10 @@ suite passes 12/12 scenarios; Clippy reports no warning in the row renderer.
 
 ## Amendment — 2026-10-11: Home virtual-list containment oracle (#1179, #1212)
 
-The unified frame can expose a partially mounted GitHub repository row below
-Home's scrollable fold at 940×660/167%. Native row bounds include virtualization
-overdraw, not only painted clipped content. `home_heading` therefore restricts
+Home can expose a partially mounted GitHub repository row below its scrollable
+fold at 940×660/167%, independently of the chrome arrangement restored by #1462.
+Native row bounds include virtualization overdraw, not only painted clipped
+content. `home_heading` therefore restricts
 window containment to fixed controls and the first Recent repository row;
 compact GitHub action-in-row and name-priority checks remain, along with every
 other heading, fixed-control and wide-layout assertion. Production is unchanged.
@@ -1086,7 +1095,169 @@ presentations, EN/JA and 100%/167%. The tiny-height leg is a geometry oracle;
 the existing 660px legs retain every operation/menu activation assertion.
 The verification skill is updated. Real-window comparison remains Tier B.
 
-The selected-only pure fit fixture subtracts macOS's 68px traffic-light exclusion
-from its non-macOS available width, preserving the same effective content budget
-and collapse expectation rather than assuming macOS geometry on Linux.
+Historical unified-frame fixture: the selected-only pure fit fixture subtracted
+macOS's 68px traffic-light exclusion from its non-macOS available width. #1462
+supersedes that reservation: the separate toolbar has no traffic-light exclusion.
+
+## Amendment — 2026-10-13: restored titlebar document tabs (#1462)
+
+**Owner decision:** return to two rows in every theme, for repository workspaces
+and Home alike. This supersedes #1179's unified frame and single-document hiding;
+it is an explicit layout reversal, not a theme-specific exception.
+
+The main repository/Home window's first row starts at y=0 and is a
+36-reference-px titlebar. Its native macOS traffic lights retain their GPUI owner
+and return to the pre-#1179 (9,9) logical-px position, centering them in the 100%
+titlebar, with an unscaled 80px exclusion
+in this row only. Repository and Home document tabs are always visible, including
+a single repository or Home-only document. The titlebar owns trailing + and tab
+overflow; Home-only windows without a remote repository omit the inert +.
+Home-only windows omit the inert × because there is no document behind Home.
+The old #1180 40px strip geometry is superseded by this 36px titlebar, while its
+always-visible single-document policy is restored.
+Settings retains its independent 46-logical-px titlebar and #1198's native-light
+position (9,16); the main-window reversal does not change Settings geometry.
+
+The second row is the toolbar: Icon Only remains 52 reference px (46.8 logical
+px at 100%); Icon and Text remains 60 reference px (54 logical px at 100%).
+Neither macOS traffic-light exclusion nor + participates in toolbar layout or
+fitting. Preserve repository/branch identity, measured natural control widths,
+centered wide-window actions, narrow overflow and #1316's Git-first collapse
+priority; this decision changes row ownership, not action order or dispatch.
+
+Only actual blank spacers own window gestures. macOS retains
+`app_owns_titlebar_drag: true`; a blank-spacer left press/pressed move delegates
+to `window.start_window_move()`, and its double-click delegates to
+`window.titlebar_double_click()` for the person's zoom/minimize/none preference.
+Windows retains native Drag hit testing on those same blank-only targets.
+No tab, +, overflow trigger, toolbar button or their wrapping container is a
+drag/double-click target.
+
+Retain session-keyed `TabList`/`TabPanel` accessibility, one roving Tab stop,
+manual keyboard activation, active/focused tab reveal, natural tab widths and
+constrained horizontal overflow, neutral selected/inactive fills, localized
+close/chooser names, dirty-close guards and existing native window titles.
+Cmd+T/Cmd+W and File → New/Close Tab keep their command owners. Closing from two
+documents to one must not hide the remaining tab or release its focus merely
+because the count changed; #1179's hidden-strip focus and ordinary-content
+TabPanel expectations are historical. Closing the final document still releases
+focus through the existing owner, and keyed close/reindex behavior remains.
+
+Overflow measures the outer titlebar's remaining width, excluding native lights,
+the available + and the 8-reference-px blank-spacer minimum. Only while overflow
+is needed does the tab group/viewport grow to that budget; the spacer stays at
+its minimum. Widening the same window retires » and returns to intrinsic tab
+widths without opening/closing documents or changing their cache signature.
+Reservations snap the native-light exclusion, + and spacer widths separately to
+GPUI's device-pixel grid (`round(width × scale_factor) / scale_factor`). Natural content
+uses the already-snapped item span, without an extra pixel or integer ceiling;
+contents that exactly fit the measured budget must not create ».
+Chrome hairline oracles sample toolbar fill below the titlebar and body fill
+below the toolbar/Home frame, matching the restored row order.
+
+Native desktop `commit_panel_viewport` measures **408 logical px** for the file
+list at 1392×883@100%: #1179's historical 440.5px minus the restored titlebar's
+snapped 32.5px frame, including its literal 1px separator.
+Fixed composer (257px), Generate (21.5px), Commit
+(25px), desktop panel width (324px) and small-body AutoGrow contracts are unchanged.
+At 940×560/167%, the added titlebar exposes the previous zero minimum on the
+compound message group: its body/action row could extend below the group's
+allocation and overpaint Commit. The group now reserves the existing Medium
+subject, gap and body/action-row minimum together; the footer reserves its
+existing padding, gaps, Small Commit and optional status/warning lines. With the
+#1463/#1467 compact list integration, each file viewport reserves one scaled
+22-reference-px row (at least 20 logical px) plus its 4px focus/border allowance;
+file lists yield remaining height before the composer on very short windows.
+AutoGrow measurement, desktop geometry and focus owners stay unchanged. Native
+integration still measures 408px on desktop and keeps the composer/actions
+contained at 940×560/167%; density and viewport oracles are not weakened.
+The Home virtual-list overdraw rationale above remains authoritative: check
+fixed chrome and the first Recent row against the window, and compact GitHub
+actions/names against their row; do not require partially mounted virtual rows
+below the fold to fit inside the window.
+
+
+## Amendment — 2026-10-13: Finder-style on-accent labels (#1468)
+
+Apple Light and Apple Dark's active row selection now uses `ui_accent()` as
+an opaque fill, superseding the Light 15% wash and Dark neutral active fill
+above. The existing System/Theme accent-source choice remains authoritative;
+Dark's Theme default still uses its yellow accent. Non-key selection retains
+the independent neutral `inactive_selected` token and ordinary foregrounds.
+Selection identity, focus ownership, input behavior and row geometry do not change.
+
+`Theme::on_accent` and the existing primary-button bridge share one
+`on_accent_foreground` derivation for Apple accents: prefer white when its
+contrast is at least **3.0:1**, otherwise black. **Owner decision: Finder
+準拠で WCAG AA 4.5 ではなく 3.0 を採用** for these accent-filled labels.
+System blue `#007aff` / `#0a84ff` therefore remains white, rather than changing
+the exact accent fill or substituting black just to satisfy the previous AA
+oracle. Light yellow, green and orange require black. This does not claim
+WCAG AA compliance for normal-sized white accent text. Other presets and
+custom themes retain their existing contrast-preserving on-accent choices.
+Resolved Apple RGB/foreground pairs are cached, with no row-time native query
+or repeated luminance calculation for an unchanged accent.
+
+`selection_foreground(active)` and `selection_secondary_foreground(active)`
+pair the foreground with the existing selected fill resolver. Apple key
+secondary labels use 70% of the chosen on-accent foreground; non-key labels
+return their normal theme roles. Actual selected-row text/glyphs and unfilled
+badges switch together in Graph, navigation, files, PR and shared history
+rows. Translucent Graph ref chips also switch their labels/glyphs because the
+accent row shows through their semantic tint. Independently opaque status
+chips retain their own fills and contrast labels. Primary accent buttons reuse
+the on-accent bridge; menu/list highlights remain row-selection presentation.
+
+**Semantic foreground guard:** `selection_uses_on_accent(selected, active)`
+is the single predicate for every row/menu foreground override. Only a selected,
+key-window Apple row replaces semantic status/check/warning/diffstat colors
+and muted labels. Inactive and non-Apple selections keep each original role,
+not a generic text-main/text-sub replacement. PR/Issue sidebar cards apply the
+guard to their explicit child labels; translucent selected WIP chips do likewise.
+Drag-over feedback uses the separate neutral segment/tint fill and retains its
+ordinary foreground. Toolbar hover uses `surface`, distinct from current-mode
+selection. Home pane and Conflict Preview/Edit switches are segments, not rows.
+
+**Screenshot review correction:** selected segmented controls are not active
+list rows. `segment_selected_bg()` therefore supplies the existing Apple
+neutral grey (other presets keep their selected tint), independent of window
+activation, with normal selected text/glyphs. Sidebar Graph/PRs/Issues,
+toolbar modes, Inspector Path/Tree, Commit Panel List/Tree, bottom tabs,
+editor toggles and filter chips use this separate role, including on hover.
+Opaque accent + on-accent text is limited to active rows, accent-filled
+primary buttons and menu highlights. Apple document tabs retain their existing
+neutral document contrast. Structural expanded fills and text-selection
+overlays remain separate. Radio/checkbox indicator glyphs keep the existing
+4.5:1 generic-input foreground. Within the component bridge, Finder's
+text-label policy changes only the filled-button foreground tokens.
+
+Regression-first native `selection_on_accent` fails the previous Light fill
+at painted `#d9ebff` versus required `#007aff`. It checks exact active/inactive
+Metal fills, renderer-inherited and painted summary-label foregrounds,
+retained selection/geometry, primary-button pixels and all-preset contrast.
+Its segment leg checks actual sidebar and Commit Panel fill pixels are neutral,
+not accent, and their labels remain ordinary in key and non-key windows.
+PR-card and menu-highlight legs additionally inspect native fill and actual
+child-label foregrounds, including muted/semantic retention outside the guard.
+Enabled custom-menu hover and keyboard highlights share the selected fill and
+foreground pair; shortcut text inherits 70% on-accent only when highlighted.
+Shortcut labels retain element identity so GPUI resolves their group-hover
+foreground during text layout, not only paint-time style refinement.
+Disabled actions keep their existing subdued/danger presentation.
+Existing activation and selected-hover oracles remain alongside it; their
+active selection expectations now deliberately follow the opaque accent,
+not the former wash. Tier B compares the plain app and Finder separately;
+native test recorders alone are not evidence of Finder's material or AX delivery.
+
+The integration with #1471/#1472 retains their compact file-row geometry,
+13-reference-px file and diffstat typography, and inset Stage/Unstage focus
+frames; the selected/key/Apple predicate changes only the foreground role.
+PR hover keeps #1476's selected-row fill, while #1473's document strip remains
+in the native titlebar without a second body strip. Graph Copy ownership from
+#1461 is unchanged.
+The PR hover oracle scrolls the live list without changing its focused PR
+before sampling the selected row and its neighbor. At the small high-zoom
+viewport, an offscreen neighbor otherwise retains retired recorder bounds
+matching the selected row; distinct live bounds now guard the unchanged
+fill/identity assertions.
 

@@ -55,13 +55,13 @@ pub struct RepoTab {
 /// Height of the tab strip in pixels. The strip doubles as the themed title bar
 /// (the OS bar is transparent), so it carries a little extra height for padding
 /// around the tabs and the traffic lights.
-pub(crate) const TAB_STRIP_H: f32 = 40.0;
+pub(crate) const TAB_STRIP_H: f32 = 36.0;
 /// Minimum / maximum width of a single tab (truncate beyond max).
 const TAB_MIN_W: f32 = 80.0;
 const TAB_MAX_W: f32 = 200.0;
 
-/// Document tabs are neutral chrome in Apple themes, not accent-selected rows.
-fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (gpui::Hsla, u32) {
+/// Document tabs use ordinary text on subtle selection fills, not accent-selected rows.
+fn tab_colors(palette: &theme::Theme, selected: bool) -> (gpui::Hsla, u32) {
     match palette.slug.as_ref() {
         "apple-light" => (
             rgb(if selected {
@@ -83,7 +83,7 @@ fn tab_colors(palette: &theme::Theme, selected: bool, window_active: bool) -> (g
         ),
         _ => (
             if selected {
-                palette.selected_for_window(window_active)
+                palette.segment_selected_bg()
             } else {
                 rgb(palette.surface).into()
             },
@@ -590,10 +590,7 @@ impl KagiApp {
         .detach();
     }
 
-    /// Close the tab at `index`.  Discards that tab's per-repo state only
-    /// (the repository itself is untouched).  Closing the last tab returns to
-    /// the Welcome screen (ADR-0027 / ADR-0028).
-    /// Persist the open tabs + active index to `settings.json` so a fresh
+    /// Persist open local tabs and the active repository identity so a fresh
     /// launch (or a Dock-reopen after the last window closed) restores the
     /// previous session.  Paths are joined with U+001F (unit separator) —
     /// settings.json is kagi-private and read back by the same tolerant
@@ -618,7 +615,14 @@ impl KagiApp {
             super::settings::write_setting("session_active", None);
         } else {
             super::settings::write_setting("session_repos", Some(&joined));
-            super::settings::write_setting("session_active", Some(&self.active_tab.to_string()));
+            let active = self
+                .tabs
+                .get(self.active_tab)
+                .filter(|tab| tab.remote.is_none());
+            super::settings::write_setting(
+                "session_active",
+                active.map(|tab| tab.path.to_string_lossy()).as_deref(),
+            );
         }
     }
 
@@ -982,7 +986,7 @@ impl KagiApp {
     // Rendering
     // ──────────────────────────────────────────────────────────────────────
 
-    /// New-document affordance belongs to the frame, including hidden-strip states.
+    /// New-document affordance follows document tabs in the titlebar strip.
     pub(super) fn render_tab_add(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let label = if self.tabs.is_empty() && self.remote_view.is_some() {
             match i18n::lang() {
@@ -1068,6 +1072,14 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
         Some(s) if !s.is_empty() => s,
         _ => return,
     };
+    // Legacy numeric settings name an entry in the saved set, not in the
+    // filtered result. All new saves contain the local repository path itself.
+    let active_path = super::settings::read_setting("session_active").and_then(|identity| {
+        match identity.parse::<usize>() {
+            Ok(index) => saved.split('\u{1f}').nth(index).map(PathBuf::from),
+            Err(_) => Some(PathBuf::from(identity)),
+        }
+    });
     for raw in saved.split('\u{1f}') {
         let path = PathBuf::from(raw);
         if app.tabs.iter().any(|t| t.path == path) {
@@ -1090,10 +1102,15 @@ pub fn restore_saved_session(app: &mut super::KagiApp) {
     if app.tabs.is_empty() {
         return;
     }
-    let active = super::settings::read_setting("session_active")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(0)
-        .min(app.tabs.len() - 1);
+    // Missing/ephemeral active owners fall back to the first surviving local
+    // repository. With no survivors the early return above keeps initial Home.
+    let active = active_path
+        .and_then(|path| {
+            app.tabs
+                .iter()
+                .position(|tab| tab.remote.is_none() && tab.path == path)
+        })
+        .unwrap_or(0);
     app.active_tab = active;
     app.repo_path = Some(app.tabs[active].path.clone());
     let session = kagi_git::session::RepoSession::open(&app.tabs[active].path).ok();
@@ -1126,35 +1143,33 @@ mod tab_chrome_tests {
     #[test]
     fn apple_tab_selection_contrast_and_preset_roles() {
         for palette in theme::THEMES {
-            for key in [true, false] {
-                let (active, active_text) = tab_colors(palette, true, key);
-                let (inactive, inactive_text) = tab_colors(palette, false, key);
-                if !tab_has_rail(palette) {
-                    let first = luminance(active);
-                    let second = luminance(inactive);
-                    assert!(
-                        (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
-                        "{} selected tab must be distinct",
-                        palette.slug
-                    );
-                    for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
-                        let fill = luminance(fill);
-                        let text = luminance(rgb(text).into());
-                        assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
-                    }
-                } else {
-                    assert_eq!(
-                        active,
-                        palette.selected_for_window(key),
-                        "{} keeps selection palette",
-                        palette.slug
-                    );
-                    assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
-                    assert_eq!(
-                        (active_text, inactive_text),
-                        (palette.text_main, palette.text_sub)
-                    );
+            let (active, active_text) = tab_colors(palette, true);
+            let (inactive, inactive_text) = tab_colors(palette, false);
+            if !tab_has_rail(palette) {
+                let first = luminance(active);
+                let second = luminance(inactive);
+                assert!(
+                    (first.max(second) + 0.05) / (first.min(second) + 0.05) >= 1.15,
+                    "{} selected tab must be distinct",
+                    palette.slug
+                );
+                for (fill, text) in [(active, active_text), (inactive, inactive_text)] {
+                    let fill = luminance(fill);
+                    let text = luminance(rgb(text).into());
+                    assert!((fill.max(text) + 0.05) / (fill.min(text) + 0.05) >= 4.5);
                 }
+            } else {
+                assert_eq!(
+                    active,
+                    palette.segment_selected_bg(),
+                    "{} keeps segment selection palette",
+                    palette.slug
+                );
+                assert_eq!(inactive, gpui::Hsla::from(rgb(palette.surface)));
+                assert_eq!(
+                    (active_text, inactive_text),
+                    (palette.text_main, palette.text_sub)
+                );
             }
         }
     }

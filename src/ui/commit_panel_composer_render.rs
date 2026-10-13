@@ -4,7 +4,16 @@ use super::commit_panel::CommitPanelView;
 use super::commit_panel_controls as controls;
 use super::*;
 use gpui::Focusable as _;
+use gpui::Pixels;
 use gpui_component::ActiveTheme as _;
+
+fn body_min_height() -> Pixels {
+    theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.)
+}
+
+fn message_min_height() -> Pixels {
+    body_min_height() + px(theme::rem_size_px() * 2.5)
+}
 
 impl CommitPanelView {
     fn render_composer_inputs(&self, window: &Window, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -28,7 +37,8 @@ impl CommitPanelView {
             (Some(title), Some(body)) => div()
                 .flex()
                 .flex_col()
-                .min_h(px(0.))
+                // Subject, gap and action-row floor yield height together.
+                .min_h(message_min_height())
                 .flex_shrink(1.)
                 .overflow_hidden()
                 .gap_2()
@@ -56,7 +66,7 @@ impl CommitPanelView {
                                 cx.stop_propagation();
                             },
                         ))
-                        .min_h(theme::scaled_px(16.) + px(theme::rem_size_px() * 0.75 + 2.))
+                        .min_h(body_min_height())
                         .flex_shrink(1.)
                         .rounded(input_radius)
                         .border_1()
@@ -71,6 +81,8 @@ impl CommitPanelView {
                                 .min_h(px(0.))
                                 .flex_shrink(1.)
                                 .overflow_hidden()
+                                .relative()
+                                .child(super::e2e::measure_inside("cp-body-input"))
                                 .child(
                                     Input::new(body)
                                         .aria_label(Msg::A11yCommitDescription.t())
@@ -124,10 +136,16 @@ impl CommitPanelView {
                 .unwrap_or(!self.state.commit_msg.trim().is_empty());
         let commit_btn = controls::commit_button(self, can_commit, cx);
         let has_unstaged_warning = !self.state.unstaged.is_empty() && !self.state.staged.is_empty();
+        // Padding, gaps, Commit and optional status lines retain dev's floor.
+        let footer_min_height = message_min_height()
+            + px(theme::rem_size_px() * 3.25 + 4.)
+            + px(theme::rem_size_px() * 1.75)
+                * (usize::from(self.smart_status.is_some()) + usize::from(has_unstaged_warning))
+                    as f32;
         div()
             .when(compact, |el| el.w_full().h_full())
             .flex_shrink(1.)
-            .min_h(px(0.))
+            .min_h(footer_min_height)
             .overflow_hidden()
             .flex()
             .flex_col()
@@ -138,6 +156,7 @@ impl CommitPanelView {
             .child(msg_inputs)
             .relative()
             .child(super::e2e::measure_inside("cp-footer"))
+            .children(controls::draft_save_feedback(self, cx))
             // A separate status line cannot push the icon controls sideways.
             .when_some(self.smart_status.clone(), |el, status| {
                 el.child(

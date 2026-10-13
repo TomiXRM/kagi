@@ -337,8 +337,8 @@ impl CommitPanelView {
                 div()
                     .id("cp-files-container")
                     .flex_1()
-                    // Intrinsic section headers plus one complete keyboard row
-                    // per list set the minimum; the composer gives up space first.
+                    // Headers and a full compact row in each list remain visible;
+                    // shorter viewports yield list height before the composer.
                     .flex()
                     .flex_col()
                     .relative()

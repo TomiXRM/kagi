@@ -735,7 +735,13 @@ impl KagiApp {
                     .when_some(
                         self.ui().pr_menu.clone().filter(|_| self.pr_menu_visible()),
                         |el, (pr, pos)| {
-                            el.child(render_pr_menu_overlay(pr, pos, window.viewport_size(), cx))
+                            el.child(render_pr_menu_overlay(
+                                pr,
+                                pos,
+                                window.viewport_size(),
+                                self.window_active,
+                                cx,
+                            ))
                         },
                     ),
                 LayerKind::FilterMenu => el.when(self.filter_menu_visible(), |el| {
@@ -751,6 +757,7 @@ impl KagiApp {
                                 fi,
                                 pos,
                                 window.viewport_size(),
+                                self.window_active,
                                 cx,
                             ))
                         },
@@ -761,6 +768,7 @@ impl KagiApp {
                         el.child(render_file_menu_overlay(
                             menu,
                             self.file_menu_keys.clone(),
+                            self.window_active,
                             window,
                             cx,
                         ))

@@ -9,7 +9,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use super::workspace_mode::WorkspaceMode;
 use super::*;
 
 impl KagiApp {
@@ -31,6 +30,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -50,6 +50,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -68,6 +69,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -86,6 +88,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -104,6 +107,7 @@ impl KagiApp {
             header,
             groups,
             &self.menu_keys,
+            self.window_active_for_render(window),
             window,
             cx,
         ))
@@ -500,7 +504,13 @@ impl Render for KagiApp {
                     return None;
                 };
                 Some(conflict_view::render_file_menu(
-                    entity, &mode, idx, pos, window, cx,
+                    entity,
+                    &mode,
+                    idx,
+                    pos,
+                    self.window_active,
+                    window,
+                    cx,
                 ))
             })
         } else {
@@ -509,7 +519,14 @@ impl Render for KagiApp {
         let editor_tree_menu_overlay = if self.editor_tree_menu_visible(cx) {
             self.ui().editor_workspace.as_ref().and_then(|entity| {
                 let (target, pos) = entity.read(cx).tree_menu?;
-                editor_tree_menu::render_editor_tree_menu(entity, target, pos, window, cx)
+                editor_tree_menu::render_editor_tree_menu(
+                    entity,
+                    target,
+                    pos,
+                    self.window_active,
+                    window,
+                    cx,
+                )
             })
         } else {
             None
@@ -567,13 +584,11 @@ impl Render for KagiApp {
         // R1: ⌘C — copy the diff line selection (kept across the copy so the
         // user sees what was taken; Esc clears it).
         let copy_diff_selection = cx.listener(|this, _: &CopyDiffSelection, window, cx| {
-            // No diff-row selection: the Graph gets first refusal (ADR-0170) —
-            // when the root (Graph) holds focus and a row is selected, Cmd+C
-            // copies that row's branch/hash. Otherwise let the event reach
-            // gpui-component's Root, which copies the TextView window selection
-            // (PR description / review bodies / diff hunks).
+            // Only the visible, uncovered Graph gets first refusal (ADR-0170).
+            // Otherwise propagate to Root's foreground TextView selection;
+            // the diff-row selection below retains its existing priority.
             if diff_selection::selected_text().is_none() {
-                if this.root_has_focus(window) {
+                if this.commit_list_has_focus(window, cx) {
                     if let Some(i) = this.ui().selected {
                         this.copy_graph_selection(i, cx);
                         return;
@@ -669,7 +684,9 @@ impl Render for KagiApp {
                 }),
             )
             .on_action(copy_diff_selection)
-            .on_action(save_editor_file)
+            .when(self.editor_save_available(cx), |el| {
+                el.on_action(save_editor_file)
+            })
             .on_action(
                 cx.listener(|this, _: &menu_keys::ContextMenuKey, window, cx| {
                     this.open_context_menu_from_key(window, cx);
@@ -752,62 +769,34 @@ impl Render for KagiApp {
             .on_action(cx.listener(|this, _: &CheckoutSelected, window, cx| {
                 this.checkout_selected_commit(window, cx);
             }))
-            // ADR-0084: Cmd+Z / Cmd+Shift+Z app history undo/redo. Mirrors the
-            // toolbar undo/redo buttons: open the plan→confirm modal when there
-            // is something to (un)do, else surface a "nothing to" footer. The
-            // keybinding's `!Input && !Terminal` predicate already keeps these
-            // off text fields and the terminal.
-            .on_action(cx.listener(|this, _: &commands::HistoryUndo, _window, cx| {
-                if this.workspace_mode() == WorkspaceMode::Editor
-                    && this
-                        .ui()
-                        .editor_workspace
-                        .as_ref()
-                        .is_some_and(|view| view.read(cx).showing_history_commit())
-                {
-                    return;
-                }
-                if this.ui().operation_history.can_undo() {
-                    if !this.reject_if_busy(cx) {
+            // Menus and shortcuts share the same handler and focus/history gate.
+            .when(self.history_menu_available(false, window, cx), |el| {
+                el.on_action(cx.listener(|this, _: &commands::HistoryUndo, window, cx| {
+                    if this.history_menu_available(false, window, cx) {
                         this.open_history_undo_modal();
+                        cx.notify();
                     }
-                } else {
-                    this.status_footer =
-                        FooterStatus::Idle(SharedString::from(Msg::NothingToUndo.t()));
-                }
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &commands::HistoryRedo, _window, cx| {
-                if this.workspace_mode() == WorkspaceMode::Editor
-                    && this
-                        .ui()
-                        .editor_workspace
-                        .as_ref()
-                        .is_some_and(|view| view.read(cx).showing_history_commit())
-                {
-                    return;
-                }
-                if this.ui().operation_history.can_redo() {
-                    if !this.reject_if_busy(cx) {
+                }))
+            })
+            .when(self.history_menu_available(true, window, cx), |el| {
+                el.on_action(cx.listener(|this, _: &commands::HistoryRedo, window, cx| {
+                    if this.history_menu_available(true, window, cx) {
                         this.open_history_redo_modal();
+                        cx.notify();
                     }
-                } else {
-                    this.status_footer =
-                        FooterStatus::Idle(SharedString::from(Msg::NothingToRedo.t()));
-                }
-                cx.notify();
-            }))
+                }))
+            })
             // ── W5-MENU / ADR-0029: conditional command handlers ──────────
             // Each menu action's handler is registered on the focused root ONLY
             // when `command_state == Enabled`.  gpui's macOS menu validation
             // (`is_action_available`, walks the dispatch tree) then greys out
             // any command whose handler is absent — the ADR-0029 disabled model.
             .map(|el| self.register_menu_actions(el, cx))
+            // Document tabs occupy the native titlebar, even for one document.
+            .child(self.render_tab_strip(window, cx))
             // ── Header slot ──────────────────────────────────
             // ADR-0013: pass HEAD commit summary for Undo label (first row = HEAD).
-            .child(self.render_header_slot(toolbar_state, status_summary, window, cx))
-            // Document tabs are separate from the unified native top frame.
-            .children(self.render_tab_strip(window, cx))
+            .child(self.render_header_slot(toolbar_state, status_summary, cx))
             // ── Operation strip (#704) — while a merge / rebase / cherry-pick
             //    / revert is in progress AND the conflict editor is not up.
             //    Owner ruling over #707: the editor's dashboard already carries
@@ -880,7 +869,7 @@ impl Render for KagiApp {
             // ── W3-NOTIFY: toast stack (above everything) ──────
             .children(self.render_toasts(cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
-            .children(self.render_platform_menu_dropdown(cx))
+            .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();
         self.attach_active_modal_key_routing(content, true, cx)
     }

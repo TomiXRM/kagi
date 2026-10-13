@@ -24,11 +24,11 @@ pub(crate) const ADVICE_COMMON_CONFLICTED_FILES: &str =
 
 /// JA template for `Msg::AdviceCommonDirtyBlocksOp`.
 pub(crate) const ADVICE_COMMON_DIRTY_BLOCKS_OP: &str =
-    "作業ツリーに{}があります。{}の前に stash か commit してください。";
+    "working tree に{}があります。{}の前に stash か commit してください。";
 
 /// JA template for `Msg::AdviceCommonDirtyRollbackHint`.
 pub(crate) const ADVICE_COMMON_DIRTY_ROLLBACK_HINT: &str =
-    "作業ツリーに{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。";
+    "working tree に{}があります。クリーンな復帰点を残すには {} の前に stash か commit してください。";
 
 /// JA template for `Msg::AdviceCommonPartialCloneObjectMissing`.
 pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
@@ -36,7 +36,7 @@ pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
 
 /// JA template for `Msg::AdviceCommonSparseExcludedPath`.
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
-    "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に作業ツリーに存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
+    "'{}' は sparse-checkout で除外されているため、削除されたのではなく意図的に working tree に存在しません。stage すると、していない削除を記録することになります。git も同じ操作を拒否します。変更するつもりなら、先に sparse-checkout の定義を広げてください。";
 
 /// JA template for `Msg::AdviceCommonExternalFilter`.
 pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
@@ -49,7 +49,7 @@ pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
     "この repository は {} を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
 
 pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
-    "'{}' は{}の submodule です。内部の作業ツリーを保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
+    "'{}' は{}の submodule です。内部の working tree を保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
 
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =

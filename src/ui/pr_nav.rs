@@ -254,6 +254,7 @@ fn render_pr_card(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let is_active = active_pr.is_some_and(|key| pr.is(key));
+    let on_accent = theme().selection_uses_on_accent(is_active, window_active);
     let accent = attention_color(bucket);
     let pr_click = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
@@ -318,8 +319,18 @@ fn render_pr_card(
                 .mb(px(3.))
                 .text_sm()
                 .line_height(theme::scaled_px(18.))
-                .text_color(rgb(theme().text_main))
-                .child(safe_text(&pr.title)),
+                .text_color(if on_accent {
+                    theme().selection_foreground(window_active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
+                .child(safe_text(&pr.title))
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative().child(super::e2e::measure_inside(format!(
+                        "pr-mode-card-title-{}",
+                        pr.number
+                    )))
+                }),
         )
         // Line 2 - the state at the left, the number hard against the right.
         // The head branch is not here: it repeated what the title says, in the
@@ -333,11 +344,25 @@ fn render_pr_card(
                 .w_full()
                 .text_size(theme::scaled_px(10.))
                 .line_height(theme::scaled_px(13.))
-                .text_color(rgb(theme().text_muted))
+                .text_color(if on_accent {
+                    theme().selection_secondary_foreground(window_active)
+                } else {
+                    rgb(theme().text_muted).into()
+                })
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.relative().child(super::e2e::measure_inside(format!(
+                        "pr-mode-card-secondary-{}",
+                        pr.number
+                    )))
+                })
                 .child(
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(accent))
+                        .text_color(if on_accent {
+                            theme().selection_secondary_foreground(window_active)
+                        } else {
+                            rgb(accent).into()
+                        })
                         .child(SharedString::from(format!("\u{25CF} {}", state))),
                 )
                 .when(stacked, |el| {
@@ -347,18 +372,27 @@ fn render_pr_card(
                     el.child(
                         div()
                             .flex_shrink_0()
-                            .text_color(rgb(if pr.failed_checks() > 0 {
-                                theme().color_blocker
+                            .text_color(if on_accent {
+                                theme().selection_secondary_foreground(window_active)
                             } else {
-                                theme().text_muted
-                            }))
+                                rgb(if pr.failed_checks() > 0 {
+                                    theme().color_blocker
+                                } else {
+                                    theme().text_muted
+                                })
+                                .into()
+                            })
                             .child(SharedString::from(checks.clone())),
                     )
                 })
                 .children(review_mark.map(|(g, c)| {
                     div()
                         .flex_shrink_0()
-                        .text_color(rgb(c))
+                        .text_color(if on_accent {
+                            theme().selection_secondary_foreground(window_active)
+                        } else {
+                            rgb(c).into()
+                        })
                         .child(SharedString::from(g))
                 }))
                 // Issue #337: "agent-created" badge - the glyph only; the agent
@@ -399,7 +433,7 @@ fn render_pr_card(
         // sync.
         .on_click(click)
         .on_mouse_down(gpui::MouseButton::Right, menu)
-        .when(pr.is_draft, |el| el.opacity(0.7))
+        .when(pr.is_draft && !on_accent, |el| el.opacity(0.7))
         .child(edge)
         .child(card);
     let row = if let Some(section) = compact {

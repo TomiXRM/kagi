@@ -3,35 +3,35 @@ use super::super::keyboard_nav::{Activation, TabList};
 use super::*;
 
 impl KagiApp {
-    pub(in crate::ui) fn tab_strip_visible(&self) -> bool {
-        self.tabs.len() + usize::from(self.home.is_some()) > 1
-    }
-
-    /// Multiple documents share a bounded strip below the unified toolbar.
+    /// Document tabs share the native titlebar, including a single document.
     pub fn render_tab_strip(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
-        if !self.tab_strip_visible() {
-            overflow::dismiss(self.root_focus.clone(), window, cx);
-            self.tab_strip_focus.sync(&[], cx);
-            self.tab_strip_focus
-                .release_closed(self.root_focus.as_ref(), window, cx);
-            return None;
-        }
+    ) -> gpui::AnyElement {
         let mut keys: Vec<_> = self.tabs.iter().map(|tab| tab.session.tab().0).collect();
         let repos = keys.len();
-        let home_slot = self.home.is_some().then_some(repos);
+        let home_slot = (self.home.is_some() || self.home_in_front()).then_some(repos);
         if home_slot.is_some() {
             keys.push(u64::MAX);
         }
         let selected = if self.home_in_front() {
             home_slot
         } else {
-            Some(self.active_tab)
+            self.tabs.get(self.active_tab).map(|_| self.active_tab)
         };
         let list = self.document_tab_list(keys, selected, repos, cx);
+        let has_add = !self.tabs.is_empty() || self.remote_view.is_some();
+        let scale = window.scale_factor();
+        let snap = |value: gpui::Pixels| gpui::px((f32::from(value) * scale).round() / scale);
+        // GPUI snaps each control separately, not their combined reference width.
+        let reserved_space = snap(theme::scaled_px(8.))
+            + if has_add {
+                snap(theme::scaled_px(28.))
+            } else {
+                gpui::px(0.)
+            }
+            + snap(gpui::px(if cfg!(target_os = "macos") { 80. } else { 0. }));
         self.tab_strip_focus
             .release_closed(self.root_focus.as_ref(), window, cx);
         let focused = self.tab_strip_focus.focused(window);
@@ -50,29 +50,49 @@ impl KagiApp {
             repos + usize::from(home_slot.is_some()),
             width.is_none(),
             has_overflow,
+            reserved_space,
             window,
             cx,
         );
         let menu = self.document_tab_menu(has_overflow, window, cx);
-        Some(
-            div()
-                .id("tab-strip")
-                .relative()
-                .flex()
-                .flex_row()
-                .items_center()
-                .w_full()
-                .h(theme::scaled_px(TAB_STRIP_H))
-                .flex_shrink_0()
-                .bg(rgb(theme().chrome_surface()))
-                .border_b_1()
-                .border_color(rgb(theme().surface))
-                .child(super::super::e2e::measure_inside("repo-tab-strip"))
-                .child(viewport)
-                .children(menu)
-                .child(probe)
-                .into_any_element(),
-        )
+        div()
+            .id("tab-strip")
+            .relative()
+            .flex()
+            .flex_row()
+            .items_center()
+            .w_full()
+            .when(cfg!(target_os = "macos"), |bar| bar.pl(gpui::px(80.)))
+            .h(theme::scaled_px(TAB_STRIP_H))
+            .flex_shrink_0()
+            .bg(rgb(theme().chrome_surface()))
+            .border_b_1()
+            .border_color(rgb(theme().surface))
+            .child(super::super::e2e::measure_inside("repo-tab-strip"))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .min_w_0()
+                    .h_full()
+                    .flex_shrink(1.)
+                    .when(has_overflow, |tabs| tabs.flex_1())
+                    .child(viewport)
+                    .children(menu),
+            )
+            .child(probe)
+            .when(has_add, |bar| bar.child(self.render_tab_add(cx)))
+            .child(
+                self.render_chrome_spacer("titlebar-drag-region", cx)
+                    // Overflow needs the full remaining tab budget, not half
+                    // of it shared with a second growing flex item.
+                    .when(has_overflow, |spacer| {
+                        spacer.flex_none().w(theme::scaled_px(8.))
+                    }),
+            )
+            .into_any_element()
     }
 
     fn document_tab_menu(
@@ -118,7 +138,7 @@ impl KagiApp {
                 cx,
             ));
         }
-        if self.home.is_some() {
+        if self.home.is_some() || self.home_in_front() {
             let slot = self.tabs.len();
             viewport = viewport.child(home_tab(
                 list,
@@ -127,6 +147,7 @@ impl KagiApp {
                 focused == Some(slot),
                 window_active,
                 width,
+                !self.tabs.is_empty(),
                 cx,
             ));
         }
@@ -240,18 +261,9 @@ fn home_tab(
     focused: bool,
     window_active: bool,
     width: Option<gpui::Pixels>,
+    closeable: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    let close_name = i18n::tab_close_name(Msg::HomeTabTitle.t());
-    #[cfg(feature = "gui-e2e")]
-    super::super::e2e::tab_strip::record("home-tab-close", gpui::Role::Button, &close_name);
-    let close = close_button("home-tab-close", close_name, None)
-        .on_click(cx.listener(|app, _, _, cx| app.close_home_tab(cx)));
-    let close = div()
-        .id("home-tab-close-reveal")
-        .opacity(if selected || focused { 1. } else { 0. })
-        .group_hover("home-tab", |style| style.opacity(1.))
-        .child(super::super::e2e::measure_control("home-tab-close", close));
     let cell = list
         .cell(slot, Msg::HomeTabTitle.t(), div().id("home-tab"))
         .group("home-tab");
@@ -262,7 +274,20 @@ fn home_tab(
             format!("⌂ {}", Msg::HomeTabTitle.t()).into(),
             width.is_some(),
         ))
-        .child(close)
+        .when(closeable, |cell| {
+            // The Home-only window has no document behind it to return to.
+            let close_name = i18n::tab_close_name(Msg::HomeTabTitle.t());
+            #[cfg(feature = "gui-e2e")]
+            super::super::e2e::tab_strip::record("home-tab-close", gpui::Role::Button, &close_name);
+            let close = close_button("home-tab-close", close_name, None)
+                .on_click(cx.listener(|app, _, _, cx| app.close_home_tab(cx)));
+            let close = div()
+                .id("home-tab-close-reveal")
+                .opacity(if selected || focused { 1. } else { 0. })
+                .group_hover("home-tab", |style| style.opacity(1.))
+                .child(super::super::e2e::measure_control("home-tab-close", close));
+            cell.child(close)
+        })
         .into_any_element()
 }
 
@@ -295,7 +320,7 @@ fn tab_cell(
     window_active: bool,
     width: Option<gpui::Pixels>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (bg, fg) = tab_colors(&theme(), selected, window_active);
+    let (bg, fg) = tab_colors(&theme(), selected);
     let min = if width.is_some() {
         px(f32::from(theme::scaled_px(TAB_MIN_W)).ceil())
     } else {

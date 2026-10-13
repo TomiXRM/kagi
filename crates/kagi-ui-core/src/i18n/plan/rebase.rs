@@ -5,7 +5,7 @@ use kagi_domain::plan_note::{RebaseNote, RebaseRecovery, RebaseTitle};
 use crate::i18n::Msg;
 
 pub(crate) const ADVICE_REBASE_DIRTY_WORKING_TREE: &str =
-    "作業ツリーに未 commit の変更があります。先に commit か stash か破棄してください。";
+    "working tree に未 commit の変更があります。先に commit か stash か破棄してください。";
 pub(crate) const ADVICE_REBASE_MAY_CONFLICT: &str =
     "rebase は途中で conflict により停止することがあります。conflict エディタで commit ごとに解決してから Continue してください。";
 
@@ -29,7 +29,7 @@ pub fn note_ja(note: &RebaseNote) -> String {
             branch, count
         ),
         RebaseNote::ReplayWorktreeDirty { branch, path } => format!(
-            "`{}` は {} で checkout 中で、未 commit の変更があります。先にそこで commit か stash してください。branch を動かすとその作業ツリーが取り残されます。",
+            "`{}` は {} で checkout 中で、未 commit の変更があります。先にそこで commit か stash してください。branch を動かすとその worktree が取り残されます。",
             branch, path
         ),
         RebaseNote::ReplayConflicts { branch, onto } => format!(

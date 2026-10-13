@@ -138,6 +138,21 @@ impl KagiApp {
         }
         cx.notify();
     }
+
+    /// Filter results auto-expand groups; never rewrite the hidden normal choice.
+    pub(super) fn toggle_sidebar_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        let filtering = self
+            .sidebar
+            .filter
+            .as_ref()
+            .is_some_and(|input| !input.read(cx).value().is_empty());
+        if filtering {
+            self.push_toast(ToastKind::Info, Msg::SidebarGroupFilterExpanded.t(), cx);
+        } else {
+            self.with_ui(|ui| ui.toggle_branch_group(key));
+        }
+        cx.notify();
+    }
 }
 
 pub(super) fn build_group_row(
@@ -205,8 +220,7 @@ pub(super) fn build_group_header(
     let tooltip_id = id.clone();
     let key_for_toggle = key.to_string();
     let toggle = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
-        this.with_ui(|ui| ui.toggle_branch_group(&key_for_toggle));
-        cx.notify();
+        this.toggle_sidebar_group(&key_for_toggle, cx);
     });
     div()
         .id(id.clone())

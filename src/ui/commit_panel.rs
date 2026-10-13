@@ -31,7 +31,7 @@ use crate::ui::smart_commit::SmartCommitState;
 use crate::ui::KagiApp;
 
 #[path = "commit_panel_composer.rs"]
-mod composer;
+pub(crate) mod composer;
 
 // ──────────────────────────────────────────────────────────────
 // CommitPanelFileRef — which file is selected in the panel
@@ -437,9 +437,14 @@ pub struct CommitPanelView {
     /// A smart-commit message generated on a background thread, queued for the
     /// next render to push into the input (which needs `&mut Window`).
     pub pending_smart_msg: Option<String>,
-    /// Last commit-message value mirrored to the per-branch draft file
-    /// (T-COMMIT-007). Compared each render to detect edits cheaply.
+    /// Successful consumption clears Inputs without recording a Smart edit.
+    pub pending_message_clear: bool,
+    /// Last successfully persisted commit message; differs from edits while dirty.
     pub last_draft_value: String,
+    /// Last observed edit, separate from the successful persistence baseline.
+    pub draft_edit_value: String,
+    /// Failed persistence detail; kept until a successful save or consumption.
+    pub draft_save_error: Option<String>,
     /// Debounce generation for the draft autosave writer.
     pub draft_save_gen: u64,
     /// T-ENTITY-COMMITPANEL-001 (correction #5): smart-commit generation guard.
@@ -529,6 +534,9 @@ impl CommitPanelView {
             commit_template: None,
             pending_smart_msg: None,
             last_draft_value: String::new(),
+            pending_message_clear: false,
+            draft_edit_value: String::new(),
+            draft_save_error: None,
             draft_save_gen: 0,
             gen: 0,
             input_lang: kagi_ui_core::i18n::lang(),
@@ -670,130 +678,3 @@ pub use kagi_ui_core::file_tree::status_badge;
 #[cfg(test)]
 #[path = "commit_panel_tests.rs"]
 mod generated_fold_tests;
-
-/// Consume only the draft belonging to the enqueued commit. A newer autosave,
-/// or an unsaved edit still in the same branch's panel, owns that key now.
-pub(crate) fn clear_committed_draft(
-    repo_path: &std::path::Path,
-    branch: &str,
-    frozen_message: &str,
-    newer_panel_draft: bool,
-) -> bool {
-    if newer_panel_draft {
-        return false;
-    }
-    match kagi_git::load_draft(repo_path, branch) {
-        Some(draft) if draft.message != frozen_message => false,
-        Some(_) => {
-            if kagi_git::clear_draft(repo_path, branch).is_ok() {
-                klog!("draft: cleared {}", branch);
-                true
-            } else {
-                false
-            }
-        }
-        None => {
-            let cleared = kagi_git::clear_draft(repo_path, branch).is_ok();
-            if cleared {
-                klog!("draft: cleared {}", branch);
-            }
-            cleared
-        }
-    }
-}
-
-impl KagiApp {
-    /// The message has reached a commit (or an amend): clear the branch draft
-    /// (T-COMMIT-007) **and** the panel's own copy of it.
-    ///
-    /// Clearing the entity used to be free — the reload at the tail of the op
-    /// dropped the whole panel. It no longer does (it closes the panel only
-    /// when the repository has nothing left to list), so a *partial* commit now
-    /// leaves the panel up with the remaining files, and the message it just
-    /// committed has to go explicitly or the next commit reuses it.
-    ///
-    /// #476: the draft key is the PANEL's repo path AND branch.
-    pub(crate) fn consume_commit_panel_message(
-        &mut self,
-        repo_path: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) {
-        let branch = self.panel_draft_branch(cx);
-        let _ = kagi_git::clear_draft(repo_path, &branch);
-        klog!("draft: cleared {}", branch);
-        self.clear_commit_panel_message(cx);
-    }
-
-    /// Clear the in-memory message without choosing another branch's draft key.
-    pub(crate) fn clear_commit_panel_message(&mut self, cx: &mut Context<Self>) {
-        if let Some(entity) = self.ui().commit_panel.clone() {
-            entity.update(cx, |v, _| {
-                v.last_draft_value = String::new();
-                // Supersede an in-flight debounced save of the consumed text;
-                // it must not restore the draft after clear_draft succeeded.
-                v.draft_save_gen = v.draft_save_gen.wrapping_add(1);
-                // The `InputState`s need a `Window`; the panel's own
-                // window-bearing pass applies this on the next frame (the same
-                // hand-off smart-commit uses).
-                v.pending_smart_msg = Some(String::new());
-                v.state.commit_msg.clear();
-            });
-        }
-    }
-}
-
-#[cfg(test)]
-mod draft_clear_tests {
-    use super::clear_committed_draft;
-    use std::ffi::OsString;
-
-    struct LogDirRestore(Option<OsString>);
-
-    impl Drop for LogDirRestore {
-        fn drop(&mut self) {
-            if let Some(previous) = self.0.take() {
-                std::env::set_var("KAGI_LOG_DIR", previous);
-            } else {
-                std::env::remove_var("KAGI_LOG_DIR");
-            }
-        }
-    }
-
-    #[test]
-    fn queued_commit_consumes_only_its_frozen_branch_and_message() {
-        let _lock = crate::ui::ENV_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let root = tempfile::tempdir().expect("isolated drafts");
-        let _restore = LogDirRestore(std::env::var_os("KAGI_LOG_DIR"));
-        std::env::set_var("KAGI_LOG_DIR", root.path());
-        let repo = root.path().join("repo");
-
-        kagi_git::save_draft(&repo, "main", "already committed", "plain").unwrap();
-        kagi_git::save_draft(&repo, "feat", "new branch's draft", "plain").unwrap();
-        assert!(clear_committed_draft(
-            &repo,
-            "main",
-            "already committed",
-            false
-        ));
-        assert!(kagi_git::load_draft(&repo, "main").is_none());
-        assert_eq!(
-            kagi_git::load_draft(&repo, "feat").unwrap().message,
-            "new branch's draft"
-        );
-
-        kagi_git::save_draft(&repo, "main", "newer edit", "plain").unwrap();
-        assert!(!clear_committed_draft(
-            &repo,
-            "main",
-            "already committed",
-            false
-        ));
-        assert!(!clear_committed_draft(&repo, "main", "newer edit", true));
-        assert_eq!(
-            kagi_git::load_draft(&repo, "main").unwrap().message,
-            "newer edit"
-        );
-    }
-}

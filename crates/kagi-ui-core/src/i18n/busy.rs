@@ -134,17 +134,17 @@ const LABELS: &[(&str, &str, &str)] = &[
     (
         "conflict-save",
         "Saving resolution…",
-        "競合の解決内容を保存中…",
+        "conflict の解決内容を保存中…",
     ),
     (
         "conflict-dir-file:keep-directory",
         "Resolving conflict…",
-        "競合を解決中…",
+        "conflict を解決中…",
     ),
     (
         "conflict-dir-file:keep-file",
         "Resolving conflict…",
-        "競合を解決中…",
+        "conflict を解決中…",
     ),
     (
         "conflict-continue",

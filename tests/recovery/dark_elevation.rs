@@ -285,12 +285,7 @@ fn assert_chrome_edge(
     assert_points(cx, window, &samples, &format!("{probe}/1px edge"));
 }
 
-fn chrome_workspace(
-    cx: &mut VisualTestAppContext,
-    window: AnyWindowHandle,
-    slug: &str,
-    has_strip: bool,
-) {
+fn chrome_workspace(cx: &mut VisualTestAppContext, window: AnyWindowHandle, slug: &str) {
     let chrome = if slug == "apple-dark" {
         0x1c1c1e
     } else {
@@ -331,27 +326,14 @@ fn chrome_workspace(
             sidebar,
         ),
     ];
-    if has_strip {
-        let strip = bounds(window, "repo-tab-strip");
-        samples.push((point(strip.right() - px(8.), strip.center().y), chrome));
-    }
-    assert_points(
-        cx,
-        window,
-        &samples,
-        &format!("workspace/{slug}/strip={has_strip}"),
-    );
+    let strip = bounds(window, "repo-tab-strip");
+    samples.push((point(strip.right() - px(8.), strip.center().y), chrome));
+    assert_points(cx, window, &samples, &format!("workspace/{slug}"));
     if slug != "apple-dark" {
         return; // Light fills are pinned; its existing border geometry is unchanged.
     }
-    let outside_header = if has_strip { chrome } else { sidebar };
-    let header = bounds(window, "toolbar-row");
-    let header_x = if has_strip {
-        header.right() - px(8.)
-    } else {
-        px(3.)
-    };
-    assert_chrome_edge(cx, window, "toolbar-row", header_x, false, outside_header);
+    // The toolbar's left edge now meets the sidebar, not a tab strip.
+    assert_chrome_edge(cx, window, "toolbar-row", px(3.), false, sidebar);
     assert_chrome_edge(cx, window, "pr-menu-footer", px(3.), true, sidebar);
     assert_chrome_edge(
         cx,
@@ -361,17 +343,14 @@ fn chrome_workspace(
         false,
         panel,
     );
-    if has_strip {
-        let strip = bounds(window, "repo-tab-strip");
-        assert_chrome_edge(
-            cx,
-            window,
-            "repo-tab-strip",
-            strip.right() - px(8.),
-            false,
-            panel,
-        );
-    }
+    assert_chrome_edge(
+        cx,
+        window,
+        "repo-tab-strip",
+        strip.right() - px(8.),
+        false,
+        chrome,
+    );
 }
 
 fn chrome_home(
@@ -398,7 +377,7 @@ fn chrome_home(
         &format!("Home/{slug}"),
     );
     if slug == "apple-dark" {
-        // Home adds a document strip directly below the unified frame.
+        // Home's document titlebar is above the frame; below it is base content.
         let frame = bounds(window, "home-frame");
         assert_chrome_edge(
             cx,
@@ -406,7 +385,7 @@ fn chrome_home(
             "home-frame",
             frame.right() - px(8.),
             false,
-            expected,
+            0x101012,
         );
     }
 }
@@ -434,14 +413,14 @@ pub fn scenario_dark_elevation_chrome(cx: &mut VisualTestAppContext) {
             for _ in 0..5 {
                 paint(cx, window);
             }
-            chrome_workspace(cx, window, slug, false);
+            chrome_workspace(cx, window, slug);
             app.update(cx, |app, cx| {
                 assert!(app.open_repository(second.path().to_path_buf(), cx));
             });
             for _ in 0..5 {
                 paint(cx, window);
             }
-            chrome_workspace(cx, window, slug, true);
+            chrome_workspace(cx, window, slug);
             chrome_home(cx, &app, window, slug);
         }));
         if let Err(panic) = result {

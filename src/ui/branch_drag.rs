@@ -39,7 +39,7 @@ pub(super) fn feedback(
         })
         .drag_over::<BranchDrag>(|style, _, _, _| {
             style
-                .bg(gpui::rgb(theme().ui_selected()))
+                .bg(theme().segment_selected_bg())
                 .border_color(gpui::rgb(theme().ui_accent()))
         })
         .on_drag_move::<BranchDrag>(cx.listener(

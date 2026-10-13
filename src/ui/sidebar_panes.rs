@@ -92,7 +92,7 @@ pub(super) fn pane_ranges(rows: &[SidebarRow]) -> [Range<usize>; 5] {
 }
 
 impl SidebarState {
-    /// Only an explicit header click or divider drag writes the layout. The
+    /// Only an explicit pane toggle or divider drag writes the layout. The
     /// HashSet remains the sole in-memory collapse owner.
     pub(super) fn persist_panes(&self) {
         let collapsed_mask = SECTIONS.iter().enumerate().fold(0, |mask, (index, key)| {
@@ -285,7 +285,9 @@ pub(super) fn render_pane(
     );
     // ↑/↓ are the rows' only while the focus is in this pane's list.
     let list = match app.sidebar.focus.lists[index].as_deref() {
-        Some(rows) => rows.list(list),
+        Some(rows) => rows
+            .list(list)
+            .key_context("KagiRowList KagiSidebarPaneRows"),
         None => list,
     };
     let tree = super::list_a11y::tree(
@@ -314,6 +316,11 @@ pub(super) fn render_pane(
     .size_full();
     div()
         .id(("sidebar-pane", index))
+        .on_action(cx.listener(
+            move |this, _: &super::sidebar_focus::SidebarTreeLeft, window, cx| {
+                this.sidebar_tree_left(index, window, cx);
+            },
+        ))
         .relative()
         .w_full()
         .flex()

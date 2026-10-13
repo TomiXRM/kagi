@@ -6,6 +6,25 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn shortcuts_remap_help_localizes_prose_and_preserves_config_syntax() {
+    let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
+    let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);
+    assert_ne!(english, japanese);
+    for text in [english, japanese] {
+        for syntax in [
+            "~/.kagi/settings.json",
+            "keybinding.<command id>",
+            "secondary-shift-b",
+            "\"\"",
+        ] {
+            assert!(text.contains(syntax));
+        }
+    }
+    assert!(english.contains("restart"));
+    assert!(japanese.contains("再起動"));
+}
+
+#[test]
 fn palette_descriptions_use_localized_sentence_boundaries() {
     assert_eq!(
         command_palette_description(Lang::En, "Actions", Some("Unavailable")),
@@ -161,7 +180,7 @@ fn commit_panel_chrome_has_japanese_without_english_fallbacks() {
         (Msg::CommitPanelDiscardAll, "Discard all"),
         (Msg::CommitPanelStage, "Stage"),
         (Msg::CommitPanelUnstage, "Unstage"),
-        (Msg::CommitPanelConflict, "競合"),
+        (Msg::CommitPanelConflict, "conflict"),
     ] {
         assert_eq!(message.t_for(Lang::Ja), japanese);
         if matches!(
@@ -255,6 +274,45 @@ fn domain_words_stay_english_in_both_langs() {
         assert!(!m.t().contains("マージ"), "{:?} still contains マージ", m);
     }
     set_lang_no_persist(Lang::En);
+}
+
+#[test]
+fn japanese_git_terms_preserve_operation_names_and_working_tree_meaning() {
+    for (message, english, japanese) in [
+        (Msg::ToolbarBranch, "Branch", "Branch"),
+        (Msg::ToolbarStash, "Stash", "Stash"),
+        (Msg::ToolbarPop, "Pop", "Pop"),
+        (Msg::InputStash, "Stash", "Stash"),
+        (Msg::InputStashTitle, "Stash changes", "変更を stash する"),
+        (Msg::A11ySidebarWorktrees, "Worktrees", "worktree"),
+        (Msg::A11ySidebarStashes, "Stashes", "stash"),
+        (Msg::PrWhyConflicting, "Conflicts", "conflict"),
+        (
+            Msg::StashClean,
+            "Stash: working tree is clean — nothing to stash",
+            "working tree に stash する変更がありません",
+        ),
+        (
+            Msg::PopEmpty,
+            "Pop: stash is empty",
+            "stash した変更がありません",
+        ),
+        (
+            Msg::EditorWorkspaceEmpty,
+            "No changed files in the working tree.",
+            "working tree に変更されたファイルはありません。",
+        ),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+    assert_eq!(
+        Msg::StashPopConflictedKept.t_for(Lang::Ja),
+        "conflict ありで適用しました — stash は保持されています。conflict を解決してから手動で drop してください。",
+    );
+    assert!(plan::rebase::ADVICE_REBASE_DIRTY_WORKING_TREE.starts_with("working tree "));
+    assert!(plan::worktree::ADVICE_WORKTREE_CREATES_LINKED_WORKTREE.contains("worktree"));
+    assert!(plan::branch::ADVICE_BRANCH_DELETE_SQUASH_MERGED.contains("merge 先に反映済み"));
 }
 
 #[test]
@@ -581,4 +639,16 @@ fn chooser_row_names_preserve_external_identity_in_both_languages() {
         }
     }
     ACTIVE.store(old, Ordering::Relaxed);
+}
+
+#[test]
+fn sidebar_filtered_disclosure_reason_is_localized() {
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::En),
+        "Groups stay expanded while filtering. Clear the filter to collapse a group."
+    );
+    assert_eq!(
+        Msg::SidebarGroupFilterExpanded.t_for(Lang::Ja),
+        "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。"
+    );
 }

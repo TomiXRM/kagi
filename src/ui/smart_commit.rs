@@ -80,6 +80,9 @@ impl SmartProvider {
 /// Identity frozen when generation dispatches; model storage is shared with the renderer.
 #[derive(Clone, Debug)]
 pub struct SmartGeneration {
+    /// Dispatch identity, retained by the session without retaining the panel.
+    /// EntityId distinguishes replacement panels whose local gen starts at zero.
+    pub request: (gpui::EntityId, u64),
     pub provider: SmartProvider,
     pub model: Option<gpui::SharedString>,
 }

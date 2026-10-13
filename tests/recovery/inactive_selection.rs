@@ -76,6 +76,16 @@ pub fn scenario_inactive_selection(cx: &mut VisualTestAppContext) {
                 "selected tab content surface"
             );
         } else {
+            let expected = theme::theme().ui_accent();
+            assert_eq!(
+                &active[..3],
+                &[
+                    (expected >> 16) as u8,
+                    (expected >> 8) as u8,
+                    expected as u8
+                ],
+                "active conflict selection paints opaque accent (#1468)"
+            );
             assert_ne!(
                 active, inactive,
                 "{name}: non-key selection must lose its blue tint"
@@ -151,14 +161,6 @@ pub fn scenario_repo_tabs_neutral(cx: &mut VisualTestAppContext) {
                 for active in [true, false] {
                     app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
                     cx.run_until_parked();
-                    if count == 1 {
-                        crate::recovery_layout::draw(cx, window, (1440., 900.));
-                        assert!(
-                            e2e::control_bounds(window.window_id(), "repo-tab-0").is_none(),
-                            "single document hides the neutral strip (#1179)"
-                        );
-                        continue;
-                    }
                     for index in 0..count {
                         let name = format!("repo-tab-{index}");
                         let expected = if index == 0 {

@@ -507,6 +507,8 @@ fn render_table_row(
 ) -> gpui::Stateful<gpui::Div> {
     let open = pr.clone();
     let click = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::pr_detail::record_activation(&format!("pr-home-row-{}", open.number));
         this.pr_mode_open(&open, cx);
     });
     let menu_pr = pr.clone();
@@ -530,8 +532,13 @@ fn render_table_row(
         PrDetailAvailability::Stale => format!("{}*", Msg::PrWhyPending.t()),
     };
     // An age needs an instant; the list's stamp is text (see `PullRequest`).
-    let age = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
-        .map(|at| kagi_ui_core::time::relative_time(at, now))
+    let (age, age_description) = kagi_ui_core::time_parse::iso_to_epoch(&pr.updated_at)
+        .map(|at| {
+            (
+                kagi_ui_core::time::relative_time(at, now),
+                kagi_ui_core::time::relative_time_description(at, now),
+            )
+        })
         .unwrap_or_default();
     use kagi_domain::github::IssueState;
     let state = match pr.state {
@@ -541,13 +548,21 @@ fn render_table_row(
         IssueState::Open => reason_text(why),
     };
     let label = super::list_a11y::pr_row_label(
-        pr.number, &pr.title, &state, &pr.author, &pr.head, &pr.base, &checks, &age,
+        pr.number,
+        &pr.title,
+        &state,
+        &pr.author,
+        &pr.head,
+        &pr.base,
+        &checks,
+        &age_description,
     );
     // The cells fill everything right of the shared row's avatar column. The
     // strip must take the table's width, not its own content's: without
     // `flex_1` + `overflow_hidden` a long title sets the column's intrinsic
     // width and the fixed columns land at a different x on each row (user
     // report).
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
     let cells = div()
         .flex_1()
         .min_w(px(0.))
@@ -556,7 +571,11 @@ fn render_table_row(
         .flex_row()
         .items_center()
         .text_xs()
-        .text_color(rgb(theme().text_muted))
+        .text_color(if selection_on_accent {
+            theme().selection_secondary_foreground(window_active)
+        } else {
+            rgb(theme().text_muted).into()
+        })
         .child(
             div()
                 .w(theme::scaled_px(COL_NO))
@@ -595,7 +614,11 @@ fn render_table_row(
                         .w_full()
                         .truncate()
                         .text_sm()
-                        .text_color(rgb(theme().text_main))
+                        .text_color(if selection_on_accent {
+                            theme().selection_foreground(window_active)
+                        } else {
+                            rgb(theme().text_main).into()
+                        })
                         .child(safe_text(&pr.title)),
                 )
                 .child(
@@ -617,11 +640,16 @@ fn render_table_row(
                         pr.number
                     )))
                 })
-                .text_color(rgb(if matches!(why, PrReason::Draft) {
-                    theme().text_muted
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
                 } else {
-                    attention_color(bucket)
-                }))
+                    rgb(if matches!(why, PrReason::Draft) {
+                        theme().text_muted
+                    } else {
+                        attention_color(bucket)
+                    })
+                    .into()
+                })
                 .child(SharedString::from(state)),
         )
         .child(
@@ -642,11 +670,16 @@ fn render_table_row(
             div()
                 .w(theme::scaled_px(COL_CHECKS))
                 .flex_shrink_0()
-                .text_color(rgb(if pr.failed_checks() > 0 {
-                    theme().color_blocker
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(window_active)
                 } else {
-                    glyph_ink
-                }))
+                    rgb(if pr.failed_checks() > 0 {
+                        theme().color_blocker
+                    } else {
+                        glyph_ink
+                    })
+                    .into()
+                })
                 .child(SharedString::from(checks)),
         )
         .child(
@@ -678,19 +711,21 @@ fn render_table_row(
         );
     super::list_a11y::list_option(
         "pr-list",
-        super::timeline_row::clickable(super::timeline_row::row(
+        super::timeline_row::row(
             ("pr-home-row", pr.number as usize),
             &pr.author,
             kagi_git::github::repo_host(&pr.base_repo),
             avatars,
             cells,
-        )),
+        ),
         position,
         size,
         label,
         selected,
     )
     .relative()
+    .cursor_pointer()
+    .when(!selected, super::timeline_row::clickable)
     .when(cfg!(feature = "gui-e2e"), |row| {
         row.child(super::e2e::measure_inside(format!(
             "pr-home-row-{}",
@@ -699,6 +734,10 @@ fn render_table_row(
     })
     .when(selected, |row| {
         row.bg(theme().selected_for_window(window_active))
+            .cursor_pointer()
+    })
+    .when(selection_on_accent, |row| {
+        row.text_color(theme().selection_foreground(window_active))
     })
     .items_center()
     .flex_shrink_0()

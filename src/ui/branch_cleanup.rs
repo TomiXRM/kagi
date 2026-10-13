@@ -433,20 +433,16 @@ impl KagiApp {
 // Render
 // ────────────────────────────────────────────────────────────
 
-/// `1_768_003_200 → "2026-01-10"` — UTC civil date without a chrono dep
-/// (Howard Hinnant's `civil_from_days`).
+/// Local calendar date, using the same per-instant/DST offset as Detail.
 fn format_date(secs: i64) -> String {
-    let z = secs.div_euclid(86_400) + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{:04}-{:02}-{:02}", y, m, d)
+    let mut date = super::detail_panel::format_local(secs);
+    date.truncate(date.find(' ').unwrap_or(date.len()));
+    date
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn format_date_for_e2e(secs: i64) -> String {
+    format_date(secs)
 }
 
 /// A tick box for one table row.
@@ -997,20 +993,20 @@ fn build_cleanup_row(
 mod format_date_tests {
     use super::format_date;
 
-    /// Same ground as `detail_panel`'s `format_civil` tests (the other
-    /// civil-date formatter in the tree): the epoch, a known timestamp, the
-    /// 2000 leap day, a pre-1970 (negative) epoch, and the 1900 non-leap-year
-    /// boundary. The two formatters agree on the date part for all of them.
+    /// Cleanup and Detail use the same local calendar, including pre-epoch dates.
     #[test]
     fn civil_dates_match_the_other_formatter() {
-        assert_eq!(format_date(0), "1970-01-01");
-        assert_eq!(format_date(1_705_311_000), "2024-01-15");
-        assert_eq!(format_date(951_782_400), "2000-02-29");
-        assert_eq!(format_date(-60), "1969-12-31");
-        // 1900 is not a leap year: 1900-02-28 + 1 day is 1900-03-01.
-        assert_eq!(format_date(-25_509 * 86_400), "1900-02-28");
-        assert_eq!(format_date(-25_508 * 86_400), "1900-03-01");
-        // The doc-comment's own example.
-        assert_eq!(format_date(1_768_003_200), "2026-01-10");
+        for epoch in [
+            0,
+            1_705_311_000,
+            951_782_400,
+            -60,
+            -25_509 * 86_400,
+            -25_508 * 86_400,
+            1_768_003_200,
+        ] {
+            let detail = crate::ui::detail_panel::format_local(epoch);
+            assert_eq!(format_date(epoch), detail.split_once(' ').unwrap().0);
+        }
     }
 }

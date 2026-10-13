@@ -34,14 +34,14 @@ use kagi_ui_core::theme;
 
 pub use render::render_file_history_view;
 
-/// Full row height for a File History commit row.
-///
-/// ponytail: copy of the bin's `row_height(false)` (= `graph_view::ROW_H` =
-/// 24.0 * 1.2); keep in sync if the graph row height ever changes.
-const ROW_H_FULL: f32 = 29.0;
+#[cfg(feature = "gui-e2e")]
+pub use kagi_ui_core::commit_row::{clear_table_row_paints, table_row_paint, TableRowPaint};
 
-/// Zoom-scaled height of a File History commit row (matches the bin's
-/// `row_height(false)`).
+/// Finder-inspired reference height for File History's single-line commit rows.
+/// This surface is independent of the graph and Editor History card densities.
+const ROW_H_FULL: f32 = 20.0;
+
+/// Density- and zoom-scaled height of a File History commit row.
 pub(crate) fn fh_row_height() -> f32 {
     theme::scaled(ROW_H_FULL)
 }

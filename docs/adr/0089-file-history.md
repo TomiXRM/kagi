@@ -111,3 +111,21 @@ not Tab stops: only the real named header actions participate in traversal.
 While a reload hides the list, its focus owner yields to the header without
 discarding the remembered key. Boundary traversal does not focus unmounted
 rows; the loaded list reclaims its single roving stop.
+
+## Amendment — 2026-10-13: Finder-inspired list density (#1467)
+
+The owner's Finder list reference replaces the graph-derived 29-reference-pixel
+File History row with a fixed, zoom-scaled 20px slot. Table labels share
+UI-core's `FILE_TREE_FONT_PX = 13`, 16px badge column and 1.2em leading;
+graph/Card rendering is unchanged. The same role applies independently to the
+Editor file tree and sidebar ref identities. Sidebar headings remain 12px,
+ordinary ref rows remain 20px, and worktree rows retain the 24px path/port
+wrapping contract from #855. Changes and Worktrees' file panes share the
+already-completed Commit Panel sizing and are not another renderer to migrate.
+
+Keep uniform-list extents, existing RowFocus/reveal/AX assignments and click
+handlers. `finder_scale_rest` measures actual painted rows, typography and
+native glyph bounds against the content mask at 100%/167% in Apple Light/Dark;
+leading assertions account for GPUI's integer-pixel rounding. Existing neighbor
+scenarios continue to cover keyboard, selection and virtualization contracts.
+

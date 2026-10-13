@@ -751,6 +751,18 @@ mod perf_oplog_detail;
 mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_editor.rs"]
+mod finder_scale_editor;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_history.rs"]
+mod finder_scale_history;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/finder_scale_rest.rs"]
+mod finder_scale_rest;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
 mod inspector_scale;
 
@@ -4045,6 +4057,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "finder_scale_rest",
+                Box::new(crate::finder_scale_rest::scenario),
             ),
             (
                 "inspector_scale",

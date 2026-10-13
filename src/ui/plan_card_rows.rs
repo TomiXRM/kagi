@@ -58,6 +58,33 @@ pub(crate) fn render_note_row(
         .into_any_element()
 }
 
+/// Advisory form-plan warnings: wrap full localized text with shared Note semantics.
+pub(crate) fn render_warnings_list(
+    prefix: &'static str,
+    warnings: &[kagi_domain::plan_note::PlanNote],
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .flex_shrink_0()
+        .children(warnings.iter().enumerate().map(|(index, warning)| {
+            let id: SharedString = format!("{prefix}-{index}").into();
+            let text = kagi_ui_core::i18n::plan_note_text(warning);
+            super::e2e::measure_control(
+                id.clone(),
+                render_note_row(
+                    id,
+                    false,
+                    "\u{26a0}",
+                    current_theme().color_warning,
+                    &text,
+                    true,
+                ),
+            )
+        }))
+}
+
 /// One "commits to push" preview row (T-HT-004). Plain (`accent: None`):
 /// unchanged single truncated line. Chip style: the sha gets its own small
 /// badge, the summary follows in regular text — same visual family as

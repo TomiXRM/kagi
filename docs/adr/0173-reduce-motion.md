@@ -50,12 +50,8 @@ that kagi's own animations consult at render time.
 
 ## OS preference
 
-macOS `NSWorkspace.accessibilityDisplayShouldReduceMotion` (and the Linux
-equivalents `gtk-enable-animations` / `prefers-reduced-motion`) are **not**
-wired. GPUI in this build exposes no plumbing for it and reading it would need
-per-platform FFI — out of proportion for this slice. The explicit setting is the
-whole contract; if OS-preference-as-default is added later, the setting overrides
-it.
+Superseded by the 2026-10-13 amendment below: macOS system preferences are now
+authoritative opt-ins, combined with the app setting rather than overridden by it.
 
 ## Animations honored / remaining
 
@@ -113,3 +109,32 @@ in different modules/entities and some outside `KagiApp`):
   when on and animated when off.
 - **Needs a human/GUI**: confirm the loading dots actually stop bobbing when the
   toggle is on (subagents cannot exercise the GUI).
+
+## Amendment — 2026-10-13 system display preferences (#1417, #1418)
+
+The current pinned GPUI checkout (`TomiXRM/zed@caf5007`) was searched for
+`reduce_motion` and accessibility display preferences: it exposes AccessKit
+semantics, but no motion/transparency preference API. Its animation elements
+still require Kagi's existing render-time gates.
+
+- `src/system_accessibility.rs` is the shell/platform boundary. Read
+  `NSWorkspace.accessibilityDisplayShouldReduceMotion` and
+  `accessibilityDisplayShouldReduceTransparency` before motion initialization.
+  Observe `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification` on the
+  workspace notification center's main queue, publish a complete snapshot and
+  wake a foreground task to refresh every window. Retain/remove the observer
+  with that task's lifetime, and re-read after registration to close the startup gap.
+- UI-core holds only the two platform-resolved booleans. Effective motion is
+  **system OR app**, while the Appearance switch edits/displays the app opt-in.
+  Changing either system preference never writes settings.json.
+- Dark dashboard PR tiles normally retain 35%-alpha black over `bg_base`.
+  With reduced transparency, choose its fully opaque RGB composite (65% of
+  each base channel), retaining appearance and label contrast. Light cards
+  already use opaque white and remain unchanged.
+- Tier A `system_reduce_motion` injects both directions, proves that the actual
+  loading renderer skips its `with_animation` branches, and checks app-on /
+  system-off and app-off / system-on. `system_reduce_transparency` compares
+  production tile fill alpha, opaque colour/contrast and restoration. Both cover
+  940×660 / 1392×883, 100% / 167%, EN / JA.
+- Native preference delivery and screenshots remain Tier B evidence, distinct
+  from the injected state/renderer assertions. Tracking #354 remains open.

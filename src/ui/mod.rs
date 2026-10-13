@@ -118,6 +118,7 @@ mod modal_command;
 mod modal_copy;
 mod modal_key_routing;
 pub mod modal_plan;
+mod modal_preview_files;
 mod modal_renderers;
 mod modal_renderers_commit;
 mod modal_renderers_create;
@@ -127,6 +128,8 @@ mod modal_renderers_input;
 mod modal_renderers_misc;
 mod modal_renderers_plan;
 mod modal_renderers_stash;
+#[cfg(feature = "gui-e2e")]
+pub use modal_renderers_stash::{take_stash_entry_label_for_e2e, take_stash_warning_glyph_for_e2e};
 mod modal_shell;
 pub mod modals;
 mod op_queue;
@@ -247,7 +250,9 @@ actions!(
         // wins in gpui's keymap), and their handlers write the terminal
         // bytes straight to the PTY.
         TerminalSendTab,
-        TerminalSendShiftTab
+        TerminalSendShiftTab,
+        /// Leave terminal input and focus the bottom-panel tab selector.
+        TerminalExitFocus
     ]
 );
 
@@ -3121,6 +3126,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.confirm_editor_dirty_guard(cx),
             M::EditorFsPrompt(_) => self.confirm_editor_fs_prompt(cx),
             M::EditorDeleteConfirm(_) => self.confirm_editor_delete(cx),
+            M::TerminalPaste(_) => self.confirm_terminal_paste(cx),
             M::TrustRepo(_) => self.confirm_trust_repo(cx),
         }
     }
@@ -3205,6 +3211,7 @@ impl KagiApp {
             M::EditorDirtyGuard(_) => self.cancel_editor_dirty_guard(),
             M::EditorFsPrompt(_) => self.cancel_editor_fs_prompt(),
             M::EditorDeleteConfirm(_) => self.cancel_editor_delete_confirm(),
+            M::TerminalPaste(_) => self.clear_terminal_paste_modal(),
             M::TrustRepo(_) => self.cancel_trust_repo_modal(),
         }
     }
@@ -3328,6 +3335,7 @@ pub fn run_app(app_state: KagiApp) {
 
     application.run(move |cx: &mut App| {
         fonts::load_bundled_fonts(cx);
+        crate::system_accessibility::install(cx);
 
         // #491: flush trailing settings-store writes on every exit path.
         cx.on_app_quit(|_cx| async move { settings::flush() })

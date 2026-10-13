@@ -619,7 +619,7 @@ pub(super) fn appearance_section(
         "reduce-motion-toggle",
         switches.get(3, cx),
         title(Msg::SettingsReduceMotion),
-        theme::reduce_motion(),
+        theme::app_reduce_motion(),
         move |on, _w, cx| {
             let _ = app_rm.update(cx, |_app, cx| {
                 theme::set_reduce_motion(on);

@@ -969,8 +969,12 @@ pub(super) fn render_loading_dots() -> gpui::Div {
         // so no per-frame animation ticks are requested (the pinned GPUI build's
         // animation element does not honor reduce-motion itself).
         let dot = if reduce_motion {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::system_accessibility::record_loading_animation(false);
             dot.into_any_element()
         } else {
+            #[cfg(feature = "gui-e2e")]
+            super::e2e::system_accessibility::record_loading_animation(true);
             dot.with_animation(
                 ("kagi-loading-dot", i),
                 gpui::Animation::new(Duration::from_millis(LOADING_BOB_MS)).repeat(),

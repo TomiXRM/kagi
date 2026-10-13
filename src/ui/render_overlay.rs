@@ -37,8 +37,12 @@ pub(crate) fn sync_spinner(
         .h(theme::scaled_px(size))
         .text_color(rgb(accent));
     if theme::reduce_motion() {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::system_accessibility::record_spinner_animation(false);
         return icon.into_any_element();
     }
+    #[cfg(feature = "gui-e2e")]
+    super::e2e::system_accessibility::record_spinner_animation(true);
     icon.with_animation(
         key,
         gpui::Animation::new(Duration::from_millis(SPIN_MS)).repeat(),
@@ -441,6 +445,9 @@ impl KagiApp {
                     // ── Repository owner-trust prompt (ADR-0160 / #310) ──
                     .when_some(self.trust_repo_modal().cloned(), |el, modal| {
                         el.child(super::trust_prompt::render_trust_repo_modal(modal, cx))
+                    })
+                    .when_some(self.terminal_paste_modal().cloned(), |el, modal| {
+                        el.child(super::terminal::input::render_paste_confirmation(modal, cx))
                     })
                     // ── Unlock-worktree confirmation ─────────────────
                     .when_some(unlock_worktree_modal.take(), |el, modal| {

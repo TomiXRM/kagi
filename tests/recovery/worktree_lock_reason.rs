@@ -303,7 +303,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
@@ -357,7 +357,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
@@ -491,7 +491,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     // ── shell exit → owner-scoped wait delivery → pending release ───────
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -630,7 +630,7 @@ pub fn scenario_terminal_auto_lock(cx: &mut VisualTestAppContext) {
             .paste_writer
             .as_ref()
             .unwrap()
-            .paste_text("exit\n");
+            .write_input("exit\n");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {

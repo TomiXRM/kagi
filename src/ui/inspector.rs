@@ -24,8 +24,6 @@ use gpui_component::Sizable as _;
 
 use kagi_git::{is_url, sanitize_trailer_value, CommitId};
 
-use kagi_ui_core::file_tree::status_badge;
-
 // Badge sort order is shared with the graph column — one definition only
 // (a second copy silently drifts and the two views disagree).
 use super::badges::badge_priority;
@@ -37,9 +35,7 @@ use super::{
     commit_list::{BadgeKind, RefBadge},
     context_menu::CommitAction,
     detail_panel::CommitDetail,
-    diffstat_bar::diffstat_unit,
-    file_tree,
-    inspector_model::{InspectorFile, InspectorModel},
+    inspector_model::InspectorModel,
     DividerDrag, DividerGhost, DividerKind, KagiApp,
 };
 
@@ -89,153 +85,12 @@ pub(super) fn render_inspector(
     panel_width: f32,
     // W11-AVATAR: resolved GitHub avatar images keyed by author email.
     avatar_images: &std::collections::HashMap<String, std::sync::Arc<gpui::Image>>,
-    files_scroll: &gpui::ScrollHandle,
+    fallback: Option<&gpui::FocusHandle>,
     message_handle: &gpui::ScrollHandle,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let files = model.files();
-
-    // ── Changed-file rows (generated files folded separately below) ───────
-    let mut tree_element_rows: Vec<gpui::AnyElement> = match files {
-        None => vec![],
-        Some(files) if tree_view => files
-            .tree
-            .iter()
-            .map(|row| match row {
-                file_tree::TreeRow::Dir { depth, name } => {
-                    let indent = (*depth as f32) * 12.0;
-                    div()
-                        .id(SharedString::from(format!("tree-dir-{}", name.as_ref())))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(theme().change_dir))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .into_any()
-                }
-                file_tree::TreeRow::File {
-                    depth,
-                    name,
-                    file_index,
-                    change,
-                } => {
-                    let indent = (*depth as f32) * 12.0;
-                    let (badge_char, badge_color, _) = status_badge(change.as_ref(), false);
-                    let fi = *file_index;
-                    let stat = files.files.get(fi).and_then(|f| f.stat.as_ref());
-                    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.open_main_diff_inspector_file(fi, cx);
-                        cx.notify();
-                    });
-                    // Right-click → context menu (History / Edit / Copy
-                    // Path); used to jump straight to File History.
-                    let menu_click =
-                        cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-                            this.inspector_file_menu = Some((fi, e.position));
-                            cx.stop_propagation();
-                            cx.notify();
-                        });
-                    let row = div()
-                        .id(("file-row", fi))
-                        .on_mouse_down(MouseButton::Right, menu_click)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .pl(theme::scaled_px(indent))
-                        .mb_px()
-                        .flex_shrink_0()
-                        .when(active_file == Some(fi), |el| {
-                            el.bg(theme().selected_for_window(window_active))
-                                .rounded_sm()
-                        })
-                        .on_click(click)
-                        .child(
-                            div()
-                                .w(theme::scaled_px(14.))
-                                .flex_shrink_0()
-                                .text_sm()
-                                .text_color(rgb(badge_color))
-                                .child(SharedString::from(badge_char)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.))
-                                .text_sm()
-                                .text_color(rgb(theme().text_main))
-                                .truncate()
-                                .child(name.clone()),
-                        )
-                        .child(diffstat_unit(fi, stat));
-                    super::e2e::measure_control(format!("inspector-file-{fi}"), row)
-                }
-            })
-            .collect(),
-        // ── Flat path list ──────────────────────────────────────────────────
-        Some(files) => files
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(_, file)| !file.generated)
-            .map(|(fi, file)| flat_file_row(fi, file, active_file, window_active, cx))
-            .collect(),
-    };
-
-    // ── Generated / lockfile fold (issue #348) ────────────────────────────
-    // Collapsed by default: a "Generated (N)" disclosure row; expanded, it
-    // lists the folded files (flat, whatever the view mode).
-    if let Some(files) = files.filter(|f| f.generated_count > 0) {
-        let expanded = generated_expanded;
-        let arrow = if expanded { "▾" } else { "▸" };
-        let label = format!(
-            "{arrow} {} ({})",
-            i18n::Msg::GeneratedFilesSection.t(),
-            files.generated_count
-        );
-        let toggle = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-            this.inspector_generated_expanded = !this.inspector_generated_expanded;
-            cx.notify();
-        });
-        tree_element_rows.push(super::e2e::measure_control(
-            "generated-fold-header",
-            div()
-                .id("generated-fold-header")
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_1()
-                .mt_1()
-                .mb_px()
-                .flex_shrink_0()
-                .on_click(toggle)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .text_sm()
-                        .text_color(rgb(theme().text_sub))
-                        .truncate()
-                        .child(SharedString::from(label)),
-                ),
-        ));
-        if expanded {
-            for (fi, file) in files.files.iter().enumerate() {
-                if file.generated {
-                    tree_element_rows.push(flat_file_row(fi, file, active_file, window_active, cx));
-                }
-            }
-        }
-    }
 
     // ── Path⇄Tree toggle ─────────────────────────────────────────────────
     // Each button sets its mode explicitly (a shared toggle would make the
@@ -382,40 +237,16 @@ pub(super) fn render_inspector(
         .mb_1()
         .child(toggle_row);
 
-    // ── Scrolling file list (own scroll, independent of message box) ──────
-    let mut files_list = div()
-        .id("inspector-files-scroll")
-        .flex_1()
-        .min_h(px(0.))
-        .overflow_y_scroll()
-        .track_scroll(files_scroll)
-        .flex()
-        .flex_col();
-
-    match files {
-        None => {
-            files_list = files_list.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme().text_muted))
-                    .child(SharedString::from(Msg::DiffUnavailable.t())),
-            );
-        }
-        Some(files) => {
-            for row in tree_element_rows {
-                files_list = files_list.child(row);
-            }
-            if files.hidden > 0 {
-                files_list = files_list.child(super::e2e::measure_control(
-                    "inspector-files-more",
-                    div()
-                        .text_sm()
-                        .text_color(rgb(theme().text_muted))
-                        .child(SharedString::from(i18n::and_n_more(files.hidden))),
-                ));
-            }
-        }
-    }
+    let files_list = model.keyboard.render(
+        model.files_snapshot(),
+        tree_view,
+        generated_expanded,
+        active_file,
+        window_active,
+        fallback,
+        window,
+        cx,
+    );
 
     // ── Bottom box: compare banner / counts / toggle / files list ─────────
     let files_box = div()
@@ -435,12 +266,7 @@ pub(super) fn render_inspector(
         .children(compare_banner)
         .children(counts_row)
         .child(files_header)
-        .child(super::render_helpers::with_system_vertical_scrollbar(
-            "inspector-files-scrollbar",
-            files_scroll,
-            files_list,
-            cx,
-        ));
+        .child(files_list);
 
     // Compare files are meaningful without a selected/loaded Graph commit.
     let panel = div()
@@ -1148,61 +974,6 @@ fn action_button(
         btn
     };
     super::e2e::measure_control(id, btn)
-}
-
-/// One flat changed-file row (badge + path + diffstat), clickable to open the
-/// diff and right-clickable for the file context menu. Shared by the flat file
-/// list and the folded "Generated (N)" section (issue #348).
-fn flat_file_row(
-    fi: usize,
-    file: &InspectorFile,
-    active_file: Option<usize>,
-    window_active: bool,
-    cx: &mut Context<KagiApp>,
-) -> gpui::AnyElement {
-    let (badge_char, badge_color, _) = status_badge(Some(&file.change), false);
-    let click = cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-        this.open_main_diff_inspector_file(fi, cx);
-        cx.notify();
-    });
-    let menu_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _window, cx| {
-        this.inspector_file_menu = Some((fi, e.position));
-        cx.stop_propagation();
-        cx.notify();
-    });
-    let row = div()
-        .id(("file-flat", fi))
-        .on_mouse_down(MouseButton::Right, menu_click)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap_1()
-        .mb_px()
-        .flex_shrink_0()
-        .when(active_file == Some(fi), |el| {
-            el.bg(theme().selected_for_window(window_active))
-                .rounded_sm()
-        })
-        .on_click(click)
-        .child(
-            div()
-                .w(theme::scaled_px(14.))
-                .flex_shrink_0()
-                .text_sm()
-                .text_color(rgb(badge_color))
-                .child(SharedString::from(badge_char)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(0.))
-                .text_sm()
-                .text_color(rgb(theme().text_main))
-                .truncate()
-                .child(file.path.clone()),
-        )
-        .child(diffstat_unit(fi, file.stat.as_ref()));
-    super::e2e::measure_control(format!("inspector-file-{fi}"), row)
 }
 
 #[cfg(test)]

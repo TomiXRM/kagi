@@ -120,6 +120,21 @@ fn rows(
     draw(cx, win);
     cx.read(|cx| assert!(app.read(cx).pr_mode().unwrap().active.is_none()));
 }
+fn assert_trigger_focus(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<KagiApp>,
+    win: AnyWindowHandle,
+    id: &str,
+) {
+    cx.update_window(win, |_, window, cx| {
+        assert!(
+            app.read(cx).dashboard_keyboard_focused_for_e2e(id, window),
+            "{id}: Escape restores trigger focus"
+        );
+    })
+    .unwrap();
+}
+
 fn filters(
     cx: &mut VisualTestAppContext,
     app: &gpui::Entity<KagiApp>,
@@ -149,7 +164,7 @@ fn filters(
             });
             cx.simulate_keystrokes(win, "escape");
             draw(cx, win);
-            tab_to(cx, app, win, id);
+            assert_trigger_focus(cx, app, win, id);
             press(cx, win, key);
             draw(cx, win);
             cx.simulate_keystrokes(win, "home");
@@ -165,6 +180,7 @@ fn filters(
             if id == "list-filter-label" {
                 cx.simulate_keystrokes(win, "escape");
                 draw(cx, win);
+                assert_trigger_focus(cx, app, win, id);
             }
         }
     }

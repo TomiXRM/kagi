@@ -93,3 +93,21 @@ History closes as part of that successful workspace handoff. Both request
 delivery and async completion require the original
 owner and pane to remain active; the pane crate stays Git-free. Back emits only
 `CloseRequested`. These are read/navigation actions and perform no Git write.
+
+## Amendment — 2026-10-13: list/header focus return (#1376)
+
+The Git-free FileHistoryView retains shared RowFocus/RowList ownership keyed
+by entry identity. Header actions do not discard its remembered row. Shift+Tab
+from Back and Tab from Follow Renames reveal that row before returning focus.
+Arrows/Home/End on the list route through the existing select/diff request path;
+root-only shortcuts remain a separate fallback. Virtualization, historical
+rename paths, loading-generation guards and all read-only semantics remain.
+The embedded diff keeps its independent focus owner and header visits never
+replace entry selection merely to obtain a Tab stop.
+The fixed-height uniform list retains its measured virtualization; returning
+focus uses the shared Uniform RowScroll reveal rather than replacing it with
+a variable-height ListState. Header-fit's offscreen measurement replicas are
+not Tab stops: only the real named header actions participate in traversal.
+While a reload hides the list, its focus owner yields to the header without
+discarding the remembered key. Boundary traversal does not focus unmounted
+rows; the loaded list reclaims its single roving stop.

@@ -195,7 +195,7 @@ pub(crate) fn apply_note(
 ) -> Stateful<Div> {
     record_note(&id, note_role(blocker), text);
     el.role(note_role(blocker))
-        .aria_label(SharedString::from(text.to_string()))
+        .aria_label(SharedString::from(text))
 }
 
 /// Record and expose the localized name of a plan-state group.

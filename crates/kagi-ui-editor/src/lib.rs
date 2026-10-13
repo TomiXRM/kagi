@@ -23,6 +23,8 @@
 //! header toolbar button.
 
 mod blame;
+#[cfg(feature = "gui-e2e")]
+pub use blame::BlameProbe;
 mod bottom_panel;
 pub mod markdown;
 mod pane_selectors;
@@ -485,14 +487,10 @@ pub struct EditorWorkspaceView {
     /// the Cmd-S save gate, and the unsaved-changes guard on file/source
     /// switch and close.
     ///
-    /// The subscription compares the editor's current text against
-    /// `content` rather than using a synchronous "am I mid-push" flag: a
-    /// gpui-component `set_value` push ALSO fires `InputEvent::Change`, but
-    /// `cx.emit` queues it as a deferred effect (`Context::emit` pushes onto
-    /// `pending_effects`) — it is delivered after `sync_editor` returns, by
-    /// which point a plain bool flag set/cleared synchronously around the
-    /// push would already be back to its resting value. Comparing text is
-    /// immune to that ordering.
+    /// Compare current text with the saved snapshot so a queued Change after
+    /// tab switching or saving is booked against the current buffer state.
+    /// The pinned component's `set_value` load is silent; user replacement,
+    /// typing, paste, cut and undo emit Change.
     pub dirty: bool,
     /// `true` when the FS watcher observed a working-tree change while
     /// `dirty` was set (T-WS-EDITOR-002 §4) — the buffer was NOT
@@ -549,6 +547,16 @@ pub struct EditorWorkspaceView {
     /// file is never blamed eagerly. Not tab-cached (recomputed on switch;
     /// same ponytail reasoning as the History panel).
     pub blame: Option<kagi_domain::blame::BlameResult>,
+    /// HEAD text and its cached mapping to the live buffer, never the saved
+    /// worktree snapshot (which may itself contain uncommitted edits).
+    blame_head: Option<std::sync::Arc<str>>,
+    blame_line_map: Vec<Option<usize>>,
+    blame_map_revision: u64,
+    blame_map_task: Option<gpui::Task<()>>,
+    #[cfg(feature = "gui-e2e")]
+    blame_map_computations: u64,
+    #[cfg(feature = "gui-e2e")]
+    pub blame_probe: std::rc::Rc<std::cell::RefCell<Option<BlameProbe>>>,
     /// `true` while the blame load is in flight.
     pub blame_loading: bool,
 
@@ -635,7 +643,15 @@ impl EditorWorkspaceView {
             tree_menu: None,
             show_blame: kagi_ui_core::settings::Settings::load().blame_inline(),
             blame: None,
+            blame_head: None,
+            blame_line_map: Vec::new(),
+            blame_map_revision: 0,
+            blame_map_task: None,
+            #[cfg(feature = "gui-e2e")]
+            blame_map_computations: 0,
             blame_loading: false,
+            #[cfg(feature = "gui-e2e")]
+            blame_probe: Default::default(),
             preview_markdown: false,
             mermaid: HashMap::new(),
             bottom_panel: None,
@@ -903,6 +919,8 @@ impl EditorWorkspaceView {
         self.file_loading = false;
         self.diff = None;
         self.blame = None;
+        self.blame_head = None;
+        self.invalidate_blame_map();
         self.blame_loading = false;
     }
 
@@ -984,6 +1002,8 @@ impl EditorWorkspaceView {
         // no longer line up with it (issue #350). Re-requested (if the
         // toggle is on) once the fresh content lands below.
         self.blame = None;
+        self.blame_head = None;
+        self.invalidate_blame_map();
         self.blame_loading = false;
         let file_req = self.file_req;
         let repo_path = self.repo_path.clone();
@@ -1227,6 +1247,7 @@ impl EditorWorkspaceView {
             Some(if self.show_blame { "true" } else { "false" }),
         );
         self.maybe_load_blame(cx);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1254,6 +1275,7 @@ impl EditorWorkspaceView {
         req: u64,
         path: &Path,
         result: Option<kagi_domain::blame::BlameResult>,
+        head: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if self.file_req != req || self.open_path.as_deref() != Some(path) {
@@ -1268,6 +1290,8 @@ impl EditorWorkspaceView {
             );
         }
         self.blame = result;
+        self.blame_head = head.map(std::sync::Arc::from);
+        self.refresh_blame_map(cx);
         cx.notify();
     }
 
@@ -1462,17 +1486,11 @@ impl EditorWorkspaceView {
                     .search_labels(find::labels())
                     .line_number(true)
             });
-            // T-WS-EDITOR-002: track user edits for the dirty indicator/
-            // guard/save-gate. `InputState` emits `InputEvent::Change` (see
-            // gpui-component 0.5.1 `src/input/state.rs::replace_text_in_range`)
-            // on every keystroke/paste/cut/undo AND on our own `set_value`
-            // push below — see `dirty`'s doc comment for why the handler
-            // compares text against `content` instead of a synchronous
-            // "am I mid-push" flag. Detached rather than stored: same
-            // pattern as the theme-select `Confirm` subscription in
-            // `mod.rs`'s `open_main_window` (holds a weak ref internally, so
-            // a dropped entity — workspace closed — just makes the callback
-            // a no-op).
+            // Track user edits for dirty/save guards and the HEAD blame map.
+            // The component's load-time set_value is silent (mapped below),
+            // while typing, paste, cut, undo and replace_all emit Change.
+            // Detached subscriptions hold a weak owner; closing the workspace
+            // makes their deferred callbacks harmless.
             cx.subscribe(&state, |this: &mut Self, state, event: &InputEvent, cx| {
                 if !matches!(event, InputEvent::Change) {
                     return;
@@ -1480,6 +1498,7 @@ impl EditorWorkspaceView {
                 let current = state.read(cx).value();
                 if this.editor.as_ref() == Some(&state) {
                     let dirty = this.content.as_deref() != Some(current.as_ref());
+                    this.update_blame_map(current, cx);
                     if this.dirty != dirty {
                         this.dirty = dirty;
                         cx.notify();
@@ -1532,6 +1551,9 @@ impl EditorWorkspaceView {
                 s.set_highlighter(lang, cx);
                 s.set_value(content, window, cx);
             });
+            // A HEAD reply can precede this silent programmatic file push.
+            let buffer = editor.read(cx).value();
+            self.update_blame_map(buffer, cx);
         }
     }
 

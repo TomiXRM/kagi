@@ -345,14 +345,20 @@ impl KagiApp {
         let repo_path = view.read(cx).repo_path.clone();
         let bg_path = path.clone();
         let task = cx.background_spawn(async move {
-            kagi_git::Backend::open(&repo_path)
-                .ok()
-                .and_then(|repo| repo.blame_file(&bg_path).ok())
+            let repo = kagi_git::Backend::open(&repo_path).ok()?;
+            let head = repo.blob_bytes_head(&bg_path).ok().flatten()?;
+            let head = String::from_utf8(head).ok()?;
+            let blame = repo.blame_file(&bg_path).ok()?;
+            Some((blame, head))
         });
         let view = view.downgrade();
         cx.spawn(async move |_app, acx| {
             let result = task.await;
-            let _ = view.update(acx, |v, cx| v.seed_blame(req, &path, result, cx));
+            let (result, head) = match result {
+                Some((blame, head)) => (Some(blame), Some(head)),
+                None => (None, None),
+            };
+            let _ = view.update(acx, |v, cx| v.seed_blame(req, &path, result, head, cx));
         })
         .detach();
     }

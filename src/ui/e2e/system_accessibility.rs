@@ -50,5 +50,5 @@ pub fn loading_animation_count() -> usize {
 }
 
 pub fn dashboard_card_fill() -> gpui::Hsla {
-    super::super::pr_dashboard::dash_card_bg()
+    super::super::pr_attention::dash_card_bg()
 }

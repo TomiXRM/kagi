@@ -237,14 +237,14 @@ pub(super) fn view_selector(
                         .relative()
                         .child(e2e::measure_inside(format!("{id}-label")))
                         .bg(if selected {
-                            theme().selected_for_window(view.window_active)
+                            theme().segment_selected_bg()
                         } else {
                             rgb(theme().surface).into()
                         })
                         .text_color(if selected {
-                            theme().selection_foreground(view.window_active)
+                            rgb(theme().text_main)
                         } else {
-                            rgb(theme().text_muted).into()
+                            rgb(theme().text_muted)
                         })
                         .hover(|s| s.cursor_default())
                         .child(e2e::commit_panel_labels::caption(id, label)),

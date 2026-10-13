@@ -481,16 +481,11 @@ impl KagiApp {
             // for the GUI E2E oracle (the AccessKit tree itself is only built
             // once assistive technology connects, which a test cannot force).
             toolbar_a11y::record_unavailable(id, unavailable);
-            let text_color = if mode_selected {
-                theme().selection_foreground(window_active)
+            let text_color = rgb(if mode_selected || enabled {
+                theme().text_main
             } else {
-                rgb(if enabled {
-                    theme().text_main
-                } else {
-                    theme().text_muted
-                })
-                .into()
-            };
+                theme().text_muted
+            });
             let chip_bg = theme().ui_accent();
 
             // The count is an overlay on the icon cell. Native probes stay
@@ -590,8 +585,7 @@ impl KagiApp {
                 .py(px((f32::from(theme::scaled_px(2.0)) - 2.0).max(0.0)))
                 .rounded_md()
                 .when(mode_selected, |el| {
-                    el.bg(theme().selected_for_window(window_active))
-                        .text_color(text_color)
+                    el.bg(theme().segment_selected_bg()).text_color(text_color)
                 })
                 .when(!mode_selected, |el| {
                     el.hover(|style| {

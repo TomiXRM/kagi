@@ -267,7 +267,6 @@ pub(super) fn render_settings_overlay(
                     &switches,
                     controls,
                     trap.clone(),
-                    window.is_window_active(),
                     cx,
                 ))
                 .child(analyze_ignore_section(
@@ -985,7 +984,6 @@ pub(super) fn smart_commit_section(
     switches: &super::keyboard_nav::FocusSlots,
     controls: &super::settings_controls::SettingsControls,
     pointer_focus: Option<gpui::FocusHandle>,
-    window_active: bool,
     cx: &gpui::App,
 ) -> impl IntoElement {
     let current = smart.model.clone();
@@ -1019,15 +1017,9 @@ pub(super) fn smart_commit_section(
     // selectable when detected on $PATH; undetected ones are shown disabled with
     // a "not found on PATH" hint.
     let provider = smart.provider;
-    let provider_chips = super::settings_controls::provider_chips(
-        app,
-        smart,
-        controls,
-        pointer_focus.clone(),
-        window_active,
-        cx,
-    )
-    .into_any_element();
+    let provider_chips =
+        super::settings_controls::provider_chips(app, smart, controls, pointer_focus.clone(), cx)
+            .into_any_element();
 
     // ── Prominent warning when a CLI provider is selected (ADR-0099) ──
     // The user explicitly asked for an unmissable warning about cost / quota /
@@ -1072,15 +1064,8 @@ pub(super) fn smart_commit_section(
             .child(SharedString::from(note))
             .into_any_element()
     } else {
-        super::settings_controls::model_chips(
-            app,
-            smart,
-            controls,
-            pointer_focus,
-            window_active,
-            cx,
-        )
-        .into_any_element()
+        super::settings_controls::model_chips(app, smart, controls, pointer_focus, cx)
+            .into_any_element()
     };
 
     // The Ollama model picker is only relevant when Ollama is the provider.

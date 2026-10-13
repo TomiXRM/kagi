@@ -43,7 +43,6 @@ pub(super) fn provider_chips(
     smart: &SmartCommitState,
     state: &SettingsControls,
     pointer_focus: Option<gpui::FocusHandle>,
-    window_active: bool,
     cx: &App,
 ) -> impl IntoElement {
     let entries: Vec<_> = std::iter::once((
@@ -109,13 +108,7 @@ pub(super) fn provider_chips(
                     .cell(
                         slot,
                         &hint,
-                        chip(
-                            &id,
-                            hint.clone(),
-                            selected == Some(slot),
-                            available,
-                            window_active,
-                        ),
+                        chip(&id, hint.clone(), selected == Some(slot), available),
                     )
                     .when(!available, |el| {
                         el.opacity(0.5).aria_description(SharedString::from(hint))
@@ -135,7 +128,6 @@ pub(super) fn model_chips(
     smart: &SmartCommitState,
     state: &SettingsControls,
     pointer_focus: Option<gpui::FocusHandle>,
-    window_active: bool,
     cx: &App,
 ) -> impl IntoElement {
     let models = smart.detected_models.clone();
@@ -177,25 +169,13 @@ pub(super) fn model_chips(
         tabs.cell(
             slot,
             &model,
-            chip(
-                &id,
-                model.clone(),
-                selected == Some(slot),
-                true,
-                window_active,
-            ),
+            chip(&id, model.clone(), selected == Some(slot), true),
         )
         .child(super::e2e::measure_inside(id))
     }))
 }
 
-fn chip(
-    id: &str,
-    label: String,
-    selected: bool,
-    available: bool,
-    window_active: bool,
-) -> gpui::Stateful<gpui::Div> {
+fn chip(id: &str, label: String, selected: bool, available: bool) -> gpui::Stateful<gpui::Div> {
     // The original 1px selection outline is inside the out-of-flow focus ring.
     div()
         .id(SharedString::from(id.to_string()))
@@ -206,15 +186,15 @@ fn chip(
         .py(keyboard_nav::inset(4.) + gpui::px(1.))
         .rounded_md()
         .bg(if selected {
-            theme().selected_for_window(window_active)
+            theme().segment_selected_bg()
         } else {
             rgb(theme().bg_base).into()
         })
         .text_sm()
         .text_color(if selected {
-            theme().selection_foreground(window_active)
+            rgb(theme().text_main)
         } else {
-            rgb(theme().text_sub).into()
+            rgb(theme().text_sub)
         })
         .when(available && !selected, |el| {
             el.hover(|s| {

@@ -2476,13 +2476,8 @@ fn render_editor_workspace(
         .flex_1()
         .min_h(px(0.))
         .when(view.show_tree, |el| {
-            el.child(render_tree_pane(
-                view,
-                tree_width,
-                window.is_window_active(),
-                cx,
-            ))
-            .child(tree_divider)
+            el.child(render_tree_pane(view, tree_width, cx))
+                .child(tree_divider)
         })
         .child(
             div()
@@ -2516,7 +2511,6 @@ fn render_source_chip(
     label: &'static str,
     active: bool,
     source: TreeSource,
-    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
@@ -2533,12 +2527,12 @@ fn render_source_chip(
         .cursor_pointer()
         .text_xs()
         .text_color(if active {
-            theme().selection_foreground(window_active)
+            rgb(theme().text_main)
         } else {
-            rgb(theme().text_muted).into()
+            rgb(theme().text_muted)
         })
         .bg(if active {
-            theme().selected_for_window(window_active)
+            theme().segment_selected_bg()
         } else {
             rgb(theme().panel).into()
         })
@@ -2584,7 +2578,6 @@ fn render_fold_button(
 /// pinned above the tree list (T-WS-EDITOR-004 user feedback #1).
 fn render_source_chips(
     view: &EditorWorkspaceView,
-    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     div()
@@ -2602,7 +2595,6 @@ fn render_source_chips(
             Msg::EditorWorkspaceSourceChanges.t(),
             view.source == TreeSource::Changes,
             TreeSource::Changes,
-            window_active,
             cx,
         ))
         .child(render_source_chip(
@@ -2610,7 +2602,6 @@ fn render_source_chips(
             Msg::EditorWorkspaceSourceAll.t(),
             view.source == TreeSource::All,
             TreeSource::All,
-            window_active,
             cx,
         ))
         // Expand-all (⌄⌄) / collapse-all (⌃⌃), lucide unfold/fold glyphs.
@@ -2634,7 +2625,6 @@ fn render_source_chips(
 fn render_tree_pane(
     view: &EditorWorkspaceView,
     width: gpui::Pixels,
-    window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> gpui::AnyElement {
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
@@ -2652,7 +2642,7 @@ fn render_tree_pane(
         .flex_col()
         .bg(rgb(theme().panel))
         .on_mouse_down(MouseButton::Right, root_menu)
-        .child(render_source_chips(view, window_active, cx));
+        .child(render_source_chips(view, cx));
 
     if view.loading {
         return pane

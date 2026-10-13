@@ -1119,9 +1119,18 @@ return their normal theme roles. Actual selected-row text/glyphs and unfilled
 badges switch together in Graph, navigation, files, PR and shared history
 rows. Translucent Graph ref chips also switch their labels/glyphs because the
 accent row shows through their semantic tint. Independently opaque status
-chips retain their own fills and contrast labels. Selected segments/modes
-preserve selected fill under hover; primary buttons reuse the same bridge.
-Neutral Apple document tabs, structural expanded fills and text-selection
+chips retain their own fills and contrast labels. Primary accent buttons reuse
+the on-accent bridge; menu/list highlights remain row-selection presentation.
+
+**Screenshot review correction:** selected segmented controls are not active
+list rows. `segment_selected_bg()` therefore supplies the existing Apple
+neutral grey (other presets keep their selected tint), independent of window
+activation, with normal selected text/glyphs. Sidebar Graph/PRs/Issues,
+toolbar modes, Inspector Path/Tree, Commit Panel List/Tree, bottom tabs,
+editor toggles and filter chips use this separate role, including on hover.
+Opaque accent + on-accent text is limited to active rows, accent-filled
+primary buttons and menu highlights. Apple document tabs retain their existing
+neutral document contrast. Structural expanded fills and text-selection
 overlays remain separate. Radio/checkbox indicator glyphs keep the existing
 4.5:1 generic-input foreground. Within the component bridge, Finder's
 text-label policy changes only the filled-button foreground tokens.
@@ -1130,6 +1139,8 @@ Regression-first native `selection_on_accent` fails the previous Light fill
 at painted `#d9ebff` versus required `#007aff`. It checks exact active/inactive
 Metal fills, renderer-inherited and painted summary-label foregrounds,
 retained selection/geometry, primary-button pixels and all-preset contrast.
+Its segment leg checks actual sidebar and Commit Panel fill pixels are neutral,
+not accent, and their labels remain ordinary in key and non-key windows.
 Existing activation and selected-hover oracles remain alongside it; their
 active selection expectations now deliberately follow the opaque accent,
 not the former wash. Tier B compares the plain app and Finder separately;

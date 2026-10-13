@@ -295,7 +295,7 @@ fn tab_cell(
     window_active: bool,
     width: Option<gpui::Pixels>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (bg, fg) = tab_colors(&theme(), selected, window_active);
+    let (bg, fg) = tab_colors(&theme(), selected);
     let min = if width.is_some() {
         px(f32::from(theme::scaled_px(TAB_MIN_W)).ceil())
     } else {
@@ -314,9 +314,6 @@ fn tab_cell(
         .bg(bg)
         .text_sm()
         .text_color(rgb(fg))
-        .when(selected && tab_has_rail(&theme()), |cell| {
-            cell.text_color(theme().selection_foreground(window_active))
-        })
         .mr(px(1.))
         .when(selected && tab_has_rail(&theme()), |cell| {
             cell.child(tab_rail(&theme(), window_active))

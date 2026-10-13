@@ -106,24 +106,24 @@ pub(super) fn render_inspector(
     let path_active = !tree_view;
     let tree_active = tree_view;
     let path_bg = if path_active {
-        theme().selected_for_window(window_active)
+        theme().segment_selected_bg()
     } else {
         rgb(theme().surface).into()
     };
     let tree_bg = if tree_active {
-        theme().selected_for_window(window_active)
+        theme().segment_selected_bg()
     } else {
         rgb(theme().surface).into()
     };
     let path_col = if path_active {
-        theme().selection_foreground(window_active)
+        rgb(theme().text_main)
     } else {
-        rgb(theme().text_sub).into()
+        rgb(theme().text_sub)
     };
     let tree_col = if tree_active {
-        theme().selection_foreground(window_active)
+        rgb(theme().text_main)
     } else {
-        rgb(theme().text_sub).into()
+        rgb(theme().text_sub)
     };
 
     let toggle_row = div()

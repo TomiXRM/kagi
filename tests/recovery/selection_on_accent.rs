@@ -76,6 +76,40 @@ fn assert_label_pixels(
     .unwrap();
 }
 
+fn assert_neutral_segment(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    id: &str,
+    label_id: &str,
+) {
+    let bounds = e2e::control_bounds(window.window_id(), id).expect("selected segment");
+    let fill = rgb_pixel(
+        cx,
+        window,
+        f32::from(bounds.left()) + 3.,
+        f32::from(bounds.center().y),
+    );
+    assert_ne!(
+        fill,
+        theme::theme().ui_accent(),
+        "segments are not row accent"
+    );
+    assert_eq!(
+        fill,
+        theme::theme().inactive_selected,
+        "neutral Apple segment"
+    );
+    assert_eq!(
+        e2e::control_paint(window.window_id(), label_id)
+            .unwrap()
+            .text_color,
+        Hsla::from(gpui::rgb(theme::theme().text_main)),
+        "selected segments retain ordinary foreground"
+    );
+    let label = e2e::control_bounds(window.window_id(), label_id).unwrap();
+    assert_label_pixels(cx, window, label, theme::theme().text_main);
+}
+
 pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "accent_source", "accent"]);
@@ -129,12 +163,7 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
             secondary.text_color,
             Hsla::from(gpui::rgb(0xffffff)).alpha(0.7)
         );
-        let mode = e2e::control_paint(window.window_id(), "sidebar-mode-graph-label").unwrap();
-        assert_eq!(
-            mode.text_color,
-            Hsla::from(gpui::rgb(0xffffff)),
-            "selected sidebar segment is white"
-        );
+        assert_neutral_segment(cx, window, "sidebar-mode-graph", "sidebar-mode-graph-label");
         let selected = cx.read(|cx| app.read(cx).ui().selected);
         app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
         draw(cx, window);
@@ -158,6 +187,7 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
             row
         );
         assert_eq!(cx.read(|cx| app.read(cx).ui().selected), selected);
+        assert_neutral_segment(cx, window, "sidebar-mode-graph", "sidebar-mode-graph-label");
         app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     }
     cx.update_window(window, |_, window, cx| {
@@ -175,27 +205,15 @@ pub fn scenario_selection_on_accent(cx: &mut VisualTestAppContext) {
             app.set_window_active_for_e2e(true, cx);
         });
         draw(cx, window);
-        let id = if cx.read(|cx| panel.read(cx).state.tree_view) {
-            "cp-view-tree-label"
+        let (id, label_id) = if cx.read(|cx| panel.read(cx).state.tree_view) {
+            ("cp-view-tree", "cp-view-tree-label")
         } else {
-            "cp-view-list-label"
+            ("cp-view-list", "cp-view-list-label")
         };
-        let bounds = e2e::control_bounds(window.window_id(), id).expect("selected segment label");
-        assert_eq!(
-            e2e::control_paint(window.window_id(), id)
-                .unwrap()
-                .text_color,
-            Hsla::from(gpui::rgb(0xffffff))
-        );
-        assert_label_pixels(cx, window, bounds, 0xffffff);
+        assert_neutral_segment(cx, window, id, label_id);
         app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
         draw(cx, window);
-        assert_eq!(
-            e2e::control_paint(window.window_id(), id)
-                .unwrap()
-                .text_color,
-            Hsla::from(gpui::rgb(theme::theme().text_main))
-        );
+        assert_neutral_segment(cx, window, id, label_id);
     }
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     drop(panel);

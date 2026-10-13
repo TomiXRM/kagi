@@ -34,7 +34,6 @@ fn sidebar_mode_nav_cell(
     id: &'static str,
     label: &'static str,
     active: bool,
-    window_active: bool,
 ) -> gpui::AnyElement {
     tabs.cell(slot, label, div().id(id))
         .flex_1()
@@ -45,8 +44,8 @@ fn sidebar_mode_nav_cell(
         .rounded(theme::scaled_px(4.))
         .cursor_pointer()
         .when(active, |el| {
-            el.bg(theme::theme().selected_for_window(window_active))
-                .text_color(theme::theme().selection_foreground(window_active))
+            el.bg(theme::theme().segment_selected_bg())
+                .text_color(rgb(theme::theme().text_main))
                 .font_weight(gpui::FontWeight::MEDIUM)
         })
         .when(!active, |el| el.text_color(rgb(theme::theme().text_muted)))
@@ -215,16 +214,8 @@ pub(super) fn render_sidebar_mode_nav(
         },
         cx,
     );
-    let cell = |slot: usize, id, label| {
-        sidebar_mode_nav_cell(
-            &tabs,
-            slot,
-            id,
-            label,
-            mode == MODES[slot],
-            app.window_active,
-        )
-    };
+    let cell =
+        |slot: usize, id, label| sidebar_mode_nav_cell(&tabs, slot, id, label, mode == MODES[slot]);
     super::e2e::measure_control(
         "sidebar-mode-nav",
         tabs.list(div().id("sidebar-mode-nav"))

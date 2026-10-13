@@ -275,6 +275,16 @@ impl Theme {
         }
     }
 
+    /// Segmented controls, modes and tabs retain a subtle fill, not row accent.
+    #[inline]
+    pub fn segment_selected_bg(&self) -> Hsla {
+        to_hsla(if matches!(&*self.slug, "apple-light" | "apple-dark") {
+            self.inactive_selected
+        } else {
+            self.selected
+        })
+    }
+
     /// Primary selected label: on-accent in key Apple windows, normal otherwise.
     pub fn selection_foreground(&self, active: bool) -> Hsla {
         if active && matches!(&*self.slug, "apple-light" | "apple-dark") {
@@ -2309,12 +2319,15 @@ mod tests {
             if apple {
                 assert_eq!(t.ui_selected(), t.ui_accent());
                 assert_eq!(active, t.on_accent());
+                assert_eq!(t.segment_selected_bg(), to_hsla(t.inactive_selected));
+                assert_ne!(t.segment_selected_bg(), to_hsla(t.ui_accent()));
                 assert_eq!(
                     t.selection_secondary_foreground(true),
                     t.selection_foreground(true).alpha(0.7)
                 );
             } else {
                 assert_eq!(t.ui_selected(), t.selected);
+                assert_eq!(t.segment_selected_bg(), to_hsla(t.selected));
                 assert_eq!(t.selection_foreground(true), to_hsla(t.text_main));
                 assert_eq!(t.on_accent(), filled_button_foreground(t.ui_accent(), t));
             }

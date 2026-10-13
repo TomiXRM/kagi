@@ -138,15 +138,18 @@ for all-preset primary-label contrast.
 For #1468 use
 `KAGI_GUI_E2E_ONLY='selection_on_accent,inactive_selection,sidebar_rows,pr_lane_selected,commit_panel_selection_hover,graph_'`
 with KEEP_GOING. `selection_on_accent` checks native opaque system-blue Graph
-fills, actual summary/ref-chip/secondary label paint, sidebar and Commit Panel
-selected segments, non-key grey/normal labels, retained identity/geometry and
-native primary-button labels across all presets. Apple on-accent uses the
+fills, actual summary/ref-chip/secondary label paint, non-key grey/normal row
+labels, retained identity/geometry and native primary-button labels across all
+presets. Sidebar and Commit Panel selected segments must instead paint neutral
+grey (not accent) and retain ordinary foregrounds in both activation states.
+Apple on-accent uses the
 owner's Finder policy: white at ≥3.0:1, black below (not a WCAG AA 4.5:1 claim);
 inactive text retains AA. Other presets/custom themes keep their existing
 selection and accent label colors. Pair with UI-core `selection_on_accent` /
 `finder_accent` and the existing system-accent injection tests.
 Tier B uses the plain build, isolated profile and a copy of the stress fixture:
-Apple Light/Dark selected Graph, sidebar mode, file and primary-button PNGs,
+Apple Light/Dark selected Graph/file rows, neutral sidebar modes/segments and
+accent-filled primary-button PNGs,
 plus one owned Finder list window/file selection captured by window ID and
 closed afterward. Active-window screenshots require owner-authorized brief
 activation of only the launched PID, with the prior foreground app restored.

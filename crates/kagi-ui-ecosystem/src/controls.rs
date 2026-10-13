@@ -161,13 +161,13 @@ fn tab_paint(id: &str, label: &'static str, selected: bool) -> Stateful<Div> {
         .py(keyboard_nav::inset(5.))
         .min_h(theme::scaled_px(24.))
         .rounded(theme::scaled_px(4.))
-        .bg(rgb(if selected {
-            theme().ui_accent()
+        .bg(if selected {
+            theme().segment_selected_bg()
         } else {
-            theme().surface
-        }))
+            rgb(theme().surface).into()
+        })
         .text_color(rgb(if selected {
-            theme().on_accent()
+            theme().text_main
         } else {
             theme().text_sub
         }))

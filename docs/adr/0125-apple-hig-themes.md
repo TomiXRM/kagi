@@ -1179,12 +1179,17 @@ below the fold to fit inside the window.
 
 ## Amendment — 2026-10-13: Finder-style on-accent labels (#1468)
 
-Apple Light and Apple Dark's active row selection now uses `ui_accent()` as
-an opaque fill, superseding the Light 15% wash and Dark neutral active fill
-above. The existing System/Theme accent-source choice remains authoritative;
-Dark's Theme default still uses its yellow accent. Non-key selection retains
-the independent neutral `inactive_selected` token and ordinary foregrounds.
+Apple Light and Apple Dark's active list selection uses `ui_accent()` as
+an opaque fill, except Graph commit/WIP rows (**#1485**, 2026-10-14).
+Apple Graph uses the Graph-only `selection_wash(active)` token: 30% accent over
+the default zebra stripe and lane tint, with normal text, badges and ref chips.
+The existing System/Theme accent-source choice remains authoritative;
+Dark's Theme default still uses its yellow accent. Non-key Graph selection
+retains the independent opaque neutral `inactive_selected` token.
 Selection identity, focus ownership, input behavior and row geometry do not change.
+Other theme presets retain `selected_for_window(active)` unchanged; the wash
+does not replace their selection identity. WIP diffstat keeps its ordinary
+added/deleted colours directly, without an unused selected-foreground override.
 
 `Theme::on_accent` and the existing primary-button bridge share one
 `on_accent_foreground` derivation for Apple accents: prefer white when its
@@ -1202,18 +1207,18 @@ or repeated luminance calculation for an unchanged accent.
 pair the foreground with the existing selected fill resolver. Apple key
 secondary labels use 70% of the chosen on-accent foreground; non-key labels
 return their normal theme roles. Actual selected-row text/glyphs and unfilled
-badges switch together in Graph, navigation, files, PR and shared history
-rows. Translucent Graph ref chips also switch their labels/glyphs because the
-accent row shows through their semantic tint. Independently opaque status
-chips retain their own fills and contrast labels. Primary accent buttons reuse
-the on-accent bridge; menu/list highlights remain row-selection presentation.
+badges switch together in navigation, files, PR and shared history rows.
+Graph commit/WIP rows and their ref chips instead keep their normal semantic
+foregrounds: the translucent wash is not an on-accent surface. Independently
+opaque status chips retain their own fills and contrast labels. Primary accent
+buttons reuse the on-accent bridge; menu/list highlights remain opaque selection.
 
 **Semantic foreground guard:** `selection_uses_on_accent(selected, active)`
-is the single predicate for every row/menu foreground override. Only a selected,
-key-window Apple row replaces semantic status/check/warning/diffstat colors
-and muted labels. Inactive and non-Apple selections keep each original role,
-not a generic text-main/text-sub replacement. PR/Issue sidebar cards apply the
-guard to their explicit child labels; translucent selected WIP chips do likewise.
+is the predicate for opaque row/menu foreground overrides. Graph rows do not
+invoke it for their wash and never replace semantic status/check/diffstat colors
+or muted labels. Only selected key-window Apple opaque rows replace those roles.
+Inactive and non-Apple selections keep each original role. PR/Issue sidebar
+cards apply the guard to their explicit child labels; Graph WIP chips do not.
 Drag-over feedback uses the separate neutral segment/tint fill and retains its
 ordinary foreground. Toolbar hover uses `surface`, distinct from current-mode
 selection. Home pane and Conflict Preview/Edit switches are segments, not rows.
@@ -1244,10 +1249,14 @@ foreground pair; shortcut text inherits 70% on-accent only when highlighted.
 Shortcut labels retain element identity so GPUI resolves their group-hover
 foreground during text layout, not only paint-time style refinement.
 Disabled actions keep their existing subdued/danger presentation.
-Existing activation and selected-hover oracles remain alongside it; their
-active selection expectations now deliberately follow the opaque accent,
-not the former wash. Tier B compares the plain app and Finder separately;
-native test recorders alone are not evidence of Finder's material or AX delivery.
+Existing activation and selected-hover oracles remain alongside it.
+The Graph legs in `selection_on_accent` and `system_accent_chrome` now assert
+the 30% accent composite instead of opaque accent; graph selection-bar pixels
+remain opaque accent. `graph_selection_wash` covers Apple Light blue and
+Apple Dark yellow at 100%/167%, normal primary ink and ≥4.5:1 contrast.
+The opaque sidebar/file/menu/button oracles retain #1468's Finder policy.
+Tier B compares the plain app before/after; native test recorders alone are
+not evidence of Finder's material or AX delivery.
 
 The integration with #1471/#1472 retains their compact file-row geometry,
 13-reference-px file and diffstat typography, and inset Stage/Unstage focus

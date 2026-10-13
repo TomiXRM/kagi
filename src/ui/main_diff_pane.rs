@@ -62,6 +62,12 @@ impl MainDiffPane {
         }
     }
 
+    /// The exact selection token used by the production list renderer.
+    #[cfg(feature = "gui-e2e")]
+    pub fn selection_token_for_e2e(&self) -> u64 {
+        self.view.height_source.token()
+    }
+
     #[cfg(feature = "gui-e2e")]
     pub fn diff_row_bounds_for_e2e(
         &self,
@@ -74,6 +80,24 @@ impl MainDiffPane {
             self.scroll.viewport_bounds(),
             self.scroll.bounds_for_item(index),
         )
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn reveal_diff_row_for_e2e(&mut self, index: usize, cx: &mut Context<Self>) {
+        let item = if super::theme::diff_split() {
+            let projection = super::diff_split::split_projection(&self.view.rows);
+            super::diff_split::split_index_of(&projection.rows, index).unwrap_or(index)
+        } else {
+            index
+        };
+        super::keyboard_nav::reveal_list_row(&self.scroll, item);
+        cx.notify();
+    }
+}
+
+impl Drop for MainDiffPane {
+    fn drop(&mut self) {
+        super::diff_selection::retire_surface(self.list_layout.selection_owner());
     }
 }
 
@@ -195,6 +219,7 @@ impl Render for MainDiffPane {
                 self.owner,
                 self.view.hunk_approvals.clone(),
             ),
+            super::diff_selection::SelectionOwner::Main(self.owner),
             cx,
         )
     }
@@ -682,6 +707,9 @@ impl KagiApp {
     /// No-op when main_diff is None. A diff read still out is superseded, so
     /// it cannot reopen the pane (#495).
     pub fn close_main_diff(&mut self) {
+        if let Some(owner) = self.active_session() {
+            super::diff_selection::retire_owner(super::diff_selection::SelectionOwner::Main(owner));
+        }
         self.with_ui(|ui| {
             ui.main_diff = None;
             ui.main_diff_req = ui.main_diff_req.wrapping_add(1);

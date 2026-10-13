@@ -145,11 +145,11 @@ for all-preset primary-label contrast.
 
 For #1468 use
 `KAGI_GUI_E2E_ONLY='selection_on_accent,inactive_selection,sidebar_rows,pr_lane_selected,commit_panel_selection_hover,graph_'`
-with KEEP_GOING. `selection_on_accent` checks native opaque system-blue Graph
-fills, actual summary/ref-chip/secondary label paint, non-key grey/normal row
-labels, retained identity/geometry and native primary-button labels across all
-presets. Sidebar and Commit Panel selected segments must instead paint neutral
-grey (not accent) and retain ordinary foregrounds in both activation states.
+with KEEP_GOING. After #1485, `selection_on_accent` checks the native 30%
+system-blue Graph wash over ordinary stripes, normal summary/ref-chip/secondary
+label paint, non-key grey, retained identity/geometry and native primary-button
+labels across all presets. Sidebar and Commit Panel selected segments must
+instead paint neutral grey and retain ordinary foregrounds in both activation states.
 See [ADR-0125 amendment](../../../docs/adr/0125-apple-hig-themes.md#amendment--2026-10-13-finder-style-on-accent-labels-1468).
 Pair with UI-core `selection_on_accent` / `finder_accent` and system-accent
 injection tests. The scenario also exercises selected PR sidebar cards and
@@ -160,6 +160,14 @@ accent-filled primary buttons and menu-hover PNGs,
 plus one owned Finder list window/file selection captured by window ID and
 closed afterward. Active-window screenshots require owner-authorized brief
 activation of only the launched PID, with the prior foreground app restored.
+For #1485 run `KAGI_GUI_E2E_ONLY='selection_on_accent,graph_,inactive_selection,system_accent'`.
+`graph_selection_wash` covers Apple Light blue / Dark yellow × 100%/167%,
+both zebra stripes, lane-band tint beneath the wash, normal semantic chip and
+label colours, ≥4.5:1 primary-ink contrast, retained geometry/selection and
+inactive grey for commit/WIP rows. Updated pixel oracles: the Graph legs in
+`selection_on_accent` and `system_accent_chrome`; the latter's left selection
+bar remains opaque accent. Non-Graph #1468 fill/foreground oracles are unchanged.
+Tier B compares selected Graph rows before/after in both themes and zooms.
 
 For #1348 use `KAGI_GUI_E2E_ONLY='editor_find_controls_a11y,editor_'`
 with KEEP_GOING. The regression opens the actual pinned code-editor SearchPanel,

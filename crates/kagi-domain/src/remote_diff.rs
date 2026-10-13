@@ -63,6 +63,9 @@ fn parse_name_status_line(line: &str) -> Option<FileStatus> {
 /// lines; reads paths from the `---`/`+++` lines and the change kind from the
 /// `new file` / `deleted file` / `rename` / `/dev/null` markers. `Binary files …
 /// differ` sets `is_binary` with no hunks.
+///
+/// Hunk content retains its raw LF/CRLF terminators. Git's explicit
+/// no-newline marker removes only the preceding patch record's final LF.
 pub fn parse_file_diff(text: &str) -> FileDiff {
     let mut old_path: Option<PathBuf> = None;
     let mut new_path: Option<PathBuf> = None;
@@ -73,7 +76,10 @@ pub fn parse_file_diff(text: &str) -> FileDiff {
     let mut old_no = 0u32;
     let mut new_no = 0u32;
 
-    for line in text.lines() {
+    for raw_line in text.split_inclusive('\n') {
+        // Header matching uses bare records; hunk payload below stays raw.
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
         if let Some(rest) = line.strip_prefix("rename from ") {
             old_path = Some(PathBuf::from(rest));
             change = ChangeKind::Renamed {
@@ -132,7 +138,15 @@ pub fn parse_file_diff(text: &str) -> FileDiff {
         // Skip the remaining header lines (`diff --git`, `index`, mode lines)
         // until the first hunk opens.
         let Some(h) = cur.as_mut() else { continue };
-        let mut chars = line.chars();
+        if line == "\\ No newline at end of file" {
+            if let Some(previous) = h.lines.last_mut() {
+                if previous.content.ends_with('\n') {
+                    let _ = previous.content.pop();
+                }
+            }
+            continue;
+        }
+        let mut chars = raw_line.chars();
         match chars.next() {
             Some(' ') => {
                 h.lines.push(DiffLine {
@@ -162,7 +176,7 @@ pub fn parse_file_diff(text: &str) -> FileDiff {
                 });
                 old_no += 1;
             }
-            // `\ No newline at end of file` and any stray blank lines: ignore.
+            // Any stray blank lines outside the patch's sigil records: ignore.
             _ => {}
         }
     }
@@ -208,6 +222,48 @@ fn parse_range(s: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_diff_preserves_each_raw_line_ending() {
+        let out = "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n keep\r\n-same\r\n+same\n";
+        let d = parse_file_diff(out);
+        let h = &d.hunks[0];
+        assert_eq!(h.lines.len(), 3);
+        assert_eq!(h.lines[0].content, "keep\r\n");
+        assert_eq!(h.lines[1].content, "same\r\n");
+        assert_eq!(h.lines[2].content, "same\n");
+        assert_eq!(h.content_identity, None);
+        assert_eq!(h.approval(), None);
+    }
+
+    #[test]
+    fn no_newline_marker_removes_only_the_patch_record_lf() {
+        let out = concat!(
+            "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n",
+            "-same\r\n\\ No newline at end of file\n",
+            "+same\n\\ No newline at end of file\n",
+        );
+        let d = parse_file_diff(out);
+        let h = &d.hunks[0];
+        assert_eq!(h.lines.len(), 2);
+        // A CR before the patch record's LF is file content, not CRLF,
+        // when Git explicitly says the source line has no final newline.
+        assert_eq!(h.lines[0].content, "same\r");
+        assert_eq!(h.lines[1].content, "same");
+        assert_eq!(h.lines[0].old_lineno, Some(1));
+        assert_eq!(h.lines[1].new_lineno, Some(1));
+        assert_eq!(h.approval(), None);
+    }
+
+    #[test]
+    fn no_newline_marker_applies_to_context_without_adding_a_row() {
+        let out = "@@ -1 +1 @@\n same\n\\ No newline at end of file\n";
+        let d = parse_file_diff(out);
+        let h = &d.hunks[0];
+        assert_eq!(h.lines.len(), 1);
+        assert_eq!(h.lines[0].content, "same");
+        assert_eq!(h.lines[0].kind, DiffLineKind::Context);
+    }
 
     #[test]
     fn name_status_variants() {

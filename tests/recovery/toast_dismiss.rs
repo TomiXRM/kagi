@@ -54,7 +54,7 @@ pub fn scenario_toast_dismiss(cx: &mut VisualTestAppContext) {
                 "menu cancellation preserves notification"
             );
         });
-        copy_escape_contract(cx, &stack, window);
+        copy_escape_contract(cx, &app, &stack, window);
         hovered_error(cx, &stack, window);
         let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
         three_line_error(cx, &stack, window, lang, &root);
@@ -285,11 +285,21 @@ fn routine_hover(
 
 fn copy_escape_contract(
     cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
     stack: &gpui::Entity<kagi::ui::toast_stack::ToastStack>,
     window: gpui::AnyWindowHandle,
 ) {
-    e2e::seed_diff_selection();
-    cx.simulate_keystrokes(window, "cmd-c");
+    app.update(cx, |app, cx| {
+        if app.ui().selected != Some(0) {
+            app.select(0);
+        }
+        cx.notify();
+    });
+    cx.run_until_parked();
+    app.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+    cx.run_until_parked();
+    paint(cx, window);
+    crate::diff_split_unicode_badge::copy_body(cx, app, window);
     cx.run_until_parked();
     let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
     cx.simulate_keystrokes(window, "escape");
@@ -311,6 +321,14 @@ fn copy_escape_contract(
     cx.simulate_keystrokes(window, "escape");
     cx.run_until_parked();
     settle_removal(cx, window);
+    app.update(cx, |app, cx| {
+        app.close_main_diff();
+        cx.notify();
+    });
+    cx.update_window(window, |_, window, cx| {
+        window.focus(&app.read(cx).root_focus.clone().unwrap(), cx);
+    })
+    .unwrap();
 }
 
 fn focused_eviction(

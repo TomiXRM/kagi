@@ -170,6 +170,10 @@ mod inactive_selection;
 mod selection_on_accent;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_selection_wash.rs"]
+mod graph_selection_wash;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/tab_strip.rs"]
 mod tab_strip;
 
@@ -254,6 +258,16 @@ mod hunk_staging;
 #[cfg(target_os = "macos")]
 #[path = "recovery/diff_keyboard.rs"]
 mod diff_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/diff_line_ending_annotation.rs"]
+mod diff_line_ending_annotation;
+#[cfg(target_os = "macos")]
+#[path = "recovery/diff_selection_revision.rs"]
+mod diff_selection_revision;
+#[cfg(target_os = "macos")]
+#[path = "recovery/diff_split_unicode_badge.rs"]
+mod diff_split_unicode_badge;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/reconcile_unobservable.rs"]
@@ -1725,6 +1739,10 @@ mod macos {
             (
                 "selection_on_accent",
                 Box::new(crate::selection_on_accent::scenario_selection_on_accent),
+            ),
+            (
+                "graph_selection_wash",
+                Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
             ),
             (
                 "repo_tabs_neutral",
@@ -3701,6 +3719,18 @@ mod macos {
             (
                 "split_diff_keyboard_order",
                 Box::new(crate::diff_keyboard::scenario_split_diff_keyboard_order),
+            ),
+            (
+                "diff_selection_revision",
+                Box::new(crate::diff_selection_revision::scenario_diff_selection_revision),
+            ),
+            (
+                "diff_split_unicode_badge",
+                Box::new(crate::diff_split_unicode_badge::scenario_diff_split_unicode_badge),
+            ),
+            (
+                "diff_line_ending_annotation",
+                Box::new(crate::diff_line_ending_annotation::scenario_diff_line_ending_annotation),
             ),
             (
                 "hunk_staging_content_identity",

@@ -44,6 +44,9 @@ pub mod diff_presentation;
 pub mod diff_controls;
 
 #[cfg(feature = "gui-e2e")]
+pub mod diff_content;
+
+#[cfg(feature = "gui-e2e")]
 pub mod pr_detail;
 
 #[cfg(feature = "gui-e2e")]
@@ -538,13 +541,18 @@ pub fn app_notice_is_acknowledgeable(app: &KagiApp) -> bool {
 
 #[cfg(feature = "gui-e2e")]
 pub fn seed_diff_selection() {
-    super::diff_selection::begin(u64::MAX, 0);
-    super::diff_selection::set_text(u64::MAX, "selected".to_string());
+    let key = super::diff_selection::SelectionKey::new(
+        super::diff_selection::SelectionOwner::Test,
+        Default::default(),
+        Default::default(),
+    );
+    super::diff_selection::begin(key, 0);
+    super::diff_selection::set_text(key, "selected".to_string());
 }
 
 #[cfg(feature = "gui-e2e")]
 pub fn diff_selection_present() -> bool {
-    super::diff_selection::selected_text().is_some()
+    super::diff_selection::has_selection()
 }
 #[cfg(feature = "gui-e2e")]
 pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {

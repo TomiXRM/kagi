@@ -19,6 +19,17 @@ pub enum DiffLineKind {
     Removed,
 }
 
+/// The exact terminator of a raw diff line, independent of display text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineEnding {
+    /// A single line feed (`\n`).
+    Lf,
+    /// A carriage return followed by a line feed (`\r\n`).
+    CrLf,
+    /// No final line feed; a trailing bare CR remains content.
+    None,
+}
+
 /// One line in a diff hunk.
 #[derive(Debug, Clone)]
 pub struct DiffLine {
@@ -30,6 +41,30 @@ pub struct DiffLine {
     pub old_lineno: Option<u32>,
     /// 1-based line number in the new file, if applicable.
     pub new_lineno: Option<u32>,
+}
+
+impl DiffLine {
+    /// Identify the terminator without changing raw patch content.
+    pub fn line_ending(&self) -> LineEnding {
+        if self.content.ends_with("\r\n") {
+            LineEnding::CrLf
+        } else if self.content.ends_with('\n') {
+            LineEnding::Lf
+        } else {
+            LineEnding::None
+        }
+    }
+
+    /// Borrow content without exactly one LF/CRLF terminator.
+    ///
+    /// A bare CR, preceding CRs, whitespace and other content are preserved.
+    /// Raw content remains available for patch identity and approval.
+    pub fn display_content(&self) -> &str {
+        let Some(content) = self.content.strip_suffix('\n') else {
+            return &self.content;
+        };
+        content.strip_suffix('\r').unwrap_or(content)
+    }
 }
 
 /// A contiguous block of changes in a file diff.
@@ -182,6 +217,45 @@ pub fn split_pairs(kinds: &[DiffLineKind]) -> Vec<SplitPair> {
     out
 }
 
+/// Identify line-ending-only replacements, aligned with raw hunk-line indices.
+///
+/// As in [`split_pairs`], each Removed run is paired index-wise with an
+/// immediately following Added run. Mark both sides only when their visible
+/// content is identical but their terminators differ. Context, unpaired tails
+/// and ordinary text changes remain unmarked. Raw content is never rewritten.
+pub fn line_ending_changes(lines: &[DiffLine]) -> Vec<bool> {
+    let mut changed = vec![false; lines.len()];
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind != DiffLineKind::Removed {
+            i += 1;
+            continue;
+        }
+        let removed_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Removed {
+            i += 1;
+        }
+        let added_start = i;
+        while i < lines.len() && lines[i].kind == DiffLineKind::Added {
+            i += 1;
+        }
+        let paired = (added_start - removed_start).min(i - added_start);
+        for offset in 0..paired {
+            let old_index = removed_start + offset;
+            let new_index = added_start + offset;
+            let old = &lines[old_index];
+            let new = &lines[new_index];
+            if old.line_ending() != new.line_ending()
+                && old.display_content() == new.display_content()
+            {
+                changed[old_index] = true;
+                changed[new_index] = true;
+            }
+        }
+    }
+    changed
+}
+
 /// The complete diff for one file in a commit.
 #[derive(Debug, Clone)]
 pub struct FileDiff {
@@ -195,6 +269,141 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
     /// `true` if git detected the file as binary (no text diff available).
     pub is_binary: bool,
+}
+
+#[cfg(test)]
+mod line_ending_tests {
+    use super::DiffLineKind::{Added as A, Context as C, Removed as R};
+    use super::{line_ending_changes, DiffLine, DiffLineKind, Hunk, LineEnding};
+
+    fn line(kind: DiffLineKind, content: &str) -> DiffLine {
+        DiffLine {
+            kind,
+            content: content.to_owned(),
+            old_lineno: None,
+            new_lineno: None,
+        }
+    }
+
+    #[test]
+    fn metadata_strips_exactly_one_terminator_and_preserves_other_content() {
+        for (raw, ending, visible) in [
+            ("hello\n", LineEnding::Lf, "hello"),
+            ("hello\r\n", LineEnding::CrLf, "hello"),
+            ("hello", LineEnding::None, "hello"),
+            ("", LineEnding::None, ""),
+            ("\n", LineEnding::Lf, ""),
+            ("\r\n", LineEnding::CrLf, ""),
+            ("hello\r", LineEnding::None, "hello\r"),
+            ("hello\r\r\n", LineEnding::CrLf, "hello\r"),
+            ("hello\n\n", LineEnding::Lf, "hello\n"),
+            ("hello\r\n\r\n", LineEnding::CrLf, "hello\r\n"),
+            ("日本語 \t\r\n", LineEnding::CrLf, "日本語 \t"),
+        ] {
+            let value = line(C, raw);
+            assert_eq!(value.line_ending(), ending, "{raw:?}");
+            assert_eq!(value.display_content(), visible, "{raw:?}");
+            assert_eq!(value.content, raw, "metadata must not rewrite raw content");
+        }
+    }
+
+    #[test]
+    fn every_ending_only_transition_marks_both_sides() {
+        for old in ["same\n", "same\r\n", "same"] {
+            for new in ["same\n", "same\r\n", "same"] {
+                assert_eq!(
+                    line_ending_changes(&[line(R, old), line(A, new)]),
+                    vec![old != new; 2],
+                    "{old:?} -> {new:?}"
+                );
+            }
+        }
+        assert_eq!(
+            line_ending_changes(&[line(R, "\n"), line(A, "\r\n")]),
+            vec![true, true]
+        );
+    }
+
+    #[test]
+    fn text_changes_and_bare_carriage_returns_are_not_ending_only() {
+        for (old, new) in [
+            ("before\n", "after\r\n"),
+            ("same \n", "same\r\n"),
+            ("same\t\n", "same\r\n"),
+            ("same\r", "same\n"),
+            ("same\r\r\n", "same\n"),
+        ] {
+            assert_eq!(
+                line_ending_changes(&[line(R, old), line(A, new)]),
+                vec![false, false],
+                "{old:?} -> {new:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn replacement_runs_pair_index_wise_without_content_search() {
+        let lines = [
+            line(R, "first\n"),
+            line(R, "second\n"),
+            line(A, "second\r\n"),
+            line(A, "first\r\n"),
+        ];
+        assert_eq!(line_ending_changes(&lines), vec![false; 4]);
+    }
+
+    #[test]
+    fn unbalanced_replacements_mark_only_matching_paired_lines() {
+        let lines = [
+            line(R, "same\n"),
+            line(R, "before\n"),
+            line(A, "same\r\n"),
+            line(A, "after\r\n"),
+            line(A, "tail\r\n"),
+        ];
+        assert_eq!(
+            line_ending_changes(&lines),
+            vec![true, false, true, false, false]
+        );
+        let lines = [line(R, "same\r\n"), line(R, "tail\n"), line(A, "same\n")];
+        assert_eq!(line_ending_changes(&lines), vec![true, false, true]);
+    }
+
+    #[test]
+    fn context_and_unpaired_runs_never_receive_annotations() {
+        let lines = [
+            line(A, "same\r\n"),
+            line(R, "same\n"),
+            line(C, "context\r\n"),
+            line(A, "same\r\n"),
+            line(C, "same\n"),
+            line(R, "other\n"),
+            line(A, "other"),
+        ];
+        assert_eq!(
+            line_ending_changes(&lines),
+            vec![false, false, false, false, false, true, true]
+        );
+        assert!(line_ending_changes(&[]).is_empty());
+    }
+
+    #[test]
+    fn metadata_leaves_raw_hunk_content_and_approval_identity_untouched() {
+        let hunk = Hunk {
+            old_range: (3, 1),
+            new_range: (3, 1),
+            lines: vec![line(R, "same\r\n"), line(A, "same\n")],
+            content_identity: Some(([17; 32], [29; 32])),
+        };
+        let approval = hunk.approval();
+        assert_eq!(line_ending_changes(&hunk.lines), vec![true, true]);
+        assert_eq!(hunk.lines[0].display_content(), "same");
+        assert_eq!(hunk.lines[1].display_content(), "same");
+        assert_eq!(hunk.lines[0].content, "same\r\n");
+        assert_eq!(hunk.lines[1].content, "same\n");
+        assert_eq!(hunk.content_identity, Some(([17; 32], [29; 32])));
+        assert_eq!(hunk.approval(), approval);
+    }
 }
 
 #[cfg(test)]

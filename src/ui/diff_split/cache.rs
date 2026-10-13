@@ -129,6 +129,8 @@ mod tests {
             text: format!("{sigil}{content}").into(),
             old_lineno: None,
             new_lineno: None,
+            line_ending: kagi_domain::diff::LineEnding::None,
+            line_ending_changed: false,
             highlights: Vec::new(),
         }
     }

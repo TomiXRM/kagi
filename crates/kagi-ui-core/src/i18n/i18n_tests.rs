@@ -6,6 +6,18 @@ use parking_lot::Mutex;
 pub(super) static LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+fn diff_line_ending_annotations_are_localized_in_both_languages() {
+    for (message, english, japanese) in [
+        (Msg::DiffLineEndingLf, "LF line ending", "LF 改行"),
+        (Msg::DiffLineEndingCrLf, "CRLF line ending", "CRLF 改行"),
+        (Msg::DiffLineEndingNone, "No line ending", "改行なし"),
+    ] {
+        assert_eq!(message.t_for(Lang::En), english);
+        assert_eq!(message.t_for(Lang::Ja), japanese);
+    }
+}
+
+#[test]
 fn shortcuts_remap_help_localizes_prose_and_preserves_config_syntax() {
     let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
     let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);

@@ -195,5 +195,63 @@ pub fn oplog(cx: &mut VisualTestAppContext) {
     inspect(cx, true);
 }
 pub fn issues(cx: &mut VisualTestAppContext) {
+    narrow_issue_metadata(cx);
     inspect(cx, false);
+}
+
+fn narrow_issue_metadata(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom"]);
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    crate::pr_detail_adaptive::resize(cx, window, (1392., 883.));
+    let mut page = crate::lists_keyboard::page();
+    page.issues.truncate(1);
+    page.issues[0].number = 12345;
+    page.issues[0].title = "Long issue title 日本語 ".repeat(30);
+    page.issues[0].comment_count = 1234;
+    page.issues[0].updated_at = "12mo ago".into();
+    KagiApp::queue_issue_list_fetch_for_e2e(gpui::Task::ready(Ok(page)));
+    app.update(cx, |app, cx| {
+        app.seed_issue_composer_for_e2e(cx);
+        app.show_issues_mode(cx);
+    });
+    for lang in [Lang::En, Lang::Ja] {
+        for slug in ["apple-light", "apple-dark"] {
+            for zoom in [1., 1.67] {
+                for width in [120., 160.] {
+                    theme::set_zoom(zoom);
+                    app.update(cx, |app, cx| {
+                        app.set_lang(lang, cx);
+                        app.set_theme(slug, cx);
+                        app.sidebar.width = width;
+                        cx.notify();
+                    });
+                    draw(cx, window);
+                    let row =
+                        e2e::control_bounds(window.window_id(), "issue-mode-card-12345").unwrap();
+                    let activity =
+                        e2e::control_paint(window.window_id(), "issue-activity-12345").unwrap();
+                    let number =
+                        e2e::control_paint(window.window_id(), "issue-number-12345").unwrap();
+                    let expected_height = theme::scaled_px(18.) + theme::scaled_px(13.) + px(16.);
+                    assert!(
+                        (row.size.height - expected_height).abs() <= px(1.),
+                        "narrow metadata preserves the two-line card height"
+                    );
+                    assert!(number.bounds.right() <= row.right() && number.bounds.right() <= number.mask.right(),
+                        "sidebar {width}/{zoom}: #12345 must fit inside row and paint mask: number {:?}, row {:?}, mask {:?}", number.bounds, row, number.mask);
+                    assert!(
+                        activity.bounds.right() <= number.bounds.left(),
+                        "activity must yield width to #number"
+                    );
+                    assert!(
+                        activity.ellipsis,
+                        "narrow activity uses truncation rather than losing the issue number"
+                    );
+                }
+            }
+        }
+    }
+    unmount(cx, app, window);
 }

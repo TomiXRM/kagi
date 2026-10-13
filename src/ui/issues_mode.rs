@@ -355,7 +355,12 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> AnyEl
                                 })
                                 .child(
                                     div()
-                                        .flex_shrink_0()
+                                        .flex_shrink(1.)
+                                        .min_w(px(0.))
+                                        // Expand only the clip, not the metadata line's layout slot.
+                                        .py(theme::scaled_px(2.))
+                                        .my(theme::scaled_px(-2.))
+                                        .truncate()
                                         .child(safe_text(&format!(
                                             "{age} · {}",
                                             super::i18n::issue_comments(issue.comment_count)

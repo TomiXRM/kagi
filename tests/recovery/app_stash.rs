@@ -766,6 +766,20 @@ pub fn scenario_stash_apply_conflict_preview(cx: &mut VisualTestAppContext) {
             plan.warnings
         );
     });
+    e2e::clear_control_bounds(window.window_id(), "stash-apply-warning");
+    kagi::ui::take_stash_warning_glyph_for_e2e();
+    crate::recovery_operations::paint(cx, window);
+    assert!(
+        e2e::control_paint(window.window_id(), "stash-apply-warning").is_some(),
+        "Apply's warning must render outside the collapsed recovery disclosure (#652)"
+    );
+    let (role, name) = kagi::ui::dialog_a11y::recorded_note("stash-apply-warning-0").unwrap();
+    assert_eq!(role, gpui::Role::Note);
+    assert!(!name.is_empty());
+    assert_eq!(
+        kagi::ui::take_stash_warning_glyph_for_e2e(),
+        Some("\u{26a0}")
+    );
 
     unmount(cx, app, window);
 }

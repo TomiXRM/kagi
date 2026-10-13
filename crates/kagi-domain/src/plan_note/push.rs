@@ -42,8 +42,8 @@ pub enum PushNote {
     /// blocker (`plan_set_upstream`) — the given upstream string is not a
     /// `remote/branch`-shaped name.
     UpstreamFormatInvalid,
-    /// warning (`plan_set_upstream`) — the named remote-tracking branch has
-    /// no local ref yet; the config can still be set.
+    /// blocker (`plan_set_upstream`) — the named remote-tracking branch has
+    /// no local ref; setting upstream requires fetching it first.
     UpstreamNotPresentLocally { upstream: String },
 }
 
@@ -265,7 +265,7 @@ mod tests {
             }
             .message_en(),
             "Remote-tracking branch 'origin/feat/x' is not present locally; \
-             config can still be set."
+             fetch it before setting upstream."
         );
     }
 

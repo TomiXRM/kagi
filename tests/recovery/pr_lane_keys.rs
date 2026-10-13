@@ -101,6 +101,32 @@ fn native_fill(cx: &mut VisualTestAppContext, cell: &Cell, id: &str) -> [u8; 4] 
     })
     .unwrap()
 }
+fn reveal_row(cx: &mut VisualTestAppContext, cell: &Cell, id: &str) -> gpui::Bounds<gpui::Pixels> {
+    for _ in 0..32 {
+        e2e::clear_control_bounds(cell.win.window_id(), id);
+        cell.paint(cx);
+        let viewport = cell.bounds("pr-lane-body");
+        let bounds = e2e::control_bounds(cell.win.window_id(), id);
+        if let Some(bounds) = bounds {
+            if bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom() {
+                return bounds;
+            }
+        }
+        let dy = bounds
+            .map(|bounds| f32::from(viewport.center().y - bounds.center().y))
+            .unwrap_or(-80.);
+        cx.simulate_event(
+            cell.win,
+            gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+    }
+    panic!("{id} must be reachable through the native lane viewport");
+}
 pub fn scenario_pr_lane_selected(cx: &mut VisualTestAppContext) {
     matrix_lane(cx, |cx, cell, _| {
         lane(cx, cell);
@@ -109,7 +135,8 @@ pub fn scenario_pr_lane_selected(cx: &mut VisualTestAppContext) {
         for commit in commits.iter().take(2) {
             let ix = rows.iter().position(|row| row.id == commit.id).unwrap();
             let id = format!("pr-lane-row-{ix}");
-            cx.simulate_click(cell.win, cell.bounds(&id).center(), gpui::Modifiers::none());
+            let bounds = reveal_row(cx, cell, &id);
+            cx.simulate_click(cell.win, bounds.center(), gpui::Modifiers::none());
             cell.paint(cx);
             assert_eq!(selected(cx, cell).as_deref(), Some(commit.id.0.as_str()));
             let list = list_a11y::recorded_list("pr-lane-body").unwrap();
@@ -167,7 +194,8 @@ pub fn scenario_pr_lane_selected(cx: &mut VisualTestAppContext) {
             .find(|(_, row)| !commits.iter().any(|c| c.id == row.id))
             .unwrap();
         let id = format!("pr-lane-row-{}", context.0);
-        cx.simulate_click(cell.win, cell.bounds(&id).center(), gpui::Modifiers::none());
+        let bounds = reveal_row(cx, cell, &id);
+        cx.simulate_click(cell.win, bounds.center(), gpui::Modifiers::none());
         cell.paint(cx);
         assert_eq!(
             selected(cx, cell),

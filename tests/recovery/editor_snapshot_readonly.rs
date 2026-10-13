@@ -360,6 +360,20 @@ fn return_current(cx: &mut VisualTestAppContext, mounted: &Mounted) {
 fn exercise(cx: &mut VisualTestAppContext, repo: &std::path::Path, original: &str, case: &Case) {
     eprintln!("[gui-e2e] snapshot case: {case:?}");
     let mounted = setup(cx, repo, case);
+    if case.dimensions.0 == 940. && case.zoom > 1. {
+        // A desktop window's default panel preference survives shrinking the
+        // window. Presentation must yield to the compound Editor minimum.
+        mounted.app.update(cx, |app, cx| {
+            app.bottom_panel_height = 920. * 0.18;
+            cx.notify();
+        });
+        paint(cx, mounted.window);
+        assert_eq!(
+            cx.read(|cx| mounted.app.read(cx).bottom_panel_height),
+            920. * 0.18,
+            "fitting must not overwrite the larger preferred panel height"
+        );
+    }
     assert_shortcuts(cx, &mounted); // commit selection left root focus; no body click yet.
     let bounds = assert_header(cx, &mounted);
     cx.simulate_click(

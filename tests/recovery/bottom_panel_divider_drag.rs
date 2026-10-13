@@ -46,7 +46,12 @@ fn move_to(cx: &mut VisualTestAppContext, window: AnyWindowHandle, position: Poi
     }
 }
 
-fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<KagiApp>) {
+fn drag(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<KagiApp>,
+    editor: bool,
+) {
     let before = cx.read(|cx| app.read(cx).bottom_panel_height);
     let setting_before = kagi_ui_core::settings::read_setting("bottom_panel_height");
     let divider = e2e::control_bounds(window.window_id(), "divider-bottom-panel").unwrap();
@@ -59,6 +64,59 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<Kag
         before,
         "press without moving must preserve the body height"
     );
+    // Calculate the contractual cap independently of the rendered/dragged
+    // value. Editor reserves compound content plus its shell; other modes
+    // retain the 60%-of-viewport body limit.
+    let scale = theme::scaled(1.);
+    let viewport = f32::from(
+        cx.update_window(window, |_, window, _| window.viewport_size().height)
+            .unwrap(),
+    );
+    let graph_max = (viewport * 0.6 / scale).max(80.);
+    let editor_budget = if kagi_ui_core::settings::toolbar_display(&theme::theme().slug)
+        == kagi_ui_core::settings::ToolbarDisplay::IconOnly
+    {
+        52.
+    } else {
+        60.
+    } + 36.
+        + 22.
+        + 200.
+        + 32.;
+    let max = if editor {
+        graph_max.min((viewport / scale - editor_budget).max(80.))
+    } else {
+        graph_max
+    };
+    let presented = f32::from(
+        e2e::control_bounds(window.window_id(), "bottom-panel")
+            .unwrap()
+            .size
+            .height,
+    ) / scale
+        - 32.;
+    assert!(
+        (presented - before.clamp(80., max)).abs() <= 0.5,
+        "presentation must fit the independent workspace budget"
+    );
+    if (max - presented).abs() <= 0.5 {
+        assert!(editor, "only the compact Editor cell begins at its cap");
+        assert!(
+            (max - (viewport / scale - editor_budget).max(80.)).abs() <= 0.5,
+            "the capped cell must follow from the compound Editor budget"
+        );
+    }
+    move_to(
+        cx,
+        window,
+        point(start.x, start.y - px(theme::scaled(2000.))),
+    );
+    assert!(
+        (cx.read(|cx| app.read(cx).bottom_panel_height) - max).abs() <= 0.5,
+        "upward overshoot must reach the independently calculated cap"
+    );
+    move_to(cx, window, start);
+    assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), before);
     for step in [5., 20., 0., 40., 2000., -2000., 40.] {
         move_to(
             cx,
@@ -66,14 +124,13 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<Kag
             point(start.x, start.y - px(theme::scaled(step))),
         );
         let actual = cx.read(|cx| app.read(cx).bottom_panel_height);
-        let max = cx
-            .update_window(window, |_, window, _| {
-                f32::from(window.viewport_size().height) * 0.6 / theme::scaled(1.)
-            })
-            .unwrap()
-            .max(80.);
+        let expected = if step == 0. {
+            before
+        } else {
+            (presented + step).clamp(80., max)
+        };
         assert!(
-            (actual - (before + step).clamp(80., max)).abs() <= 0.5,
+            (actual - expected).abs() <= 0.5,
             "step {step}: body height {actual} must use the unchanged press origin"
         );
         assert_eq!(
@@ -87,16 +144,25 @@ fn drag(cx: &mut VisualTestAppContext, window: AnyWindowHandle, app: &Entity<Kag
         if (20. ..=40.).contains(&step) {
             let painted = e2e::control_bounds(window.window_id(), "divider-bottom-panel").unwrap();
             assert!(
-                (f32::from(painted.center().y - start.y) + theme::scaled(step)).abs() <= 1.,
+                (f32::from(painted.center().y - start.y) + theme::scaled(expected - presented))
+                    .abs()
+                    <= 1.,
                 "painted divider must continuously track the pointer"
             );
+            if max > presented + 0.5 {
+                assert!(
+                    actual > presented + 0.5,
+                    "room to grow must produce a real drag"
+                );
+                assert!(painted.center().y < start.y, "divider must visibly move");
+            }
         }
     }
     let end = point(start.x, start.y - px(theme::scaled(40.)));
     let after = cx.read(|cx| app.read(cx).bottom_panel_height);
     assert!(
-        (after - before - 40.).abs() <= 0.5,
-        "drag +40 must add 40 to the body height: before={before}, after={after}"
+        (after - (presented + 40.).clamp(80., max)).abs() <= 0.5,
+        "drag +40 must use the presented origin and workspace cap: before={before}, after={after}"
     );
     cx.simulate_mouse_up(window, end, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
@@ -221,7 +287,7 @@ pub fn scenario_bottom_panel_divider_drag(cx: &mut VisualTestAppContext) {
                 });
                 cx.run_until_parked();
                 draw(cx, window);
-                drag(cx, window, &app);
+                drag(cx, window, &app, mode == 3);
             }
             unmount(cx, app, window);
         }

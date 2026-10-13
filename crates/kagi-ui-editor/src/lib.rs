@@ -2477,11 +2477,13 @@ fn render_editor_workspace(
     // T-WS-EDITOR-005 finding #3: `show_tree` (pushed by `render_body` from
     // the resolver's `layout.left`) hides the tree pane AND its divider —
     // View → Toggle Sidebar now actually hides the file tree in Editor mode.
-    let (tree_width, hunks_width) = tabs::pane_widths(view, window.viewport_size().width);
+    let (tree_width, hunks_width) = tabs::pane_widths(view, view.pane_bounds(window).size.width);
     let body = div()
+        .relative()
         .flex()
         .flex_row()
         .flex_1()
+        .min_w(px(0.))
         .min_h(px(0.))
         .when(view.show_tree, |el| {
             el.child(render_tree_pane(view, tree_width, cx))
@@ -2498,7 +2500,8 @@ fn render_editor_workspace(
                 .children(bottom_panel),
         )
         .child(hunks_divider)
-        .child(render_hunks_pane(view, hunks_width, cx));
+        .child(render_hunks_pane(view, hunks_width, cx))
+        .child(tabs::measure_pane_bounds(view, cx));
 
     div()
         .id("editor-workspace")

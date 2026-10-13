@@ -570,6 +570,13 @@ pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
         );
     });
     acknowledge_panicked_writer(&app, cx);
+    // Acknowledging the session directly does not dismiss its visible notice.
+    // Normal modal routing must remain inert until that notice is closed.
+    app.update(cx, |app, cx| app.save_editor_file(cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.read(cx).dirty));
+    assert!(cx.read(|cx| !app.read(cx).app_sessions.has_leases()));
+    app.update(cx, |app, _| app.clear_app_notice());
     app.update(cx, |app, cx| app.save_editor_file(cx));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

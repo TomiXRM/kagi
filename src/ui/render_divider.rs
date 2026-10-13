@@ -143,9 +143,11 @@ impl KagiApp {
                 else {
                     return;
                 };
-                let viewport_h = f32::from(window.viewport_size().height);
                 let cursor_y = f32::from(event.event.position.y);
-                let max_h = ((viewport_h * BOTTOM_PANEL_MAX_FRAC) / z).max(BOTTOM_PANEL_MIN_H);
+                let max_h = super::render_bottom::max_body_height(
+                    window,
+                    self.workspace_mode() == workspace_mode::WorkspaceMode::Editor,
+                );
                 let new_h =
                     (origin_height + (origin_y - cursor_y) / z).clamp(BOTTOM_PANEL_MIN_H, max_h);
                 // Returning to the press position restores a preference that
@@ -276,18 +278,17 @@ impl KagiApp {
                 }
             }
             DividerKind::EditorTree => {
-                // T-WS-EDITOR-004: the Editor Workspace's left tree pane
-                // occupies the sidebar's slot (LeftPane::FileTree hides the
-                // real sidebar in Editor mode), so its divider sits at
-                // x = tree_w * physical scale from the window's left edge.
+                // Fit and input share the actual Editor body, whose left edge
+                // can sit after the host's Compact rail.
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
                 entity.update(cx, |v, cx| {
+                    let bounds = v.pane_bounds(window);
                     let new_w = v
                         .pane_width_from_rendered(
-                            (cursor_x - 2.0 * z) / z,
-                            window.viewport_size().width,
+                            (cursor_x - f32::from(bounds.left()) - 2.0 * z) / z,
+                            bounds.size.width,
                         )
                         .clamp(EDITOR_TREE_MIN, EDITOR_TREE_MAX);
                     if (new_w - v.tree_w).abs() > 0.5 {
@@ -297,19 +298,17 @@ impl KagiApp {
                 });
             }
             DividerKind::EditorHunks => {
-                // T-WS-EDITOR-004: the hunks pane is the rightmost slot and
-                // this divider sits at its LEFT edge, so dragging right
-                // SHRINKS it — same geometry as the Panel arm (measure from
-                // the viewport's right edge).
+                // The hunks divider sits at the pane's LEFT edge; dragging
+                // right shrinks it, measured from the Editor body's right edge.
                 let Some(entity) = self.ui().editor_workspace.clone() else {
                     return;
                 };
                 entity.update(cx, |v, cx| {
-                    let viewport = window.viewport_size();
+                    let bounds = v.pane_bounds(window);
                     let new_w = v
                         .pane_width_from_rendered(
-                            (f32::from(viewport.width) - cursor_x - 2.0 * z) / z,
-                            viewport.width,
+                            (f32::from(bounds.right()) - cursor_x - 2.0 * z) / z,
+                            bounds.size.width,
                         )
                         .clamp(EDITOR_HUNKS_MIN, EDITOR_HUNKS_MAX);
                     if (new_w - v.hunks_w).abs() > 0.5 {

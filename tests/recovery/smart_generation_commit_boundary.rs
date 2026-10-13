@@ -68,6 +68,8 @@ pub fn scenario_smart_generation_commit_boundary(cx: &mut VisualTestAppContext) 
     assert_message(cx, &panel, "Explicit B", "New generation");
     drop(panel);
     unmount(cx, app, window);
+    discarded_panel_generation(cx);
+    complete_commit_closes_panel(cx);
     eprintln!("[gui-e2e] PASS smart_generation_commit_boundary");
 }
 
@@ -142,4 +144,78 @@ pub(super) fn generate(
     })
     .unwrap();
     paint(cx, window);
+}
+
+fn discarded_panel_generation(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("staged"), "staged\n").unwrap();
+    git(fixture.path(), &["add", "staged"]);
+    let case = Case {
+        locale: "en",
+        theme: "apple-light",
+        dimensions: (1392., 883.),
+        zoom: 1.,
+    };
+    let (app, window) = open(cx, fixture.path(), case);
+    let timer = cx.background_executor.clone();
+    e2e::queue_smart_generation(cx.background_executor.spawn(async move {
+        timer.timer(std::time::Duration::from_secs(10)).await;
+        Some(("Discarded panel's result".into(), true))
+    }));
+    generate(cx, window, &app);
+    let weak = cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().downgrade());
+    app.update(cx, |app, cx| {
+        let ui = app.ui_mut().unwrap();
+        ui.commit_panel = None;
+        ui.commit_panel_open = false;
+        cx.notify();
+    });
+    paint(cx, window);
+    assert!(
+        weak.upgrade().is_none(),
+        "discard must release the initiating panel"
+    );
+    cx.advance_clock(std::time::Duration::from_secs(10));
+    paint(cx, window);
+    assert!(!cx.read(|cx| app.read(cx).ui().smart_commit_generating));
+    assert!(cx.read(|cx| app.read(cx).ui().smart_commit_generation.is_none()));
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+    })
+    .unwrap();
+    paint(cx, window);
+    assert_eq!(labels::accessible_disabled("cp-smart-suggest"), Some(false));
+    unmount(cx, app, window);
+}
+
+fn complete_commit_closes_panel(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("staged"), "staged\n").unwrap();
+    git(fixture.path(), &["add", "staged"]);
+    let (app, window) = open(
+        cx,
+        fixture.path(),
+        Case {
+            locale: "en",
+            theme: "apple-light",
+            dimensions: (1392., 883.),
+            zoom: 1.,
+        },
+    );
+    let panel = cx
+        .read(|cx| app.read(cx).ui().commit_panel.clone())
+        .unwrap();
+    edit(cx, window, &panel, "Commit all staged files", "");
+    app.update(cx, |app, cx| {
+        app.open_commit_plan_modal(app.active_session().unwrap(), cx)
+    });
+    paint(cx, window);
+    app.update(cx, |app, cx| app.start_commit(cx));
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).ui().commit_panel.is_none()),
+        "a consumed message cannot retain an empty commit panel during reload"
+    );
+    drop(panel);
+    unmount(cx, app, window);
 }

@@ -35,8 +35,6 @@ pub fn scenario_smart_replace_undo(cx: &mut VisualTestAppContext) {
                 "Earlier title",
                 "Earlier body\n# Keep template",
             );
-            // Input groups typing by wall clock; these are separate user edits.
-            std::thread::sleep(std::time::Duration::from_millis(1100));
             edit(
                 cx,
                 window,
@@ -44,7 +42,6 @@ pub fn scenario_smart_replace_undo(cx: &mut VisualTestAppContext) {
                 "Handwritten 日本語",
                 "Long handwritten body\nSecond line\n# Keep template",
             );
-            std::thread::sleep(std::time::Duration::from_millis(1100));
             if path == "rule" {
                 cx.update_window(window, |_, window, cx| {
                     app.update(cx, |app, cx| {

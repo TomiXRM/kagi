@@ -665,7 +665,7 @@ impl KagiApp {
                         .as_ref()
                         .is_some_and(|panel| panel.read(cx).repo_path == repo)
                         && self.panel_draft_branch(cx) == branch;
-                    let cleared = crate::ui::commit_panel::clear_committed_draft(
+                    let cleared = crate::ui::commit_panel::composer::clear_committed_draft(
                         &repo,
                         &branch,
                         &frozen,

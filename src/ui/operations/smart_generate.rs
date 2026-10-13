@@ -122,6 +122,11 @@ impl KagiApp {
                 // the tab closed, so a completion that lost its panel writes
                 // nothing instead of resurrecting it (#722 P1).
                 let Some(cp_entity) = cp_weak.upgrade() else {
+                    ui.smart_commit_generating = false;
+                    ui.smart_commit_generation = None;
+                    if app.active_session() == Some(owner) {
+                        cx.notify();
+                    }
                     return;
                 };
                 let stale = cp_entity.read(cx).gen != gen;

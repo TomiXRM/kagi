@@ -116,6 +116,19 @@ The generation-counter guard stays: a result whose `gen` no longer matches has
 been superseded by a newer click and is still dropped. Only the
 "is it still empty?" check is gone.
 
+#### Undo and the consumed-message boundary (#1434/#1436, 2026-10-13)
+
+Explicit generation replaces both fields through the pinned Input's
+Undo-preserving `replace_all` API. Rule generation, LLM completion and rule
+fallback share this path and retain the loaded template comment block. Standard
+Input Undo restores the preceding handwritten field, Redo restores generated
+text, and earlier edits remain in history. Initial draft load and successful
+commit clear still use `set_value`: those are lifecycle changes, not Smart edits.
+Successful message consumption also advances the panel's generation guard and
+drops any queued result. A generation for the consumed commit cannot land in the
+next draft, even if unstaged work retains the same panel entity.
+
+
 ### The Template toggle
 
 A `commit.template` is opt-out per user, not per repo: the toggle at the bottom

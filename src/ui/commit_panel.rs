@@ -436,9 +436,14 @@ pub struct CommitPanelView {
     /// A smart-commit message generated on a background thread, queued for the
     /// next render to push into the input (which needs `&mut Window`).
     pub pending_smart_msg: Option<String>,
-    /// Last commit-message value mirrored to the per-branch draft file
-    /// (T-COMMIT-007). Compared each render to detect edits cheaply.
+    /// Successful consumption clears Inputs without recording a Smart edit.
+    pub pending_message_clear: bool,
+    /// Last successfully persisted commit message; differs from edits while dirty.
     pub last_draft_value: String,
+    /// Last observed edit, separate from the successful persistence baseline.
+    pub draft_edit_value: String,
+    /// Failed persistence detail; kept until a successful save or consumption.
+    pub draft_save_error: Option<String>,
     /// Debounce generation for the draft autosave writer.
     pub draft_save_gen: u64,
     /// T-ENTITY-COMMITPANEL-001 (correction #5): smart-commit generation guard.
@@ -527,6 +532,9 @@ impl CommitPanelView {
             commit_template: None,
             pending_smart_msg: None,
             last_draft_value: String::new(),
+            pending_message_clear: false,
+            draft_edit_value: String::new(),
+            draft_save_error: None,
             draft_save_gen: 0,
             gen: 0,
             input_lang: kagi_ui_core::i18n::lang(),
@@ -727,14 +735,21 @@ impl KagiApp {
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
                 v.last_draft_value = String::new();
+                v.draft_edit_value.clear();
+                v.draft_save_error = None;
+                v.gen = v.gen.wrapping_add(1);
                 // Supersede an in-flight debounced save of the consumed text;
                 // it must not restore the draft after clear_draft succeeded.
                 v.draft_save_gen = v.draft_save_gen.wrapping_add(1);
-                // The `InputState`s need a `Window`; the panel's own
-                // window-bearing pass applies this on the next frame (the same
-                // hand-off smart-commit uses).
-                v.pending_smart_msg = Some(String::new());
+                // Consumption is a lifecycle reset, not an undoable Smart edit.
+                v.pending_smart_msg = None;
+                v.pending_message_clear = true;
                 v.state.commit_msg.clear();
+            });
+            self.with_ui(|ui| {
+                ui.smart_commit_generating = false;
+                ui.smart_commit_generation = None;
+                ui.smart_commit_status = None;
             });
         }
     }

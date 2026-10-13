@@ -3098,6 +3098,18 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_commit_footer_provider),
             ),
             (
+                "smart_generation_commit_boundary",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_generation_commit_boundary),
+            ),
+            (
+                "commit_draft_save_failure",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_draft_save_failure),
+            ),
+            (
+                "smart_replace_undo",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_smart_replace_undo),
+            ),
+            (
                 "commit_panel_coauthor_keys",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_coauthor_keys),
             ),

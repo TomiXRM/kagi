@@ -118,8 +118,6 @@ impl KagiApp {
                 let Some(ui) = app.ui.get_mut(&owner) else {
                     return;
                 };
-                ui.smart_commit_generating = false;
-                ui.smart_commit_generation = None;
                 // Upgrade only now: `release_session` dropped the entity when
                 // the tab closed, so a completion that lost its panel writes
                 // nothing instead of resurrecting it (#722 P1).
@@ -127,23 +125,26 @@ impl KagiApp {
                     return;
                 };
                 let stale = cp_entity.read(cx).gen != gen;
+                // Superseded/consumed work cannot alter the newer spinner,
+                // status or draft, including failed late completions.
+                if stale {
+                    return;
+                }
+                ui.smart_commit_generating = false;
+                ui.smart_commit_generation = None;
                 match out {
                     Some((msg, used_llm)) if !msg.trim().is_empty() => {
-                        // Drop only a result superseded by a newer generation.
-                        if !stale {
-                            // The Input's set_value needs `&mut Window`, which is
-                            // unavailable here. Mirror into the initiating panel
-                            // entity; its next render pushes it into the Input.
-                            cp_entity.update(cx, |v, _| {
-                                v.state.commit_msg = msg.clone();
-                                v.pending_smart_msg = Some(msg.clone());
-                            });
-                            ui.smart_commit_status = Some(if used_llm {
-                                Msg::SmartGeneratedLocal.t().to_string()
-                            } else {
-                                Msg::SmartGenerationFallback.t().to_string()
-                            });
-                        }
+                        // Input replacement needs a Window; the panel applies
+                        // this reversible edit on its next render.
+                        cp_entity.update(cx, |v, _| {
+                            v.state.commit_msg = msg.clone();
+                            v.pending_smart_msg = Some(msg.clone());
+                        });
+                        ui.smart_commit_status = Some(if used_llm {
+                            Msg::SmartGeneratedLocal.t().to_string()
+                        } else {
+                            Msg::SmartGenerationFallback.t().to_string()
+                        });
                     }
                     _ => {
                         ui.smart_commit_status = Some(Msg::SmartGenerationFailed.t().to_string());

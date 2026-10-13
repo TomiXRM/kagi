@@ -679,7 +679,7 @@ impl KagiApp {
                         // us from consuming the panel message.
                         if let Some(panel) = self.ui().commit_panel.clone() {
                             panel.update(cx, |panel, _| {
-                                if panel.repo_path == repo && panel.last_draft_value == frozen {
+                                if panel.repo_path == repo && panel.draft_edit_value == frozen {
                                     panel.draft_save_gen = panel.draft_save_gen.wrapping_add(1);
                                 }
                             });

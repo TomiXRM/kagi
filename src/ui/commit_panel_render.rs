@@ -730,6 +730,7 @@ impl CommitPanelView {
                     .child(msg_inputs)
                     .relative()
                     .child(super::e2e::measure_inside("cp-footer"))
+                    .children(controls::draft_save_feedback(self, cx))
                     // Transient smart-commit status. Its own full-width line:
                     // inside the right-aligned icon group it pushed the icons
                     // sideways as the text appeared (user report).

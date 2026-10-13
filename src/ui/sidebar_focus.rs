@@ -6,7 +6,8 @@
 //! the pane. A pane that offers no drawn row — collapsed, empty, emptied by
 //! the filter, or too short to draw one — has its header as its Tab stop
 //! instead (#981 review). Enter / Space toggle that header; opening transfers
-//! focus to the first drawn row. Left on a row collapses its pane onto the header.
+//! focus to the first drawn row. Left collapses a group, visits its parent, or
+//! collapses the pane from a top-level row; inspection-card controls are excluded.
 //!
 //! Enter / Space press a row: a branch opens its checkout plan (the current
 //! branch: jumps to it), a worktree opens or closes its inspection card (the
@@ -40,13 +41,13 @@ const WORKTREES: usize = 2;
 
 gpui::actions!(worktree_inspection, [WorktreeCardNext, WorktreeCardPrev]);
 
-gpui::actions!(sidebar_pane, [CollapseSidebarPane]);
+gpui::actions!(sidebar_pane, [SidebarTreeLeft]);
 
 pub(super) fn bind_keys(cx: &mut gpui::App) {
     cx.bind_keys([
         gpui::KeyBinding::new("tab", WorktreeCardNext, Some("WorktreeInspection")),
         gpui::KeyBinding::new("shift-tab", WorktreeCardPrev, Some("WorktreeInspection")),
-        gpui::KeyBinding::new("left", CollapseSidebarPane, Some("KagiSidebarPaneRows")),
+        gpui::KeyBinding::new("left", SidebarTreeLeft, Some("KagiSidebarPaneRows")),
     ]);
 }
 
@@ -384,13 +385,51 @@ impl KagiApp {
         cx.notify();
     }
 
-    /// A pane-scoped Left retains one roving stop and returns focus before unmount.
-    pub(super) fn collapse_sidebar_pane(
+    /// Outline Left: collapse an expanded group, visit a parent, then the pane.
+    pub(super) fn sidebar_tree_left(
         &mut self,
         pane: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.sidebar.focus.card_holds_focus(window, cx) {
+            return;
+        }
+        let focused = self.sidebar.focus.rows[pane].focused(window);
+        let Some((_, item)) = self.sidebar.focus.keys[pane]
+            .iter()
+            .find(|(key, _)| Some(key.as_str()) == focused)
+        else {
+            return;
+        };
+        let absolute = self.sidebar.pane_ranges[pane].start + 1 + item;
+        let row = &self.sidebar.rows[absolute];
+        match row {
+            SidebarRow::LocalGroupHeader {
+                key,
+                collapsed: false,
+                ..
+            }
+            | SidebarRow::RemoteHeader {
+                key,
+                collapsed: false,
+                ..
+            }
+            | SidebarRow::RemoteSubGroup {
+                key,
+                collapsed: false,
+                ..
+            } => {
+                let key = key.clone();
+                self.toggle_sidebar_group(&key, cx);
+                return;
+            }
+            _ => {}
+        }
+        if super::sidebar_a11y::level(row) > 2 {
+            self.focus_sidebar_parent(pane, absolute, window, cx);
+            return;
+        }
         let section = super::sidebar_panes::SECTIONS[pane];
         if !self.sidebar.collapsed.contains(section) {
             self.sidebar.toggle_section(section);
@@ -399,6 +438,34 @@ impl KagiApp {
         self.sidebar.focus.card = None;
         self.sidebar.focus.headers.get(pane, cx).focus(window, cx);
         cx.notify();
+    }
+
+    fn focus_sidebar_parent(
+        &self,
+        pane: usize,
+        absolute: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let body_start = self.sidebar.pane_ranges[pane].start + 1;
+        let level = super::sidebar_a11y::level(&self.sidebar.rows[absolute]);
+        let Some(parent) = (body_start..absolute)
+            .rev()
+            .find(|&index| super::sidebar_a11y::level(&self.sidebar.rows[index]) < level)
+        else {
+            return;
+        };
+        let item = parent - body_start;
+        if let Some(list) = self.sidebar.focus.lists[pane].as_deref() {
+            if let Some(slot) = self.sidebar.focus.keys[pane]
+                .iter()
+                .position(|(_, at)| *at == item)
+            {
+                list.reveal_entry(item);
+                list.focus_row(slot, window, cx);
+                cx.notify();
+            }
+        }
     }
 
     /// Enter / Space on a row: its main action (see the module docs).

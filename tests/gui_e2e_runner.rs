@@ -2614,6 +2614,10 @@ mod macos {
                 Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse),
             ),
             (
+                "sidebar_keyboard_collapse_card",
+                Box::new(crate::sidebar_groups::scenario_sidebar_keyboard_collapse_card),
+            ),
+            (
                 "sidebar_filtered_disclosure",
                 Box::new(crate::sidebar_groups::scenario_sidebar_filtered_disclosure),
             ),

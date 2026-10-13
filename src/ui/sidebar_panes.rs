@@ -286,8 +286,8 @@ fn render_pane(app: &KagiApp, index: usize, cx: &mut Context<KagiApp>) -> gpui::
     div()
         .id(("sidebar-pane", index))
         .on_action(cx.listener(
-            move |this, _: &super::sidebar_focus::CollapseSidebarPane, window, cx| {
-                this.collapse_sidebar_pane(index, window, cx);
+            move |this, _: &super::sidebar_focus::SidebarTreeLeft, window, cx| {
+                this.sidebar_tree_left(index, window, cx);
             },
         ))
         .relative()

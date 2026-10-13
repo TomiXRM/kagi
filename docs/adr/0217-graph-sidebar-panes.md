@@ -116,8 +116,13 @@ sidebar edge rather than accepting a larger geometry-test tolerance.
 ## Amendment — 2026-10-13: keyboard collapse and filtered disclosures (#1449, #1450)
 
 The five panes retain exactly one Tab stop each: a roving drawn row, or the
-header when collapsed/empty/header-only. Left on a pane row collapses that
-pane and focuses its remaining header immediately. Enter/Space on that header
+header when collapsed/empty/header-only. Outline Left first collapses a focused
+expanded group through `toggle_sidebar_group` (inert with a reason while
+filtering); on its child, Left reveals and focuses the immediate parent group.
+Only a top-level row that is not an expanded group collapses the pane and
+focuses its remaining header immediately. A worktree inspection card holding
+focus is explicitly excluded, so Left on its controls changes neither pane,
+card nor focus. Enter/Space on the pane header
 use the same `SidebarState::toggle_section` as a pointer click, including for
 an expanded empty pane. Opening still transfers focus to the first drawn row;
 an opened pane without room for a row retains header focus. The existing
@@ -126,7 +131,7 @@ collapse never changes weights or Git data.
 
 **Filtering policy: dynamic group disclosures are inert with a localized
 reason.** Matching local-prefix, remote and remote-subgroup children remain
-automatically expanded while a filter is nonempty. Pointer and Enter/Space
+automatically expanded while a filter is nonempty. Pointer, Enter/Space and Left
 activation report “Groups stay expanded while filtering. Clear the filter to
 collapse a group.” in EN/JA through the existing informational toast.
 Neither activation changes the session's normal `branch_groups_collapsed`
@@ -138,7 +143,10 @@ separate and remains available during filtering.
 
 Tier A `sidebar_keyboard_collapse` covers all five populated/empty/collapsed
 panes, Left/Enter/Space, one-stop navigation, focus return, saved mask/weights
-and remount. `sidebar_filtered_disclosure` covers each dynamic group from
+and remount, plus expanded-group collapse and child-to-parent focus legs for
+local prefixes, remotes and remote subgroups. `sidebar_keyboard_collapse_card`
+keeps inspection actions/card/focus intact on Left in the same matrix.
+`sidebar_filtered_disclosure` covers each dynamic group from
 open/closed normal states with repeated pointer and keyboard activation,
 localized reason, children/chevron/AX agreement and clear restoration.
 Both use real Git fixtures and assert zero Git writes across 940×660 and

@@ -157,7 +157,12 @@ fn populated(
         1,
         "one roving row Tab stop for expanded pane {pane}"
     );
-    focus(cx, app, window, pane, &rows[0]);
+    let top = if pane == 0 { "branch:main" } else { &rows[0] };
+    focus(cx, app, window, pane, top);
+    if pane == 1 && !app.read_with(cx, |app, _| normal_group_collapsed(app, "remote:origin")) {
+        keys(cx, window, "left");
+        paint(cx, app, window);
+    }
     keys(cx, window, "left");
     paint(cx, app, window);
     assert!(
@@ -180,6 +185,9 @@ fn pane_cycle(
     paint(cx, app, window);
     assert_saved(cx, app, 0, weights);
     assert_eq!(focused(cx, app, window).map(|(at, _)| at), Some(pane));
+    if pane == 0 {
+        focus(cx, app, window, pane, "branch:main");
+    }
     keys(cx, window, "left");
     paint(cx, app, window);
     assert_saved(cx, app, 1 << pane, weights);
@@ -209,6 +217,10 @@ pub fn scenario_sidebar_keyboard_collapse(cx: &mut VisualTestAppContext) {
         fixture.path(),
         &["update-ref", "refs/remotes/origin/topic/one", "HEAD"],
     );
+    git(
+        fixture.path(),
+        &["update-ref", "refs/remotes/origin/plain", "HEAD"],
+    );
     git(fixture.path(), &["tag", "v1"]);
     let linked = tempfile::tempdir().unwrap();
     let worktree = linked.path().join("linked");
@@ -229,6 +241,7 @@ pub fn scenario_sidebar_keyboard_collapse(cx: &mut VisualTestAppContext) {
         for zoom in [1., 1.67] {
             for language in [Lang::En, Lang::Ja] {
                 let (app, window) = mount_dimensions(cx, fixture.path(), dimensions);
+                outline_left(cx, &app, window, language, zoom);
                 for pane in 0..5 {
                     appearance(cx, &app, window, language, "apple-light", zoom, pane);
                     pane_cycle(cx, &app, window, pane);
@@ -414,7 +427,7 @@ fn filtered_group(
         "filter preserves full group identity reveal"
     );
     for keyboard in [false, true] {
-        for activation in ["enter", "space"] {
+        for activation in ["enter", "space", "left"] {
             filtered_activation(cx, app, window, (pane, key), keyboard, activation, language);
             assert_eq!(
                 app.read_with(cx, |app, _| app.ui().branch_groups_collapsed.clone()),
@@ -473,4 +486,121 @@ pub fn scenario_sidebar_filtered_disclosure(cx: &mut VisualTestAppContext) {
         "filter disclosure causes zero Git writes"
     );
     theme::set_zoom(1.);
+}
+
+fn outline_left(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    language: Lang,
+    zoom: f32,
+) {
+    for (pane, group, child) in [
+        (0, "local:topic", "branch:topic/one"),
+        (1, "remote:origin", "remote:origin/plain"),
+        (1, "remote:origin:topic", "remote:origin/topic/one"),
+    ] {
+        appearance(cx, app, window, language, "apple-light", zoom, pane);
+        app.update(cx, |app, cx| {
+            app.ui_mut().unwrap().branch_groups_collapsed.clear();
+            cx.notify();
+        });
+        paint(cx, app, window);
+        let before = layout(cx, app);
+        focus(cx, app, window, pane, &format!("group:{group}"));
+        keys(cx, window, "left");
+        paint(cx, app, window);
+        assert!(
+            !app.read_with(cx, |app, _| app.sidebar.collapsed.contains(SECTIONS[pane])),
+            "Left on an expanded group collapses the group, not its pane"
+        );
+        assert!(app.read_with(cx, |app, _| normal_group_collapsed(app, group)));
+        assert_eq!(
+            focused(cx, app, window),
+            Some((pane, format!("group:{group}")))
+        );
+        assert_eq!(layout(cx, app), before);
+        keys(cx, window, "enter");
+        paint(cx, app, window);
+        focus(cx, app, window, pane, child);
+        keys(cx, window, "left");
+        paint(cx, app, window);
+        assert_eq!(
+            focused(cx, app, window),
+            Some((pane, format!("group:{group}"))),
+            "Left on a child moves focus to its immediate parent group"
+        );
+        assert_eq!(layout(cx, app), before);
+        assert!(!app.read_with(cx, |app, _| normal_group_collapsed(app, group)));
+    }
+}
+
+pub fn scenario_sidebar_keyboard_collapse_card(cx: &mut VisualTestAppContext) {
+    let _settings = Settings::capture();
+    let fixture = build_fixture();
+    let linked = tempfile::tempdir().unwrap();
+    let worktree = linked.path().join("linked");
+    git(
+        fixture.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let before = Witness::read(fixture.path());
+    for dimensions in [(940., 660.), (1392., 883.)] {
+        for zoom in [1., 1.67] {
+            for language in [Lang::En, Lang::Ja] {
+                let (app, window) = mount_dimensions(cx, fixture.path(), dimensions);
+                appearance(cx, &app, window, language, "apple-light", zoom, 2);
+                card_left(cx, &app, window);
+                unmount(cx, app, window);
+            }
+        }
+    }
+    assert_eq!(
+        Witness::read(fixture.path()),
+        before,
+        "card navigation performs zero Git writes"
+    );
+}
+
+fn card_left(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
+    let row = app.read_with(cx, |app, _| app.sidebar_row_keys_for_e2e(2))[0].clone();
+    focus(cx, app, window, 2, &row);
+    keys(cx, window, "enter");
+    paint(cx, app, window);
+    let card = app.read_with(cx, |app, _| app.sidebar_keyboard_card_for_e2e());
+    assert!(card.is_some(), "worktree card opens from its keyboard row");
+    keys(cx, window, "tab");
+    paint(cx, app, window);
+    assert_eq!(
+        focused(cx, app, window),
+        None,
+        "Tab reaches a card action, not its row"
+    );
+    let before = cx
+        .update_window(window, |_, window, cx| window.focused(cx))
+        .unwrap();
+    let pane_layout = layout(cx, app);
+    keys(cx, window, "left");
+    paint(cx, app, window);
+    assert_eq!(
+        layout(cx, app),
+        pane_layout,
+        "Left inside a card action must not collapse its pane"
+    );
+    assert_eq!(
+        app.read_with(cx, |app, _| app.sidebar_keyboard_card_for_e2e()),
+        card,
+        "Left inside a card action must not dismiss inspection"
+    );
+    let after = cx
+        .update_window(window, |_, window, cx| window.focused(cx))
+        .unwrap();
+    assert_eq!(after, before, "card action keeps its focus");
+    keys(cx, window, "escape");
 }

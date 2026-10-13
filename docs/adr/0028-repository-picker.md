@@ -37,7 +37,8 @@ leaving the repository tab, and departing then returning all retire the
 answer, even if the new card has the same branch name. A surviving form
 continues to use its current branch name and the normal typed-input replan.
 
-The opt-in Tier A transport queues immediate or deferred oneshot answers;
+The opt-in Tier A transport queues immediate or deferred `gpui::Task` answers
+using the existing shared deferral helper, without another dependency;
 both it and the native receiver use the same asynchronous completion task.
 At 940×660 and 167%, EN/JA coverage checks replacement and departed-visit
 rejection, unchanged path/touched/plan and no replan for stale/cancelled

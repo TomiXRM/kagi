@@ -94,7 +94,9 @@ impl KagiApp {
         };
         let prompt = i18n::Msg::InputChooseFolder.t();
         #[cfg(feature = "gui-e2e")]
-        let receiver = crate::ui::e2e::take_folder_prompt(prompt);
+        let Some(receiver) = crate::ui::e2e::take_folder_prompt(prompt) else {
+            return;
+        };
         #[cfg(not(feature = "gui-e2e"))]
         let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
@@ -104,7 +106,7 @@ impl KagiApp {
         });
         cx.spawn_in(window, async move |app, acx| {
             #[cfg(feature = "gui-e2e")]
-            let folder = receiver.await.ok().flatten();
+            let folder = receiver.await;
             #[cfg(not(feature = "gui-e2e"))]
             let folder = receiver
                 .await

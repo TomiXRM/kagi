@@ -3379,7 +3379,6 @@ name = "kagi"
 version = "0.44.0"
 dependencies = [
  "chrono",
- "futures-channel",
  "getrandom 0.3.4",
  "git2",
  "gpui",

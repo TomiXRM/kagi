@@ -147,8 +147,11 @@ For #1515 use `KAGI_GUI_E2E_ONLY='editor_history,editor_'` with KEEP_GOING.
 at production `start_editor_history_load`; it does not seed the view directly.
 EN/JA × Apple Light/Dark × 100%/167% checks cause/empty separation, real Tab
 and Enter/Space Retry dispatch, successful commits, successful zero entries,
-stale A-after-B rejection and mode/commit ownership. The seam replaces only
-the transport Task and is compile-time GUI-only. Tier B uses a disposable
+stale A-after-B rejection and mode/commit ownership. The cause includes ESC/BEL
+and 500 long lines: raw state remains complete, renderer-fed text contains visible
+escapes and a bounded preview, and native Retry bounds remain inside the History
+viewport throughout the matrix. The seam replaces only the transport Task and is
+compile-time GUI-only. Tier B uses a disposable
 repository copy and a real Git read failure, restores it, then retries in the
 same pane; screenshots and native AX are separate from renderer-fed text.
 

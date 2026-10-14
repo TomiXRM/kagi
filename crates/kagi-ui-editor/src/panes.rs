@@ -17,26 +17,60 @@ use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLay
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::theme;
 
+use crate::named_button::NamedButton;
 use gpui_component::{
     button::{Button, ButtonVariants},
     Sizable,
 };
 
-#[derive(gpui::IntoElement)]
-struct HistoryButton {
-    button: Button,
-}
-impl gpui::InteractiveElement for HistoryButton {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
-        self.button.interactivity()
+/// Bound untrusted stderr before sanitizing, then bound the escaped preview.
+/// The complete backend cause remains on the file owner.
+fn history_error_preview(error: &str) -> String {
+    const CHARS: usize = 480;
+    let mut lines = 1;
+    let mut end = error.len();
+    for (count, (offset, ch)) in error.char_indices().enumerate() {
+        if count == CHARS || (ch == '\n' && lines == 3) {
+            end = offset;
+            break;
+        }
+        if ch == '\n' {
+            lines += 1;
+        }
     }
-}
-impl gpui::StatefulInteractiveElement for HistoryButton {}
-impl gpui::RenderOnce for HistoryButton {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-        self.button.render(window, cx)
+    let mut preview = kagi_domain::text_safety::sanitize_control_bytes(&error[..end]);
+    let escaped_end = preview.char_indices().nth(CHARS).map(|(offset, _)| offset);
+    if let Some(offset) = escaped_end {
+        preview.truncate(offset);
     }
+    if end < error.len() || escaped_end.is_some() {
+        preview.push('…');
+    }
+    preview
 }
+
+#[cfg(feature = "gui-e2e")]
+fn measure_history_error(cx: &mut Context<EditorWorkspaceView>, retry: bool) -> AnyElement {
+    let entity = cx.entity().downgrade();
+    gpui::canvas(
+        move |bounds, _, cx| {
+            let _ = entity.update(cx, |view, _| {
+                if retry {
+                    view.history_retry_bounds = Some(bounds);
+                } else {
+                    view.history_error_bounds = Some(bounds);
+                }
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
 /// `InspectorSplit`-style divider, at least not in this v1).
@@ -74,6 +108,7 @@ pub(crate) fn render_history_pane(
     if let Some(error) = &view.history_error {
         let heading = Msg::EditorHistoryFailed.t();
         let retry = Msg::EditorHistoryRetry.t();
+        let error = history_error_preview(error);
         #[cfg(feature = "gui-e2e")]
         {
             *view.history_presentation.borrow_mut() = format!("{heading}\n{error}\n{retry}");
@@ -97,7 +132,6 @@ pub(crate) fn render_history_pane(
             .id("ews-history-error")
             .flex_1()
             .min_h(px(0.))
-            .overflow_y_scroll()
             .flex()
             .flex_col()
             .items_start()
@@ -105,13 +139,37 @@ pub(crate) fn render_history_pane(
             .p_3()
             .text_sm()
             .text_color(rgb(theme().text_main))
-            .child(heading)
-            .child(div().w_full().child(error.clone()))
+            .child(div().flex_shrink_0().child(heading))
             .child(
-                HistoryButton { button }
-                    .role(gpui::Role::Button)
-                    .aria_label(retry),
+                div()
+                    .id("ews-history-cause")
+                    .flex_1()
+                    .min_h(px(0.))
+                    .w_full()
+                    .overflow_y_scroll()
+                    .child(div().w_full().child(error)),
             )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .relative()
+                    .child(
+                        NamedButton(button)
+                            .role(gpui::Role::Button)
+                            .aria_label(retry),
+                    )
+                    .when(cfg!(feature = "gui-e2e"), |el| {
+                        #[cfg(feature = "gui-e2e")]
+                        let el = el.child(measure_history_error(cx, true));
+                        el
+                    }),
+            )
+            .relative()
+            .when(cfg!(feature = "gui-e2e"), |el| {
+                #[cfg(feature = "gui-e2e")]
+                let el = el.child(measure_history_error(cx, false));
+                el
+            })
             .into_any_element();
     }
     let Some(history) = view.history.as_ref() else {
@@ -318,4 +376,27 @@ pub(crate) fn render_snapshot_pane(
         })
         .child(crate::snapshot::text(view, cx))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::history_error_preview;
+
+    #[test]
+    fn history_error_preview_escapes_controls_and_bounds_untrusted_output() {
+        assert_eq!(
+            history_error_preview("cause\x1b\x07日本語"),
+            "cause\\x1B\\x07日本語"
+        );
+        assert_eq!(
+            history_error_preview("one\ntwo\nthree\nfour"),
+            "one\ntwo\nthree…"
+        );
+        let long = history_error_preview(&"日".repeat(1_000));
+        assert_eq!(long.chars().count(), 481);
+        assert!(long.ends_with('…'));
+        let controls = history_error_preview(&"\x1b".repeat(1_000));
+        assert_eq!(controls.chars().count(), 481);
+        assert!(!controls.contains('\x1b'));
+    }
 }

@@ -313,6 +313,14 @@ semantics. The open/dense pane keeps the same typography and spacing as its
 neighboring snapshot actions; no modal or write-operation receipt is appropriate
 for this read.
 
+Backend causes may include untrusted Git stderr. Retain the complete original
+cause in state, but bound the preview before `sanitize_control_bytes`, then cap
+the escaped display at 480 characters and three lines (plus an ellipsis when
+truncated). Renderer probes observe that same safe preview, never raw stderr.
+Only the cause owns a flexible scroll region; the heading and Retry are fixed
+siblings outside it, so arbitrarily long causes cannot displace recovery.
+History and Snapshot use one shared named Button adapter.
+
 Retry clears the error and emits the existing `HistoryRequested` through the
 same `(file_req, path)` request slot. While loading, repeated activation is inert.
 Mode changes preserve the accepted error until explicit Retry; changing files

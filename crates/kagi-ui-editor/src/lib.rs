@@ -27,6 +27,7 @@ mod blame;
 pub use blame::BlameProbe;
 mod bottom_panel;
 pub mod markdown;
+mod named_button;
 mod pane_selectors;
 mod panes;
 pub use pane_selectors::EditorPaneSelectors;
@@ -434,6 +435,10 @@ pub struct EditorWorkspaceView {
     pub history_presentation: std::cell::RefCell<String>,
     #[cfg(feature = "gui-e2e")]
     pub history_retry_focused: bool,
+    #[cfg(feature = "gui-e2e")]
+    pub history_error_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_retry_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     /// The in-flight History load, owned by its own request key
     /// (`(file_req, path)`) rather than by a bare bool — see
     /// [`kagi_domain::load_request`] and [`Self::history_loading`] (#489).
@@ -630,6 +635,10 @@ impl EditorWorkspaceView {
             history_presentation: Default::default(),
             #[cfg(feature = "gui-e2e")]
             history_retry_focused: false,
+            #[cfg(feature = "gui-e2e")]
+            history_error_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            history_retry_bounds: None,
             history_req: RequestSlot::new(),
             selected_history_commit: None,
             middle_tab: MiddlePaneTab::default(),

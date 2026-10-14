@@ -12,6 +12,9 @@ use kagi_ui_editor::{EditorWorkspaceEvent, EditorWorkspaceView, MiddlePaneTab, R
 use std::{cell::RefCell, rc::Rc};
 
 const CAUSE: &str = "history-read-1515-cause";
+fn failure() -> String {
+    format!("{CAUSE}\x1b[31m\x07\n{}", "long cause 日本語\n".repeat(500))
+}
 fn wait(
     cx: &mut VisualTestAppContext,
     editor: &Entity<EditorWorkspaceView>,
@@ -69,11 +72,30 @@ fn assert_error(
     wait(cx, editor, window, |view| !view.history_loading());
     cx.read(|cx| {
         let view = editor.read(cx);
-        assert_eq!(view.history_error.as_deref(), Some(CAUSE));
+        assert_eq!(view.history_error.as_deref(), Some(failure().as_str()));
         let text = view.history_presentation.borrow();
         assert!(text.contains(Msg::EditorHistoryFailed.t()) && text.contains(CAUSE));
+        assert!(
+            !text.contains('\x1b') && !text.contains('\x07'),
+            "History cause must sanitize control bytes"
+        );
+        assert!(text.contains("\\x1B") && text.contains("\\x07"));
+        assert!(
+            text.chars().count() < 700,
+            "History cause preview must be bounded"
+        );
         assert!(text.contains(Msg::EditorHistoryRetry.t()));
         assert!(!text.contains(Msg::EditorHistoryEmpty.t()));
+        let pane = view
+            .history_error_bounds
+            .expect("rendered History error viewport");
+        let retry = view.history_retry_bounds.expect("rendered pinned Retry");
+        assert!(retry.size.height > gpui::px(0.));
+        assert!(retry.left() >= pane.left() && retry.right() <= pane.right());
+        assert!(
+            retry.top() >= pane.top() && retry.bottom() <= pane.bottom(),
+            "long causes must not push Retry outside the History viewport"
+        );
     });
 }
 
@@ -118,7 +140,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 wait(cx, &editor, window, |view| {
                     !view.file_loading && view.editor.is_some()
                 });
-                e2e::queue_editor_history(Task::ready(Err(CAUSE.into())));
+                e2e::queue_editor_history(Task::ready(Err(failure())));
                 cx.update_window(window, |_, window, cx| {
                     editor.update(cx, |view, cx| {
                         view.set_right_tab(RightPaneTab::History, window, cx)
@@ -144,7 +166,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 );
                 for key in ["enter", "space"] {
                     let before = requests.borrow().len();
-                    e2e::queue_editor_history(Task::ready(Err(CAUSE.into())));
+                    e2e::queue_editor_history(Task::ready(Err(failure())));
                     retry_by_tab(cx, &editor, window, key);
                     assert_error(cx, &editor, window);
                     assert_eq!(

@@ -2095,6 +2095,12 @@ impl KagiApp {
         if deselect {
             return;
         }
+        // Explicit Graph selection reveals its Inspector in compact Changes.
+        // Refresh/reconcile retain selection separately and never enter here.
+        if self.compact.enabled {
+            self.bottom_tab = BottomTab::Changes;
+            self.bottom_panel_open = true;
+        }
 
         if let Some(detail) = self.view().details.get(index) {
             let parent_count = detail.parent_ids.len();

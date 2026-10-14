@@ -345,6 +345,9 @@ mod branch_menu_compact;
 #[path = "recovery/clone_card.rs"]
 mod clone_card;
 #[cfg(target_os = "macos")]
+#[path = "recovery/clone_menu.rs"]
+mod clone_menu;
+#[cfg(target_os = "macos")]
 #[path = "recovery/clone_owner.rs"]
 mod clone_owner;
 #[cfg(target_os = "macos")]
@@ -610,6 +613,10 @@ mod compact_layout;
 mod compact_rail;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_select_changes.rs"]
+mod compact_select_changes;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
 
@@ -620,6 +627,10 @@ mod recovery_commit_panel_polish;
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_keyboard.rs"]
 mod recovery_commit_panel_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_file.rs"]
+mod recovery_commit_panel_file;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
@@ -2014,6 +2025,10 @@ mod macos {
                 Box::new(crate::clone_card::scenario_clone_card_viewport),
             ),
             (
+                "clone_menu_routes_home",
+                Box::new(crate::clone_menu::scenario_clone_menu_routes_home),
+            ),
+            (
                 "clone_card_destination",
                 Box::new(crate::clone_card::scenario_clone_card_destination),
             ),
@@ -3285,6 +3300,10 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "diff_header_ax_unique",
+                Box::new(crate::recovery_header_fit::scenario_diff_header_ax_unique),
+            ),
+            (
                 "diff_mode_segment",
                 Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
             ),
@@ -3306,6 +3325,10 @@ mod macos {
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (
+                "compact_select_changes",
+                Box::new(crate::compact_select_changes::scenario_compact_select_changes),
+            ),
+            (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),
@@ -3324,6 +3347,10 @@ mod macos {
             (
                 "commit_panel_bulk_hover",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
+            ),
+            (
+                "commit_panel_file_middle_ellipsis",
+                Box::new(crate::recovery_commit_panel_file::scenario),
             ),
             (
                 "compact_bottom_third",
@@ -3356,6 +3383,10 @@ mod macos {
             (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
+            ),
+            (
+                "compact_layout_state_tall",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
             ),
             (
                 "compact_layout_lifecycle",

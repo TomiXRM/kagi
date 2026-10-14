@@ -79,8 +79,20 @@ fn select_row(
     })
 }
 pub fn scenario_compact_layout_state(cx: &mut VisualTestAppContext) {
+    state_matrix(cx, 660.);
+}
+
+pub fn scenario_compact_layout_state_tall(cx: &mut VisualTestAppContext) {
+    state_matrix(cx, 1000.);
+}
+
+fn state_matrix(cx: &mut VisualTestAppContext, height: f32) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
-    matrix(|case| state_case(cx, case));
+    matrix(|case| {
+        if case.height == height {
+            state_case(cx, case);
+        }
+    });
 }
 
 fn state_case(cx: &mut VisualTestAppContext, case: Case) {

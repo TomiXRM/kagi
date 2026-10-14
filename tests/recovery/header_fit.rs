@@ -170,3 +170,51 @@ pub fn scenario_header_fit(cx: &mut VisualTestAppContext) {
     drop(restore);
     eprintln!("[gui-e2e] PASS header_fit: diff + File History header controls inside the window (EN/JA 1000x720@1.25, labels kept at 1920)");
 }
+
+/// Inspect the native adapter, not renderer metadata: natural-width copies
+/// must never contribute a second accessible header control.
+pub fn scenario_diff_header_ax_unique(cx: &mut VisualTestAppContext) {
+    let _restore = GlobalSettings::capture();
+    let fixture = build_fixture();
+    for locale in ["en", "ja"] {
+        std::env::set_var("KAGI_LANG", locale);
+        i18n::init_lang();
+        for dimensions in [(1000., 720.), (1920., 1080.)] {
+            theme::set_zoom(if dimensions.0 == 1000. { 1.25 } else { 1. });
+            let (app, win) = open_window(cx, fixture.path(), dimensions);
+            app.update(cx, |app, cx| {
+                app.select(0);
+                cx.notify();
+            });
+            cx.run_until_parked();
+            app.update(cx, |app, cx| app.open_main_diff_commit(0, cx));
+            crate::native_ax::activate(cx);
+            settle(cx, win, dimensions);
+            let tree = crate::native_ax::tree(cx, win);
+            let nodes = tree["nodes"].as_object().unwrap();
+            for id in &DIFF_CONTROLS[..5] {
+                let control = crate::native_ax::node(cx, win, (*id).into());
+                let label = control["aria"]["label"].as_str().expect("header AX name");
+                let count = nodes
+                    .values()
+                    .filter(|node| {
+                        node["aria"]["label"].as_str() == Some(label)
+                            && node["aria"]["role"] == control["aria"]["role"]
+                    })
+                    .count();
+                assert_eq!(
+                    count, 1,
+                    "{locale}/{dimensions:?}/{id}: duplicate AX control {label}: {tree}"
+                );
+            }
+            assert!(
+                !nodes.values().any(|node| node["element_id"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("header-fit-copy"))),
+                "measurement buttons leaked into native AX: {tree}"
+            );
+            unmount(cx, app, win);
+        }
+    }
+    eprintln!("[gui-e2e] PASS diff_header_ax_unique");
+}

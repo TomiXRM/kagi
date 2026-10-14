@@ -145,6 +145,12 @@ frame constraint accounts for any frame/content inset and uses AppKit's own
 screen coordinates, rather than mixing display-local GPUI coordinates across
 monitors. The existing scroller owns content that exceeds the visible height.
 Repository window defaults and restoration policy are untouched.
+Fitting runs only for initial layout, changed intrinsic content height, pane or
+zoom changes, and changed connected-display geometry. Ordinary native moves only
+persist geometry; redraws do not re-clamp an unchanged layout. A user may therefore
+leave a window partially offscreen, under the Dock, or across a display boundary.
+The cached layout key includes all displays' full/visible frames, not the current
+window's display, so dragging between displays is not a topology change.
 Saved display identity uses the GPUI display UUID, not an ambiguous local x/y
 coordinate or the currently focused screen. A disconnected UUID recenters on
 the primary display; the old three-component frame remains readable and acquires
@@ -162,4 +168,7 @@ frames must restore on their own connected display and fit fully, not merely
 expose a titlebar. These deterministic hidden-window bounds do not prove physical
 pointer delivery or the physical bottom edge; Tier B captures the real Settings
 window on the main display at 167%.
+The same regression also moves the live native frame partly beyond the right and
+bottom visible edges, drains its bounds notifications and redraws repeatedly,
+and requires the chosen position to survive until a pane/content/zoom change.
 

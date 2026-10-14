@@ -109,6 +109,7 @@ struct SettingsWindow {
     focus: FocusHandle,
     tabs: keyboard_nav::TabFocus,
     scroll: ScrollHandle,
+    last_fit: Option<(f32, usize, f32, u64)>,
     _observe: Subscription,
     _release: Subscription,
     _toast_removed: Option<Subscription>,
@@ -128,7 +129,6 @@ impl SettingsWindow {
             true
         });
         cx.observe_window_bounds(window, |_, window, cx| {
-            fit_content(window, None, cx);
             remember_geometry(window, cx);
         })
         .detach();
@@ -174,6 +174,7 @@ impl SettingsWindow {
             focus,
             tabs: Default::default(),
             scroll: Default::default(),
+            last_fit: None,
             _observe: observe,
             _release: release,
             _toast_removed: toast_removed,
@@ -274,6 +275,9 @@ impl SettingsWindow {
 
     fn page_body(&self, owner: &Entity<KagiApp>, cx: &Context<Self>) -> gpui::Div {
         let chrome = 46. + f32::from(theme::scaled_px(48.));
+        let host = cx.entity().downgrade();
+        let pane = self.pane;
+        let zoom = theme::zoom();
         div()
             .relative()
             .flex()
@@ -285,7 +289,20 @@ impl SettingsWindow {
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
-                        fit_content(window, Some(f32::from(bounds.size.height) + chrome), cx);
+                        let height = f32::from(bounds.size.height) + chrome;
+                        let displays = display_configuration();
+                        let _ = host.update(cx, |this, cx| {
+                            if this.last_fit.is_some_and(|previous| {
+                                (previous.0 - height).abs() < 0.5
+                                    && previous.1 == pane
+                                    && previous.2 == zoom
+                                    && previous.3 == displays
+                            }) {
+                                return;
+                            }
+                            this.last_fit = Some((height, pane, zoom, displays));
+                            fit_content(window, height, cx);
+                        });
                     },
                     |_, _, _, _| {},
                 )
@@ -399,9 +416,43 @@ impl Render for SettingsWindow {
     }
 }
 
+/// Check the whole display layout, not the window's current display: a user
+/// dragging across a display boundary is not a configuration change. Native
+/// enumeration avoids allocating GPUI's Vec of display wrappers every prepaint.
+fn display_configuration() -> u64 {
+    use objc2::{class, msg_send, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use std::hash::{Hash, Hasher};
+
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    // SAFETY: AppKit screens and their immutable rectangles are read only on
+    // the main thread; none of the borrowed native objects escape this call.
+    unsafe {
+        let screens: *mut AnyObject = msg_send![class!(NSScreen), screens];
+        let count: usize = msg_send![screens, count];
+        count.hash(&mut hash);
+        for index in 0..count {
+            let screen: *mut AnyObject = msg_send![screens, objectAtIndex: index];
+            let frame: NSRect = msg_send![screen, frame];
+            let visible: NSRect = msg_send![screen, visibleFrame];
+            for rect in [frame, visible] {
+                for coordinate in [
+                    rect.origin.x,
+                    rect.origin.y,
+                    rect.size.width,
+                    rect.size.height,
+                ] {
+                    coordinate.to_bits().hash(&mut hash);
+                }
+            }
+        }
+    }
+    hash.finish()
+}
+
 /// GPUI exposes content resizing but no native frame positioning. Apply both
 /// together on the foreground executor, outside the drawing/window borrow.
-fn fit_content(window: &Window, height: Option<f32>, cx: &App) {
+fn fit_content(window: &Window, height: f32, cx: &App) {
     use objc2::{msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::NSRect;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -426,9 +477,7 @@ fn fit_content(window: &Window, height: Option<f32>, cx: &App) {
         let visible: NSRect = msg_send![screen, visibleFrame];
         let inset = current.size.height - content.size.height;
         let max_content = (visible.size.height - inset).max(0.);
-        let content_height = height
-            .map_or(content.size.height, f64::from)
-            .clamp(500_f64.min(max_content), max_content);
+        let content_height = f64::from(height).clamp(500_f64.min(max_content), max_content);
         let mut fitted = current;
         fitted.size.width =
             (715. + current.size.width - content.size.width).min(visible.size.width);

@@ -40,6 +40,55 @@ fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, s
     }).unwrap();
 }
 
+fn assert_manual_move_preserved(cx: &mut VisualTestAppContext, settings: AnyWindowHandle) {
+    use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let expected = cx
+        .update_window(settings, |_, window, cx| {
+            let mut bounds = window.window_bounds().get_bounds();
+            let visible = window.display(cx).unwrap().visible_bounds();
+            let origin = gpui::point(
+                visible.right() - bounds.size.width + gpui::px(110.),
+                visible.bottom() - bounds.size.height + gpui::px(90.),
+            );
+            let delta = origin - bounds.origin;
+            bounds.origin = origin;
+            let handle = HasWindowHandle::window_handle(window).unwrap();
+            let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+                panic!("native Settings requires AppKit");
+            };
+            // SAFETY: exact live GPUI NSView, accessed on the main thread. Retain
+            // its NSWindow and move it outside GPUI's window borrow, like a drag.
+            let (native, frame) = unsafe {
+                let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+                let native: *mut AnyObject = msg_send![view, window];
+                let mut frame: NSRect = msg_send![native, frame];
+                frame.origin.x += f64::from(f32::from(delta.x));
+                frame.origin.y -= f64::from(f32::from(delta.y));
+                (Retained::retain(native).unwrap(), frame)
+            };
+            cx.foreground_executor()
+                .spawn(async move {
+                    // SAFETY: retained native window on the foreground executor.
+                    unsafe {
+                        let _: () = msg_send![&*native, setFrame: frame, display: true];
+                    }
+                })
+                .detach();
+            bounds
+        })
+        .unwrap();
+    settle(cx, settings);
+    cx.update_window(settings, |_, window, _| {
+        assert_eq!(
+            window.window_bounds().get_bounds(), expected,
+            "ordinary bounds notifications and redraws must preserve a user's partially off-screen move"
+        );
+    }).unwrap();
+}
+
 fn assert_last_setting_reachable(
     cx: &mut VisualTestAppContext,
     repo: AnyWindowHandle,
@@ -137,6 +186,7 @@ pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
                     .update_window(repo, |_, window, _| window.window_bounds())
                     .unwrap();
                 assert_screen_fit(cx, settings, "first content-driven resize");
+                assert_manual_move_preserved(cx, settings);
                 for pane in [1, 2, 3, 0] {
                     let bounds = e2e::control_bounds(
                         settings.window_id(),

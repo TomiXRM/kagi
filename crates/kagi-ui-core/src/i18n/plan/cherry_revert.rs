@@ -130,14 +130,19 @@ pub fn predicted_head_text<'a>(
     language: crate::i18n::Lang,
 ) -> std::borrow::Cow<'a, str> {
     use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
-    if language == crate::i18n::Lang::Ja && *disposition == PlanDisposition::Ready {
+    if *disposition == PlanDisposition::Ready {
         if let PlanTitle::CherryRevert(CherryRevertTitle::Revert {
             branch, summary, ..
         }) = title
         {
-            return format!(
-                "branch: {branch} (+1 revert commit が新規作成されます: Revert \"{summary}\")"
-            )
+            return match language {
+                crate::i18n::Lang::En => {
+                    format!("branch: {branch} (+1 new revert commit: Revert \"{summary}\")")
+                }
+                crate::i18n::Lang::Ja => format!(
+                    "branch: {branch} (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+                ),
+            }
             .into();
         }
     }
@@ -158,11 +163,12 @@ mod tests {
             branch: "日本語-branch".into(),
             summary: summary.into(),
         });
-        let canonical =
-            format!("branch: 日本語-branch (+1 new revert commit: Revert \"{summary}\")");
+        let canonical = format!(
+            "branch: 日本語-branch (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+        );
         assert_eq!(
             predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::En),
-            canonical
+            format!("branch: 日本語-branch (+1 new revert commit: Revert \"{summary}\")")
         );
         assert_eq!(
             predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::Ja),

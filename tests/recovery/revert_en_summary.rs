@@ -33,13 +33,11 @@ pub fn scenario_revert_card_en_summary(cx: &mut VisualTestAppContext) {
     app.update(cx, |app, _| {
         let plan = &app.revert_modal().expect("Revert card").plan;
         assert!(plan.blockers.is_empty());
-        assert!(
-            !plan.predicted.head.contains("が新規作成されます"),
-            "English Revert AFTER contains Japanese: {}",
-            plan.predicted.head
+        assert_eq!(
+            plan.predicted.head,
+            "branch: main (+1 revert commit が新規作成されます: Revert \"second commit\")",
+            "receipt state must retain the legacy bytes"
         );
-        assert!(plan.predicted.head.contains("+1 new revert commit"));
-        assert!(plan.predicted.head.contains("Revert \""));
     });
     kagi::ui::dialog_a11y::clear_recorded_a11y();
     cx.update_window(window, |_, window, cx| {
@@ -51,6 +49,28 @@ pub fn scenario_revert_card_en_summary(cx: &mut VisualTestAppContext) {
         kagi::ui::dialog_a11y::recorded_note("plan-state-after").expect("rendered AFTER group");
     assert!(after.contains("+1 new revert commit"), "{after}");
     assert!(!after.contains("が新規作成されます"), "{after}");
+    app.update(cx, |app, cx| app.start_revert(cx));
+    cx.run_until_parked();
+    let expected = "[kagi] footer: revert: branch: main → branch: main (+1 revert commit が新規作成されます: Revert \"second commit\")";
+    assert!(
+        kagi_ui_core::klog::tail()
+            .iter()
+            .any(|line| line == expected),
+        "legacy Revert footer contract missing: {:?}",
+        kagi_ui_core::klog::tail()
+    );
+    let records = kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100);
+    let receipt = records
+        .iter()
+        .find(|record| record.op == "revert")
+        .expect("Revert receipt");
+    match &receipt.outcome {
+        kagi_git::oplog::OpOutcome::Success { after } => assert_eq!(
+            after.head,
+            "branch: main (+1 revert commit が新規作成されます: Revert \"second commit\")"
+        ),
+        other => panic!("Revert must succeed: {other:?}"),
+    }
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS revert_card_en_summary");
 }

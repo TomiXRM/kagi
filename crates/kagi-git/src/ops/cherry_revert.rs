@@ -842,7 +842,7 @@ pub fn plan_revert(repo: &Repository, id: &CommitId) -> Result<OperationPlan, Gi
 
     let predicted = StateSummary {
         head: format!(
-            "branch: {} (+1 new revert commit: Revert \"{}\")",
+            "branch: {} (+1 revert commit が新規作成されます: Revert \"{}\")",
             branch_name, summary_line
         ),
         dirty: if current.dirty == "clean" {

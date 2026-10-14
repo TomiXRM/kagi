@@ -20,7 +20,7 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
-use kagi_domain::plan_note::{PlanNote, PushNote};
+use kagi_domain::plan_note::{CommonNote, PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
 
@@ -153,6 +153,12 @@ pub(crate) fn render_input_modal_heading(
 }
 
 // Existing input-plan renderer contract shared by Rename and Set Upstream.
+/// Field presentation is distinct from backend rename validation.
+pub(crate) enum InputPlanValidation {
+    Unchanged,
+    Rename(BranchRenameValidation),
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_input_plan_modal(
     short_title: &'static str,
@@ -161,7 +167,7 @@ pub(crate) fn render_input_plan_modal(
     label: &'static str,
     input_state: Option<Entity<InputState>>,
     plan: Option<std::sync::Arc<OperationPlan>>,
-    validation: Option<BranchRenameValidation>,
+    validation: Option<InputPlanValidation>,
     error: Option<SharedString>,
     confirm_label: &'static str,
     accent: PlanCardAccent,
@@ -172,9 +178,9 @@ pub(crate) fn render_input_plan_modal(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let field_reason = match validation.as_ref() {
-        Some(BranchRenameValidation::Invalid(reason)) => Some(SharedString::from(
-            crate::ui::i18n::branch_name_error(reason),
-        )),
+        Some(InputPlanValidation::Rename(BranchRenameValidation::Invalid(reason))) => Some(
+            SharedString::from(crate::ui::i18n::branch_name_error(reason)),
+        ),
         _ => plan.as_ref().and_then(|p| {
             p.blockers
                 .iter()
@@ -184,7 +190,9 @@ pub(crate) fn render_input_plan_modal(
     };
     let has_blockers =
         field_reason.is_some() || plan.as_ref().is_none_or(|p| !p.blockers.is_empty());
-    let disabled_reason = if has_blockers {
+    let disabled_reason = if matches!(validation, Some(InputPlanValidation::Unchanged)) {
+        Some(Msg::InputRenameEnterNewName.t().into())
+    } else if has_blockers {
         error.clone().or_else(|| field_reason.clone()).or_else(|| {
             plan.as_ref()
                 .and_then(|p| p.blockers.first())
@@ -244,6 +252,16 @@ pub(crate) fn render_input_plan_modal(
             for blocker in &plan.blockers {
                 // The upstream format blocker is already the field's error.
                 if matches!(blocker, PlanNote::Push(PushNote::UpstreamFormatInvalid)) {
+                    continue;
+                }
+                // Rename validation already explains this exact cause at the field.
+                if matches!(
+                    (validation.as_ref(), blocker),
+                    (
+                        Some(InputPlanValidation::Rename(BranchRenameValidation::Invalid(reason))),
+                        PlanNote::Common(CommonNote::BranchNameErrorKeyed(plan_reason))
+                    ) if reason == plan_reason
+                ) {
                     continue;
                 }
                 displayed = true;

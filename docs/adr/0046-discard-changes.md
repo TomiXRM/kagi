@@ -79,3 +79,19 @@ Discard still only plans the operation. The destructive confirmation retains
 root Return = Cancel and explicit danger-button approval. All three compact
 menu rows fit the actual viewport at the current zoom. Backend semantics,
 mandatory backups, preflight, verification and oplog ownership are unchanged.
+
+## Amendment — 2026-10-14: compact row-focus reconciliation
+
+Only the surface drawing Changes file lists reconciles their retained row focus:
+the desktop panel or compact Changes, never the compact composer projection.
+Reconciling twice before virtual-list layout consumed an End/arrow focus
+transition and incorrectly treated its not-yet-drawn destination as wheel-scrolled
+away. The native discard oracle now compares the frozen menu and plan paths with
+the opener's actual focused-row AX name, as well as its requested row. In the
+audited regression the menu path still matched the actual focused row; the defect
+was premature focus relocation, not a cross-row discard write.
+
+The inline-action menu-anchor regression resizes within each presentation:
+desktop width changes and compact height changes. Crossing the breakpoint
+unmounts that surface's Button and is covered by the compact lifecycle's focus
+handoff, not an assertion that the unmounted Button still dispatches a file menu.

@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Main repository windows enforce a native 940×660 logical-point minimum, shared by saved-frame restore and runtime resizing, preserving supported compact chrome instead of allowing an unusable 200×150 window. (#1550)
+  - Restore persistence coverage waits for each requested native resize before advancing its debounce clock, rather than comparing unchanged saved geometry with the initial clamped frame.
 - Sidebar search now clears a nonempty query on the first Escape without losing input focus; a second, empty Escape returns to the list. Its Clear button exposes an independent localized EN/JA accessibility action and keeps search focused after native AXPress. IME cancellation is consumed before search cancellation. (#1547, #1548)
   - Neighbor disclosure coverage now mounts its inline Sidebar at the approved 1000px desktop breakpoint instead of looking for desktop rows inside the 940px compact rail; all filtering/disclosure assertions remain.
 - Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)

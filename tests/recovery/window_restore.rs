@@ -101,8 +101,7 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
         window.resize(size(px(1000.), px(720.)));
     })
     .expect("observe production repository window");
-    crate::macos::drain_native_events();
-    cx.run_until_parked();
+    wait_for_resize(cx, window, size(px(1000.), px(720.)));
     assert_eq!(
         settings::read_setting("window_frame"),
         before,
@@ -128,8 +127,7 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
         window.resize(size(px(1100.), px(760.)))
     })
     .unwrap();
-    crate::macos::drain_native_events();
-    cx.run_until_parked();
+    wait_for_resize(cx, window, size(px(1100.), px(760.)));
     let final_bounds = cx
         .update_window(window, |_, window, _| window.window_bounds().get_bounds())
         .unwrap();
@@ -157,6 +155,29 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
         before_skip,
         "NO_RESTORE does not save"
     );
+}
+
+fn wait_for_resize(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    wanted: gpui::Size<Pixels>,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        crate::macos::drain_native_events();
+        cx.run_until_parked();
+        if cx
+            .update_window(window, |_, window, _| window.viewport_size())
+            .unwrap()
+            == wanted
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "native restore persistence resize timed out"
+        );
+    }
 }
 
 fn main_display_geometry(cx: &mut VisualTestAppContext) -> (String, Bounds<Pixels>) {

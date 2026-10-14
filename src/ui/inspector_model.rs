@@ -123,6 +123,7 @@ impl InspectorFiles {
 /// Complete-message derivations, prepared once for an immutable commit SHA.
 struct InspectorMessage {
     html: SharedString,
+    links: Vec<SharedString>,
     coauthors: Vec<CoAuthor>,
     trailers: Vec<Trailer>,
 }
@@ -173,14 +174,20 @@ impl InspectorModel {
         // fragments flap in and out while resizing. HTML, not Markdown: the
         // selectable `TextView` parses only those two, and Markdown would
         // misread the message (`* fix` as a bullet, `#123` as a heading).
-        let html =
-            kagi_domain::message::message_to_html(&kagi_domain::message::reflow_message(message));
+        let reflowed = kagi_domain::message::reflow_message(message);
+        let ranges = kagi_domain::message::message_url_ranges(&reflowed);
+        let html = kagi_domain::message::message_with_links_to_html(&reflowed, &ranges);
+        let links = ranges
+            .into_iter()
+            .map(|range| SharedString::from(reflowed[range].to_owned()))
+            .collect();
         #[cfg(any(test, feature = "gui-e2e"))]
         DERIVATIONS.with(|d| d.set((d.get().0, d.get().1 + 1)));
         self.message = Some((
             sha.clone(),
             InspectorMessage {
                 html: SharedString::from(html),
+                links,
                 coauthors: parse_coauthors(message),
                 trailers: parse_trailers(message),
             },
@@ -195,6 +202,13 @@ impl InspectorModel {
     /// Immutable ownership for lazy row processors, without copying file stats.
     pub(super) fn files_snapshot(&self) -> Option<Rc<InspectorFiles>> {
         self.files.as_ref().and_then(|(_, files)| files.clone())
+    }
+
+    pub(super) fn message_links(&self) -> &[SharedString] {
+        self.message
+            .as_ref()
+            .map(|(_, message)| message.links.as_slice())
+            .unwrap_or_default()
     }
 
     pub(super) fn message_html(&self) -> SharedString {

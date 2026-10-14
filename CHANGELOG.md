@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector detects explicit HTTP(S) URLs in literal commit messages, with named Open Link and Copy Link actions for pointer, keyboard and accessibility in EN/JA. Authored HTML/Markdown stays literal; arbitrary schemes remain inert. (#1566)
 - Fetch authentication failures identify the remote and advise checking credentials in English/Japanese, while Operation Log Copy retains the complete Git diagnostic. Non-interactive Git no longer launches a nonexistent askpass helper on macOS. No automatic authentication retry is added. (#1561)
   - Review: remote-branch menu Fetch uses the same localized summary/full-detail split, and malformed additive receipt detail no longer discards the whole row.
 - Branch-menu Create worktree here starts with an empty new-branch field and a matching provisional path instead of proposing the already-existing source branch. Empty fields no longer show an inline required-name error; typed collisions retain normal EN/JA validation. Open worktree from branch, lock and removal safety are unchanged. (#1564)

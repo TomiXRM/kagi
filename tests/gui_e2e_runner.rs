@@ -880,6 +880,10 @@ mod perf_oplog_detail;
 mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inspector_message_links.rs"]
+mod inspector_message_links;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/finder_scale_editor.rs"]
 mod finder_scale_editor;
 
@@ -4439,6 +4443,10 @@ mod macos {
             (
                 "inspector_metadata_a11y",
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
+            ),
+            (
+                "inspector_message_links",
+                Box::new(crate::inspector_message_links::scenario),
             ),
             (
                 "finder_scale_rest",

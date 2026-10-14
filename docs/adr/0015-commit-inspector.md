@@ -143,6 +143,36 @@ refreshed with default features and unchanged fixture commit `1955d837`;
 final owner-facing comparisons. Each raw capture is 2784×1766, matching the
 baseline's 1392×883 logical window without resampling or window shadow.
 
+## Amendment — 2026-10-15: literal message URL actions (#1566)
+
+The dependency-free domain message parser detects explicit `http://` and
+`https://` destinations only. Surrounding Japanese prose, whitespace, quotes,
+angle brackets, unmatched closing brackets and sentence punctuation remain
+outside the destination; balanced ASCII brackets in paths remain inside.
+Other schemes, empty authorities and embedded scheme prefixes are not links.
+Authored HTML and Markdown remain literal escaped text, never executable markup.
+
+The SHA-owned Inspector message derivation retains destinations with the HTML,
+co-authors and trailers; rendering neither parses messages nor reads Git.
+Inline anchors identify URLs in the selectable literal body. The pinned
+TextView does not expose per-link keyboard/accessibility controls, so the same
+message scroller also contains named Link and Copy Link controls, using the
+existing named Button boundary, Link variant and focus ring/Enter/Space handling.
+Names include the complete destination in EN/JA; Copy uses destination bytes,
+not escaped HTML. The existing Home OS-opener boundary is shared, preserving
+Home's lifecycle/log behavior and recording URL requests instead of starting
+the user's browser in native GUI E2E.
+Keyboard focus reveals the actual control through the existing message scroll
+handle, including when the default 1:1 split puts link actions below the viewport.
+Reveal is deferred until the parent scroll's prepaint borrow ends; no second
+focus handle or message scroll owner is created.
+As with inspection-list reveal (#1382), reveal converges once per focus change
+and then respects wheel/thumb scrolling. Oversized controls align only their
+top edge; clamped offsets complete reveal instead of generating endless frames.
+URL detection uses one `match_indices("http")` scan and disjoint consumed spans,
+so large messages containing only one scheme do not trigger quadratic searches.
+
+No settings, operation admission, confirmation, receipt or Git state changes.
 ## Amendment — 2026-10-15: full-width changed-file options (#1559)
 
 Inspector file options explicitly fill the virtual list's available width.

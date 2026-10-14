@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Compact ⌘F opens the existing navigator Popover and focuses its shared filter; short-window rails scroll and reveal keyboard-focused controls. Rail triggers expose expanded state and Enter/Space toggle the same Popover as pointer activation. PR/Issue section headings support keyboard disclosure in both layouts, and compact PR lists use the existing system-policy scrollbar with a session-owned scroll handle. (#1491–#1494, #1502)
+  - Review: focused-trigger reveal runs only on focus transitions, preserving subsequent wheel scrolling to PRs/Issues while a different rail control retains keyboard focus.
 - Operation Log summary time, operation and outcome now share the 13px dense-list identity role while retaining the 22px summary floor and variable-height details. Issues navigator age, comment count and number use the readable 13px secondary role without changing card height or selected foregrounds. (#1498, #1499)
   - Review: narrow Issues activity labels shrink and truncate so long ages and comment counts cannot clip the trailing Issue number, including 120px/160px sidebar widths.
 - Apple Light/Dark unselected Graph WIP hover uses a lighter 15% accent wash over its lane tint instead of opaque accent. Selection retains its 30% wash and counts/diffstat retain their normal colours. (#1497)

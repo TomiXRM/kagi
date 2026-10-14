@@ -70,6 +70,30 @@ The geometry matrix is partitioned across `compact_layout_geometry` (660px,
 (1000px, 167%). Each runs all EN/JA × Apple Light/Dark cells through the
 same assertions and real rail interactions; the broad filter selects every
 partition. This bounds process runtime without dropping matrix cells.
+
+For #1491–#1494/#1502 use `KAGI_GUI_E2E_ONLY='compact_'` with KEEP_GOING.
+The seven-trigger AX matrix is a heavy scenario: use the permitted 300s native
+deadline rather than dropping EN/JA × 100%/167% × Apple Light/Dark cells.
+`compact_rail_cmd_f` retires the harness-provisioned filter for its first-shortcut
+leg, then checks the same rendered Input entity/value on reopen and at 1000px.
+`compact_rail_short_window` uses real 940×400@167% / 400×300@100% windows,
+wheel/pointer and Tab/Shift-Tab reveal plus the production legacy-size restore.
+With Local retaining keyboard focus, wheel input must still reach Issues and
+preserve the resulting offset across subsequent frames; focus reveal is one-shot.
+`compact_popover_sections` checks shared PR disclosure and Issue category
+callbacks, native focus-ring pixels and actual AccessKit role/name/state nodes.
+`compact_rail_ax` reads those nodes after keyboard toggle, Escape, outside click
+and owner/width/modal transitions. The native NSView accessibility entry point
+activates the real adapter; this is not a claim of VoiceOver speech.
+`compact_pr_popover_scroll` uses 33 natural-height PR cards, actual thumb drag to
+the track end, policy hide/reveal pixels, filter/disclosure extents and a fresh
+session-owned handle after repository switching. Observe inside flexible
+containers: wrapping them in an auto-sized measurement div changes the layout.
+The PR dashboard and Issue feed must not simultaneously mount the navigator's
+shared filter Input/chip focus slots. Tier B: compare the provided plain baseline
+with an isolated plain build at 900×500 in Apple Light/Dark, including high zoom,
+scroll to Issues, and open Cmd-F; capture only the launched PID's window.
+
 For #1417/#1418 use
 `KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
 The in-memory system-display injection never writes macOS preferences. Both

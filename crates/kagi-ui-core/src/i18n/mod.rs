@@ -318,7 +318,6 @@ pub enum Msg {
     AgentReviewedTooltip,
 
     // ── Placeholder / unimplemented menu reasons ────────────────────
-    CloneUnimplemented,
     MultiWindowUnsupported,
     ResetUnimplemented,
 
@@ -2523,8 +2522,6 @@ impl Msg {
             (Ja, AgentUnnamed) => "AI エージェント",
 
             // ── Placeholders ────────────────────────────────────────
-            (En, CloneUnimplemented) => "clone is not implemented yet",
-            (Ja, CloneUnimplemented) => "clone は未実装です",
             (En, MultiWindowUnsupported) => "multiple windows are not supported",
             (Ja, MultiWindowUnsupported) => "複数ウィンドウは未対応です",
             (En, ResetUnimplemented) => "reset is not implemented (ADR-0024)",

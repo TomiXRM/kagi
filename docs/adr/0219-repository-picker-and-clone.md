@@ -124,3 +124,14 @@ empty, and a failed organization, on github.com and an Enterprise host in both
 languages. This is a wording-only change; no controls, density or layout policy
 are changed, and the scenario is not native VoiceOver or screenshot evidence.
 
+## Amendment (2026-10-14): File Clone Repository entry (#1522)
+
+`file.cloneRepository` and its existing Cmd/Ctrl+Shift+O binding open the
+existing Home Repositories picker, focusing its filter. They are navigation,
+not a clone write: selecting a repository still opens the existing clone
+confirmation card, with no default destination or implicit execution.
+Repository tabs are retained, Home remains a singleton, and ordinary Home
+departure retires repository-owned plans. Repeated invocation reuses the same
+picker. The command registry supplies the same enabled entry to native File,
+the portable menu, shortcut and palette; no alternate clone lifecycle is added.
+

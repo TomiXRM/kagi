@@ -907,6 +907,7 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "app.quit"
         | "file.newTab"
         | "file.openRepository"
+        | "file.cloneRepository"
         // Remote connect needs no open repo (ADR-0089) — always available.
         | "file.connectRemote"
         // W27-UIPOLISH: zoom is global (rem-size scaling) — always available.
@@ -940,7 +941,6 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
         | "lang.japanese" => Enabled,
 
         // ── Placeholders (feature not implemented; greyed with a reason) ──
-        "file.cloneRepository" => Disabled(Msg::CloneUnimplemented.t()),
         "window.new" => Disabled(Msg::MultiWindowUnsupported.t()),
         // Reset stays disabled per ADR-0024 (no reset in MVP).
         "commit.reset" => Disabled(Msg::ResetUnimplemented.t()),
@@ -1927,7 +1927,7 @@ impl KagiApp {
                     window.remove_window();
                 }
             }
-            "file.cloneRepository" => { /* placeholder — disabled, never dispatched */ }
+            "file.cloneRepository" => self.open_clone_picker(window, cx),
             "file.openInTerminal" => self.menu_open_terminal(window, cx),
             "repo.createSnapshot" => self.create_snapshot_now(cx),
             "file.connectRemote" => self.open_remote_browse(cx),

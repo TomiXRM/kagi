@@ -241,6 +241,7 @@ impl CommitPanelView {
 impl Render for CommitPanelView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.prepare_render(window, cx);
+        self.reconcile_file_rows(window, cx);
         self.reconcile_coauthor_menu(window, cx);
         let panel_width = self.panel_render_width;
         self.render_panel(panel_width, window, cx)
@@ -263,6 +264,10 @@ impl CommitPanelView {
         // the child's input.
         self.sync_inputs(window, cx);
         controls::reconcile_bulk_focus(self, window, cx);
+    }
+
+    /// Reconcile only from the surface that actually draws these lazy lists.
+    pub(super) fn reconcile_file_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_tree_layout();
         self.unstaged_navigation.reconcile(
             &self.state,

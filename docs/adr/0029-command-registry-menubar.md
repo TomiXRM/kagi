@@ -164,3 +164,15 @@ The existing CloseTab command remains the single Cmd-W binding. Its handler
 is enabled on document-free Home and delegates to guarded host closure only
 when there is no tab/document to close; no parallel unguarded close route is
 introduced.
+
+## Amendment (2026-10-14): palette accessibility activation (#1513)
+
+The existing `ListBoxOption` result row owns an explicit AccessKit `Click`
+handler. Native assistive activation, pointer MouseDown and Input Enter share
+the same action identity and enabled gate. MouseDown remains the pointer entry
+because the dismiss scrim can unmount the palette before mouse-up; no pointer
+`on_click` is added. Disabled results remain selectable and execution-inert.
+Theme and language results use their existing settings-backed dispatch paths.
+The `palette_rows_ax_action` regression inspects real AccessKit nodes and sends
+AppKit's standard Press action through the production adapter, not a callback
+recorder. Selection, heading ownership and selected-child reveal remain unchanged.

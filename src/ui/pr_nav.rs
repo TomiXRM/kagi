@@ -167,6 +167,10 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui:
         .overflow_y_scroll()
         .flex()
         .flex_col();
+    let scroll = compact
+        .then(|| app.pr_mode().map(|mode| &mode.navigator_scroll))
+        .flatten();
+    body = body.when_some(scroll, |body, scroll| body.track_scroll(scroll));
     body = body.child(super::e2e::measure_inside("pr-sidebar-list-viewport"));
     if all.is_empty() {
         body = body.child(
@@ -206,6 +210,14 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> gpui:
             ));
         }
     }
+
+    let body = if let Some(scroll) = scroll {
+        super::with_vertical_scrollbar("compact-pr-list-scrollbar", scroll, body, true)
+            .child(super::e2e::measure_inside("compact-pr-list-scrollbar"))
+            .into_any_element()
+    } else {
+        body.into_any_element()
+    };
 
     focus_border(
         div()

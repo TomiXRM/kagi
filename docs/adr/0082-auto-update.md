@@ -123,3 +123,15 @@ checking, always-confirmed installing** — Kagi never replaces itself silently.
 - Consistent with the safety thesis: checking is opt-in and silent-failing;
   installing is always previewed + confirmed + checksum-verified, writes atomically,
   and never runs a destructive command.
+
+## Amendment — 2026-10-14: in-flight update actions (#1514)
+
+The existing window-owned installer and duplicate-start guard remain the only
+operation owner. Once installation starts, Skip this version is unavailable,
+with the installing reason, and its callback refuses to clear the offer or
+persist a skipped tag. Later becomes “Hide — update continues” in both EN/JA,
+using the same visible and accessibility caption. Hide/Escape only dismiss
+presentation; the offer, progress and reopen entry remain intact. Installation
+failure releases the guard, retains the failure and offer, and restores the
+pre-install Skip/Later choices. This does not add mid-install cancellation or
+change the successful install/relaunch path.

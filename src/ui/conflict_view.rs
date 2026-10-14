@@ -93,6 +93,8 @@ pub struct EditorChrome {
     pub result_editing: bool,
     /// Whether the destructive "Reset all" is armed (POLISH-042).
     pub reset_all_armed: bool,
+    pub reset_focus: Option<gpui::FocusHandle>,
+    pub result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// A·B / Result vertical split ratio (fraction given to the A·B row).
@@ -156,8 +158,11 @@ pub struct ConflictView {
     /// T-CONFLICT-UX-015: whether the Result pane is in Edit mode (editable)
     /// rather than Preview (read-only).
     pub result_editing: bool,
-    /// T-CONFLICT-POLISH-042: armed state for the destructive "Reset all".
-    pub reset_all_armed: bool,
+    /// The edited path whose first-stage Reset all approval is still current.
+    pub reset_all_target: Option<PathBuf>,
+    reset_focus: Option<gpui::FocusHandle>,
+    reset_blur_subscription: Option<gpui::Subscription>,
+    result_mode_focus: std::rc::Rc<super::keyboard_nav::TabFocus>,
     /// T-CONFLICT-UI-003: A|B pane width split ratio (fraction given to A).
     pub ab_split: f32,
     /// T-CONFLICT-UI-003: A·B / Result vertical split ratio (fraction to A·B).
@@ -228,7 +233,10 @@ impl ConflictView {
             editing_before_text: HashMap::new(),
             editor_inputs: None,
             result_editing: false,
-            reset_all_armed: false,
+            reset_all_target: None,
+            reset_focus: None,
+            reset_blur_subscription: None,
+            result_mode_focus: Default::default(),
             ab_split: super::CONFLICT_AB_DEFAULT,
             result_split: super::CONFLICT_RESULT_DEFAULT,
             geom: std::rc::Rc::new(std::cell::Cell::new((0.0, 0.0))),
@@ -373,7 +381,7 @@ impl ConflictView {
     }
 
     fn after_selection_change(&mut self, path: &std::path::Path, selected_hunk: Option<usize>) {
-        self.reset_all_armed = false;
+        self.reset_all_target = None;
         if let Some(hunk) = selected_hunk {
             self.selected_hunk = hunk;
         }
@@ -561,9 +569,33 @@ fn kind_tag(kind: ConflictKind) -> &'static str {
 
 impl Render for ConflictView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.reset_focus.is_none() {
+            let focus = cx.focus_handle().tab_stop(false);
+            self.reset_blur_subscription =
+                Some(cx.on_focus_out(&focus, window, |view, _, _, cx| {
+                    view.reset_all_target = None;
+                    cx.notify();
+                }));
+            self.reset_focus = Some(focus);
+        }
+        // Reconcile logical focus as well as native focus-out: inactive windows
+        // retain logical focus, but GPUI suppresses their native focus events.
+        if self.reset_all_target.is_some()
+            && self
+                .reset_focus
+                .as_ref()
+                .is_some_and(|focus| !focus.contains_focused(window, cx))
+        {
+            self.reset_all_target = None;
+        }
         if self.window_activation_subscription.is_none() {
             self.window_activation_subscription =
-                Some(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+                Some(cx.observe_window_activation(window, |view, window, cx| {
+                    if !window.is_window_active() {
+                        view.reset_all_target = None;
+                    }
+                    cx.notify();
+                }));
         }
         let window_active = window.is_window_active();
         #[cfg(feature = "gui-e2e")]
@@ -661,7 +693,10 @@ impl ConflictView {
             result_scroll: self.result_scroll_handle.clone(),
             result_hl: self.result_hl.clone(),
             result_editing: self.result_editing,
-            reset_all_armed: self.reset_all_armed,
+            reset_all_armed: self.reset_all_target.as_ref() == self.editing.as_ref()
+                && self.reset_all_target.is_some(),
+            reset_focus: self.reset_focus.clone(),
+            result_mode_focus: self.result_mode_focus.clone(),
             ab_split: self.ab_split,
             result_split: self.result_split,
             selected_hunk: self.selected_hunk,
@@ -704,6 +739,9 @@ impl ConflictView {
     /// materialization, then sets `editing`. Read-only repo open via `repo_path`.
     /// (Moved from `KagiApp::conflict_open_editor`, sourcing `repo_path` from self.)
     pub fn conflict_open_editor(&mut self, path: &std::path::Path) {
+        if self.editing.as_deref() != Some(path) {
+            self.reset_all_target = None;
+        }
         // Materialize the markers (needs the repo) and build the hunk model.
         if let Ok(repo) = kagi_git::Backend::open(&self.repo_path) {
             if let Some(c) = self.mode.as_mut() {
@@ -724,6 +762,7 @@ impl ConflictView {
 
     /// T-CONFLICT-UX-010/012: set the focused hunk (selected-hunk highlight).
     pub fn conflict_editor_select_hunk(&mut self, hunk_index: usize) {
+        self.reset_all_target = None;
         self.selected_hunk = hunk_index;
     }
 
@@ -769,24 +808,33 @@ impl ConflictView {
     /// T-CONFLICT-POLISH-042: "Reset all" two-stage confirm. First click arms,
     /// second performs the reset. (Moved from `KagiApp`.)
     pub fn conflict_editor_reset_all_request(&mut self, path: &std::path::Path) {
-        if self.reset_all_armed {
-            self.reset_all_armed = false;
+        if self.writer_busy || self.editing.as_deref() != Some(path) {
+            return;
+        }
+        if self.reset_all_target.as_deref() == Some(path) {
+            self.reset_all_target = None;
             self.conflict_editor_reset_all(path);
         } else {
-            self.reset_all_armed = true;
+            self.reset_all_target = Some(path.to_path_buf());
         }
     }
 
-    /// T-CONFLICT-UX-015: toggle the Result pane between Preview / Edit mode.
-    pub fn conflict_editor_toggle_result_mode(&mut self) {
-        if self.writer_busy {
+    /// Explicitly select Preview / Edit; reactivation preserves manual input.
+    pub fn conflict_editor_set_result_mode(&mut self, editing: bool) {
+        if self.writer_busy || self.result_editing == editing {
             return;
         }
-        self.result_editing = !self.result_editing;
+        self.reset_all_target = None;
+        self.result_editing = editing;
         // Force the inputs to re-sync (mode is part of the content signature).
         if let Some(i) = self.editor_inputs.as_mut() {
             i.content_sig = 0;
         }
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn result_mode_tabs_for_e2e(&self) -> Vec<(gpui::Role, String, bool, bool)> {
+        self.result_mode_focus.recorded_tabs()
     }
 
     /// Reset every hunk of `path` to unresolved (toolbar "Reset all").
@@ -821,6 +869,7 @@ impl ConflictView {
             return;
         };
         let open_path = (file.kind == ConflictKind::Content).then(|| file.path.clone());
+        self.reset_all_target = None;
         mode.selected_file = Some(idx);
         mode.editing_file = open_path.as_ref().map(|_| idx);
         if let Some(p) = open_path {

@@ -303,3 +303,32 @@ clears the hidden buffer, then checks editing refusal and padding focus. Actual
 Issue-body and Conflict-Result legs check initial/live EN/JA names and help.
 Native VoiceOver, Full Keyboard Access and live IME are separate PM-owned
 Tier B checks, not claims from these renderer/TestDispatcher observations.
+
+## Amendment — 2026-10-14: History read failure feedback (#1515)
+
+An accepted History `Err` retains its cause on the current Editor file owner,
+distinct from `Ok` with zero entries. The settled pane displays an EN/JA failure
+heading, the cause and a pinned ghost Retry Button with ordinary keyboard/AX
+semantics. The open/dense pane keeps the same typography and spacing as its
+neighboring snapshot actions; no modal or write-operation receipt is appropriate
+for this read.
+
+Backend causes may include untrusted Git stderr. Retain the complete original
+cause in state, but bound the preview before `sanitize_control_bytes`, then cap
+the escaped display at 480 characters and three lines (plus an ellipsis when
+truncated). Renderer probes observe that same safe preview, never raw stderr.
+Only the cause owns a flexible scroll region; the heading and Retry are fixed
+siblings outside it, so arbitrarily long causes cannot displace recovery.
+History and Snapshot use one shared named Button adapter.
+
+Retry clears the error and emits the existing `HistoryRequested` through the
+same `(file_req, path)` request slot. While loading, repeated activation is inert.
+Mode changes preserve the accepted error until explicit Retry; changing files
+clears it alongside the immutable history and stale responses are rejected before
+either field is touched. Success clears the failure, including a genuinely empty
+history. Commit selection, virtualization, Diff and read-only Snapshot ownership
+remain unchanged.
+
+The `editor_history_fetch_error` regression injects only the History transport
+task at `start_editor_history_load`; production dispatch and publication remain
+the real path. Its neighbors run with `editor_history,editor_`.

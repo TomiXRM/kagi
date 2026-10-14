@@ -492,7 +492,13 @@ impl KagiApp {
     ) {
         let repo_path = view.read(cx).repo_path.clone();
         let bg_path = path.clone();
+        #[cfg(feature = "gui-e2e")]
+        let injected = super::e2e::take_editor_history();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(task) = injected {
+                return task.await;
+            }
             let req = kagi_git::FileHistoryRequest {
                 repo_dir: repo_path,
                 file_path: bg_path,

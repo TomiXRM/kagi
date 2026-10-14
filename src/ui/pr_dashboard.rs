@@ -380,12 +380,19 @@ pub(super) fn render_dashboard(
         .min_w(px(0.))
         .min_h(px(0.))
         .bg(rgb(page_bg()))
-        .child(super::list_filter_strip::render_strip(
-            app,
-            super::list_filter_strip::ListKind::Prs,
-            filtered_count,
-            cx,
-        ))
+        .when(
+            !super::compact_sidebar::owns_list_filter(window, cx),
+            |page| {
+                // The navigator projects the same Input and focus slots. Only one
+                // surface may mount them while the compact Popover is open.
+                page.child(super::list_filter_strip::render_strip(
+                    app,
+                    super::list_filter_strip::ListKind::Prs,
+                    filtered_count,
+                    cx,
+                ))
+            },
+        )
         .child(body)
         .into_any_element()
 }

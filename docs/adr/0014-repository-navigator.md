@@ -12,3 +12,12 @@
 
 ## Consequences
 - 状態追加: collapsed sections / filter 文字列(KagiApp 保持、reload で維持)
+
+## Amendment — 2026-10-14: search cancellation and Clear accessibility (#1547/#1548)
+
+Nonempty search consumes Escape by clearing only its query and retaining the
+Input's focus. Empty search Escape retains the existing exit to the local list.
+IME marked-text cancellation is consumed by Input before the containing
+workspace's Escape handler runs. The Input's optional Clear button receives its
+own localized EN/JA action name, distinct from “Filter sidebar”; native AXPress
+uses the existing clear-and-refocus callback and empty inputs expose no Clear.

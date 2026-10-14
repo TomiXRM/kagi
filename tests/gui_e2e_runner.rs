@@ -220,6 +220,9 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_search.rs"]
+mod sidebar_search;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_focus.rs"]
@@ -1612,6 +1615,14 @@ mod macos {
             (
                 "sidebar_panes",
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
+            ),
+            (
+                "sidebar_search_escape",
+                Box::new(crate::sidebar_search::sidebar_search_escape),
+            ),
+            (
+                "sidebar_search_clear_ax",
+                Box::new(crate::sidebar_search::sidebar_search_clear_ax),
             ),
             (
                 "sidebar_filter_tab_entry",

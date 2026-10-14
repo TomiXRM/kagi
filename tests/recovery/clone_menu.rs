@@ -1,5 +1,5 @@
 use crate::macos::{build_fixture, mount, unmount};
-use gpui::VisualTestAppContext;
+use gpui::{Focusable as _, VisualTestAppContext};
 use kagi::ui::{
     commands::{command_state, CommandState},
     home_work::HomePane,
@@ -14,6 +14,39 @@ pub fn scenario_clone_menu_routes_home(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let (app, window) = mount(cx, &fixture.path().canonicalize().unwrap());
     let before = crate::macos::repo_fingerprint(fixture.path());
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.about", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    let modal_focus = cx.read(|cx| app.read(cx).modal_focus.clone().unwrap());
+    assert!(
+        cx.read(|cx| matches!(
+            command_state(app.read(cx), "file.cloneRepository"),
+            CommandState::Disabled(_)
+        )),
+        "Clone command must be unavailable under another modal"
+    );
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("cmd-shift-o").unwrap());
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("file.cloneRepository", window, cx)
+        });
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(window, |_, window, cx| modal_focus
+            .contains_focused(window, cx))
+            .unwrap(),
+        "Clone shortcut must not move focus behind an existing modal"
+    );
+    assert!(!cx.read(|cx| app.read(cx).home_in_front()));
+    cx.dispatch_keystroke(window, gpui::Keystroke::parse("escape").unwrap());
+    cx.run_until_parked();
     let lang = kagi::ui::i18n::lang();
     for language in [Lang::En, Lang::Ja] {
         kagi::ui::i18n::set_lang(language);
@@ -31,6 +64,20 @@ pub fn scenario_clone_menu_routes_home(cx: &mut VisualTestAppContext) {
         cx.run_until_parked();
         crate::app_conflict::click_control(cx, window, "platform-menu-cmd-file.cloneRepository");
         cx.run_until_parked();
+        assert!(
+            cx.update_window(window, |_, window, cx| {
+                app.read(cx)
+                    .home_github
+                    .filter
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            })
+            .unwrap(),
+            "portable Clone menu must leave focus in the repository filter"
+        );
         cx.read(|cx| {
             let app = app.read(cx);
             assert!(app.home_in_front());

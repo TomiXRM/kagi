@@ -99,6 +99,14 @@ impl KagiApp {
 
     /// File → Clone Repository reuses Home's repository selection and card.
     pub fn open_clone_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.clone_modal().is_some() {
+            self.pending_focus = None;
+            self.focus_after_pick(window, cx);
+            return;
+        }
+        if self.has_modal_or_visible_plan(cx) {
+            return;
+        }
         if self.tabs.is_empty() && self.remote_view.is_some() {
             self.depart_active_tab();
             self.remote_view = None;
@@ -107,11 +115,8 @@ impl KagiApp {
         self.close_settings_for_command(window, cx);
         self.set_home_pane(super::home_work::HomePane::Repos, cx);
         self.ensure_home_github(window, cx);
-        if self.clone_modal().is_some() {
-            self.focus_after_pick(window, cx);
-            return;
-        }
         if let Some(filter) = &self.home_github.filter {
+            self.pending_focus = None;
             filter.update(cx, |input, cx| input.focus(window, cx));
         }
         cx.notify();

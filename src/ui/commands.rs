@@ -889,6 +889,9 @@ pub fn command_state(app: &KagiApp, id: &str) -> CommandState {
     let diff_open = app.ui().main_diff.is_some() || app.pending_headless_diff.is_some();
 
     match id {
+        "file.cloneRepository" if app.has_active_modal() && app.clone_modal().is_none() => {
+            Disabled(Msg::FinishDialogFirst.t())
+        }
         "view.togglePrSwimlane" if app.pr_mode_visible()
             && app.pr_mode().is_some_and(|m| m.active.is_some()) => Enabled,
         "view.togglePrSwimlane" => Disabled(Msg::NoPrOpen.t()),

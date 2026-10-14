@@ -134,4 +134,11 @@ Repository tabs are retained, Home remains a singleton, and ordinary Home
 departure retires repository-owned plans. Repeated invocation reuses the same
 picker. The command registry supplies the same enabled entry to native File,
 the portable menu, shortcut and palette; no alternate clone lifecycle is added.
+An existing non-clone modal or visible Commit plan blocks this navigation:
+the command cannot change the underlying screen or steal its focus trap.
+The registry disables Clone while another modal is open, and direct dispatch
+also checks the existing modal/visible-plan guard. An already-open clone card
+is refocused without replacing it. Explicit picker/card focus consumes the
+portable menu's pending opener restoration, so the next frame cannot move
+focus back to the covered workspace.
 

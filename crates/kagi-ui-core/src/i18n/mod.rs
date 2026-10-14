@@ -320,6 +320,7 @@ pub enum Msg {
     // ── Placeholder / unimplemented menu reasons ────────────────────
     MultiWindowUnsupported,
     ResetUnimplemented,
+    FinishDialogFirst,
 
     // ── Busy footers (op in flight) ─────────────────────────────────
     BusyCheckout,
@@ -2526,6 +2527,8 @@ impl Msg {
             (Ja, MultiWindowUnsupported) => "複数ウィンドウは未対応です",
             (En, ResetUnimplemented) => "reset is not implemented (ADR-0024)",
             (Ja, ResetUnimplemented) => "reset は未実装です (ADR-0024)",
+            (En, FinishDialogFirst) => "Finish or dismiss the open dialog first",
+            (Ja, FinishDialogFirst) => "開いているダイアログを完了するか閉じてください",
 
             // ── Busy footers ────────────────────────────────────────
             (En, BusyCheckout) => "checkout in progress…",

@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - File → Clone Repository and its existing shortcut now open Home's Repositories picker instead of remaining disabled as an unimplemented placeholder. Selecting a repository uses the existing clone confirmation card and safety lifecycle. (#1522)
+  - Review: another open modal or visible confirmation blocks navigation without stealing its focus; portable menu dismissal cannot restore the covered workspace's focus over the picker.
 - Activity chart hover and keyboard inspection targets now align with the plotted bucket positions, including narrow plots at 167% zoom; neighboring marks share midpoint hit boundaries without changing aggregation or series encoding. (#1510)
 - Smart Commit's first Settings enable now requires the same four localized privacy statements as Generate, including unstaged exclusion and the staged-secret warning. Approval only enables the preference; cancelling, Escape or closing Settings sends nothing and leaves it disabled. Consent survives OFF/re-enable independently from the enable flag, and older enabled settings without recorded consent must ask before generation. (#1509)
 - Editor History read failures retain their cause and show a localized Retry action instead of claiming that the file has no history. Retry uses the existing file/request owner; successful empty reads and stale responses remain distinct. (#1515)

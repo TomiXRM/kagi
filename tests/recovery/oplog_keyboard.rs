@@ -86,8 +86,8 @@ fn activate(
 ) -> gpui::Pixels {
     let bounds = cx.read(|cx| panel.read(cx).scroll_handle().bounds_for_item(0).unwrap());
     assert!(
-        (f32::from(bounds.size.height) - theme::scaled(22.)).abs() < 1.,
-        "collapsed height unchanged"
+        (f32::from(bounds.size.height) - theme::scaled(44.)).abs() < 1.,
+        "collapsed two-line priority summary height"
     );
     cx.simulate_click(
         window,

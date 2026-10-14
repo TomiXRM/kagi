@@ -38,7 +38,10 @@ pub fn scenario_window_min_size(cx: &mut VisualTestAppContext) {
                     Some(size(px(940.), px(660.))),
                     "native runtime minimum must match restore"
                 );
-                options.window_bounds = Some(gpui::WindowBounds::Windowed(restored));
+                options.window_bounds = Some(gpui::WindowBounds::Windowed(Bounds {
+                    size: size(px(1000.), px(720.)),
+                    ..restored
+                }));
                 options.show = false;
                 options.focus = false;
                 app.open_window(options, |window, app| {
@@ -48,7 +51,22 @@ pub fn scenario_window_min_size(cx: &mut VisualTestAppContext) {
             });
             let window = *window;
             let entity = out.borrow_mut().take().unwrap();
-            request_native_size(cx, window, 200., 150.);
+            crate::macos::drain_native_events();
+            crate::toolbar_overflow::frame(cx, window);
+            assert_eq!(
+                cx.update_window(window, |_, window, _| window.viewport_size())
+                    .unwrap(),
+                size(px(1000.), px(720.)),
+                "renderer resize must start above the native minimum"
+            );
+            let native_minimum = native_minimum(cx, window);
+            assert_eq!(
+                native_minimum,
+                size(px(940.), px(660.)),
+                "NSWindow contentMinSize"
+            );
+            cx.update_window(window, |_, window, _| window.resize(native_minimum))
+                .unwrap();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             loop {
                 crate::macos::drain_native_events();
@@ -62,7 +80,7 @@ pub fn scenario_window_min_size(cx: &mut VisualTestAppContext) {
                 }
                 assert!(
                     std::time::Instant::now() < deadline,
-                    "native minimum resize timed out"
+                    "renderer resize from above minimum timed out"
                 );
             }
             let viewport = cx
@@ -71,7 +89,7 @@ pub fn scenario_window_min_size(cx: &mut VisualTestAppContext) {
             assert_eq!(
                 viewport,
                 size(px(940.), px(660.)),
-                "runtime 200×150 resize clamps"
+                "renderer resize changes the viewport to its inspected native minimum"
             );
             let viewport = Bounds::new(point(px(0.), px(0.)), viewport);
             for id in ["compact-rail", "compact-rail-local", "tb-graph-mode"] {
@@ -118,12 +136,10 @@ pub fn scenario_window_min_size(cx: &mut VisualTestAppContext) {
     }
 }
 
-fn request_native_size(
+fn native_minimum(
     cx: &mut VisualTestAppContext,
     target: gpui::AnyWindowHandle,
-    width: f64,
-    height: f64,
-) {
+) -> gpui::Size<gpui::Pixels> {
     #[repr(C)]
     struct NativeSize {
         width: f64,
@@ -139,29 +155,30 @@ fn request_native_size(
         );
     }
     let marker = format!("minimum-probe-{:?}", target.window_id());
-    cx.update_window(target, |_, window, _| window.set_window_title(&marker))
+    let previous = cx
+        .update_window(target, |_, window, _| {
+            let previous = window.window_title();
+            window.set_window_title(&marker);
+            previous
+        })
         .unwrap();
-    cx.update(|_| unsafe {
+    let minimum = cx.update(|_| unsafe {
         use objc2::{class, msg_send, runtime::AnyObject};
         let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
         let windows: *mut AnyObject = msg_send![app, windows];
         let count: usize = msg_send![windows, count];
-        let mut found = false;
         for index in 0..count {
             let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
             let title: *mut AnyObject = msg_send![window, title];
             let bytes: *const std::ffi::c_char = msg_send![title, UTF8String];
             if !bytes.is_null() && std::ffi::CStr::from_ptr(bytes).to_string_lossy() == marker {
-                let value: *mut AnyObject =
-                    msg_send![class!(NSValue), valueWithSize: NativeSize { width, height }];
-                let attribute: *mut AnyObject =
-                    msg_send![class!(NSString), stringWithUTF8String: c"AXSize".as_ptr()];
-                let _: () =
-                    msg_send![window, accessibilitySetValue: value, forAttribute: attribute];
-                found = true;
-                break;
+                let minimum: NativeSize = msg_send![window, contentMinSize];
+                return size(px(minimum.width as f32), px(minimum.height as f32));
             }
         }
-        assert!(found, "native repository window found by its own identity");
+        panic!("native repository window found by its own identity");
     });
+    cx.update_window(target, |_, window, _| window.set_window_title(&previous))
+        .unwrap();
+    minimum
 }

@@ -166,3 +166,13 @@ expand to this minimum. Display fitting still caps startup geometry to the
 usable area if the display itself is smaller; the native minimum remains the
 supported product size. Larger 1000×720 and 1400×900 requests stay unconstrained.
 Settings and other secondary windows remain independently owned.
+
+Validation separates native configuration from OS resize delivery. Tier A
+reads the actual NSWindow `contentMinSize` and observes a renderer resize
+from 1000×720 to that minimum, alongside restore and control-layout coverage.
+The hidden runner cannot deliver AXSize reliably: same-process calls return
+-25208 and external runner-child calls return -25204, even offscreen-visible.
+The legacy NSWindow accessibility setter is a no-op and is not an oracle.
+Tier B uses an external Swift AXUIElementSetAttributeValue request against
+the isolated plain app: 200×150 reads back as 940×660 in AX and CGWindow
+bounds. This runtime evidence remains in the screenshot-side evidence.json.

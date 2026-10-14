@@ -236,7 +236,7 @@ struct EntryRecord {
     repo_identity: RecordedIdentity,
     #[serde(default, deserialize_with = "issue_fields")]
     issue_fields: Option<IssueCreateFields>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "technical_detail")]
     technical_detail: Option<String>,
 }
 
@@ -364,6 +364,13 @@ fn actor<'de, D: Deserializer<'de>>(d: D) -> Result<Actor, D::Error> {
 
 fn worktree<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(scalar(Value::deserialize(d)?).filter(|text| text != "null"))
+}
+
+fn technical_detail<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::String(text) => Some(text),
+        _ => None,
+    })
 }
 
 fn failure_code<'de, D: Deserializer<'de>>(d: D) -> Result<Option<FailureCode>, D::Error> {

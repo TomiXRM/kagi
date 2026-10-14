@@ -507,8 +507,9 @@ summary identifying the remote and asking the user to check credentials. The
 optional receipt `technical_detail` holds the unchanged full CLI diagnostic,
 rendered in expanded detail and Operation Log Copy, never in the toast or row
 summary. The wire codec omits this field when absent, so ordinary/old receipt
-bytes remain unchanged; old lines read it as `None`. Manual, quiet and departed
-Fetch attempts retain the same detail and exactly one receipt.
+bytes remain unchanged; old lines read it as `None`. A non-string optional
+detail is ignored as `None` without losing the receipt. Manual, quiet, departed
+and remote-branch menu Fetch attempts retain the same detail and exactly one receipt.
 The existing bounded toast/footer presenter and frozen session/visit ownership
 remain the only delivery path. Other failure and Unknown wording is unchanged.
 

@@ -24,6 +24,7 @@ pub fn scenario_fetch_auth_failure_toast(cx: &mut VisualTestAppContext) {
             git(repo, &["config", "credential.helper", ""]);
             git(repo, &["config", "branch.main.remote", "origin"]);
             git(repo, &["config", "branch.main.merge", "refs/heads/main"]);
+            git(repo, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
             let before = git_fixture::git_output(repo, &["show-ref"]);
             let (app, window) = mount(cx, repo);
             crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
@@ -143,6 +144,71 @@ pub fn scenario_fetch_auth_failure_toast(cx: &mut VisualTestAppContext) {
                     .is_some_and(|detail| detail.contains("terminal prompts disabled")
                         && !detail.contains("cannot exec")));
             }
+            // Exercise the real remote-branch menu item, not the repo Fetch command.
+            let target = kagi_git::CommitId(
+                git_fixture::git_output(repo, &["rev-parse", "HEAD"])
+                    .trim()
+                    .to_string(),
+            );
+            app.update(cx, |app, cx| {
+                app.open_remote_branch_menu(
+                    "origin/main".into(),
+                    target,
+                    gpui::point(gpui::px(150.), gpui::px(150.)),
+                );
+                cx.notify();
+            });
+            kagi::ui::e2e::clear_control_bounds(window.window_id(), "branch-menu-item-1-0");
+            draw(cx, window, (1000., 720.));
+            let fetch = kagi::ui::e2e::control_bounds(window.window_id(), "branch-menu-item-1-0")
+                .expect("Fetch remote branch menu item is drawn");
+            cx.simulate_click(window, fetch.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            draw(cx, window, (1000., 720.));
+            cx.read(|cx| {
+                let app = app.read(cx);
+                assert!(app.branch_menu.is_none(), "real menu action dismissed");
+                assert!(!app.app_sessions.has_leases());
+                let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().unwrap();
+                assert_eq!(toast.kind, ToastKind::Error);
+                assert_eq!(toast.message.as_ref(), expected, "branch menu auth summary");
+                assert!(matches!(&app.status_footer, FooterStatus::Failed(text) if text.as_ref() == expected));
+                assert!(app.app_notice().is_none());
+            });
+            let persisted = kagi_git::oplog::read_oplog_tail_for_repo(repo, 10);
+            let branch_attempts: Vec<_> = persisted
+                .iter()
+                .filter(|entry| entry.op == "fetch-remote-branch")
+                .collect();
+            assert_eq!(branch_attempts.len(), 1, "one branch-menu receipt");
+            let receipt = branch_attempts[0];
+            assert!(
+                matches!(&receipt.outcome, kagi_git::oplog::OpOutcome::Failed { error } if error == expected)
+            );
+            assert!(receipt
+                .technical_detail
+                .as_ref()
+                .is_some_and(|detail| detail.contains("terminal prompts disabled")
+                    && !detail.contains("cannot exec")));
+            let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
+            let row = cx.read(|cx| {
+                panel
+                    .read(cx)
+                    .entries()
+                    .iter()
+                    .position(|entry| entry.op == "fetch-remote-branch")
+                    .unwrap()
+            });
+            cx.update(|cx| panel.update(cx, |panel, cx| panel.copy_entry(row, cx)));
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap();
+            assert!(
+                copied.contains(expected) && copied.contains("terminal prompts disabled"),
+                "{copied}"
+            );
+            drop(panel);
             assert_eq!(
                 git_fixture::git_output(repo, &["show-ref"]),
                 before,

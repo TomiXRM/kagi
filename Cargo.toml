@@ -79,6 +79,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
+# Settings fits its native frame via the exact window's AppKit handle.
+raw-window-handle = "0.6"
+objc2-foundation = "0.3"
 
 # Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
 # build.rs. No-op (unused) on other targets.
@@ -201,5 +204,5 @@ zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d
 ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ee625584d557174d9257eea17107e11fbfe25f98" }
-gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "ee625584d557174d9257eea17107e11fbfe25f98" }
+gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }
+gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }

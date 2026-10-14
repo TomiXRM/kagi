@@ -605,6 +605,12 @@ If only the owner revision became stale, the still-current panel request starts
 a new background read and keeps its loading presentation. Invalidation alone
 (for example, fetch with no ref movement) does not guarantee a reload will publish.
 Superseded panel requests remain discarded without restarting.
+Batch staging (#1569) publishes through `CommitPanelView::apply_status`, which
+clears this request before delegating to the shared state-level `apply_status`.
+Its one post-write read still supplies session counts, the watcher baseline and
+WIP diffstat. Admission invalidates the owner read revision; clearing the panel
+request makes the old opening completion a no-op, not an unnecessary retry.
+Background `from_repo` uses the same state-level status application.
 
 Smart Commit's first effective-PATH lookup can launch an interactive login shell;
 it is not an instant filesystem scan. Capability discovery is lazy and

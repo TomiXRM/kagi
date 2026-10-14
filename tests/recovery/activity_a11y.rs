@@ -4,7 +4,7 @@ use gpui::{AnyWindowHandle, Entity, Role, VisualTestAppContext};
 use kagi::ui::{e2e, i18n::Lang, theme, BottomTab, KagiApp};
 use kagi_domain::activity::Granularity;
 
-fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(crate) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -50,7 +50,7 @@ fn matrix(
     theme::set_active(&original.2);
     cx.update(theme::sync_gpui_component_theme);
 }
-fn focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
+pub(crate) fn focus(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     let node = e2e::activity::node(id).expect("Activity renderer metadata");
     cx.update_window(window, |_, window, cx| {
         node.focus

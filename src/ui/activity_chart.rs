@@ -3,6 +3,37 @@ use super::theme::{self, theme};
 use gpui::{canvas, point, px, Bounds, Canvas, PathBuilder, Pixels, Point, Window};
 use kagi_domain::activity::ActivityBucket;
 
+/// Padded linear x scale and its midpoint inspection cells.
+pub(super) struct PlotScale {
+    pub pad: Pixels,
+    count: usize,
+}
+impl PlotScale {
+    pub fn new(count: usize) -> Self {
+        Self {
+            pad: theme::scaled_px(10.),
+            count,
+        }
+    }
+    pub fn x(&self, width: Pixels, index: usize) -> Pixels {
+        if self.count <= 1 {
+            width / 2.
+        } else {
+            self.pad + (width - self.pad * 2.) * (index as f32 / (self.count - 1) as f32)
+        }
+    }
+    /// End cells own padding plus half an interval; interior cells one interval.
+    pub fn cell(&self, index: usize) -> (Pixels, f32) {
+        if self.count <= 1 {
+            (px(0.), 1.)
+        } else if index == 0 || index + 1 == self.count {
+            (self.pad, 0.5)
+        } else {
+            (px(0.), 1.)
+        }
+    }
+}
+
 pub(super) fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
     canvas(
         |_, _, _| {},
@@ -10,18 +41,15 @@ pub(super) fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
             if buckets.is_empty() {
                 return;
             }
-            let pad = theme::scaled_px(10.);
+            let scale = PlotScale::new(buckets.len());
+            let pad = scale.pad;
             let left = bounds.left() + pad;
             let right = bounds.right() - pad;
             let top = bounds.top() + pad;
             let bottom = bounds.bottom() - pad;
             let max = buckets.iter().map(|b| b.commits).max().unwrap_or(1).max(1) as f32;
             let position = |i: usize, value: u32| {
-                let x = if buckets.len() == 1 {
-                    (left + right) / 2.
-                } else {
-                    left + (right - left) * (i as f32 / (buckets.len() - 1) as f32)
-                };
+                let x = bounds.left() + scale.x(bounds.size.width, i);
                 point(x, bottom - (bottom - top) * (value as f32 / max))
             };
             let mut base = PathBuilder::stroke(theme::scaled_px(1.));
@@ -31,10 +59,12 @@ pub(super) fn activity_chart(buckets: Vec<ActivityBucket>) -> Canvas<()> {
                 window.paint_path(path, gpui::rgb(theme().text_muted));
             }
             for merges in [false, true] {
-                let points = buckets
-                    .iter()
-                    .enumerate()
-                    .map(|(i, b)| position(i, if merges { b.merges } else { b.commits }));
+                let points = buckets.iter().enumerate().map(|(i, b)| {
+                    let point = position(i, if merges { b.merges } else { b.commits });
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::activity::record_point(i, merges, point);
+                    point
+                });
                 paint_series(points, merges, window, "chart");
             }
         },

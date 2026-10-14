@@ -220,6 +220,20 @@ real Tab evidence. Tier B: open Activity, Tab into periods/chart, inspect
 both ends with the keyboard, verify the selected fill on hover and the
 dashed merge legend/line, then read each bucket in Accessibility Inspector.
 
+For #1510 use `KAGI_GUI_E2E_ONLY='activity_'` with KEEP_GOING.
+`activity_bucket_hit` and its Light-100/Dark-100/Dark-167 partitions deliver
+pointer events to the actual painter-recorded coordinates of both series for
+48/42/30/52 buckets. Each covers the ordinary 940×660 layout and exact
+260/400/600 logical-pixel plots at its theme/zoom. The RAII `PlotWidth` probe
+changes layout only: the production canvas and overlay receive identical bounds.
+Bucket index, UTC Status date/count and immediate keyboard/pointer readouts
+must agree; Home/Right inspection and End/Left/Right retain the matching mark
+inside the focus region. The existing four activity scenarios retain empty,
+single-point and coincident-stroke coverage. Use the heavy 300s native deadline
+when running this matrix. Tier B: hover an actual chart mark at 167% in Apple
+Light/Dark and capture the isolated app's own window ID; painter metadata is
+not native VoiceOver evidence.
+
 For #1311 use `KAGI_GUI_E2E_ONLY='conflict_'` with KEEP_GOING.
 `conflict_text_keyboard` opens a real two-hunk / three-line merge fixture,
 Tabs to the production resolver, moves Down to hunk 2 and Right to Incoming,

@@ -81,3 +81,16 @@ commands in successfully painted solid/dash/gap
 paths and record the single-point branch, not the requested encoding. Native
 VoiceOver reading and real Tab traversal remain Tier B checks; renderer
 attributes alone do not establish those platform observations.
+
+## Activity plot geometry amendment (2026-10-14, #1510)
+
+The chart's padded linear x scale also owns bucket inspection geometry.
+Neighboring marks split their hit regions at the midpoint; first and last
+regions extend through the plot padding. A single bucket owns the full plot.
+The existing Status owner, roving keyboard focus and immediate readout remain
+unchanged. This is the dense chart role, referenced to HIG Charts/Stocks
+scrubbing: an inspection target must contain the mark it describes.
+The pinned component library has no matching chart hit-region component, so
+the existing custom canvas and focusable overlay remain, with shared geometry.
+Native regression inputs target actual painter-recorded series coordinates,
+not overlay centers; focused regions must contain those same coordinates.

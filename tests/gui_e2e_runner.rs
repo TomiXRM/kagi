@@ -220,6 +220,9 @@ mod recovery_bottom_panel;
 #[cfg(target_os = "macos")]
 #[path = "recovery/activity_a11y.rs"]
 mod activity_a11y;
+#[cfg(target_os = "macos")]
+#[path = "recovery/activity_bucket_hit.rs"]
+mod activity_bucket_hit;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/terminal_states.rs"]
@@ -3969,6 +3972,22 @@ mod macos {
             (
                 "activity_single_bucket_encoding",
                 Box::new(crate::activity_a11y::scenario_activity_single_bucket_encoding),
+            ),
+            (
+                "activity_bucket_hit",
+                Box::new(crate::activity_bucket_hit::scenario_activity_bucket_hit),
+            ),
+            (
+                "activity_bucket_hit_light_100",
+                Box::new(crate::activity_bucket_hit::scenario_activity_bucket_hit_light_100),
+            ),
+            (
+                "activity_bucket_hit_dark_100",
+                Box::new(crate::activity_bucket_hit::scenario_activity_bucket_hit_dark_100),
+            ),
+            (
+                "activity_bucket_hit_dark_167",
+                Box::new(crate::activity_bucket_hit::scenario_activity_bucket_hit_dark_167),
             ),
             (
                 "bottom_panel_tab_hover",

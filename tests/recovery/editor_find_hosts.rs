@@ -109,7 +109,7 @@ fn conflict(cx: &mut VisualTestAppContext, lang: Lang) {
         .expect("real conflict view");
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(std::path::Path::new("notes.txt"));
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(true);
         cx.notify();
     });
     paint(cx, window);

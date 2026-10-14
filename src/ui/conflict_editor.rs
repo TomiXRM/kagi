@@ -111,7 +111,11 @@ fn render_toolbar(
         cx.notify();
     });
     let p_reset = path.to_path_buf();
-    let reset = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+    let reset_focus = chrome.reset_focus.clone();
+    let reset = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
+        if let Some(focus) = &reset_focus {
+            focus.focus(window, cx);
+        }
         this.conflict_editor_reset_all_request(&p_reset);
         cx.notify();
     });
@@ -181,21 +185,28 @@ fn render_toolbar(
             cx,
         ))
         // Reset all — destructive: trash icon, armed → blocker colour + confirm label.
-        .child(icon_button(
-            "editor-reset",
-            "icons/trash-2.svg",
-            if reset_armed {
-                Msg::EditorResetAllConfirm.t()
-            } else {
-                Msg::EditorReset.t()
-            },
-            if reset_armed {
-                ButtonRole::Danger
-            } else {
-                ButtonRole::Warning
-            },
-            reset,
-            cx,
+        .child(super::e2e::measure_control(
+            "conflict-editor-reset",
+            div()
+                .when_some(chrome.reset_focus.as_ref(), |el, focus| {
+                    el.track_focus(focus)
+                })
+                .child(icon_button(
+                    "editor-reset",
+                    "icons/trash-2.svg",
+                    if reset_armed {
+                        Msg::EditorResetAllConfirm.t()
+                    } else {
+                        Msg::EditorReset.t()
+                    },
+                    if reset_armed {
+                        ButtonRole::Danger
+                    } else {
+                        ButtonRole::Warning
+                    },
+                    reset,
+                    cx,
+                )),
         ))
         .into_any_element()
 }
@@ -1449,10 +1460,6 @@ fn render_result_pane(
         theme().color_warning
     };
 
-    let toggle = cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-        this.conflict_editor_toggle_result_mode();
-        cx.notify();
-    });
     // File-level "Save resolution" lives near the Result (deliverable #4).
     // Save writes the working tree + stages + re-detects (reload) → it touches
     // `app.conflict`, so it MUST defer to the parent (calling it synchronously
@@ -1490,7 +1497,7 @@ fn render_result_pane(
                 .text_color(rgb(theme().text_label))
                 .child(SharedString::from(Msg::EditorResultOutput.t())),
         )
-        .child(mode_toggle(editing, toggle))
+        .child(mode_toggle(chrome, cx))
         .child(
             div()
                 .flex_grow(1.)
@@ -1558,52 +1565,83 @@ fn render_result_pane(
         .border_color(rgb(theme().surface))
         .bg(rgb(theme().bg_base))
         .child(header)
-        .child(preview_body)
+        .child(super::e2e::measure_control(
+            if editing {
+                "conflict-result-edit-body"
+            } else {
+                "conflict-result-preview-body"
+            },
+            preview_body,
+        ))
         .into_any_element()
 }
 
-/// A two-segment Preview | Edit toggle (UX-015).
-fn mode_toggle<H>(editing: bool, handler: H) -> gpui::Stateful<gpui::Div>
-where
-    H: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-{
-    let seg = |probe: &'static str, label: &str, active: bool| {
-        let foreground = rgb(if active {
-            theme().text_main
-        } else {
-            theme().text_sub
-        });
-        div()
-            .px(theme::scaled_px(7.))
-            .py(theme::scaled_px(2.))
-            .text_size(theme::scaled_px(10.))
-            .text_color(foreground)
-            .when(active, |s| s.bg(theme().segment_selected_bg()))
-            .when(cfg!(feature = "gui-e2e"), |el| {
-                el.relative().child(super::e2e::measure_inside(probe))
-            })
-            .child(SharedString::from(label.to_string()))
+/// Explicit Preview | Edit selection using the shared roving TabList.
+fn mode_toggle(chrome: &EditorChrome, cx: &mut Context<ConflictView>) -> gpui::Stateful<gpui::Div> {
+    use super::keyboard_nav::{self, Activation, TabList};
+    let weak = cx.entity().downgrade();
+    let tabs = TabList::new(
+        &chrome.result_mode_focus,
+        keyboard_nav::slot_keys(2),
+        vec![0, 1],
+        Some(usize::from(chrome.result_editing)),
+        Activation::Automatic,
+        None,
+        move |slot, _, _, cx| {
+            let _ = weak.update(cx, |view, cx| {
+                view.conflict_editor_set_result_mode(slot == 1);
+                cx.notify();
+            });
+        },
+        cx,
+    );
+    let cell = |slot, id: &'static str, label: &'static str| {
+        let selected = chrome.result_editing == (slot == 1);
+        tabs.cell(
+            slot,
+            label,
+            div()
+                .id(id)
+                .m(px(-keyboard_nav::RING))
+                .relative()
+                .role(gpui::Role::Tab)
+                .aria_label(label)
+                .aria_selected(selected)
+                .child(super::e2e::measure_inside(id))
+                .child(
+                    div()
+                        .px(theme::scaled_px(7.))
+                        .py(theme::scaled_px(2.))
+                        .text_size(theme::scaled_px(10.))
+                        .text_color(rgb(if selected {
+                            theme().text_main
+                        } else {
+                            theme().text_sub
+                        }))
+                        .when(selected, |el| el.bg(theme().segment_selected_bg()))
+                        .child(label),
+                ),
+        )
     };
-    div()
-        .id("result-mode-toggle")
-        .flex()
-        .flex_row()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(theme().surface))
-        .overflow_hidden()
-        .cursor_pointer()
-        .child(seg(
-            "conflict-result-preview",
-            Msg::EditorPreviewMode.t(),
-            !editing,
-        ))
-        .child(seg(
-            "conflict-result-edit",
-            Msg::EditorEditMode.t(),
-            editing,
-        ))
-        .on_click(handler)
+    tabs.list(
+        div()
+            .id("result-mode-toggle")
+            .relative()
+            .child(super::e2e::measure_inside("conflict-result-group"))
+            .flex()
+            .flex_row()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(theme().surface)),
+    )
+    .role(gpui::Role::TabList)
+    .aria_label(Msg::EditorResultOutput.t())
+    .child(cell(
+        0,
+        "conflict-result-preview",
+        Msg::EditorPreviewMode.t(),
+    ))
+    .child(cell(1, "conflict-result-edit", Msg::EditorEditMode.t()))
 }
 
 // ────────────────────────────────────────────────────────────

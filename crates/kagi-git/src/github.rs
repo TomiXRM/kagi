@@ -495,6 +495,7 @@ pub(crate) fn plan_pr_merge(
                 .as_ref()
                 .is_some_and(|branch| branch.tip.is_some() && branch.keep_reason.is_none()));
     OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: if blockers.is_empty() {

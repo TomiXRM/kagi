@@ -83,6 +83,7 @@ pub fn plan_checkout_tracking_branch(
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -298,6 +299,7 @@ pub fn plan_switch_to_latest(
         .unwrap_or_default();
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),

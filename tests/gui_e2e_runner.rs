@@ -117,6 +117,10 @@ mod plan_card_reachability;
 mod rebase_card_scope;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/push_tag_card_scope.rs"]
+mod push_tag_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -1908,6 +1912,10 @@ mod macos {
                 Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
             ),
             (
+                "push_tag_card_scope",
+                Box::new(crate::push_tag_card_scope::scenario_push_tag_card_scope),
+            ),
+            (
                 "neighbor_plan_labels",
                 Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels),
             ),
@@ -2985,56 +2993,56 @@ mod macos {
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_light_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_light_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_light_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_100_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_en_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+                "tag_unloaded_target_ja_light_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_light_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_167_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_ja_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_167_1392",

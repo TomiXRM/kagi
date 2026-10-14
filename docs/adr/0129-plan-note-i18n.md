@@ -117,3 +117,12 @@ Existing local branches remain valid upstreams, matching the executor contract.
 EN/JA text directs the user to fetch a missing tracking ref first; planning never
 performs that fetch. Input Enter may record an existing Refused receipt, but
 blocked creation never admits a write or produces an execution receipt.
+
+## Revert AFTER summary amendment (2026-10-14, #1534)
+
+The backend predicted HEAD uses canonical English for new Revert commits.
+The card and Copy all localize the Japanese clause from the typed Revert title
+only for Ready plans; blocked predictions retain their observed state.
+Branch names and commit subjects remain verbatim. Presenter unit coverage
+includes Japanese user data in English and blocked predictions; native
+`revert_card_en_summary` covers the real plan card.

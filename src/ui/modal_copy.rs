@@ -80,11 +80,17 @@ pub(crate) fn plan_clipboard_text(
 ) -> String {
     let mut out = String::new();
     let predicted_dirty = plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_head = plan::cherry_revert::predicted_head_text(
+        &plan.title,
+        &plan.disposition,
+        &plan.predicted.head,
+        kagi_ui_core::i18n::lang(),
+    );
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
     out.push_str(&format!(
         "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        plan.current.head, plan.current.dirty, plan.predicted.head, predicted_dirty
+        plan.current.head, plan.current.dirty, predicted_head, predicted_dirty
     ));
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));

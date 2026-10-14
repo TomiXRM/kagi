@@ -121,3 +121,58 @@ pub fn recovery_ja(recovery: &CherryRevertRecovery) -> String {
         }
     }
 }
+
+/// Localize generated Revert AFTER prose from typed data, not user text.
+pub fn predicted_head_text<'a>(
+    title: &kagi_domain::plan_note::PlanTitle,
+    disposition: &kagi_domain::plan_note::PlanDisposition,
+    canonical: &'a str,
+    language: crate::i18n::Lang,
+) -> std::borrow::Cow<'a, str> {
+    use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
+    if language == crate::i18n::Lang::Ja && *disposition == PlanDisposition::Ready {
+        if let PlanTitle::CherryRevert(CherryRevertTitle::Revert {
+            branch, summary, ..
+        }) = title
+        {
+            return format!(
+                "branch: {branch} (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+            )
+            .into();
+        }
+    }
+    std::borrow::Cow::Borrowed(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::Lang;
+    use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
+
+    #[test]
+    fn revert_after_summary_preserves_user_text() {
+        let summary = "日本語の commit: が新規作成されます";
+        let title = PlanTitle::CherryRevert(CherryRevertTitle::Revert {
+            sha: "12345678".into(),
+            branch: "日本語-branch".into(),
+            summary: summary.into(),
+        });
+        let canonical =
+            format!("branch: 日本語-branch (+1 new revert commit: Revert \"{summary}\")");
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::En),
+            canonical
+        );
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Ready, &canonical, Lang::Ja),
+            format!(
+                "branch: 日本語-branch (+1 revert commit が新規作成されます: Revert \"{summary}\")"
+            )
+        );
+        assert_eq!(
+            predicted_head_text(&title, &PlanDisposition::Blocked, "branch: main", Lang::Ja),
+            "branch: main"
+        );
+    }
+}

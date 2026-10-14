@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Smart Commit's first Settings enable now requires the same four localized privacy statements as Generate, including unstaged exclusion and the staged-secret warning. Approval only enables the preference; cancelling, Escape or closing Settings sends nothing and leaves it disabled. Consent survives OFF/re-enable independently from the enable flag, and older enabled settings without recorded consent must ask before generation. (#1509)
 - Editor History read failures retain their cause and show a localized Retry action instead of claiming that the file has no history. Retry uses the existing file/request owner; successful empty reads and stale responses remain distinct. (#1515)
   - Review: display-control bytes in backend causes are escaped, previews are bounded to three lines/480 characters, and Retry stays pinned outside the cause scroller. History and Snapshot share one named Button adapter.
 - Conflict Editor Reset all confirmation is bound to the edited file and disarms on navigation, selection changes and blur. Result Preview/Edit uses explicit shared TabList selection, so pressing an already-selected segment preserves mode and manual edits; writer-busy controls remain inert. (#1511, #1512)

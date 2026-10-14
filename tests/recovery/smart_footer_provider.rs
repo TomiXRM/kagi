@@ -5,7 +5,8 @@ use kagi_domain::message_gen::CliProvider;
 
 pub fn scenario_smart_commit_footer_provider(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
-    let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["theme", "smart_commit_consent_accepted"]);
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
     let fixture = build_fixture();
     std::fs::write(fixture.path().join("footer-provider"), "staged\n").unwrap();
     git(fixture.path(), &["add", "footer-provider"]);

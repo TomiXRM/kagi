@@ -14,7 +14,7 @@ fn request_log(log: &Mutex<Vec<String>>) -> MutexGuard<'_, Vec<String>> {
     }
 }
 
-struct Ollama {
+pub(crate) struct Ollama {
     host: String,
     generated: Arc<Mutex<Vec<String>>>,
     fail_generation: Arc<std::sync::atomic::AtomicBool>,
@@ -23,7 +23,7 @@ struct Ollama {
     previous_host: Option<String>,
 }
 impl Ollama {
-    fn new(models: &[String]) -> Self {
+    pub(crate) fn new(models: &[String]) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let host = listener.local_addr().unwrap().to_string();
         listener.set_nonblocking(true).unwrap();
@@ -97,6 +97,10 @@ impl Ollama {
             previous_host,
         }
     }
+
+    pub(crate) fn generated_models(&self) -> Vec<String> {
+        request_log(&self.generated).clone()
+    }
 }
 impl Drop for Ollama {
     fn drop(&mut self) {
@@ -125,8 +129,10 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&[
         "smart_commit_model",
         "smart_commit_llm_enabled",
+        "smart_commit_consent_accepted",
         "lang",
     ]);
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
     let language = i18n::lang();
     for (count, lang, failure) in [
         (1, Lang::En, false),
@@ -270,10 +276,15 @@ pub fn keyboard(cx: &mut VisualTestAppContext) {
 
 pub fn empty(cx: &mut VisualTestAppContext) {
     use kagi_ui_core::i18n::{self, Lang};
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["smart_commit_llm_enabled", "lang"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "smart_commit_llm_enabled",
+        "smart_commit_consent_accepted",
+        "lang",
+    ]);
     let language = i18n::lang();
     for lang in [Lang::En, Lang::Ja] {
         i18n::set_lang(lang);
+        kagi::ui::settings::write_setting("smart_commit_consent_accepted", None);
         let server = Ollama::new(&[]);
         let fixture = build_fixture();
         std::fs::write(fixture.path().join("smart.txt"), "staged fixture\n").unwrap();
@@ -408,7 +419,11 @@ pub fn empty(cx: &mut VisualTestAppContext) {
             )
         });
         // A departed consent owner must not replace the background or active draft.
-        app.update(cx, |app, _| app.smart_commit.llm_enabled = false);
+        kagi::ui::settings::write_setting("smart_commit_consent_accepted", None);
+        app.update(cx, |app, _| {
+            app.smart_commit.llm_enabled = false;
+            app.smart_commit.consent_accepted = false;
+        });
         cx.update_window(window, |_, window, cx| {
             app.update(cx, |app, cx| {
                 app.smart_generate(app.active_session().unwrap(), window, cx)

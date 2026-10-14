@@ -194,6 +194,10 @@ mod create_branch_warnings;
 mod smart_picker;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/smart_commit_settings_consent.rs"]
+mod smart_commit_settings_consent;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_panes.rs"]
 mod recovery_sidebar_panes;
 
@@ -2018,6 +2022,10 @@ mod macos {
             (
                 "smart_commit_modal_and_probe",
                 Box::new(crate::recovery_operations::scenario_smart_commit_modal_and_probe),
+            ),
+            (
+                "smart_commit_settings_consent",
+                Box::new(crate::smart_commit_settings_consent::scenario_smart_commit_settings_consent),
             ),
             (
                 "smart_picker_keyboard",

@@ -18,6 +18,12 @@ impl KagiApp {
     /// the backend).  On any `Err` the result falls back to the rule-based draft
     /// so the UI never blocks or shows a blocking error.
     pub(super) fn run_smart_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.smart_commit.llm_enabled
+            || !self.smart_commit.consent_accepted
+            || message_gen::offline()
+        {
+            return;
+        }
         // #476: generate from the PANEL's staged diff, not the tab's.
         let Some(repo_path) = self.commit_panel_repo_path(cx) else {
             return;

@@ -742,6 +742,8 @@ fn pending_generation(
 /// the moment the resource dies, so the task holds a weak handle and upgrades
 /// only after the owner entry proves the tab is still open.
 pub fn scenario_smart_generation_close_drops_panel(cx: &mut VisualTestAppContext) {
+    let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
     let root_dir = tempfile::tempdir().expect("tempdir");
     let root = root_dir.path().canonicalize().unwrap();
     let repo_a = build_fixture(&root, "smart-a");

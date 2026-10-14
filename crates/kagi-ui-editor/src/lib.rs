@@ -27,6 +27,7 @@ mod blame;
 pub use blame::BlameProbe;
 mod bottom_panel;
 pub mod markdown;
+mod named_button;
 mod pane_selectors;
 mod panes;
 pub use pane_selectors::EditorPaneSelectors;
@@ -428,6 +429,16 @@ pub struct EditorWorkspaceView {
     /// without copying them. `None` while loading or before the tab has ever
     /// been opened for this file.
     pub history: Option<Arc<FileHistory>>,
+    /// Accepted read failure for the current file, separate from an empty history.
+    pub history_error: Option<String>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_presentation: std::cell::RefCell<String>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_retry_focused: bool,
+    #[cfg(feature = "gui-e2e")]
+    pub history_error_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    #[cfg(feature = "gui-e2e")]
+    pub history_retry_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     /// The in-flight History load, owned by its own request key
     /// (`(file_req, path)`) rather than by a bare bool — see
     /// [`kagi_domain::load_request`] and [`Self::history_loading`] (#489).
@@ -619,6 +630,15 @@ impl EditorWorkspaceView {
             file_req: 0,
             right_tab: RightPaneTab::default(),
             history: None,
+            history_error: None,
+            #[cfg(feature = "gui-e2e")]
+            history_presentation: Default::default(),
+            #[cfg(feature = "gui-e2e")]
+            history_retry_focused: false,
+            #[cfg(feature = "gui-e2e")]
+            history_error_bounds: None,
+            #[cfg(feature = "gui-e2e")]
+            history_retry_bounds: None,
             history_req: RequestSlot::new(),
             selected_history_commit: None,
             middle_tab: MiddlePaneTab::default(),
@@ -1133,6 +1153,7 @@ impl EditorWorkspaceView {
     /// if `right_tab` is still `History` after this reset.
     fn reset_history_panel(&mut self) {
         self.history = None;
+        self.history_error = None;
         self.history_req.clear();
         self.selected_history_commit = None;
         // `middle_tab` (Diff ⇄ Snapshot), like `right_tab`, is a persistent
@@ -1209,7 +1230,10 @@ impl EditorWorkspaceView {
     /// must refresh it instead of silently showing the old file's list, or
     /// nothing at all).
     fn maybe_load_history(&mut self, cx: &mut Context<Self>) {
-        if self.right_tab != RightPaneTab::History || self.history.is_some() {
+        if self.right_tab != RightPaneTab::History
+            || self.history.is_some()
+            || self.history_error.is_some()
+        {
             return;
         }
         let Some(path) = self.open_path.clone() else {
@@ -1227,6 +1251,15 @@ impl EditorWorkspaceView {
         });
     }
 
+    pub fn retry_history(&mut self, cx: &mut Context<Self>) {
+        if self.history_loading() || self.history_error.is_none() {
+            return;
+        }
+        self.history_error = None;
+        self.maybe_load_history(cx);
+        cx.notify();
+    }
+
     /// The bin's answer to [`EditorWorkspaceEvent::HistoryRequested`].
     pub fn seed_history(
         &mut self,
@@ -1239,7 +1272,16 @@ impl EditorWorkspaceView {
         {
             return;
         }
-        self.history = result.ok().map(Arc::new);
+        match result {
+            Ok(history) => {
+                self.history = Some(Arc::new(history));
+                self.history_error = None;
+            }
+            Err(error) => {
+                self.history = None;
+                self.history_error = Some(error);
+            }
+        }
         cx.notify();
     }
 

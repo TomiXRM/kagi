@@ -158,3 +158,20 @@ provider failure (including HTTP errors and timeouts), and manual-edit failure.
 The generated commit message retains its independently chosen language.
 Provider failure diagnostics remain unchanged in the English klog contract;
 the existing session-owned completion and quiet fallback policy are unchanged.
+
+## Amendment — 2026-10-14: Settings first-time consent (#1509)
+
+- First-time enable from Settings and Generate must show the same four localized
+  `CONSENT_LINES`, including unstaged exclusion and the staged-secret warning.
+- Consent is a persisted fact separate from `smart_commit_llm_enabled`. Disabling
+  preserves consent; re-enabling after approval does not ask again. A legacy
+  enabled value without recorded consent is not evidence of approval and must
+  pass the consent gate before generation.
+- Settings approval belongs to its actual native-window or portable-overlay
+  focus owner, without requiring a repository session. It enables only: no
+  automatic model choice and no generation. Cancel, Escape and host closure
+  retire the pending approval without changing preferences or sending a diff;
+  dismissal restores the Settings switch's focus while its owner is alive.
+- Generate's existing repository-session ownership, explicit model selection,
+  provider warnings and offline policy remain intact. Detection may read model
+  availability, but only an explicit Generate submits staged content.

@@ -31,7 +31,7 @@ pub fn scenario_conflict_continue_cache(cx: &mut VisualTestAppContext) {
     assert_verdict(cx, Some(Msg::ConflictBlockerUnresolved));
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(Path::new("file.txt"));
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(true);
         cx.notify();
     });
     app.update(cx, |_, cx| cx.notify());
@@ -87,7 +87,7 @@ pub fn scenario_conflict_continue_cache(cx: &mut VisualTestAppContext) {
 
     // Preview does not feed stale InputState text back over a restored Result.
     conflict.update(cx, |view, cx| {
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(false);
         cx.notify();
     });
     app.update(cx, |_, cx| cx.notify());

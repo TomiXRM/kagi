@@ -86,3 +86,19 @@ pub fn recorded_sections() -> std::collections::BTreeMap<&'static str, RecordedS
 pub fn recorded_description(index: usize) -> Option<String> {
     DESCRIPTIONS.with(|values| values.borrow().get(&index).cloned())
 }
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static EXECUTED: std::cell::RefCell<Vec<crate::ui::command_palette::PaletteAction>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn executed(action: &crate::ui::command_palette::PaletteAction) {
+    EXECUTED.with(|values| values.borrow_mut().push(action.clone()));
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_executed() -> Vec<crate::ui::command_palette::PaletteAction> {
+    EXECUTED.with(|values| std::mem::take(&mut *values.borrow_mut()))
+}

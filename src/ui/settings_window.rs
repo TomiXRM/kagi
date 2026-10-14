@@ -137,7 +137,9 @@ impl SettingsWindow {
             }
             if let Some(owner) = this.owner.upgrade() {
                 owner.update(cx, |app, cx| {
-                    if app.clear_analyze_reset_alert(id) {
+                    let reset = app.clear_analyze_reset_alert(id);
+                    let consent = app.clear_settings_smart_consent(id);
+                    if reset || consent {
                         cx.notify();
                     }
                 });
@@ -349,6 +351,18 @@ impl Render for SettingsWindow {
             .when_some(
                 owner.read(cx).analyze_reset_alert().cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),
+            )
+            .when_some(
+                owner
+                    .read(cx)
+                    .settings_smart_consent()
+                    .filter(|alert| alert.window == window.window_handle().window_id())
+                    .cloned(),
+                |el, alert| {
+                    el.child(super::settings_controls::smart_consent_alert(
+                        &owner, alert, cx,
+                    ))
+                },
             )
             .into_any_element()
     }

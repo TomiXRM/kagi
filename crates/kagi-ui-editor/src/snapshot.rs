@@ -1,4 +1,5 @@
 //! Immutable historical content; the live InputState is never involved.
+use crate::named_button::NamedButton;
 use crate::{EditorWorkspaceView, RightPaneTab};
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Role, SharedString};
 use gpui_component::{
@@ -10,22 +11,6 @@ use kagi_ui_core::{
     i18n::Msg,
     theme::{self, theme},
 };
-
-// Forward stateful AX methods to the pinned Button's own interaction owner
-// (same boundary as core::header_fit's NamedHeaderButton).
-#[derive(gpui::IntoElement)]
-struct SnapshotButton(Button);
-impl gpui::InteractiveElement for SnapshotButton {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
-        self.0.interactivity()
-    }
-}
-impl gpui::StatefulInteractiveElement for SnapshotButton {}
-impl gpui::RenderOnce for SnapshotButton {
-    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
-        self.0.render(window, cx)
-    }
-}
 
 /// Bound LF blocks; preserve CRLF verbatim in one block; large text skips syntax.
 /// Fence longer than every literal backtick run, retaining source separators.
@@ -172,7 +157,7 @@ fn open_current(cx: &mut Context<EditorWorkspaceView>) -> AnyElement {
             }
             cx.notify();
         }));
-    let button = SnapshotButton(button).role(role).aria_label(name.clone());
+    let button = NamedButton(button).role(role).aria_label(name.clone());
     let button = div().flex_shrink_0().relative().child(button);
     #[cfg(feature = "gui-e2e")]
     let button = {

@@ -168,6 +168,8 @@ pub struct PrModeState {
     /// The PR home table is virtualized so its layout processor can report the
     /// visible PR-number set to the lazy detail controller.
     pub dashboard_scroll: UniformListScrollHandle,
+    /// Natural-height navigator scrolling belongs to this repository session.
+    pub navigator_scroll: ScrollHandle,
     /// Shared horizontal viewport for the dashboard's header and virtual rows.
     pub dashboard_horizontal_scroll: ScrollHandle,
     pub dashboard_keys: std::cell::RefCell<super::keyboard_nav::RowFocus>,
@@ -204,6 +206,7 @@ impl Default for PrModeState {
             feed_anchor: None,
             view: PrView::Overview,
             dashboard_scroll: UniformListScrollHandle::new(),
+            navigator_scroll: ScrollHandle::new(),
             dashboard_horizontal_scroll: ScrollHandle::new(),
             dashboard_keys: Default::default(),
             dashboard_drawn: Default::default(),

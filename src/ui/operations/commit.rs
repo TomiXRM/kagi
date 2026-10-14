@@ -411,7 +411,7 @@ impl KagiApp {
 
     /// "Generate with Local LLM" button.
     ///
-    /// Enforces the opt-in gates: if the user has not yet enabled LLM generation
+    /// Enforces the opt-in gates: if the user has not confirmed privacy consent
     /// (or never confirmed a model) the consent / model-picker modal is shown
     /// first.  Only when all gates are cleared is the staged diff collected and
     /// sent to loopback Ollama (in the background, with a timeout).  Any failure
@@ -435,10 +435,13 @@ impl KagiApp {
         // when an earlier tab's presentation is still awaiting dismissal.
         self.smart_model_focus.owner = Some(owner);
         // Gate 1: first-time consent.
-        if !self.smart_commit.llm_enabled {
+        if !self.smart_commit.consent_accepted {
             self.set_smart_commit_modal(smart_commit::SmartCommitModal::Consent);
             cx.notify();
             return;
+        }
+        if !self.smart_commit.llm_enabled {
+            self.smart_commit.set_enabled(true);
         }
         // Gate 2: model selection — Ollama only. CLI providers (ADR-0099) have no
         // model picker; the provider itself is chosen in Settings.
@@ -489,7 +492,7 @@ impl KagiApp {
             return;
         }
         self.clear_smart_commit_modal();
-        self.smart_commit.set_enabled(true);
+        self.smart_commit.accept_consent();
         klog!("smart-commit: llm enabled (consent given)");
         // Move on to picking a model (always confirm at least once per ADR).
         if self.smart_commit.model.is_none() {

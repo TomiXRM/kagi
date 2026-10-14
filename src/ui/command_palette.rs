@@ -354,12 +354,24 @@ impl KagiApp {
         let Some(row) = rows.get(selected) else {
             return;
         };
-        if !row.enabled {
-            return;
-        }
         let action = row.action.clone();
-        self.close_command_palette(window, cx);
-        self.run_palette_action(&action, window, cx);
+        self.activate_palette_row(selected, &action, row.enabled, window, cx);
+    }
+
+    /// One result identity and enabled gate for keyboard, pointer and AX entry.
+    fn activate_palette_row(
+        &mut self,
+        index: usize,
+        action: &PaletteAction,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.command_palette_selected = index;
+        if enabled {
+            self.close_command_palette(window, cx);
+            self.run_palette_action(action, window, cx);
+        }
         cx.notify();
     }
 
@@ -371,6 +383,8 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::palette::executed(action);
         match action {
             PaletteAction::Command(id) => self.handle_menu_command(id, window, cx),
             PaletteAction::SetTheme(slug) => self.set_theme(slug, cx),
@@ -562,17 +576,12 @@ impl KagiApp {
     ) -> gpui::AnyElement {
         let action = row.action.clone();
         let enabled = row.enabled;
+        let pointer_action = action.clone();
+        let owner = cx.entity().downgrade();
         let click = cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
-            // MouseDown (not click): the dismiss scrim would unmount the overlay
-            // on the same down-event before a click could complete — same fix as
-            // the branch picker (see commands.rs).
-            this.command_palette_selected = index;
-            if enabled {
-                this.close_command_palette(window, cx);
-                this.run_palette_action(&action, window, cx);
-            }
+            // Keep MouseDown: the dismiss scrim can unmount before mouse-up.
+            this.activate_palette_row(index, &pointer_action, enabled, window, cx);
             cx.stop_propagation();
-            cx.notify();
         });
 
         let label: SharedString = row.label.clone().into();
@@ -598,6 +607,11 @@ impl KagiApp {
         .py(theme::scaled_px(6.0))
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, click)
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            let _ = owner.update(cx, |this, cx| {
+                this.activate_palette_row(index, &action, enabled, window, cx);
+            });
+        })
         .on_mouse_move(
             cx.listener(move |this, ev: &gpui::MouseMoveEvent, _window, cx| {
                 if this.command_palette_pointer == Some(ev.position) {

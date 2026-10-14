@@ -1675,6 +1675,8 @@ pub enum Msg {
     /// Right-pane History tab placeholder when the file has no commit
     /// history.
     EditorHistoryEmpty,
+    EditorHistoryFailed,
+    EditorHistoryRetry,
     /// Snapshot tab placeholder when the load finished but found nothing
     /// (e.g. the path didn't exist yet at that commit).
     EditorSnapshotUnavailable,
@@ -1831,6 +1833,7 @@ pub enum Msg {
     UpdateSkipVersion,
     UpdateReleasePage,
     UpdateLater,
+    UpdateHideContinuing,
     UpdateInstalling,
     UpdateInstallingReason,
     UpdateFailed,
@@ -4268,6 +4271,10 @@ impl Msg {
             (Ja, EditorMiddleTabSnapshot) => "スナップショット",
             (En, EditorHistoryEmpty) => "No history for this file.",
             (Ja, EditorHistoryEmpty) => "このファイルの変更履歴はありません。",
+            (En, EditorHistoryFailed) => "Could not load History.",
+            (Ja, EditorHistoryFailed) => "History を取得できませんでした。",
+            (En, EditorHistoryRetry) => "Retry",
+            (Ja, EditorHistoryRetry) => "再試行",
             (En, EditorSnapshotUnavailable) => "Content not available for this commit.",
             (Ja, EditorSnapshotUnavailable) => "この commit 時点のコンテンツは取得できません。",
             (En, EditorSnapshotReadOnly) => "Snapshot — read only",
@@ -4475,6 +4482,8 @@ impl Msg {
             (Ja, UpdateReleasePage) => "リリースページ",
             (En, UpdateLater) => "Later",
             (Ja, UpdateLater) => "後で",
+            (En, UpdateHideContinuing) => "Hide — update continues",
+            (Ja, UpdateHideContinuing) => "非表示 — 更新は続行します",
             (En, UpdateInstalling) => "Updating…",
             (Ja, UpdateInstalling) => "更新中…",
             (En, UpdateInstallingReason) => "An update is currently being installed.",

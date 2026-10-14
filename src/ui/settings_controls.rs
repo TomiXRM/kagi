@@ -16,6 +16,15 @@ pub(crate) struct SettingsControls {
     pub saved_ignore: Option<String>,
     pub ignore_error: Option<String>,
     pub(super) reset_alert: Option<super::settings_analyze::AnalyzeResetAlert>,
+    pub(super) smart_consent: Option<SmartConsentAlert>,
+}
+
+/// Settings form approval, not a replacement for the main window's modal slot.
+#[derive(Clone)]
+pub(super) struct SmartConsentAlert {
+    pub window: gpui::WindowId,
+    pub focus: gpui::FocusHandle,
+    pub alert_return_focus: super::overlay_focus::AlertReturnFocus,
 }
 
 impl SettingsControls {
@@ -219,6 +228,74 @@ fn chip(id: &str, label: String, selected: bool, available: bool) -> gpui::State
 }
 
 impl KagiApp {
+    pub(super) fn settings_smart_consent(&self) -> Option<&SmartConsentAlert> {
+        self.settings_controls.smart_consent.as_ref()
+    }
+
+    pub(super) fn clear_settings_smart_consent(&mut self, window: gpui::WindowId) -> bool {
+        if self
+            .settings_smart_consent()
+            .is_some_and(|alert| alert.window == window)
+        {
+            self.settings_controls.smart_consent = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn request_settings_smart_enabled(
+        &mut self,
+        on: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !on || self.smart_commit.consent_accepted {
+            self.smart_commit.set_enabled(on);
+            if on {
+                self.refresh_smart_commit_detection(cx);
+            }
+        } else if self.settings_smart_consent().is_none() {
+            // Pointer activation does not focus the Switch's keyboard wrapper.
+            // Both input paths must return to the same live Settings control.
+            window.focus(&self.settings_switches.get(5, cx), cx);
+            let focus = cx.focus_handle();
+            self.settings_controls.smart_consent = Some(SmartConsentAlert {
+                window: window.window_handle().window_id(),
+                alert_return_focus: super::overlay_focus::AlertReturnFocus::for_settings(
+                    window,
+                    cx,
+                    focus.clone(),
+                ),
+                focus: focus.clone(),
+            });
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn finish_settings_smart_consent(
+        &mut self,
+        confirm: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(alert) = self
+            .settings_controls
+            .smart_consent
+            .take_if(|alert| alert.window == window.window_handle().window_id())
+        else {
+            return;
+        };
+        alert.alert_return_focus.restore_settings(window, cx);
+        if confirm {
+            self.smart_commit.accept_consent();
+            kagi_ui_core::klog!("smart-commit: llm enabled (consent given)");
+            self.refresh_smart_commit_detection(cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn save_analyze_ignore(
         &mut self,
         reset: bool,
@@ -261,6 +338,59 @@ impl KagiApp {
             Some(input.read(cx).value().as_ref()) != self.settings_controls.saved_ignore.as_deref()
         })
     }
+}
+
+pub(super) fn smart_consent_alert(
+    app: &Entity<KagiApp>,
+    alert: SmartConsentAlert,
+    cx: &App,
+) -> impl IntoElement {
+    use super::dialog_a11y::{apply_dialog, dialog_a11y, ConfirmStage, DialogHandler};
+    use gpui_component::FocusTrapElement as _;
+    let owner = app.downgrade();
+    let confirm: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        let _ = owner.update(cx, |app, cx| {
+            app.finish_settings_smart_consent(true, window, cx)
+        });
+    });
+    let owner = app.downgrade();
+    let cancel: DialogHandler = std::rc::Rc::new(move |window, cx| {
+        let _ = owner.update(cx, |app, cx| {
+            app.finish_settings_smart_consent(false, window, cx)
+        });
+    });
+    let card = super::modal_renderers_misc::smart_consent_card(confirm.clone(), cancel.clone(), cx)
+        .w(gpui::relative(0.9))
+        .max_w(super::theme::scaled_px(super::modal_shell::MODAL_W_MD));
+    let key_cancel = cancel.clone();
+    let card = apply_dialog(
+        "settings-smart-consent-alert",
+        div().id("settings-smart-consent-alert"),
+        dialog_a11y(
+            Msg::SmartConsentTitle.t(),
+            Some(Msg::SmartConsentEnable.t()),
+            false,
+            ConfirmStage::Single,
+        ),
+        Some(confirm),
+        cancel.clone(),
+    )
+    .focus_trap("settings-smart-consent-alert", &alert.focus)
+    .on_action(move |_: &super::CloseMainDiff, window, cx| {
+        cancel(window, cx);
+        cx.stop_propagation();
+    })
+    .on_key_down(move |event, window, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "escape") {
+            key_cancel(window, cx);
+            cx.stop_propagation();
+        }
+    })
+    .child(card);
+    super::modal_renderers::modal_overlay(super::e2e::measure_control(
+        "settings-smart-consent-alert",
+        card,
+    ))
 }
 
 #[cfg(feature = "gui-e2e")]

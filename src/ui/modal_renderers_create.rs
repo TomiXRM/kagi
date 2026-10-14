@@ -276,9 +276,16 @@ pub(crate) fn render_create_worktree_modal(
     ));
     let mut body = modal_scroll_body()
         .child(render_input_modal_field(
-            Msg::InputBranchName.t(),
+            if modal.allow_existing_branch {
+                Msg::InputBranchName.t()
+            } else {
+                Msg::InputNewBranchName.t()
+            },
             modal.branch_state.as_ref(),
             plan.as_ref()
+                // Empty is an input request, not a user-generated name error.
+                // The plan's blocker still keeps Create disabled.
+                .filter(|_| !modal.branch_input.trim().is_empty())
                 .and_then(|p| {
                     p.blockers.iter().find(|b| {
                         matches!(b, PlanNote::Common(CommonNote::BranchNameErrorKeyed(_)))

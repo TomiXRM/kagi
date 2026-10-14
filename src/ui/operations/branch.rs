@@ -1210,7 +1210,7 @@ impl KagiApp {
                 self.open_merge_modal(state.name, None, cx);
             }
             BranchAction::CreateWorktreeFromHere => {
-                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
+                self.open_create_worktree_modal(state.target, cx);
             }
             BranchAction::CreateTagHere => {
                 self.open_create_tag_modal(state.target, cx);

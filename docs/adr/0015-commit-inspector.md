@@ -142,3 +142,81 @@ refreshed with default features and unchanged fixture commit `1955d837`;
 `review-comparison-*.png` and `review-finder-kagi-native-scale.png` are the
 final owner-facing comparisons. Each raw capture is 2784×1766, matching the
 baseline's 1392×883 logical window without resampling or window shadow.
+
+## Amendment — 2026-10-15: literal message URL actions (#1566)
+
+The dependency-free domain message parser detects explicit `http://` and
+`https://` destinations only. Surrounding Japanese prose, whitespace, quotes,
+angle brackets, unmatched closing brackets and sentence punctuation remain
+outside the destination; balanced ASCII brackets in paths remain inside.
+Other schemes, empty authorities and embedded scheme prefixes are not links.
+Authored HTML and Markdown remain literal escaped text, never executable markup.
+
+The SHA-owned Inspector message derivation retains destinations with the HTML,
+co-authors and trailers; rendering neither parses messages nor reads Git.
+Inline anchors identify URLs in the selectable literal body. The pinned
+TextView does not expose per-link keyboard/accessibility controls, so the same
+message scroller also contains named Link and Copy Link controls, using the
+existing named Button boundary, Link variant and focus ring/Enter/Space handling.
+Names include the complete destination in EN/JA; Copy uses destination bytes,
+not escaped HTML. The existing Home OS-opener boundary is shared, preserving
+Home's lifecycle/log behavior and recording URL requests instead of starting
+the user's browser in native GUI E2E.
+Keyboard focus reveals the actual control through the existing message scroll
+handle, including when the default 1:1 split puts link actions below the viewport.
+Reveal is deferred until the parent scroll's prepaint borrow ends; no second
+focus handle or message scroll owner is created.
+As with inspection-list reveal (#1382), reveal converges once per focus change
+and then respects wheel/thumb scrolling. Oversized controls align only their
+top edge; clamped offsets complete reveal instead of generating endless frames.
+URL detection uses one `match_indices("http")` scan and disjoint consumed spans,
+so large messages containing only one scheme do not trigger quadratic searches.
+
+No settings, operation admission, confirmation, receipt or Git state changes.
+## Amendment — 2026-10-15: full-width changed-file options (#1559)
+
+Inspector file options explicitly fill the virtual list's available width.
+Their existing click handler, hover/selection fill and shared keyboard-focus
+border belong to that same outer row. Tree indentation is internal left
+padding; the filename remains flexible and truncating, while the diffstat
+retains its existing trailing nonshrinking column. Path and Tree therefore
+share a full-row target rather than a target sized to their text.
+No focus/selection owner, keyboard activation policy, repository read,
+setting, receipt or klog contract changes.
+
+`inspector_file_row_hit` exercises filename, diffstat and right-edge clicks,
+native selection/focus pixels and arrow/Space activation at 1000×720 and
+1400×900, EN/JA, 100%/167%, Apple Light/Dark, Path/Tree. Each case uses
+the actual list's right edge rather than deriving its click from the
+potentially undersized row, and compares repository fingerprints.
+The file-row geometry probe forwards the leaf's own layout, prepaint and paint
+without adding a container that stretches intrinsically sized rows only in tests.
+The pre-fix right-edge click fails with `left: None` versus
+`right: Some("src/nested/a.txt")`.
+
+Desktop-oracle repair: #1481's compact breakpoint invalidates desktop-only
+message/files frames at 940px. `inspector_scale` and `inspector_full_message`
+now use 1000×720 for their small desktop leg; dedicated compact scenarios
+retain compact coverage. Scale retains the historical upward-offset comparison
+at unchanged 1392×883 and caps the new 1000×720 offsets at native measurements
+of 340 / 433.5 logical pixels (100% / 167%, +0.6px tolerance), identical in both
+languages/themes. The one-sided density ceiling permits unrelated chrome
+improvements to move files upward without fixing the whole header as a golden.
+The old 940×660 offset is not misrepresented as a 1000×720 baseline.
+
+Verification: the scoped `inspector_` native run passes all 12 scenarios,
+including 32 Path/Tree hit/selection/focus cells in `inspector_file_row_hit`.
+Default-feature Tier B captures all 16 EN/JA × 100%/167% × Apple Light/Dark
+× 1000/1400 width cells in Tree view. Real process AX file rows exactly match
+their enclosing Changed files outline's x/width (302 logical px at 100%;
+204.5 at narrow 167%, 505 at wide 167%); trailing-edge clicks open the same
+file diff and publish native selected state. The 32 before/selected PNGs
+and AX trees are retained under
+`/tmp/kagi-hig-audit-20261008/inspector-file-rows-tierb/`.
+Owned-PID input leaves the system pointer untouched; each window-ID capture
+temporarily activates only its own process and immediately restores the
+recorded previous foreground process (maximum observed interval 1.915s).
+All 16 applications quit normally. This is native AX inspection and visual
+evidence, not VoiceOver or IME coverage. Narrow high-zoom metadata overlap
+was observed but is outside this file-row-width change.
+

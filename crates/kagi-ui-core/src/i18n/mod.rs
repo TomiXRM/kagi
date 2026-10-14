@@ -210,6 +210,8 @@ pub fn init_lang() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
     AboutTitle,
+    InspectorOpenLink,
+    InspectorCopyLink,
     A11yCommandPaletteQuery,
     A11yCommitSummary,
     A11yCommitDescription,
@@ -531,6 +533,8 @@ pub enum Msg {
     SnapshotCreated,
     /// Toast prefix when a manual snapshot fails (ADR-0154 / #335).
     SnapshotFailed,
+    /// Fetch authentication failure; `{}` is the sanitized remote identity.
+    FetchAuthenticationRequired,
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
@@ -797,6 +801,7 @@ pub enum Msg {
     HomeTitle,
     HomeRecent,
     HomeNoRecent,
+    HomeRemoveRecent,
     HomeOpenFolder,
     HomeConnectRemote,
     HomeGithubMine,
@@ -1931,6 +1936,10 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, InspectorOpenLink) => "Open Link",
+            (Ja, InspectorOpenLink) => "リンクを開く",
+            (En, InspectorCopyLink) => "Copy Link",
+            (Ja, InspectorCopyLink) => "リンクをコピー",
             (En, A11yCommandPaletteQuery) => "Command search",
             (Ja, A11yCommandPaletteQuery) => "コマンド検索",
             (En, A11yCommitSummary) => "Commit summary",
@@ -2879,6 +2888,8 @@ impl Msg {
             (Ja, SnapshotCreated) => "スナップショットを作成しました",
             (En, SnapshotFailed) => "Snapshot failed",
             (Ja, SnapshotFailed) => "スナップショットの作成に失敗しました",
+            (En, FetchAuthenticationRequired) => "Fetch from {} requires authentication. Check your credentials.",
+            (Ja, FetchAuthenticationRequired) => "{} からの Fetch には認証が必要です。認証情報を確認してください。",
             (En, LoadMoreCommits) => "Load more commits",
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",
@@ -3295,6 +3306,8 @@ impl Msg {
             (Ja, HomeRecent) => "最近開いたリポジトリ",
             (En, HomeNoRecent) => "No recently opened repositories.",
             (Ja, HomeNoRecent) => "最近開いたリポジトリはありません。",
+            (En, HomeRemoveRecent) => "Remove from Recently Opened",
+            (Ja, HomeRemoveRecent) => "最近使った項目から取り除く",
             (En, HomeOpenFolder) => "Open Folder…",
             (Ja, HomeOpenFolder) => "フォルダーを開く…",
             (En, HomeConnectRemote) => "Connect to SSH remote…",

@@ -267,10 +267,17 @@ impl KagiApp {
     pub(super) fn open_work_item_url(&mut self, url: &str, cx: &mut Context<Self>) {
         self.drop_pending_open(cx);
         klog!("home: open on github {}", url);
+        Self::open_link_url(url, cx);
+    }
+
+    /// The shared OS URL boundary; native GUI scenarios record without a browser.
+    pub(super) fn open_link_url(url: &str, cx: &mut gpui::App) {
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_opened_url(url);
         #[cfg(not(feature = "gui-e2e"))]
         cx.open_url(url);
+        #[cfg(feature = "gui-e2e")]
+        let _ = cx;
     }
 
     /// The PR's refs have arrived. Opened only while it is still the PR

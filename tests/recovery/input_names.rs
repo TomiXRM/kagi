@@ -219,7 +219,7 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
                 app.update(cx, |app, cx| {
                     app.open_create_worktree_modal(head.clone(), cx)
                 });
-                &[Msg::InputBranchName, Msg::InputWorktreePath]
+                &[Msg::InputNewBranchName, Msg::InputWorktreePath]
             }
             "tag" => {
                 app.update(cx, |app, cx| app.open_create_tag_modal(head.clone(), cx));

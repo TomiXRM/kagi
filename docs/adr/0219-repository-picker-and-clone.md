@@ -142,3 +142,23 @@ is refocused without replacing it. Explicit picker/card focus consumes the
 portable menu's pending opener restoration, so the next frame cannot move
 focus back to the covered workspace.
 
+## Amendment (2026-10-15): history-only Recent removal (#1567)
+
+Recent rows provide “Remove from Recently Opened” /「最近使った項目から取り除く」
+through right-click and the focused row's Shift+F10/Menu key. The existing
+shared context-menu renderer owns keyboard navigation, named MenuItem
+accessibility and dismissal/focus return. The full path is captured at opening
+and checked against the still-visible Home row before dispatch, never a
+recycled row position.
+
+`tabs` removes only that exact path from the existing `recent_repos` key via
+the settings store. It does not open Git, mutate a repository/worktree, close
+or switch tabs, or record a repository receipt. Dispatch remembers the removed
+row's index and prevents menu dismissal from restoring its obsolete handle.
+After list reconciliation, focus moves to the same index (the new row in that
+position), or to the predecessor if the removed row was last. When no recent
+row survives, the pinned Open Folder Button's own keyed handle receives focus
+and draws its normal focus ring; the window root is only a transient handoff.
+Open Folder remains available with the normal empty Recent message. Opening
+that repository explicitly again may record it normally.
+

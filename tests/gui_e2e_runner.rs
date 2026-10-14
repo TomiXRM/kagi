@@ -167,8 +167,15 @@ mod settings_window;
 mod window_restore;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_min_size.rs"]
+mod window_min_size;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/close_window_initial_home.rs"]
 mod close_window_initial_home;
+#[cfg(target_os = "macos")]
+#[path = "recovery/help_shortcuts_glyphs.rs"]
+mod help_shortcuts_glyphs;
 #[cfg(target_os = "macos")]
 #[path = "recovery/shortcuts_panel_scroll.rs"]
 mod shortcuts_panel_scroll;
@@ -369,6 +376,9 @@ mod app_conflict;
 #[path = "recovery/home_heading.rs"]
 mod home_heading;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_recent_remove.rs"]
+mod home_recent_remove;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_tab.rs"]
 mod home_tab;
 
@@ -462,6 +472,10 @@ mod inventory;
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_folder_picker.rs"]
 mod worktree_folder_picker;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_default_name.rs"]
+mod worktree_default_name;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
@@ -749,6 +763,10 @@ mod remote_refresh_owner;
 mod fetch_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/fetch_auth_error.rs"]
+mod fetch_auth_error;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/guard_writer_panic.rs"]
 mod guard_writer_panic;
 
@@ -865,6 +883,10 @@ mod perf_oplog_detail;
 mod inspector_metadata;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inspector_message_links.rs"]
+mod inspector_message_links;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/finder_scale_editor.rs"]
 mod finder_scale_editor;
 
@@ -879,6 +901,9 @@ mod density_rest;
 #[path = "recovery/finder_scale_rest.rs"]
 mod finder_scale_rest;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_file_rows.rs"]
+mod inspector_file_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
 mod inspector_scale;
@@ -1794,8 +1819,16 @@ mod macos {
                 Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
             ),
             (
+                "help_shortcuts_glyphs",
+                Box::new(crate::help_shortcuts_glyphs::scenario_help_shortcuts_glyphs),
+            ),
+            (
                 "window_restore_position",
                 Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_min_size",
+                Box::new(crate::window_min_size::scenario_window_min_size),
             ),
             (
                 "window_restore_display_identity",
@@ -1959,6 +1992,10 @@ mod macos {
             (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
+            ),
+            (
+                "home_recent_remove",
+                Box::new(crate::home_recent_remove::scenario_home_recent_remove),
             ),
             (
                 "home_repository_affordances",
@@ -2741,6 +2778,10 @@ mod macos {
             (
                 "worktree_modal_prefill",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_modal_prefill),
+            ),
+            (
+                "worktree_create_default_name",
+                Box::new(crate::worktree_default_name::scenario_worktree_create_default_name),
             ),
             (
                 "repo_health_proposal",
@@ -3719,6 +3760,10 @@ mod macos {
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_newest_request),
             ),
             (
+                "fetch_auth_failure_toast",
+                Box::new(crate::fetch_auth_error::scenario_fetch_auth_failure_toast),
+            ),
+            (
                 "fetch_same_owner_piggybacks",
                 Box::new(crate::fetch_owner::scenario_fetch_same_owner_piggybacks),
             ),
@@ -4419,12 +4464,20 @@ mod macos {
                 Box::new(crate::inspector_metadata::scenario_inspector_metadata_a11y),
             ),
             (
+                "inspector_message_links",
+                Box::new(crate::inspector_message_links::scenario),
+            ),
+            (
                 "finder_scale_rest",
                 Box::new(crate::finder_scale_rest::scenario),
             ),
             (
                 "inspector_scale",
                 Box::new(crate::inspector_scale::scenario),
+            ),
+            (
+                "inspector_file_row_hit",
+                Box::new(crate::inspector_file_rows::scenario),
             ),
             (
                 "graph_subject_identity",
@@ -4558,8 +4611,11 @@ mod macos {
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         // Effective bindings are cached at startup, exactly as in the product.
-        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
-            .then(crate::palette_polish::install_shortcut_bindings);
+        let _shortcut_bindings = matches!(
+            exact.as_deref(),
+            Some("palette_shortcut_glyphs" | "help_shortcuts_glyphs")
+        )
+        .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

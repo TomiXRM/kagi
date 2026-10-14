@@ -1053,6 +1053,14 @@ pub fn record_recent_repo(path: &Path) {
     super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
 }
 
+/// Forget only this history entry; repository files and open tabs are untouched.
+pub fn remove_recent_repo(path: &Path) {
+    let p = path.to_string_lossy();
+    let mut list = recent_repo_strings();
+    list.retain(|entry| entry != p.as_ref());
+    super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
+}
+
 /// Recently-opened repositories that still exist on disk (most-recent first).
 pub fn recent_repos() -> Vec<PathBuf> {
     recent_repo_strings()

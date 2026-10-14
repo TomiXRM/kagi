@@ -2015,6 +2015,13 @@ impl KagiApp {
             return;
         }
         cx.notify();
+        #[cfg(feature = "gui-e2e")]
+        let task = e2e::take_update_install().unwrap_or_else(|| {
+            cx.background_spawn(async move {
+                crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
+            })
+        });
+        #[cfg(not(feature = "gui-e2e"))]
         let task = cx.background_spawn(async move {
             crate::update::install(&plan, &release, &|m| klog!("update: {m}"))
         });
@@ -2037,6 +2044,9 @@ impl KagiApp {
 
     /// "Skip this version" — persist the tag so the banner stays hidden for it.
     fn skip_this_update(&mut self, cx: &mut Context<Self>) {
+        if self.update_installing {
+            return;
+        }
         if let Some((plan, _)) = &self.update_available {
             settings::write_setting("update_skipped", Some(&plan.tag));
         }

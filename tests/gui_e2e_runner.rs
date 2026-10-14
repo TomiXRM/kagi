@@ -351,6 +351,9 @@ mod app_conflict;
 #[path = "recovery/home_heading.rs"]
 mod home_heading;
 #[cfg(target_os = "macos")]
+#[path = "recovery/home_recent_remove.rs"]
+mod home_recent_remove;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_tab.rs"]
 mod home_tab;
 
@@ -1918,6 +1921,10 @@ mod macos {
             (
                 "reconcile_unobservable_release",
                 Box::new(crate::reconcile_unobservable::scenario_reconcile_unobservable_release),
+            ),
+            (
+                "home_recent_remove",
+                Box::new(crate::home_recent_remove::scenario_home_recent_remove),
             ),
             (
                 "home_repository_affordances",

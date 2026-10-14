@@ -341,6 +341,7 @@ impl KagiApp {
             || self.stash_menu.is_some()
             || self.tag_menu.is_some()
             || self.worktree_menu.is_some()
+            || self.home_github.recent.menu.is_some()
     }
 
     /// The repository on screen is being left (Home in front, another tab):
@@ -368,6 +369,7 @@ impl KagiApp {
         self.stash_menu = None;
         self.tag_menu = None;
         self.worktree_menu = None;
+        self.home_github.recent.menu = None;
     }
 
     /// Each frame before the menus are drawn: a menu that just opened takes

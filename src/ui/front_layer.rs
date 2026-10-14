@@ -81,6 +81,7 @@ impl LayerKind {
                     || app.stash_menu_visible()
                     || app.tag_menu_visible()
                     || app.worktree_menu_visible()
+                    || (app.home_in_front() && app.home_github.recent.menu.is_some())
             }
             Self::MenuOverlay => app.menu_overlay.is_some(),
             Self::EarlyModal => app.early_modal_visible(),
@@ -327,6 +328,7 @@ impl KagiApp {
                 self.stash_menu = None;
                 self.tag_menu = None;
                 self.worktree_menu = None;
+                self.home_github.recent.menu = None;
             }
             LayerKind::MenuOverlay => self.menu_overlay = None,
             LayerKind::PrMenu => self.with_ui(|ui| ui.pr_menu = None),

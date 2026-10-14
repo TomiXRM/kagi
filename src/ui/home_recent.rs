@@ -13,6 +13,7 @@ pub(super) struct RecentList {
     keys: Rc<[String]>,
     pub(super) keyboard: super::list_keyboard::ListKeyboard,
     scroll: gpui::ListState,
+    pub(super) menu: Option<(PathBuf, gpui::Point<gpui::Pixels>)>,
 }
 impl Default for RecentList {
     fn default() -> Self {
@@ -21,11 +22,73 @@ impl Default for RecentList {
             keys: Rc::from([]),
             keyboard: Default::default(),
             scroll: gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.)),
+            menu: None,
         }
     }
 }
 
 impl KagiApp {
+    fn open_recent_menu(
+        &mut self,
+        path: PathBuf,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.home_in_front()
+            || self.front_layer(cx) != super::front_layer::FrontLayer::None
+            || !super::tabs::recent_repos().contains(&path)
+        {
+            return;
+        }
+        self.home_github.recent.menu = Some((path, position));
+        cx.notify();
+    }
+
+    pub(super) fn render_recent_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (path, position) = self.home_github.recent.menu.clone()?;
+        use super::context_menu::{ItemState, MenuGroup, MenuItem};
+        let expected = path.clone();
+        Some(super::menu_overlay::render_menu_overlay(
+            "home-recent-menu",
+            "home-recent-menu-item",
+            280.,
+            "",
+            position,
+            Msg::HomeRecent.t().into(),
+            vec![MenuGroup {
+                title: None,
+                items: vec![MenuItem::command(
+                    path,
+                    Msg::HomeRemoveRecent.t(),
+                    ItemState::Enabled,
+                    false,
+                )],
+            }],
+            |app, _, cx| {
+                app.home_github.recent.menu = None;
+                cx.notify();
+            },
+            move |app, path, _, cx| {
+                if app.home_in_front()
+                    && app.home_github.recent.menu.as_ref().map(|m| &m.0) == Some(&expected)
+                    && super::tabs::recent_repos().contains(&path)
+                {
+                    super::tabs::remove_recent_repo(&path);
+                }
+                app.home_github.recent.menu = None;
+                cx.notify();
+            },
+            Some(&self.menu_keys),
+            self.window_active,
+            window,
+            cx,
+        ))
+    }
+
     pub(super) fn render_home_sidebar(
         &mut self,
         width: gpui::Pixels,
@@ -165,6 +228,10 @@ fn recent_row(
     let full = safe_text(&path.display().to_string());
     let label = super::i18n::recent_row_name(&name);
     let tooltip = full.clone();
+    let menu_path = path.clone();
+    let keyboard_path = path.clone();
+    let anchor = super::menu_keys::RowAnchor::default();
+    let key_anchor = anchor.clone();
     let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
         if !app.home_in_front() || !super::tabs::recent_repos().contains(&path) {
             return;
@@ -175,6 +242,8 @@ fn recent_row(
     let row = div()
         .id(("home-recent", i))
         .aria_description(full.clone())
+        .relative()
+        .child(anchor.probe())
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
         })
@@ -186,6 +255,19 @@ fn recent_row(
         .cursor(gpui::CursorStyle::Arrow)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(open)
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |app, event: &gpui::MouseDownEvent, _, cx| {
+                app.open_recent_menu(menu_path.clone(), event.position, cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_action(cx.listener(
+            move |app, _: &super::menu_keys::ContextMenuKey, window, cx| {
+                app.open_recent_menu(keyboard_path.clone(), key_anchor.point(window), cx);
+                cx.stop_propagation();
+            },
+        ))
         .child(
             div()
                 .text_sm()

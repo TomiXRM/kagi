@@ -102,6 +102,21 @@ pub(crate) fn plan_clipboard_text(
             out.push('\n');
         }
     }
+    if !plan.preview_files.is_empty() {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(&kagi_domain::text_safety::sanitize_control_bytes(
+                &file.path.to_string_lossy(),
+            ));
+            out.push('\n');
+        }
+    }
     let recovery = plan_recovery_text(plan.recovery.as_ref());
     if !recovery.is_empty() {
         out.push('\n');

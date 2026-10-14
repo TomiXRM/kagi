@@ -86,3 +86,22 @@ Its Issue-only native consumer results do not prove PR conversation
 virtualization, remove PR data-cloning costs, or change this ADR's review/merge
 boundary. Shared GitHub Markdown preparation/privacy policy remains ADR-0142.
 
+
+## Amendment — 2026-10-14: PR merge danger and scope (#1529/#1531)
+
+Branch deletion is a destructive **interaction role**, even though its guarded
+execution and recovery contract remains unchanged. A merge plan that can delete
+a remote or local head branch sets the shared destructive bit: the named Merge
+button becomes danger, root Return cancels, and the existing alert focus trap
+applies. Explicit focus/Space or pointer approval remains the only write entry;
+retaining branches leaves the ordinary merge role.
+
+The card keeps local CURRENT separate from the GitHub AFTER target repository
+and base ref. Typed EN/JA notes show the approved source branch/full SHA and
+GitHub file/addition/deletion totals. A loaded PR tab can supply its immutable
+whole-PR diff base only when its repository/number and loaded head match the
+approved PR. The existing background plan computes paths from those immutable
+commits, not from the currently selected commit's file list. Missing or failed
+path reads are explicitly unavailable; they never imply zero changed files.
+The shared preview/Copy all renderer displays the frozen paths. Local cleanup
+names/tips remain separate, and `--match-head-commit` still refuses head drift.

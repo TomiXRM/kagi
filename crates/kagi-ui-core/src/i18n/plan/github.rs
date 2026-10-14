@@ -59,6 +59,18 @@ pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED_DELETION_UNAUTHORIZED: &
 /// Japanese rendering of one GitHub note.
 pub fn note_ja(note: &GithubNote) -> String {
     match note {
+        GithubNote::MergeScope {
+            branch,
+            head_sha,
+            files,
+            additions,
+            deletions,
+        } => {
+            format!("PR source: {branch}@{head_sha}\nファイル: {files} 件 · +{additions} / −{deletions}")
+        }
+        GithubNote::MergeFilesUnavailable => {
+            "この head commit の PR ファイルパスは取得できていません。".into()
+        }
         GithubNote::HeadUnavailable { number } => {
             super::advice_text(Msg::AdviceGithubHeadUnavailable, &[number])
         }

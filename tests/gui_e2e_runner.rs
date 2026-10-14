@@ -54,6 +54,10 @@ mod open_picker;
 mod ref_validation;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/squash_safe_default.rs"]
+mod squash_safe_default;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -2527,6 +2531,14 @@ mod macos {
             (
                 "oplog_append_failure_visible",
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
+            ),
+            (
+                "pr_merge_delete_branch_return_cancel",
+                Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
+            ),
+            (
+                "pr_merge_card_scope",
+                Box::new(crate::squash_safe_default::pr_merge_card_scope),
             ),
             (
                 "pr_merge_write_lease",

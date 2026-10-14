@@ -46,28 +46,47 @@ pub(super) fn open_or_raise(owner: Entity<KagiApp>, cx: &mut App) {
 }
 
 fn window_options(cx: &App) -> WindowOptions {
-    let max_height = cx.primary_display().map_or(720., |display| {
-        f32::from(display.bounds().size.height) * 0.85
-    });
-    // Cocoa's setContentSize anchors the bottom edge. Restoring the last
-    // content height avoids a fresh 720 → page-height resize on every reopen.
     let saved = settings::settings_window_frame();
+    let display = saved
+        .and_then(|frame| frame.display_uuid)
+        .and_then(|uuid| {
+            cx.displays()
+                .into_iter()
+                .find(|display| display.uuid().is_ok_and(|id| id.as_u128() == uuid))
+        })
+        .or_else(|| cx.primary_display());
+    let visible = display.as_ref().map(|display| display.visible_bounds());
+    let max_height = visible.map_or(720., |bounds| f32::from(bounds.size.height));
     let height = saved
         .map_or(720., |frame| frame.height)
         .clamp(500_f32.min(max_height), max_height);
-    let mut bounds = Bounds::centered(None, size(px(715.), px(height)), cx);
-    if let Some(frame) = saved {
-        let restored = point(px(frame.x), px(frame.y));
-        if cx
-            .displays()
-            .iter()
-            .any(|display| display.bounds().contains(&restored))
-        {
-            bounds.origin = restored;
-        }
+    let width = visible.map_or(px(715.), |bounds| px(715.).min(bounds.size.width));
+    let mut bounds = Bounds::centered(None, size(width, px(height)), cx);
+    if let Some(visible) = visible {
+        let restore = saved.filter(|frame| {
+            frame.display_uuid.is_none()
+                || display.as_ref().is_some_and(|display| {
+                    display
+                        .uuid()
+                        .is_ok_and(|uuid| Some(uuid.as_u128()) == frame.display_uuid)
+                })
+        });
+        bounds.origin = restore.map_or_else(
+            || visible.center() - (bounds.size / 2.).into(),
+            |frame| point(px(frame.x), px(frame.y)),
+        );
+        bounds.origin.x = bounds
+            .origin
+            .x
+            .clamp(visible.left(), visible.right() - width);
+        bounds.origin.y = bounds
+            .origin
+            .y
+            .clamp(visible.top(), visible.bottom() - px(height));
     }
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        display_id: display.map(|display| display.id()),
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(Msg::SettingsTitle.t().into()),
             appears_transparent: true,
@@ -103,15 +122,18 @@ impl SettingsWindow {
             .unwrap_or(0);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        window.on_window_should_close(cx, |window, _| {
-            remember_geometry(window);
+        window.on_window_should_close(cx, |window, cx| {
+            remember_geometry(window, cx);
             settings::flush();
             true
         });
-        cx.observe_window_bounds(window, |_, window, _| remember_geometry(window))
-            .detach();
+        cx.observe_window_bounds(window, |_, window, cx| {
+            fit_content(window, None, cx);
+            remember_geometry(window, cx);
+        })
+        .detach();
         let observe = cx.observe(&owner, |_, _, cx| cx.notify());
-        let release = cx.observe_release_in(&owner, window, |_, _, window, _| close(window));
+        let release = cx.observe_release_in(&owner, window, |_, _, window, cx| close(window, cx));
         let toast_removed = owner.read(cx).toast_stack.clone().map(|stack| {
             cx.subscribe_in(
                 &stack,
@@ -263,14 +285,7 @@ impl SettingsWindow {
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
-                        let max = window
-                            .display(cx)
-                            .map_or(720., |d| f32::from(d.bounds().size.height) * 0.85);
-                        let height =
-                            (f32::from(bounds.size.height) + chrome).clamp(500_f32.min(max), max);
-                        if (f32::from(window.viewport_size().height) - height).abs() > 1. {
-                            window.resize(size(px(715.), px(height)));
-                        }
+                        fit_content(window, Some(f32::from(bounds.size.height) + chrome), cx);
                     },
                     |_, _, _, _| {},
                 )
@@ -285,7 +300,7 @@ impl Render for SettingsWindow {
         super::window_menu::publish_settings_edit_state(window, cx);
         keyboard_nav::forget_roving_without_focus(window);
         let Some(owner) = self.owner.upgrade() else {
-            close(window);
+            close(window, cx);
             return div().into_any_element();
         };
         window.set_window_title(Msg::SettingsTitle.t());
@@ -316,17 +331,33 @@ impl Render for SettingsWindow {
             .font_family(super::UI_FONT)
             .text_color(gpui::rgb(theme::theme().text_main))
             .track_focus(&self.focus)
-            .on_action(|_: &commands::CloseTab, window, _| close(window))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if event.keystroke.modifiers != gpui::Modifiers::none() {
+                    return;
+                }
+                let direction = match event.keystroke.key.as_str() {
+                    "pageup" => 1.,
+                    "pagedown" => -1.,
+                    _ => return,
+                };
+                let mut offset = this.scroll.offset();
+                offset.y = (offset.y + this.scroll.bounds().size.height * direction)
+                    .clamp(-this.scroll.max_offset().y, px(0.));
+                this.scroll.set_offset(offset);
+                window.refresh();
+                cx.stop_propagation();
+            }))
+            .on_action(|_: &commands::CloseTab, window, cx| close(window, cx))
             .on_action(|_: &commands::OpenSettings, window, _| raise(window))
             .on_action(|_: &commands::MinimizeWindow, window, _| window.minimize_window())
-            .on_action(|_: &commands::CloseWindow, window, _| close(window))
+            .on_action(|_: &commands::CloseWindow, window, cx| close(window, cx))
             .on_action(cx.listener(|this, _: &commands::Quit, window, cx| {
                 if this
                     .owner
                     .update(cx, |app, cx| !app.hold_host_close(cx))
                     .unwrap_or(false)
                 {
-                    remember_geometry(window);
+                    remember_geometry(window, cx);
                     settings::flush();
                     commands::quit_app(cx);
                 }
@@ -368,12 +399,82 @@ impl Render for SettingsWindow {
     }
 }
 
-fn remember_geometry(window: &Window) {
+/// GPUI exposes content resizing but no native frame positioning. Apply both
+/// together on the foreground executor, outside the drawing/window borrow.
+fn fit_content(window: &Window, height: Option<f32>, cx: &App) {
+    use objc2::{msg_send, rc::Retained, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: GPUI's AppKit handle is a live NSView, and this host is accessed
+    // only on the main thread. Retain its exact NSWindow across the queued task.
+    let target = unsafe {
+        let view = handle.ns_view.as_ptr().cast::<AnyObject>();
+        let native: *mut AnyObject = msg_send![view, window];
+        let screen: *mut AnyObject = msg_send![native, screen];
+        if native.is_null() || screen.is_null() {
+            return;
+        }
+        let current: NSRect = msg_send![native, frame];
+        let content: NSRect = msg_send![view, frame];
+        let visible: NSRect = msg_send![screen, visibleFrame];
+        let inset = current.size.height - content.size.height;
+        let max_content = (visible.size.height - inset).max(0.);
+        let content_height = height
+            .map_or(content.size.height, f64::from)
+            .clamp(500_f64.min(max_content), max_content);
+        let mut fitted = current;
+        fitted.size.width =
+            (715. + current.size.width - content.size.width).min(visible.size.width);
+        fitted.size.height = content_height + inset;
+        // Preserve the top edge instead of Cocoa setContentSize's bottom anchor.
+        fitted.origin.y += current.size.height - fitted.size.height;
+        fitted.origin.x = fitted.origin.x.clamp(
+            visible.origin.x,
+            visible.origin.x + visible.size.width - fitted.size.width,
+        );
+        fitted.origin.y = fitted.origin.y.clamp(
+            visible.origin.y,
+            visible.origin.y + visible.size.height - fitted.size.height,
+        );
+        if (current.origin.x - fitted.origin.x).abs() < 0.5
+            && (current.origin.y - fitted.origin.y).abs() < 0.5
+            && (current.size.width - fitted.size.width).abs() < 0.5
+            && (current.size.height - fitted.size.height).abs() < 0.5
+        {
+            return;
+        }
+        Retained::retain(native).map(|native| (native, fitted))
+    };
+    if let Some((native, fitted)) = target {
+        cx.foreground_executor()
+            .spawn(async move {
+                // SAFETY: the retained NSWindow and this executor stay on the
+                // main thread; AppKit delivers normal move/resize notifications.
+                unsafe {
+                    let _: () = msg_send![&*native, setFrame: fitted, display: true];
+                }
+            })
+            .detach();
+    }
+}
+
+fn remember_geometry(window: &Window, cx: &App) {
     let origin = window.bounds().origin;
     settings::write_settings_window_frame(settings::SettingsWindowFrame {
         x: f32::from(origin.x),
         y: f32::from(origin.y),
         height: f32::from(window.viewport_size().height),
+        display_uuid: window
+            .display(cx)
+            .and_then(|display| display.uuid().ok())
+            .map(|uuid| uuid.as_u128()),
     });
 }
 
@@ -388,8 +489,8 @@ fn raise(window: &mut Window) {
     window.activate_window();
 }
 
-fn close(window: &mut Window) {
-    remember_geometry(window);
+fn close(window: &mut Window, cx: &App) {
+    remember_geometry(window, cx);
     settings::flush();
     window.remove_window();
 }

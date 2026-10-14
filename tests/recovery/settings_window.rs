@@ -24,6 +24,206 @@ fn settle(cx: &mut VisualTestAppContext, handle: AnyWindowHandle) {
     }
 }
 
+fn assert_screen_fit(cx: &mut VisualTestAppContext, settings: AnyWindowHandle, step: &str) {
+    settle(cx, settings);
+    cx.update_window(settings, |_, window, cx| {
+        let frame = window.window_bounds().get_bounds();
+        let visible = window.display(cx).expect("Settings display").visible_bounds();
+        assert!(
+            frame.left() >= visible.left() - gpui::px(1.)
+                && frame.top() >= visible.top() - gpui::px(1.)
+                && frame.right() <= visible.right() + gpui::px(1.)
+                && frame.bottom() <= visible.bottom() + gpui::px(1.),
+            "Settings entire frame must fit visible screen after {step} ({:?}/{}/{}) — frame {frame:?}, visible {visible:?}",
+            i18n::lang(), theme::zoom(), theme::theme().slug
+        );
+    }).unwrap();
+}
+
+fn assert_last_setting_reachable(
+    cx: &mut VisualTestAppContext,
+    repo: AnyWindowHandle,
+    settings: AnyWindowHandle,
+) {
+    let owner = cx
+        .update_window(repo, |_, window, cx| {
+            window
+                .root::<gpui_component::Root>()
+                .flatten()
+                .unwrap()
+                .read(cx)
+                .view()
+                .clone()
+                .downcast::<kagi::ui::KagiApp>()
+                .unwrap()
+        })
+        .unwrap();
+    let viewport = e2e::control_bounds(settings.window_id(), "settings-window-scrollbar")
+        .expect("existing page scrollbar viewport");
+    cx.simulate_event(
+        settings,
+        gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-10000.))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    draw(cx, settings);
+    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key")
+        .expect("last General setting");
+    assert!(
+        last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
+        "wheel reaches entire final control: {last:?} in {viewport:?}"
+    );
+    cx.simulate_event(
+        settings,
+        gpui::MouseMoveEvent {
+            position: last.center(),
+            ..Default::default()
+        },
+    );
+    // Switching away/back uses the production scroll reset, rather than a test
+    // setter that could hide an inaccessible keyboard path.
+    for pane in ["settings-pane-1", "settings-pane-0"] {
+        let at = e2e::control_bounds(settings.window_id(), pane)
+            .unwrap()
+            .center();
+        cx.simulate_click(settings, at, gpui::Modifiers::none());
+        settle(cx, settings);
+    }
+    let mut reached = false;
+    for _ in 0..80 {
+        cx.simulate_keystrokes(settings, "tab");
+        draw(cx, settings);
+        reached = cx
+            .update_window(settings, |_, window, cx| {
+                owner.read(cx).settings_switch_focused_for_e2e(window) == Some(4)
+            })
+            .unwrap();
+        if reached {
+            break;
+        }
+    }
+    assert!(reached, "real Tab reaches the final General switch");
+    // Ordinary Page Down moves the existing page scroller while keeping focus
+    // on the setting; no test-only scroll setter.
+    for _ in 0..4 {
+        cx.simulate_keystrokes(settings, "pagedown");
+        draw(cx, settings);
+    }
+    let last = e2e::control_bounds(settings.window_id(), "terminal-auto-lock-toggle-key").unwrap();
+    assert!(
+        last.top() >= viewport.top() && last.bottom() <= viewport.bottom(),
+        "keyboard reveals entire final control: {last:?} in {viewport:?}"
+    );
+    crate::native_ax::activate(cx);
+    draw(cx, settings);
+    let node = crate::native_ax::node(cx, settings, "terminal-auto-lock-toggle-key".into());
+    assert_eq!(
+        node["aria"]["label"],
+        kagi::ui::i18n::Msg::SettingsTerminalAutoLock.t()
+    );
+}
+
+pub fn scenario_settings_window_screen_fit(cx: &mut VisualTestAppContext) {
+    configurations(cx, |cx| {
+        for appearance in ["apple-light", "apple-dark"] {
+            theme::set_active(appearance);
+            kagi::ui::settings::write_setting("settings_window_frame", None);
+            cx.update(theme::sync_gpui_component_theme);
+            run_cell(cx, |cx, repo, settings| {
+                let repo_before = cx
+                    .update_window(repo, |_, window, _| window.window_bounds())
+                    .unwrap();
+                assert_screen_fit(cx, settings, "first content-driven resize");
+                for pane in [1, 2, 3, 0] {
+                    let bounds = e2e::control_bounds(
+                        settings.window_id(),
+                        [
+                            "settings-pane-0",
+                            "settings-pane-1",
+                            "settings-pane-2",
+                            "settings-pane-3",
+                        ][pane],
+                    )
+                    .expect("pane control");
+                    cx.simulate_click(settings, bounds.center(), gpui::Modifiers::none());
+                    assert_screen_fit(cx, settings, "pane switch");
+                }
+                let zoom = theme::zoom();
+                theme::set_zoom(1.);
+                cx.update(theme::sync_gpui_component_theme);
+                assert_screen_fit(cx, settings, "100% zoom");
+                theme::set_zoom(1.67);
+                cx.update(theme::sync_gpui_component_theme);
+                assert_screen_fit(cx, settings, "100% to 167% zoom");
+                assert_last_setting_reachable(cx, repo, settings);
+                theme::set_zoom(zoom);
+                cx.update(theme::sync_gpui_component_theme);
+                assert_screen_fit(cx, settings, "zoom restoration");
+                cx.simulate_keystrokes(settings, "cmd-w");
+                cx.run_until_parked();
+                drain_native_events();
+
+                // A titlebar on a connected screen does not qualify the entire
+                // saved frame: both right and bottom edges need correction.
+                let displays = cx.read(|cx| cx.displays());
+                for display in displays {
+                    let visible = display.visible_bounds();
+                    kagi::ui::settings::write_settings_window_frame(
+                        kagi::ui::settings::SettingsWindowFrame {
+                            x: f32::from(visible.right()) - 120.,
+                            y: f32::from(visible.bottom()) - 120.,
+                            height: 900.,
+                            display_uuid: display.uuid().ok().map(|uuid| uuid.as_u128()),
+                        },
+                    );
+                    cx.simulate_keystrokes(repo, "cmd-,");
+                    cx.run_until_parked();
+                    let reopened = cx.read(|cx| {
+                        cx.windows()
+                            .into_iter()
+                            .find(|w| w.window_id() != repo.window_id())
+                            .expect("restored Settings")
+                    });
+                    assert_screen_fit(cx, reopened, "off-edge saved frame restore");
+                    cx.update_window(reopened, |_, window, cx| {
+                        assert_eq!(
+                            window.display(cx).unwrap().id(),
+                            display.id(),
+                            "saved position chooses its own connected display"
+                        );
+                    })
+                    .unwrap();
+                    cx.simulate_keystrokes(reopened, "cmd-w");
+                    cx.run_until_parked();
+                    drain_native_events();
+                    cx.simulate_keystrokes(repo, "cmd-,");
+                    cx.run_until_parked();
+                    let reopened = cx.read(|cx| {
+                        cx.windows()
+                            .into_iter()
+                            .find(|w| w.window_id() != repo.window_id())
+                            .unwrap()
+                    });
+                    assert_screen_fit(cx, reopened, "reopen");
+                    cx.simulate_keystrokes(reopened, "cmd-w");
+                    cx.run_until_parked();
+                    drain_native_events();
+                }
+                assert_eq!(
+                    cx.update_window(repo, |_, window, _| window.window_bounds())
+                        .unwrap(),
+                    repo_before,
+                    "Settings fitting leaves repository geometry unchanged"
+                );
+            });
+        }
+    });
+    eprintln!("[gui-e2e] PASS settings_window_screen_fit");
+}
+
 pub(crate) struct SettingsHostGuard {
     cx: VisualTestAppContext,
     previous: bool,
@@ -378,6 +578,7 @@ fn restart_settings_after_app_quit(cx: &mut VisualTestAppContext) {
             x: 100.,
             y: 100.,
             height: 500.,
+            display_uuid: None,
         },
     );
     frame.height = 500.;

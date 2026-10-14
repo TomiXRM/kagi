@@ -18,14 +18,16 @@ sets app_owns_titlebar_drag and owns dragging only on its blank/title surface,
 not pane controls. General, Language, Smart Commit and Analyze use the existing
 localized groups. Pane selection, position and the last content height are saved
 through settings::; invalid/missing selections use General, and disconnected-
-display positions recenter. Restoring height avoids Cocoa's bottom-anchored
-initial resize moving the saved frame on each reopen. The selected pane
-determines content height through real layout, clamped to 500 logical points and
-85% of the current display; oversized pages remain reachable through one
-persistent system-scrollbar owner. Width does not scale with UI zoom.
+display positions recenter. Restoring height avoids an unnecessary initial
+resize on every reopen. The selected pane determines content height through real
+layout, with a 500-logical-point floor when the display permits it and the
+current display's visible frame as the ceiling. Oversized pages remain reachable
+through one persistent system-scrollbar owner. Width does not scale with UI zoom.
 Both position and height are saved on bounds changes as one flat-string
-settings_window_frame value ("x,y,content-height"), not alternating preference
-keys. The sole store can coalesce a continuous bounds burst, and the normal
+settings_window_frame value ("x,y,content-height[,display-uuid]"), not alternating
+preference keys. Display UUID is optional for existing frames and recorded as
+32 hexadecimal digits for new captures. The sole store coalesces a continuous
+bounds burst, and the normal
 application-quit flush also preserves an open Settings frame. The settings module
 reads the former settings_window_position/settings_window_height pair once,
 converts it to the frame key and removes the obsolete pair; unrelated settings
@@ -130,4 +132,34 @@ help scroller. Full tooltips remain available, and switch accessibility
 descriptions include the same localized detail. Analyze and custom-theme
 help follow the same visible-detail policy. This supersedes the tooltip-only
 detail presentation without changing live preference apply or storage.
+
+
+## Amendment — 2026-10-14: Settings screen containment (#1549)
+
+Settings is an open-density auxiliary window, using macOS Settings as its
+placement reference, not a larger repository window or a second form control
+convention. Every initial/restored frame fits the selected display's visible
+area. Content-driven height changes preserve the top edge where possible and
+clamp the entire native frame, including its bottom and right edges. The native
+frame constraint accounts for any frame/content inset and uses AppKit's own
+screen coordinates, rather than mixing display-local GPUI coordinates across
+monitors. The existing scroller owns content that exceeds the visible height.
+Repository window defaults and restoration policy are untouched.
+Saved display identity uses the GPUI display UUID, not an ambiguous local x/y
+coordinate or the currently focused screen. A disconnected UUID recenters on
+the primary display; the old three-component frame remains readable and acquires
+its display identity at the next native bounds capture.
+Unmodified Page Up/Down bubble to the native host's existing scroll owner when
+an editing control has not consumed them. This keeps focused controls intact
+while allowing keyboard inspection of page content below the fitted frame.
+
+The native `settings_window_screen_fit` regression checks window bounds against
+the display's visible bounds after first open, all pane transitions, 100%→167%
+zoom and reopen in EN/JA and Apple Light/Dark. Wheel scrolling and real Tab plus
+Page Down must reach the final General switch inside that page viewport; the
+native accessibility tree retains its localized name. Saved right/bottom-overflow
+frames must restore on their own connected display and fit fully, not merely
+expose a titlebar. These deterministic hidden-window bounds do not prove physical
+pointer delivery or the physical bottom edge; Tier B captures the real Settings
+window on the main display at 167%.
 

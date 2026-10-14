@@ -1432,6 +1432,7 @@ pub enum Msg {
     PlanMerge,
     /// Confirm button on the rebase modal, `{}` = branch.
     PlanRebaseOnto,
+    PlanRebaseCandidates,
     PlanReplayOnto,
     PlanReplayOntoArmed,
     ThemeColorVision,
@@ -3938,6 +3939,8 @@ impl Msg {
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
             (Ja, PlanRebaseOnto) => "{} を rebase",
+            (En, PlanRebaseCandidates) => "Replay candidates",
+            (Ja, PlanRebaseCandidates) => "replay 候補の commit",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",

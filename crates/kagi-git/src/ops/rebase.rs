@@ -97,6 +97,35 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         }
     }
 
+    // Explicit upstream rebase considers HEAD commits not reachable from onto.
+    // Default rebase flattens merges; show the non-merge replay candidates in
+    // dependency order. Git may skip equivalent patches or newly empty commits.
+    let mut preview_commits = Vec::new();
+    if let (Head::Attached { .. }, Some(onto_oid)) = (&head, onto_oid) {
+        let scope_error =
+            |e: git2::Error| GitError::Other(format!("rebase scope read failed: {}", e.message()));
+        let mut walk = repo.revwalk().map_err(scope_error)?;
+        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)
+            .map_err(scope_error)?;
+        walk.push_head().map_err(scope_error)?;
+        walk.hide(onto_oid).map_err(scope_error)?;
+        for oid in walk {
+            let commit = repo
+                .find_commit(oid.map_err(scope_error)?)
+                .map_err(scope_error)?;
+            if commit.parent_count() > 1 {
+                continue;
+            }
+            preview_commits.push(format!(
+                "{}  {}",
+                &commit.id().to_string()[..8],
+                kagi_domain::text_safety::display_subject(
+                    commit.summary().ok().flatten().unwrap_or("(no subject)")
+                )
+            ));
+        }
+    }
+
     Ok(OperationPlan {
         tag_push_identity: None,
         approved_index_digest: None,
@@ -116,7 +145,7 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         pull_identity: None,
         worktree_digest: None,
         preview_files: Vec::new(),
-        preview_commits: Vec::new(),
+        preview_commits,
         destructive: false,
         equivalent_command: None,
     })

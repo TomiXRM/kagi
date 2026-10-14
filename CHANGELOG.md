@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Rebase confirmation discloses the oldest-first commit range to replay, its count and commit identities instead of only repeating the unchanged branch/clean summary. The scoped list is localized in EN/JA; planning remains read-only. (#1530)
 - Editor Blame uses a named, keyboard-focusable toggle Button with a visible focus ring and toggled (pressed) accessibility state. Enter, Space and pointer activation share the existing on/off path in EN/JA. (#1524)
 - Activity chart hover and keyboard inspection targets now align with the plotted bucket positions, including narrow plots at 167% zoom; neighboring marks share midpoint hit boundaries without changing aggregation or series encoding. (#1510)
 - Smart Commit's first Settings enable now requires the same four localized privacy statements as Generate, including unstaged exclusion and the staged-secret warning. Approval only enables the preference; cancelling, Escape or closing Settings sends nothing and leaves it disabled. Consent survives OFF/re-enable independently from the enable flag, and older enabled settings without recorded consent must ask before generation. (#1509)

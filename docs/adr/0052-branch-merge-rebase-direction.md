@@ -50,3 +50,16 @@ visible action, not the requirement to disclose operation direction.
 Replay retains its warning caption and existing two-stage approval gate.
 The armed warning has no branch name and uses the ordinary, unellipsized
 button so its complete safety wording remains visible in both languages.
+
+## Amendment — 2026-10-14: Rebase plan scope (#1530)
+
+The current branch remains attached and clean after a successful rebase, but
+that alone does not disclose the operation. Plan time enumerates non-merge
+commits reachable from HEAD but not the target, oldest first, with short OIDs
+and subjects. The shared scrollable list shows the full candidate count and
+supports Copy. EN/JA captions identify replay candidates, not pushes.
+Git may skip equivalent patches or commits that become empty; this is a
+candidate range, not a promise of a particular final SHA or replay count.
+No render-time Git reads or plan-time repository writes are introduced.
+Replay's ref-update script stays separate and is not relabeled as commits.
+

@@ -830,18 +830,9 @@ fn render_plan_modal_card_styled(
         body = body.child(div().flex_shrink_0().child(extra.element));
     }
 
-    // ── Commits to push (T-HT-004) ────────────────────────
-    // Shown only when preview_commits is non-empty (push plans).
-    //
-    // #454: was `take(total.min(10))` + an "… and N more" line — the count was
-    // honest but the remaining commits were unreachable. Every row is rendered
-    // now, inside the shared list panel with its own capped scroll box, so the
-    // list reads as a box and scrolls in place (user request 2026-09-06)
-    // instead of stretching the card.
-    //
-    // Plain rows, not a `uniform_list`: the producer caps the preview at 100
-    // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
-    // bounded and virtualization would buy nothing here.
+    // Shared commit preview: Push uses newest-first publication rows; Rebase
+    // uses the backend's complete oldest-first candidate range. Every row is
+    // reachable in the capped scroll box and available through Copy.
     if !plan.preview_commits.is_empty() {
         let total = plan.preview_commits.len();
         // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
@@ -853,6 +844,16 @@ fn render_plan_modal_card_styled(
             .min_h(gpui::px(0.))
             .max_h(modal_list_max_h(total))
             .overflow_y_scroll();
+        if matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Rebase(
+                kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+            )
+        ) {
+            list = list
+                .role(gpui::Role::Group)
+                .aria_label(format!("{}: {total}", Msg::PlanRebaseCandidates.t()));
+        }
         #[cfg(feature = "gui-e2e")]
         {
             list = list
@@ -880,7 +881,18 @@ fn render_plan_modal_card_styled(
             list = list.child(row);
         }
         body = body.child(modal_list_panel(
-            SharedString::from("Commits to push"),
+            SharedString::from(
+                if matches!(
+                    &plan.title,
+                    kagi_domain::plan_note::PlanTitle::Rebase(
+                        kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+                    )
+                ) {
+                    Msg::PlanRebaseCandidates.t()
+                } else {
+                    "Commits to push"
+                },
+            ),
             total,
             Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
             None,

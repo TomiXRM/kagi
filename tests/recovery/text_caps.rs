@@ -381,7 +381,7 @@ pub fn scenario_inspector_full_message(cx: &mut VisualTestAppContext) {
             i18n::set_lang(lang);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
-                for dimensions in [(1000., 720.), (1392., 883.)] {
+                for dimensions in [(940., 660.), (1392., 883.)] {
                     resize(cx, window, dimensions);
                     for (row, original) in messages.iter().enumerate() {
                         assert_message(cx, &app, window, original, row);

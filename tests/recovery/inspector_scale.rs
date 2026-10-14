@@ -187,7 +187,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
                 cx.update(theme::sync_gpui_component_theme);
-                for (width, height) in [(1392., 883.), (1000., 720.)] {
+                for (width, height) in [(1392., 883.), (940., 660.)] {
                     let (app, window) = mount(cx, fixture.path());
                     app.update(cx, |app, cx| {
                         app.inspector_visible = true;

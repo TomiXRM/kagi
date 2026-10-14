@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Command palette result rows expose a standard accessibility Click action for commands, themes and languages, sharing the pointer/keyboard enabled gate without double pointer activation. Unavailable results remain selectable but do not execute. (#1513)
 - Update installation disables Skip this version, and replaces Later with “Hide — update continues” (EN/JA). Hiding retains the update offer and window-owned installer; reopening cannot start another installer, and failures restore the pre-install choices. (#1514)
 - Compact ⌘F opens the existing navigator Popover and focuses its shared filter; short-window rails scroll and reveal keyboard-focused controls. Rail triggers expose expanded state and Enter/Space toggle the same Popover as pointer activation. PR/Issue section headings support keyboard disclosure in both layouts, and compact PR lists use the existing system-policy scrollbar with a session-owned scroll handle. (#1491–#1494, #1502)
   - Review: focused-trigger reveal runs only on focus transitions, preserving subsequent wheel scrolling to PRs/Issues while a different rail control retains keyboard focus.

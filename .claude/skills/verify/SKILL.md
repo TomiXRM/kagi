@@ -104,6 +104,14 @@ shared filter Input/chip focus slots. Tier B: compare the provided plain baselin
 with an isolated plain build at 900×500 in Apple Light/Dark, including high zoom,
 scroll to Issues, and open Cmd-F; capture only the launched PID's window.
 
+For #1513 use `KAGI_GUI_E2E_ONLY='palette_'` with KEEP_GOING.
+`palette_rows_ax_action` shares the native NSView activation and AccessKit node
+inspection helper with the rail. It checks result-owned Click actions and sends
+AppKit Press through the production adapter, with exact dispatch identities and
+counts for commands, themes and languages. Mouse down/up and Input Enter share
+the oracle; disabled results dispatch nothing. This proves native adapter
+delivery, not VoiceOver speech or IME behavior.
+
 For #1417/#1418 use
 `KAGI_GUI_E2E_ONLY='system_reduce_motion,system_reduce_transparency'` with KEEP_GOING.
 The in-memory system-display injection never writes macOS preferences. Both

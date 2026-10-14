@@ -433,8 +433,14 @@ mod modal_viewports;
 mod remote_browse_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/native_ax.rs"]
+mod native_ax;
+#[cfg(target_os = "macos")]
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
+#[cfg(target_os = "macos")]
+#[path = "recovery/palette_ax.rs"]
+mod palette_ax;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
@@ -2692,6 +2698,10 @@ mod macos {
             (
                 "palette_selection_scroll",
                 Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
+            ),
+            (
+                "palette_rows_ax_action",
+                Box::new(crate::palette_ax::scenario_palette_rows_ax_action),
             ),
             (
                 "palette_viewport",

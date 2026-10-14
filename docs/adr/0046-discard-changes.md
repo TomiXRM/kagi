@@ -95,3 +95,13 @@ The inline-action menu-anchor regression resizes within each presentation:
 desktop width changes and compact height changes. Crossing the breakpoint
 unmounts that surface's Button and is covered by the compact lifecycle's focus
 handoff, not an assertion that the unmounted Button still dispatches a file menu.
+
+## Amendment — 2026-10-14: focus follows file selection (#1536)
+
+Changes keyboard arrows, Home/End and PageUp/PageDown select the destination
+file through the existing owner-bound deferred diff path as they move the
+retained row focus. The selected fill and AX selected state therefore identify
+the same file as the focus ring and Shift+F10/Menu target. Pointer behavior,
+frozen menu identity, plan/confirmation, mandatory backup and execution remain
+unchanged. Compact focus reconciliation remains owned only by the visible
+Changes surface, as established by #1546.

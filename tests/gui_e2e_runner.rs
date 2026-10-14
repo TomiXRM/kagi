@@ -113,6 +113,10 @@ mod plan_labels;
 mod plan_card_reachability;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/rebase_card_scope.rs"]
+mod rebase_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -216,6 +220,9 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_search.rs"]
+mod sidebar_search;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_focus.rs"]
@@ -496,6 +503,9 @@ mod sidebar_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_panels.rs"]
 mod tab_panels;
+#[cfg(target_os = "macos")]
+#[path = "recovery/zoom_200.rs"]
+mod zoom_200;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_bar_fit.rs"]
@@ -627,6 +637,10 @@ mod compact_rail;
 #[cfg(target_os = "macos")]
 #[path = "recovery/compact_select_changes.rs"]
 mod compact_select_changes;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/graph_return_changes.rs"]
+mod graph_return_changes;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
@@ -1603,6 +1617,14 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_search_escape",
+                Box::new(crate::sidebar_search::sidebar_search_escape),
+            ),
+            (
+                "sidebar_search_clear_ax",
+                Box::new(crate::sidebar_search::sidebar_search_clear_ax),
+            ),
+            (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
@@ -1866,7 +1888,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
-            ("neighbor_plan_labels", Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels)),
+            (
+                "rebase_card_scope",
+                Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "neighbor_plan_labels",
+                Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels),
+            ),
             ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
             ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (
@@ -2865,6 +2894,10 @@ mod macos {
                 Box::new(crate::settings_switches::scenario_settings_zoom_bound),
             ),
             (
+                "zoom_200_operable",
+                Box::new(crate::zoom_200::scenario_zoom_200_operable),
+            ),
+            (
                 "settings_groups",
                 Box::new(crate::settings_switches::scenario_settings_groups),
             ),
@@ -3366,6 +3399,18 @@ mod macos {
                 Box::new(crate::compact_select_changes::scenario_compact_select_changes),
             ),
             (
+                "graph_return_reopens_changes",
+                Box::new(crate::graph_return_changes::scenario_graph_return_reopens_changes),
+            ),
+            (
+                "graph_return_input_escape",
+                Box::new(crate::graph_return_changes::scenario_graph_return_input_escape),
+            ),
+            (
+                "graph_return_bottom_focus",
+                Box::new(crate::graph_return_changes::scenario_graph_return_bottom_focus),
+            ),
+            (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),
@@ -3444,6 +3489,10 @@ mod macos {
             (
                 "changes_rows_keyboard",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
+            ),
+            (
+                "changes_focus_follows_selection",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_focus_follows_selection),
             ),
             (
                 "changes_discard_keyboard",

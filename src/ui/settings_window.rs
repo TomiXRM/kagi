@@ -210,6 +210,7 @@ impl SettingsWindow {
             div()
                 .id("settings-panes")
                 .flex()
+                .flex_wrap()
                 .justify_center()
                 .gap_1()
                 .py_2(),

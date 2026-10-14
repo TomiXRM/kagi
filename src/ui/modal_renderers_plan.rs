@@ -728,6 +728,8 @@ pub(crate) fn render_push_tag_modal(
 /// Rebase: single confirm, no armed second stage — see `operations/rebase.rs`'s
 /// module doc for why. Replay (#344): destructive, so the label swaps to the
 /// armed form after the first confirm and the accent is the blocker colour.
+/// Ordinary Rebase retains the backend's ordered commit preview; Replay hides
+/// its machine-only ref script through `display_plan`.
 pub(crate) fn render_rebase_modal(
     modal: RebaseCurrentOntoModal,
     overrides: &std::collections::HashMap<&'static str, bool>,

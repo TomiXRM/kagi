@@ -221,3 +221,20 @@ input at 940×660 and 940×560@167%. The fork adds only a public cached
 The body's minimum reserves action-row chrome, and the message/footer clip
 shrinking content so it cannot overpaint Commit. Real-window IME/AX and the
 JA Tier B comparison remain checks owned by the integrating agent.
+
+## Amendment — 2026-10-14: file identity at narrow widths (#1533)
+
+The shared staged/unstaged List/Tree file renderer uses GPUI native middle
+ellipsis, preserving the distinguishing filename suffix as well as its prefix.
+No kagi-ui-core middle-ellipsis helper exists; no custom string slicing or
+second row renderer is introduced. The dense 13-reference-pixel file role,
+22-reference-pixel slot, selection foregrounds, Stage/Unstage controls and
+file/diff ownership remain unchanged.
+
+Full-path hover uses the existing viewport-bounded wrapping subject tooltip.
+The accessible label and row description remain the complete repository path,
+independently of visual truncation. EN/JA use the same unmodified Git filenames.
+The native regression `commit_panel_file_middle_ellipsis` covers both sections
+and both presentations at 100%/167%; real-window narrow alpha/beta and tooltip
+comparisons remain Tier B evidence, not claims inferred from style probes.
+

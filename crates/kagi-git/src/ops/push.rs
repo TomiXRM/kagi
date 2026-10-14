@@ -138,6 +138,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
                 dirty: current.dirty.clone(),
             };
             return Ok(OperationPlan {
+                rebase_scope: None,
                 tag_push_identity: None,
                 approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
@@ -290,6 +291,7 @@ pub fn plan_push(repo: &Repository) -> Result<OperationPlan, GitError> {
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: if nothing_to_push {
@@ -679,6 +681,7 @@ pub fn plan_push_branch(
     });
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: if nothing_to_push {

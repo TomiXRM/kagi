@@ -11,8 +11,6 @@
 //! a destructive confirm can never hide its own targets (and a sticky user
 //! override can never carry a collapsed state into the next confirm).
 
-use super::i18n::Msg;
-use super::modal_copy::modal_copy_button;
 use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
@@ -398,12 +396,11 @@ pub(crate) fn modal_section_chipped(
 pub(crate) fn modal_list_panel(
     title: impl Into<SharedString>,
     count: usize,
-    // `(element id, text)` for the header's copy button: the rows as text, so
-    // the list is copyable without selection (#454 follow-up).
-    copy: Option<(&'static str, String)>,
+    // Prebuilt header action, so large row copies can be generated on click.
+    copy: Option<gpui::AnyElement>,
     summary: Option<gpui::Div>,
     body: gpui::AnyElement,
-    cx: &mut Context<KagiApp>,
+    _cx: &mut Context<KagiApp>,
 ) -> gpui::Div {
     // Theme-independent panel tint: `surface == modal` in several themes, so a
     // `surface` fill would be invisible on the card (see `theme::panel_style`).
@@ -465,9 +462,7 @@ pub(crate) fn modal_list_panel(
                         .items_center()
                         .gap_1()
                         .child(modal_chip(count.to_string(), current_theme().text_sub))
-                        .children(copy.map(|(id, text)| {
-                            modal_copy_button(id, Msg::ModalCopyList.t(), text, cx)
-                        })),
+                        .children(copy),
                 ),
         )
         .children(summary.map(|summary| summary.h(theme::scaled_px(MODAL_LIST_ROW_H))))

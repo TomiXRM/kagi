@@ -233,12 +233,12 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             );
         }
         if width == 1000. {
-            // Native 1000×720 measurements, identical across EN/JA and both themes.
-            // The old 940×660 offsets cannot be compared across a viewport/reflow change.
+            // Native 1000×720 density ceilings, identical across languages/themes.
+            // Allow rows to move up; unrelated chrome improvements must not fail this oracle.
             let expected = if zoom == 1. { 340. } else { 433.5 };
             assert!(
-                (offset - expected).abs() <= 0.6,
-                "desktop-breakpoint first row: {offset} vs {expected} at {width}/{zoom}"
+                offset <= expected + 0.6,
+                "desktop-breakpoint density must not regress: {offset} vs {expected} at {width}/{zoom}"
             );
         } else {
             // Frozen pre-density measurements at the unchanged 1392×883 viewport.

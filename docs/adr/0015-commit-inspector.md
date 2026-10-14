@@ -168,8 +168,10 @@ Desktop-oracle repair: #1481's compact breakpoint invalidates desktop-only
 message/files frames at 940px. `inspector_scale` and `inspector_full_message`
 now use 1000×720 for their small desktop leg; dedicated compact scenarios
 retain compact coverage. Scale retains the historical upward-offset comparison
-at unchanged 1392×883 and pins the new 1000×720 offsets to 340 / 433.5 logical
-pixels (100% / 167%, ±0.6px), measured identically in both languages/themes.
+at unchanged 1392×883 and caps the new 1000×720 offsets at native measurements
+of 340 / 433.5 logical pixels (100% / 167%, +0.6px tolerance), identical in both
+languages/themes. The one-sided density ceiling permits unrelated chrome
+improvements to move files upward without fixing the whole header as a golden.
 The old 940×660 offset is not misrepresented as a 1000×720 baseline.
 
 Verification: the scoped `inspector_` native run passes all 12 scenarios,

@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- UI Zoom now reaches 200% through Settings and the existing zoom shortcuts, persists across reopening, and describes the 70%–200% range in English and Japanese. Existing 100%/167% and migrated zoom values remain supported. (#1553)
+  - Native Settings pane tabs wrap at high zoom rather than clipping the first/last pane outside the existing window.
+  - Compact Sidebar search defers navigator opening until the shortcut handler releases its app update, avoiding a reentrant-owner read panic.
 - Compact Changes reconciles file-row focus only from the surface drawing its lists, so the pinned composer no longer moves End/arrow focus back to an earlier file before scrolling finishes. Keyboard Discard coverage compares its menu and planned path with the actual focused row's accessibility name.
 - Revert confirmation uses English generated AFTER prose in English and Japanese presentation in Japanese; commit subjects and branch names remain verbatim, including Copy all. (#1534)
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)

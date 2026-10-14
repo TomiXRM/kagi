@@ -259,6 +259,7 @@ pub fn plan_restore_snapshot(repo: &Repository, id: &str) -> Result<OperationPla
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),

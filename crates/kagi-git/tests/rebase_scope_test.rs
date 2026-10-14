@@ -36,3 +36,90 @@ fn rebase_plan_discloses_three_commits_in_replay_order_without_writes() {
     assert_eq!(git_output(path, &["show-ref"]), before);
     assert!(git_output(path, &["status", "--porcelain"]).is_empty());
 }
+
+fn range_fixture(count: usize, divergent: bool) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    init_repo(path, "main");
+    write_file(path, "base", "base");
+    commit_all(path, "base");
+    git(path, &["checkout", "-qb", "feature"]);
+    for n in 0..count {
+        write_file(path, "feature", &n.to_string());
+        commit_all(path, &format!("candidate {n}"));
+    }
+    if divergent {
+        git(path, &["checkout", "-q", "main"]);
+        write_file(path, "target", "target");
+        commit_all(path, "target work");
+        git(path, &["checkout", "-q", "feature"]);
+    }
+    dir
+}
+
+#[test]
+fn rebase_scope_caps_preview_and_retains_true_total() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = range_fixture(150, true);
+    let repo = git2::Repository::open(dir.path()).unwrap();
+    let plan = kagi_git::ops::plan_rebase_current_onto(&repo, "main").unwrap();
+    assert_eq!(plan.preview_commits.len(), 100);
+    assert_eq!(plan.rebase_scope.as_ref().unwrap().total_commits, 150);
+    assert!(plan.preview_commits[0].ends_with("candidate 0"));
+    assert!(plan.preview_commits[99].ends_with("candidate 99"));
+}
+
+#[test]
+fn rebase_linear_ancestor_is_noop_like_git() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = range_fixture(3, false);
+    let path = dir.path();
+    let before = git_output(path, &["rev-parse", "HEAD"]);
+    let repo = git2::Repository::open(path).unwrap();
+    let plan = kagi_git::ops::plan_rebase_current_onto(&repo, "main").unwrap();
+    assert!(plan.preview_commits.is_empty());
+    assert_eq!(plan.rebase_scope.as_ref().unwrap().total_commits, 0);
+    assert!(plan.blockers.iter().any(|note| matches!(
+        note,
+        kagi_domain::plan_note::PlanNote::Rebase(
+            kagi_domain::plan_note::RebaseNote::AlreadyUpToDate { .. }
+        )
+    )));
+    git(path, &["rebase", "main"]);
+    assert_eq!(git_output(path, &["rev-parse", "HEAD"]), before);
+}
+
+#[test]
+fn rebase_refuses_target_drift_without_mutating_refs() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = range_fixture(3, true);
+    let path = dir.path();
+    let mut backend =
+        kagi_git::Backend::open_with_policy(path, kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let op = kagi_git::Operation::RebaseCurrentOnto {
+        onto: "main".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    let scope = plan.rebase_scope.as_ref().unwrap();
+    assert!(plan.current.head.contains(&scope.current_oid));
+    assert!(plan.predicted.head.contains(&scope.onto_oid));
+    assert_ne!(plan.current, plan.predicted);
+    git(path, &["checkout", "-q", "main"]);
+    write_file(path, "target", "moved target");
+    commit_all(path, "target moved after approval");
+    git(path, &["checkout", "-q", "feature"]);
+    let before = git_output(path, &["show-ref"]);
+    let error = backend.run(&op, &plan).unwrap_err();
+    assert!(
+        error.to_string().contains("changed since planning"),
+        "{error}"
+    );
+    assert_eq!(git_output(path, &["show-ref"]), before);
+}

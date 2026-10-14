@@ -38,11 +38,11 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
     } else {
         "clean".to_string()
     };
-    let current = StateSummary {
+    let mut current = StateSummary {
         head: head_display.clone(),
         dirty: dirty_display.clone(),
     };
-    let predicted = StateSummary {
+    let mut predicted = StateSummary {
         head: head_display,
         dirty: dirty_display,
     };
@@ -97,36 +97,86 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         }
     }
 
-    // Explicit upstream rebase considers HEAD commits not reachable from onto.
-    // Default rebase flattens merges; show the non-merge replay candidates in
-    // dependency order. Git may skip equivalent patches or newly empty commits.
     let mut preview_commits = Vec::new();
-    if let (Head::Attached { .. }, Some(onto_oid)) = (&head, onto_oid) {
+    let mut rebase_scope = None;
+    if let (Some(branch), Some(onto_oid)) = (branch_name.as_ref(), onto_oid) {
         let scope_error =
             |e: git2::Error| GitError::Other(format!("rebase scope read failed: {}", e.message()));
-        let mut walk = repo.revwalk().map_err(scope_error)?;
-        walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)
-            .map_err(scope_error)?;
-        walk.push_head().map_err(scope_error)?;
-        walk.hide(onto_oid).map_err(scope_error)?;
-        for oid in walk {
-            let commit = repo
-                .find_commit(oid.map_err(scope_error)?)
-                .map_err(scope_error)?;
-            if commit.parent_count() > 1 {
-                continue;
+        let head_oid = repo
+            .head()
+            .map_err(scope_error)?
+            .target()
+            .ok_or_else(|| GitError::Other("HEAD has no target".into()))?;
+        let range = format!("{onto_oid}..{head_oid}");
+        let repo_path = repo.workdir().unwrap_or_else(|| repo.path());
+        let count = |filter: &str| -> Result<usize, GitError> {
+            let out = run_git(repo_path, &["rev-list", "--count", filter, &range])
+                .map_err(|e| crate::cli::context("rebase scope read failed", e))?;
+            if out.status != 0 {
+                return Err(GitError::Other(format!(
+                    "rebase scope read failed: {}",
+                    out.stderr
+                )));
             }
-            preview_commits.push(format!(
-                "{}  {}",
-                &commit.id().to_string()[..8],
-                kagi_domain::text_safety::display_subject(
-                    commit.summary().ok().flatten().unwrap_or("(no subject)")
-                )
-            ));
+            out.stdout
+                .trim()
+                .parse()
+                .map_err(|_| GitError::Other("invalid rebase scope count".into()))
+        };
+        let mut total_commits = count("--no-merges")?;
+        let is_linear_noop = (head_oid == onto_oid
+            || repo
+                .graph_descendant_of(head_oid, onto_oid)
+                .map_err(scope_error)?)
+            && count("--min-parents=2")? == 0;
+        if is_linear_noop {
+            total_commits = 0;
+            if head_oid != onto_oid {
+                blockers.push(PlanNote::Rebase(RebaseNote::AlreadyUpToDate {
+                    branch: branch.clone(),
+                    onto: onto.to_string(),
+                }));
+            }
+        } else {
+            let mut walk = repo.revwalk().map_err(scope_error)?;
+            walk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)
+                .map_err(scope_error)?;
+            walk.push(head_oid).map_err(scope_error)?;
+            walk.hide(onto_oid).map_err(scope_error)?;
+            for oid in walk {
+                let commit = repo
+                    .find_commit(oid.map_err(scope_error)?)
+                    .map_err(scope_error)?;
+                if commit.parent_count() > 1 {
+                    continue;
+                }
+                preview_commits.push(format!(
+                    "{}  {}",
+                    &commit.id().to_string()[..8],
+                    kagi_domain::text_safety::display_subject(
+                        commit.summary().ok().flatten().unwrap_or("(no subject)")
+                    )
+                ));
+                if preview_commits.len() == 100 {
+                    break;
+                }
+            }
         }
+        current.head = format!("refs/heads/{branch} @ {head_oid}");
+        // The UI localizes this structured scope; never predict a final SHA.
+        predicted.dirty = "Result OID is not yet known".into();
+        predicted.head = format!("refs/heads/{branch} onto {onto} @ {onto_oid}");
+        rebase_scope = Some(kagi_domain::plan::RebaseScope {
+            current_ref: format!("refs/heads/{branch}"),
+            current_oid: head_oid.to_string(),
+            onto_ref: onto.to_string(),
+            onto_oid: onto_oid.to_string(),
+            total_commits,
+        });
     }
 
     Ok(OperationPlan {
+        rebase_scope,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -149,6 +199,37 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
         destructive: false,
         equivalent_command: None,
     })
+}
+
+pub(crate) fn check_rebase_identity(
+    repo: &Repository,
+    plan: &OperationPlan,
+) -> Result<(), GitError> {
+    let Some(scope) = &plan.rebase_scope else {
+        return Ok(());
+    };
+    if !repo
+        .head()
+        .is_ok_and(|head| head.name().is_ok_and(|name| name == scope.current_ref))
+    {
+        return Err(GitError::Other(
+            "Rebase current branch changed since planning; please re-plan".into(),
+        ));
+    }
+    let current = repo
+        .revparse_single(&scope.onto_ref)
+        .and_then(|object| object.peel_to_commit())
+        .map_err(|_| {
+            GitError::Other("Rebase target changed since planning; please re-plan".into())
+        })?;
+    let expected = git2::Oid::from_str(&scope.onto_oid)
+        .map_err(|_| GitError::Other("Invalid approved Rebase target OID".into()))?;
+    if current.id() != expected {
+        return Err(GitError::Other(
+            "Rebase target changed since planning; please re-plan".into(),
+        ));
+    }
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────

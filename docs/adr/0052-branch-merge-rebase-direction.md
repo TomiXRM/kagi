@@ -62,4 +62,15 @@ Git may skip equivalent patches or commits that become empty; this is a
 candidate range, not a promise of a particular final SHA or replay count.
 No render-time Git reads or plan-time repository writes are introduced.
 Replay's ref-update script stays separate and is not relabeled as commits.
+Planning runs off the UI thread through the existing session/visit-owned
+planning lifecycle. The preview retains at most 100 subjects; a separate
+typed scope retains the true total and presents a localized remaining count.
+Copy formatting/joining happens only on activation. Linear ancestry with
+no merge commits is already up to date, matching Git's no-op behavior.
+The scope freezes the current ref/full OID and target operand/full OID.
+CURRENT shows the original tip; AFTER identifies the target tip and marks
+the result OID unknown. Mandatory preflight refuses target drift before
+backup/write admission, and execution uses the approved target OID rather
+than resolving the branch name again.
+
 

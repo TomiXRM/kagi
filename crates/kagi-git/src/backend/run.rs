@@ -497,9 +497,20 @@ impl Backend {
             Operation::ForceWithLeasePush => self
                 .execute_force_with_lease_push(plan)
                 .map(|()| OperationOutcome::Unit),
-            Operation::RebaseCurrentOnto { onto } => self
-                .execute_rebase_current_onto(onto)
-                .map(OperationOutcome::Rebase),
+            Operation::RebaseCurrentOnto { onto } => {
+                let scope = plan
+                    .rebase_scope
+                    .as_ref()
+                    .ok_or_else(|| GitError::Other("missing approved Rebase identity".into()))?;
+                if scope.onto_ref != *onto {
+                    return Err(GitError::Other(
+                        "Rebase operand changed since planning".into(),
+                    ));
+                }
+                ops::preflight_check(&self.repo, plan)?;
+                self.execute_rebase_current_onto(&scope.onto_oid)
+                    .map(OperationOutcome::Rebase)
+            }
             Operation::SyncToRemote { branch } => {
                 ops::execute_sync_to_remote(&self.repo, plan, branch, backup_refs, partial_after)
             }

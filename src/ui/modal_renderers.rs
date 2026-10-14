@@ -17,7 +17,7 @@ use super::button_style::{modal_button, ModalButtonKind};
 use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::{render_equivalent_command, render_recovery_commands};
-use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_copy::plan_clipboard_text;
 use super::modal_shell::{
     modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, note_path_list,
     note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
@@ -327,6 +327,11 @@ fn plan_state(
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
     let predicted_detail =
         kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_detail = if plan.rebase_scope.is_some() {
+        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
+    } else {
+        predicted_detail
+    };
     div()
         .id("plan-state-comparison")
         .relative()
@@ -738,6 +743,8 @@ fn render_plan_modal_card_styled(
     )
     .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
+    let copy_plan = plan.clone();
+    let copy_extra = extra.as_ref().map(|extra| extra.clipboard.clone());
     let card = apply_dialog(
         "plan-card",
         modal_card(MODAL_W_MD).id("plan-card"),
@@ -753,16 +760,19 @@ fn render_plan_modal_card_styled(
             current_theme().color_success,
         )),
         Some(
-            modal_copy_button(
+            super::modal_copy::modal_copy_button_lazy(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
-                match &extra {
-                    Some(extra) => format!(
-                        "{}\n{}",
-                        plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
-                        extra.clipboard
-                    ),
-                    None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
+                move || {
+                    let text = plan_clipboard_text(
+                        &copy_plan,
+                        &copy_plan.preview_commits,
+                        ShellKind::current(),
+                    );
+                    match &copy_extra {
+                        Some(extra) => format!("{text}\n{extra}"),
+                        None => text,
+                    }
                 },
                 cx,
             )
@@ -830,11 +840,14 @@ fn render_plan_modal_card_styled(
         body = body.child(div().flex_shrink_0().child(extra.element));
     }
 
-    // Shared commit preview: Push uses newest-first publication rows; Rebase
-    // uses the backend's complete oldest-first candidate range. Every row is
-    // reachable in the capped scroll box and available through Copy.
+    // Producers cap previews at 100 rows. Rebase retains its true total
+    // separately, and shows a localized remainder without rendering it.
     if !plan.preview_commits.is_empty() {
-        let total = plan.preview_commits.len();
+        let visible = plan.preview_commits.len();
+        let total = plan
+            .rebase_scope
+            .as_ref()
+            .map_or(visible, |scope| scope.total_commits);
         // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
         // height ceiling (rows x ROW_H) would cut a row short.
         let mut list = div()
@@ -842,7 +855,7 @@ fn render_plan_modal_card_styled(
             .flex()
             .flex_col()
             .min_h(gpui::px(0.))
-            .max_h(modal_list_max_h(total))
+            .max_h(modal_list_max_h(visible))
             .overflow_y_scroll();
         if matches!(
             &plan.title,
@@ -894,8 +907,38 @@ fn render_plan_modal_card_styled(
                 },
             ),
             total,
-            Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
-            None,
+            Some({
+                let plan = plan.clone();
+                super::modal_copy::modal_copy_button_lazy(
+                    "plan-commits-copy",
+                    Msg::ModalCopyList.t(),
+                    move || {
+                        let mut text = plan.preview_commits.join("\n");
+                        if let Some(scope) = &plan.rebase_scope {
+                            let remaining = scope
+                                .total_commits
+                                .saturating_sub(plan.preview_commits.len());
+                            if remaining > 0 {
+                                text.push('\n');
+                                text.push_str(
+                                    &Msg::PlanRebaseMore
+                                        .t()
+                                        .replace("{}", &remaining.to_string()),
+                                );
+                            }
+                        }
+                        text
+                    },
+                    cx,
+                )
+            }),
+            (total > visible).then(|| {
+                div().child(
+                    Msg::PlanRebaseMore
+                        .t()
+                        .replace("{}", &(total - visible).to_string()),
+                )
+            }),
             list.into_any_element(),
             cx,
         ));

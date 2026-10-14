@@ -1,6 +1,6 @@
 //! Activity presentation: the existing aggregate, chart, period selector and ranking.
 use super::{
-    activity_chart::{activity_chart, paint_series},
+    activity_chart::{activity_chart, paint_series, PlotScale},
     commit_list, e2e, keyboard_nav,
     theme::{self, theme},
     KagiApp,
@@ -367,6 +367,11 @@ impl KagiApp {
                             .child(activity_chart(data.buckets.clone()).size_full())
                             .child(self.activity_bucket_overlay(data, window, cx))
                             .when(cfg!(feature = "gui-e2e"), |el| {
+                                #[cfg(feature = "gui-e2e")]
+                                let el = match e2e::activity::plot_width() {
+                                    Some(width) => el.flex_none().w(width),
+                                    None => el,
+                                };
                                 el.child(e2e::measure_inside("activity-chart"))
                             }),
                     ),
@@ -416,6 +421,7 @@ impl KagiApp {
             .role(Role::Group)
             .aria_label(Msg::ActivityChart.t())
             .key_context("KagiTabList KagiActivityBuckets");
+        let scale = PlotScale::new(data.buckets.len());
         for (i, bucket) in data.buckets.iter().enumerate() {
             let id = format!("activity-bucket-{i}");
             let name = activity_text::bucket(
@@ -439,14 +445,12 @@ impl KagiApp {
             let cell = keyboard_nav::with_ring(
                 div()
                     .id(SharedString::from(id.clone()))
-                    .relative()
+                    .absolute()
+                    .inset_0()
                     .role(Role::Status)
                     .aria_label(SharedString::from(name))
                     .track_focus(&handle),
             )
-            .flex_1()
-            .min_w(px(0.))
-            .h_full()
             .hover(move |s| s.bg(hover_bg))
             .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
                 if *hovered {
@@ -461,7 +465,19 @@ impl KagiApp {
                 .when(cfg!(feature = "gui-e2e"), |cell| {
                     cell.child(e2e::measure_inside(id))
                 });
-            overlay = overlay.child(cell);
+            let (basis, grow) = scale.cell(i);
+            // Keep the ring's fixed border out of flex arithmetic: the wrapper
+            // allocates midpoint cells, and the existing interactive ring fills it.
+            overlay = overlay.child(
+                div()
+                    .relative()
+                    .flex_basis(basis)
+                    .flex_grow(grow)
+                    .flex_shrink_0()
+                    .min_w(px(0.))
+                    .h_full()
+                    .child(cell),
+            );
         }
         overlay
     }

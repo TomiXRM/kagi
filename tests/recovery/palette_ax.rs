@@ -40,6 +40,8 @@ pub fn scenario_palette_rows_ax_action(cx: &mut VisualTestAppContext) {
                 kagi_ui_core::theme::set_active(preset);
                 kagi_ui_core::theme::set_zoom(zoom);
                 let (app, win) = mount(cx, fixture.path());
+                // In-process predecessors may have dispatched palette actions.
+                e2e::palette::take_executed();
                 native_ax::activate(cx);
                 for kind in ["command", "theme", "language"] {
                     let query = match kind {

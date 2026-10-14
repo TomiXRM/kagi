@@ -72,5 +72,11 @@ CURRENT shows the original tip; AFTER identifies the target tip and marks
 the result OID unknown. Mandatory preflight refuses target drift before
 backup/write admission, and execution uses the approved target OID rather
 than resolving the branch name again.
+Rebase planning admission uses the same operation latch as writes, refusing
+repeat selection and other in-flight plans before changing any planning tag.
+Its tag is registered in the shared EN/JA busy-label table. Frozen scope is
+projected only by the UI display/Copy adapter; semantic current/predicted
+summaries remain `branch: X` / `clean`, preserving durable success receipts.
+
 
 

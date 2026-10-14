@@ -325,6 +325,7 @@ fn plan_state(
 }
 
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    let (current_head, predicted_head) = super::modal_copy::plan_display_heads(plan);
     let predicted_detail =
         kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
     let predicted_detail = if plan.rebase_scope.is_some() {
@@ -345,7 +346,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
         .flex()
         .flex_col()
         .child(plan_state(
-            &plan.current.head,
+            &current_head,
             &plan.current.dirty,
             Msg::InputStashCurrent.t(),
             "plan-state-current",
@@ -358,7 +359,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
-                    &plan.predicted.head,
+                    &predicted_head,
                     &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",

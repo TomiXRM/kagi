@@ -38,11 +38,11 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
     } else {
         "clean".to_string()
     };
-    let mut current = StateSummary {
+    let current = StateSummary {
         head: head_display.clone(),
         dirty: dirty_display.clone(),
     };
-    let mut predicted = StateSummary {
+    let predicted = StateSummary {
         head: head_display,
         dirty: dirty_display,
     };
@@ -162,10 +162,6 @@ pub fn plan_rebase_current_onto(repo: &Repository, onto: &str) -> Result<Operati
                 }
             }
         }
-        current.head = format!("refs/heads/{branch} @ {head_oid}");
-        // The UI localizes this structured scope; never predict a final SHA.
-        predicted.dirty = "Result OID is not yet known".into();
-        predicted.head = format!("refs/heads/{branch} onto {onto} @ {onto_oid}");
         rebase_scope = Some(kagi_domain::plan::RebaseScope {
             current_ref: format!("refs/heads/{branch}"),
             current_oid: head_oid.to_string(),

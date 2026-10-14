@@ -108,9 +108,10 @@ fn rebase_refuses_target_drift_without_mutating_refs() {
     };
     let plan = backend.plan(&op).unwrap();
     let scope = plan.rebase_scope.as_ref().unwrap();
-    assert!(plan.current.head.contains(&scope.current_oid));
-    assert!(plan.predicted.head.contains(&scope.onto_oid));
-    assert_ne!(plan.current, plan.predicted);
+    assert_eq!(scope.current_ref, "refs/heads/feature");
+    assert_eq!(scope.current_oid, git_output(path, &["rev-parse", "HEAD"]));
+    assert_eq!(scope.onto_ref, "main");
+    assert_eq!(scope.onto_oid, git_output(path, &["rev-parse", "main"]));
     git(path, &["checkout", "-q", "main"]);
     write_file(path, "target", "moved target");
     commit_all(path, "target moved after approval");
@@ -122,4 +123,39 @@ fn rebase_refuses_target_drift_without_mutating_refs() {
         "{error}"
     );
     assert_eq!(git_output(path, &["show-ref"]), before);
+}
+
+#[test]
+fn successful_rebase_retains_legacy_receipt_summary() {
+    if !test_support::run_isolated() {
+        return;
+    }
+    let dir = range_fixture(3, true);
+    let path = dir.path();
+    let mut backend =
+        kagi_git::Backend::open_with_policy(path, kagi_git::backend::ExecutionPolicy::human(false))
+            .unwrap();
+    let op = kagi_git::Operation::RebaseCurrentOnto {
+        onto: "main".into(),
+    };
+    let plan = backend.plan(&op).unwrap();
+    assert_eq!(plan.current.head, "branch: feature");
+    assert_eq!(plan.current.dirty, "clean");
+    assert_eq!(
+        plan.predicted.head, "branch: feature",
+        "successful receipt input must retain its semantic branch summary"
+    );
+    assert_eq!(
+        plan.predicted.dirty, "clean",
+        "display-only uncertainty must not become the persisted after state"
+    );
+    assert!(matches!(
+        backend.run(&op, &plan).unwrap(),
+        kagi_git::OperationOutcome::Rebase(_)
+    ));
+    assert_eq!(
+        git_output(path, &["symbolic-ref", "HEAD"]),
+        "refs/heads/feature"
+    );
+    assert!(git_output(path, &["status", "--porcelain"]).is_empty());
 }

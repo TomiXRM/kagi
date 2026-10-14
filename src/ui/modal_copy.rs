@@ -76,6 +76,26 @@ pub(crate) fn modal_copy_button_lazy(
     .into_any_element()
 }
 
+/// Display-only identities; semantic summaries remain unchanged for receipts.
+pub(crate) fn plan_display_heads(
+    plan: &OperationPlan,
+) -> (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>) {
+    use std::borrow::Cow;
+    match &plan.rebase_scope {
+        Some(scope) => (
+            Cow::Owned(format!("{} @ {}", scope.current_ref, scope.current_oid)),
+            Cow::Owned(format!(
+                "{} onto {} @ {}",
+                scope.current_ref, scope.onto_ref, scope.onto_oid
+            )),
+        ),
+        None => (
+            Cow::Borrowed(&plan.current.head),
+            Cow::Borrowed(&plan.predicted.head),
+        ),
+    }
+}
+
 /// The whole popup as plain text, for [`modal_copy_button`].
 ///
 /// Copies the complete plan: full title, state, warnings, blockers, rows and
@@ -93,11 +113,12 @@ pub(crate) fn plan_clipboard_text(
     } else {
         plan::after_state_detail(&plan.title, &plan.predicted.dirty)
     };
+    let (current_head, predicted_head) = plan_display_heads(plan);
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
     out.push_str(&format!(
         "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        plan.current.head, plan.current.dirty, plan.predicted.head, predicted_dirty
+        current_head, plan.current.dirty, predicted_head, predicted_dirty
     ));
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));

@@ -24,6 +24,11 @@ impl KagiApp {
     /// Open the rebase-current-onto modal, rebasing the checked-out branch
     /// onto `onto` (the right-clicked row's branch).
     pub fn open_rebase_modal(&mut self, onto: String, cx: &mut Context<Self>) {
+        if self.op_latched() {
+            self.status_footer = FooterStatus::Idle(SharedString::from(Msg::OpInProgress.t()));
+            cx.notify();
+            return;
+        }
         if self.modal_focus.is_none() {
             self.modal_focus = Some(cx.focus_handle());
         }
@@ -36,7 +41,8 @@ impl KagiApp {
         };
         self.clear_rebase_current_onto_modal();
         self.planning = Some("rebase-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::PlanRebasePlanning.t()));
+        self.status_footer =
+            FooterStatus::Busy(SharedString::from(i18n::busy_label("rebase-plan")));
         let bg_onto = onto.clone();
         let task = cx.background_spawn(async move {
             let repo = crate::ui::blocking_ops::open_merge_backend(&owner)?;

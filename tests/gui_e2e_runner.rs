@@ -3476,6 +3476,10 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_rows_keyboard),
             ),
             (
+                "changes_focus_follows_selection",
+                Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_focus_follows_selection),
+            ),
+            (
                 "changes_discard_keyboard",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_changes_discard_keyboard),
             ),

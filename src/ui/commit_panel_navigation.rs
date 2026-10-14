@@ -226,8 +226,26 @@ pub(crate) fn file_row(
     let opener = nav.anchor.clone();
     let rows_click = rows.clone();
     let rows_menu = rows.clone();
+    let panel = cx.entity().downgrade();
     let mut el = rows
-        .row(at, el)
+        .selecting_row(at, el, move |display, window, cx| {
+            let _ = panel.update(cx, |view, cx| {
+                let mut destination = None;
+                file_positions(&view.state, staged, |index, position| {
+                    if position == display {
+                        destination = Some(index);
+                    }
+                });
+                if let Some(index) = destination {
+                    let file = if staged {
+                        super::commit_panel::CommitPanelFileRef::Staged { index }
+                    } else {
+                        super::commit_panel::CommitPanelFileRef::Unstaged { index }
+                    };
+                    view.defer_select_file(file, window, cx);
+                }
+            });
+        })
         .role(role)
         .aria_label(row_name(view, staged, fi))
         .aria_selected(selected)

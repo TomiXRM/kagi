@@ -238,3 +238,14 @@ The native regression `commit_panel_file_middle_ellipsis` covers both sections
 and both presentations at 100%/167%; real-window narrow alpha/beta and tooltip
 comparisons remain Tier B evidence, not claims inferred from style probes.
 
+## Amendment — 2026-10-14: unified Changes focus and selection (#1536)
+
+The dense Changes list follows Finder's selection contract: keyboard row
+movement automatically selects the destination file, rather than leaving the
+active diff on a previously clicked file. Reuse RowList::selecting_row and
+CommitPanelView::defer_select_file; no second focus owner, diff loader, debounce
+or selection state is introduced. Both sections and their List/Tree projections
+retain path identity and existing lazy loading, with selected fill and AX state
+derived from the active diff. Desktop and compact Changes share this behavior;
+the compact composer must not reconcile file focus (#1546). Existing
+Shift+F10/Menu shortcuts and destructive approval semantics are unchanged.

@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)
 - Graph's final Escape now closes an open bottom pane only after existing overlays, diff and commit-selection dismissal. Returning from PRs/Issues keeps the pane hidden until a fresh compact commit click or Up/Down selection reveals Changes detail/files through the existing selection hook; same-row toggles do not reopen it. Desktop keeps its right Inspector, and Editor/Conflict Escape semantics remain unchanged. (#1543)
   - Review: focused text Inputs keep their Escape semantics, including desktop Commit Panel title/body. Closing from a bottom-pane descendant hands focus to the Graph root before hiding controls, keeping the next Escape and ⌘J reachable.
 - Rebase confirmation discloses the oldest-first commit range to replay, its count and commit identities instead of only repeating the unchanged branch/clean summary. The scoped list is localized in EN/JA; planning remains read-only. (#1530)

@@ -142,3 +142,25 @@ refreshed with default features and unchanged fixture commit `1955d837`;
 `review-comparison-*.png` and `review-finder-kagi-native-scale.png` are the
 final owner-facing comparisons. Each raw capture is 2784×1766, matching the
 baseline's 1392×883 logical window without resampling or window shadow.
+
+## Amendment — 2026-10-15: full-width changed-file options (#1559)
+
+Inspector file options explicitly fill the virtual list's available width.
+Their existing click handler, hover/selection fill and shared keyboard-focus
+border belong to that same outer row. Tree indentation is internal left
+padding; the filename remains flexible and truncating, while the diffstat
+retains its existing trailing nonshrinking column. Path and Tree therefore
+share a full-row target rather than a target sized to their text.
+No focus/selection owner, keyboard activation policy, repository read,
+setting, receipt or klog contract changes.
+
+`inspector_file_row_hit` exercises filename, diffstat and right-edge clicks,
+native selection/focus pixels and arrow/Space activation at 1000×720 and
+1400×900, EN/JA, 100%/167%, Apple Light/Dark, Path/Tree. Each case uses
+the actual list's right edge rather than deriving its click from the
+potentially undersized row, and compares repository fingerprints.
+The file-row geometry probe forwards the leaf's own layout, prepaint and paint
+without adding a container that stretches intrinsically sized rows only in tests.
+The pre-fix right-edge click fails with `left: None` versus
+`right: Some("src/nested/a.txt")`.
+

@@ -1,6 +1,6 @@
 #[path = "../../../tests/support/git_fixture.rs"]
 mod git_fixture;
-use git_fixture::{git, init_repo, write_file};
+use git_fixture::{git, git_output, init_repo, write_file};
 use kagi_domain::status::ChangeKind;
 
 #[test]
@@ -22,7 +22,8 @@ fn stash_manifest_contains_worktree_index_and_untracked_without_writes() {
     write_file(path, "untracked.txt", "untracked\n");
     git(path, &["stash", "push", "-u", "-qm", "manifest"]);
     let before_index = std::fs::read(path.join(".git/index")).unwrap();
-    let before_refs = git(path, &["show-ref"]);
+    let before_refs = git_output(path, &["show-ref"]);
+    let before_stash_reflog = std::fs::read(path.join(".git/logs/refs/stash")).unwrap();
     let mut repo = git2::Repository::open(path).unwrap();
     for plan in [
         kagi_git::plan_stash_apply(&mut repo, 0).unwrap(),
@@ -64,7 +65,11 @@ fn stash_manifest_contains_worktree_index_and_untracked_without_writes() {
         std::fs::read(path.join(".git/index")).unwrap(),
         before_index
     );
-    assert_eq!(git(path, &["show-ref"]), before_refs);
+    assert_eq!(git_output(path, &["show-ref"]), before_refs);
+    assert_eq!(
+        std::fs::read(path.join(".git/logs/refs/stash")).unwrap(),
+        before_stash_reflog
+    );
     assert_eq!(std::fs::read(path.join("modified.txt")).unwrap(), b"base\n");
     assert!(!path.join("untracked.txt").exists());
     assert!(kagi_git::plan_stash_apply(&mut repo, 9)

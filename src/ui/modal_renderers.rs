@@ -238,7 +238,7 @@ fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
 }
 
 fn plan_state(
-    head: &str,
+    head: SharedString,
     dirty: &str,
     label: &'static str,
     id: &'static str,
@@ -293,7 +293,7 @@ fn plan_state(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(SharedString::from(head.to_owned()))
+                        .child(head)
                         .when(cfg!(feature = "gui-e2e"), |head| {
                             head.child(super::e2e::measure_inside(head_id))
                         }),
@@ -346,7 +346,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
         .flex()
         .flex_col()
         .child(plan_state(
-            &current_head,
+            SharedString::from(current_head.into_owned()),
             &plan.current.dirty,
             Msg::InputStashCurrent.t(),
             "plan-state-current",
@@ -359,7 +359,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
-                    &predicted_head,
+                    SharedString::from(predicted_head.into_owned()),
                     &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",

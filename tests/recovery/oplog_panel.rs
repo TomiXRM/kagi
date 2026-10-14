@@ -458,6 +458,18 @@ pub fn scenario_oplog_actor_reflog(cx: &mut VisualTestAppContext) {
     assert_eq!(rows.len(), 3, "one row per recorded operation: {rows:?}");
     let name = repo.file_name().unwrap().to_string_lossy().into_owned();
     for (i, actor) in rows.iter().zip(["cli", "mcp", "human"]) {
+        // Two-line summaries can put older receipts below the default pane.
+        // Inspect each badge only after revealing its actual row.
+        cx.read(|cx| {
+            app.read(cx)
+                .op_log
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .scroll_handle()
+                .scroll_to_reveal_item(*i);
+        });
+        paint(cx, window);
         assert!(
             painted(window, &format!("oplog-actor-{i}-{actor}")),
             "row {i} shows the {actor} badge"

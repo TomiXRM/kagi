@@ -67,6 +67,57 @@ fn each_presentation(
         }
     }
 }
+fn covered_rail_is_inert(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let trigger = "compact-rail-prs";
+    if e2e::control_bounds(window.window_id(), trigger).is_none() {
+        return;
+    }
+    crate::native_ax::activate(cx);
+    paint(cx, window);
+    let focused = |cx: &mut VisualTestAppContext| {
+        let tree = crate::native_ax::tree(cx, window);
+        let key = tree["gpui_focus"].as_str().expect("real GPUI focus");
+        tree["nodes"][key]["element_id"].as_str()
+            == Some(format!("{:?}", gpui::ElementId::from(trigger)).as_str())
+    };
+    for _ in 0..80 {
+        cx.simulate_keystrokes(window, "tab");
+        cx.run_until_parked();
+        paint(cx, window);
+        if focused(cx) {
+            break;
+        }
+    }
+    assert!(focused(cx), "Tab reaches the actual covered rail trigger");
+    let mode = app.read_with(cx, |app, _| app.workspace_mode());
+    for key in ["enter", "space"] {
+        e2e::clear_control_bounds(window.window_id(), "compact-sidebar-popover");
+        crate::keyboard_nav::keys(cx, window, key);
+        cx.run_until_parked();
+        paint(cx, window);
+        cx.run_until_parked();
+        paint(cx, window);
+        assert_eq!(
+            app.read_with(cx, |app, _| app.workspace_mode()),
+            mode,
+            "{key}: a covered rail trigger cannot change workspace mode"
+        );
+        assert!(
+            e2e::control_bounds(window.window_id(), "compact-sidebar-popover").is_none(),
+            "{key}: a covered rail trigger cannot open a popover"
+        );
+        assert!(focused(cx), "{key}: covered activation cannot steal focus");
+        assert_eq!(
+            crate::native_ax::node(cx, window, trigger.into())["aria"]["expanded"],
+            false
+        );
+    }
+}
+
 /// The shared non-danger cards and the bespoke cherry-pick card must survive
 /// compact suspension repaints while Tab crosses the rail and card controls.
 pub fn scenario_neighbor_plan_labels(cx: &mut VisualTestAppContext) {
@@ -107,6 +158,7 @@ pub fn scenario_neighbor_plan_labels(cx: &mut VisualTestAppContext) {
             // Preserve the original root-start driver: forcing modal_focus
             // would hide a production cycle before the card's first stop.
             crate::recovery_operations::press_key(cx, app, window, "f19");
+            covered_rail_is_inert(cx, app, window);
             let mut saw_cancel = false;
             let mut reached = false;
             for _ in 0..80 {

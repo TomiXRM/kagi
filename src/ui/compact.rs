@@ -91,9 +91,9 @@ impl KagiApp {
         self.compact.enabled = enabled;
         let suspended =
             enabled && (self.has_modal_or_visible_plan(cx) || self.menu_overlay.is_some());
-        // Retire the covered projections once, not on every modal repaint:
-        // repeated rail dismissal would steal each Tab back to the root.
-        if suspended && !self.compact.suspended {
+        // Do not repeatedly dismiss merely focused triggers: that steals Tab
+        // back to the root. Reconcile an actually open covered rail as well.
+        if suspended && (!self.compact.suspended || super::compact_sidebar::is_open(window, cx)) {
             super::compact_sidebar::dismiss(window, cx);
             self.dismiss_compact_presentation(window, cx, true);
         }

@@ -360,6 +360,7 @@ fn control(
             selected: open,
             state: cached.downgrade(),
             focus: cached.read(cx).triggers.get(index, cx),
+            suspended: app.compact.suspended,
         })
         .content(move |popover_state, window, cx| {
             let popover = cx.entity();
@@ -429,6 +430,19 @@ fn open_changed(
     window: &mut Window,
     cx: &mut App,
 ) {
+    if open
+        && app
+            .upgrade()
+            .is_none_or(|app| app.read(cx).compact.suspended)
+    {
+        let popover = cached
+            .upgrade()
+            .and_then(|cached| cached.read(cx).popovers[index].clone());
+        if let Some(popover) = popover {
+            popover.update(cx, |state, cx| state.dismiss(window, cx));
+        }
+        return;
+    }
     let focused = window.focused(cx);
     let owner = cached.upgrade().and_then(|cached| cached.read(cx).owner);
     let replaced = if open {
@@ -477,7 +491,10 @@ fn open_changed(
             return;
         }
         let _ = app.update(cx, |app, cx| {
-            if app.active_session() != owner || app.home_in_front() {
+            if app.active_session() != owner
+                || app.home_in_front()
+                || (open && app.compact.suspended)
+            {
                 return;
             }
             if open {
@@ -524,6 +541,7 @@ struct RailTrigger {
     selected: bool,
     state: WeakEntity<RailState>,
     focus: FocusHandle,
+    suspended: bool,
 }
 
 impl Selectable for RailTrigger {
@@ -575,6 +593,10 @@ impl RenderOnce for RailTrigger {
                 });
             })
             .on_click(move |event, window, cx| {
+                if self.suspended {
+                    cx.stop_propagation();
+                    return;
+                }
                 if event.is_keyboard() {
                     let focused = window.focused(cx);
                     let _ = self.state.update(cx, |state, _| {

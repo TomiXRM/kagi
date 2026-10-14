@@ -7,7 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Compact plan confirmations no longer cycle Tab back to the workspace root before reaching the card. Covered navigator/composer projections are dismissed once when suspension begins, preserving subsequent keyboard focus and the existing confirmation safety policy.
+- Compact plan confirmations no longer cycle Tab back to the workspace root before reaching the card. Covered navigator/composer projections are dismissed when suspension begins, preserving subsequent keyboard focus and the existing confirmation safety policy. Covered rail triggers reject pointer, Enter and Space activation without opening a popover or switching workspace mode.
 - File → Clone Repository and its existing shortcut now open Home's Repositories picker instead of remaining disabled as an unimplemented placeholder. Selecting a repository uses the existing clone confirmation card and safety lifecycle. (#1522)
   - Review: another open modal or visible confirmation blocks navigation without stealing its focus; portable menu dismissal cannot restore the covered workspace's focus over the picker.
 - Editor Blame uses a named, keyboard-focusable toggle Button with a visible focus ring and toggled (pressed) accessibility state. Enter, Space and pointer activation share the existing on/off path in EN/JA. (#1524)

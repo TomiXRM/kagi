@@ -156,6 +156,13 @@ merge (#1481, `e5c21131`); its parent `32214ba6` passes the unchanged
 unchanged; `neighbor_plan_labels` also traverses the real cherry-pick, revert and
 merge Cancel/Confirm buttons across both viewports, languages, themes and zooms.
 
+Covered rail triggers retain their Tab stops but reject pointer, Enter and Space
+activation while suspended. The open-change owner independently rejects covered
+opens before queuing any workspace-mode change. Suspension also dismisses any
+actually open rail as a defensive reconciliation, never a merely focused trigger.
+The neighbor-card regression activates the real PR rail trigger with Enter and
+Space, asserts unchanged mode/no expanded popover, then continues Tab to Confirm.
+
 Incoming narrow keyboard fixtures provide real untracked WIP; wide fixtures stay
 unchanged. Localization tests close the occluding composer before pointer-selecting
 Changes, then reopen the same WIP owner rather than clicking through a pinned popup.

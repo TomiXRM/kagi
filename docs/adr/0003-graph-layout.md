@@ -65,3 +65,28 @@ The `graph_` neighbor selection retains divider drag and history interactions.
 dividers at 1000px/167%, keeps preferences/settings unchanged and restores original wide x
 positions. `graph_columns_inspector_fit` covers the relaxed subject floor and
 contained metadata at 1440px/167% with sidebar 240px and Inspector 360px, EN/JA.
+
+## Amendment — 2026-10-14: Graph keyboard entry (#1532)
+
+The dense virtual commit list retains one list-level FocusHandle and Tab stop,
+after Sidebar in the existing element order: Sidebar → Graph → bottom controls
+→ Inspector when the bottom panel is open, and Sidebar → Graph → Inspector when
+closed. The pre-existing bottom controls are not reordered (#1532 scope).
+Recycled rows do not gain individual stops. Exact Graph focus shares the existing root commit
+selection/action gate; focused child controls and Inputs remain excluded.
+Keyboard focus paints the existing 2px accent ring as an inset absolute overlay,
+as the diff body does, without changing row or viewport geometry. Pointer
+selection retains the existing root-focus behavior and does not show the ring.
+Rest, hover, selected, loading and empty content keep their existing presentation;
+the new stop exists only when the actual commit list is drawn.
+The focus tracker belongs to the named ListBox itself, not its unroled scroll
+container, so the native adapter publishes the localized Commits list as focused.
+The ring remains on the outer container. A cached unborn repository can replace
+the list without a workspace-mode change; that exact empty-state branch returns
+retained Graph focus to root before removing the tracker. The regression switches
+from a focused Graph to that cached empty tab and checks Escape and Cmd-J routing.
+
+`graph_tab_stop` covers EN/JA, 100%/167%, Apple Light/Dark at 1000×720 with
+real Tab/Shift-Tab dispatch, Up/Down selection, native ring pixels and actual AX
+focus identity in both bottom-panel visibility cases, paired with `keyboard_nav,focus_`.
+Native adapter/simulated keyboard evidence is not VoiceOver delivery.

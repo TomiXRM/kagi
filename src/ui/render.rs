@@ -274,6 +274,22 @@ impl Render for KagiApp {
             // The same for the Graph sidebar's rows and headers (#981).
             self.yield_sidebar_focus(window, cx);
         }
+        // A hidden Graph stop must not strand focus after a workspace takeover.
+        let graph_hidden = self.home_in_front()
+            || self.conflict_body_visible()
+            || super::workspace::resolve_workspace(&self.workspace_inputs(false, false, false))
+                .center
+                != super::workspace::CenterPane::CommitList;
+        if graph_hidden
+            && self
+                .graph_focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_focused(window))
+        {
+            if let Some(root) = &self.root_focus {
+                root.focus(window, cx);
+            }
+        }
         if !self.pr_mode_visible() || self.home_in_front() {
             if let Some(mode) = self.pr_mode() {
                 mode.detail_focus

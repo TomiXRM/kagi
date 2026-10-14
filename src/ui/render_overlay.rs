@@ -103,6 +103,8 @@ impl gpui::Render for toast_stack::ToastStack {
             let count = self.toasts().len() - 1;
             let caption = if self.expanded {
                 Msg::ToastCollapse.t().to_string()
+            } else if count == 1 {
+                Msg::ToastMoreOne.t().to_string()
             } else {
                 Msg::ToastMore.t().replace("{count}", &count.to_string())
             };
@@ -256,6 +258,7 @@ fn toast_card(
         .when_some(toast.action_focus.clone(), |card, focus| {
             use gpui_component::button::{Button, ButtonVariants as _};
             use gpui_component::Sizable as _;
+            let owner = cx.entity().downgrade();
             card.child(e2e::measure_control(
                 "clone-completion-open",
                 toast_stack::ToastButton(
@@ -270,6 +273,9 @@ fn toast_card(
                     focus,
                     "toast-open-repository",
                 )
+                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                    let _ = owner.update(cx, |stack, cx| stack.activate_action(id, cx));
+                })
                 .on_key_down(super::keyboard_nav::stop_activation_keys),
             ))
         })

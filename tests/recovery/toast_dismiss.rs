@@ -59,6 +59,7 @@ pub fn scenario_toast_dismiss(cx: &mut VisualTestAppContext) {
         let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
         three_line_error(cx, &stack, window, lang, &root);
         routine_hover(cx, &stack, window, &root);
+        hidden_routine_hover(cx, &stack, window);
         focused_eviction(cx, &stack, window, &root);
         let _ = kagi::ui::toast_stack::take_close_focus_for_e2e();
         drop(stack);
@@ -212,6 +213,86 @@ fn settle_removal(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHandle) 
     paint(cx, window);
     cx.run_until_parked();
     paint(cx, window);
+}
+
+fn hidden_routine_hover(
+    cx: &mut VisualTestAppContext,
+    stack: &gpui::Entity<kagi::ui::toast_stack::ToastStack>,
+    window: gpui::AnyWindowHandle,
+) {
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(ToastKind::Info, "Hover then hide", cx)
+    });
+    let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+    paint(cx, window);
+    let close = e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{id}")).unwrap();
+    cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+    cx.read(|cx| assert!(stack.read(cx).toasts().last().unwrap().paused_at.is_some()));
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(ToastKind::Error, "Replacement preview", cx)
+    });
+    stack.update(cx, |stack, _| {
+        stack.advance_age_for_e2e(Duration::from_secs(5))
+    });
+    cx.advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    settle_removal(cx, window);
+    cx.read(|cx| {
+        assert!(
+            stack.read(cx).toasts().iter().all(|toast| toast.id != id),
+            "hidden hovered Info expires and decreases the notification count"
+        )
+    });
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(ToastKind::Info, "Hover then collapse", cx)
+    });
+    let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+    crate::native_ax::activate(cx);
+    paint(cx, window);
+    let count = cx.read(|cx| stack.read(cx).toasts().len() - 1);
+    let caption = if count == 1 {
+        kagi::ui::i18n::Msg::ToastMoreOne.t().to_string()
+    } else {
+        kagi::ui::i18n::Msg::ToastMore
+            .t()
+            .replace("{count}", &count.to_string())
+    };
+    assert!(crate::native_ax::press(cx, window, &caption));
+    cx.run_until_parked();
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(ToastKind::Error, "Keep newest visible", cx);
+        // Retained hover state models an older card clipped by the bounded scroller.
+        stack.set_hovered(id, true);
+    });
+    paint(cx, window);
+    assert!(crate::native_ax::press(
+        cx,
+        window,
+        kagi::ui::i18n::Msg::ToastCollapse.t()
+    ));
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert!(stack
+            .read(cx)
+            .toasts()
+            .iter()
+            .find(|toast| toast.id == id)
+            .unwrap()
+            .paused_at
+            .is_none())
+    });
+    stack.update(cx, |stack, _| {
+        stack.advance_age_for_e2e(Duration::from_secs(5))
+    });
+    cx.advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    settle_removal(cx, window);
+    cx.read(|cx| {
+        assert!(
+            stack.read(cx).toasts().iter().all(|toast| toast.id != id),
+            "collapsed hovered Info expires"
+        )
+    });
 }
 
 fn routine_hover(

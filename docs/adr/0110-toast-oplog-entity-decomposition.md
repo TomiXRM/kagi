@@ -149,3 +149,8 @@ leading Graph hit lane available and avoids covering the bottom Operation Log.
 Disclosure stays above the card scroller so Collapse cannot scroll out of reach.
 Native Click actions share the disclosure/dismiss listeners, and hiding controls
 repairs their retained focus through the existing ToastRemoved contract.
+Review: hidden cards resume their hover-paused timers both on newest-card
+replacement and on Collapse; the old subtree cannot be relied on to deliver
+hover-leave after it is removed. Open Repository also owns an explicit native
+Click action, so activation of a scroll-clipped action does not depend on
+synthetic pointer hit-testing. The English one-older-card caption is singular.

@@ -325,7 +325,11 @@ impl ToastStack {
         self.expanded = !self.expanded;
         if !self.expanded {
             let mut hidden_focus = Vec::new();
-            for toast in self.toasts.iter().take(self.toasts.len().saturating_sub(1)) {
+            let hidden_count = self.toasts.len().saturating_sub(1);
+            for toast in self.toasts.iter_mut().take(hidden_count) {
+                if let Some(start) = toast.paused_at.take() {
+                    toast.born += start.elapsed();
+                }
                 hidden_focus.extend(take_toast_focus(toast));
             }
             cx.emit(ToastRemoved(hidden_focus));
@@ -346,7 +350,10 @@ impl ToastStack {
         let evicts = self.toasts.len() == TOASTS_MAX;
         if !self.expanded {
             let mut hidden_focus = Vec::new();
-            for toast in &self.toasts {
+            for toast in &mut self.toasts {
+                if let Some(start) = toast.paused_at.take() {
+                    toast.born += start.elapsed();
+                }
                 hidden_focus.extend(take_toast_focus(toast));
             }
             cx.emit(ToastRemoved(hidden_focus));

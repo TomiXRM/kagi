@@ -1032,6 +1032,8 @@ pub struct KagiApp {
     /// default — without a focused element gpui never dispatches key events,
     /// so window-wide actions like cmd-j would silently do nothing.
     pub root_focus: Option<gpui::FocusHandle>,
+    /// Retained keyboard entry for the Graph commit list.
+    pub graph_focus: Option<gpui::FocusHandle>,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     pub(crate) window_active: bool,
     pub(crate) toolbar_layout: render_header::toolbar_overflow::Layout,
@@ -1495,6 +1497,7 @@ impl KagiApp {
             ui: HashMap::new(),
             ui_default: TabUiState::default(),
             root_focus: None,
+            graph_focus: None,
             window_activation_subscription: None,
             window_active: true,
             toolbar_layout: render_header::toolbar_overflow::Layout::default(),
@@ -3021,8 +3024,8 @@ impl KagiApp {
         }
     }
 
-    /// True when keyboard focus is on the app root (the commit-list
-    /// context). Keyboard shortcuts that act on the selected commit must
+    /// True when keyboard focus is on the app root or the Graph list.
+    /// Keyboard shortcuts that act on the selected commit must
     /// not fire while the terminal, a text input or any other focusable
     /// element owns the focus — key events bubble up to the root from
     /// every focused element (user-reported: Enter in the terminal almost
@@ -3031,6 +3034,10 @@ impl KagiApp {
         self.root_focus
             .as_ref()
             .is_some_and(|fh| fh.is_focused(window))
+            || self
+                .graph_focus
+                .as_ref()
+                .is_some_and(|fh| fh.is_focused(window))
     }
 
     /// Cmd+C on the Graph: copy the selected row's branch name or full SHA per

@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Graph is a single keyboard Tab stop between Sidebar and Inspector. Its inset accent ring is visible for keyboard focus; existing commit arrows and selection actions work there, and Shift-Tab returns without clicking. (#1532)
+  - Review: keyboard focus belongs to the named Commits ListBox in the native accessibility tree; switching to a cached unborn repository releases the missing list's focus to root so Escape and ⌘J remain reachable.
 - Compact Graph commit selection now activates the Changes bottom tab and opens its existing Inspector detail/files projection for pointer and keyboard navigation, even after manually opening Terminal or Operation Log. Same-row reselection and refresh-retained selection leave the chosen tab alone; desktop selection remains unchanged. WIP keeps the existing working-tree Changes path. (#1528)
 - Diff and File History header natural-width measurement copies no longer appear as duplicate accessibility controls. The real named actions, button sizing and icon-only fitting remain unchanged. (#1523)
 - Remote/group header native coverage now mounts the exact 1000px desktop breakpoint instead of expecting inline navigator rows in the approved 940px compact rail. All eight appearances retain 120/240/340px sidebar widths, full-identity reveals, count-column/ellipsis geometry, accessibility hierarchy, targeted disclosure and unchanged-repository assertions; production rendering is unchanged. (#1481 regression audit)

@@ -165,6 +165,7 @@ pub fn plan_checkout(repo: &Repository, branch: &str) -> Result<OperationPlan, G
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -229,6 +230,7 @@ pub fn preflight_check(repo: &Repository, plan: &OperationPlan) -> Result<(), Gi
         }
     }
     super::remote_common::check_pull_identity(repo, plan)?;
+    super::rebase::check_rebase_identity(repo, plan)?;
     Ok(())
 }
 
@@ -390,6 +392,7 @@ pub fn plan_checkout_commit(repo: &Repository, id: &CommitId) -> Result<Operatio
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),

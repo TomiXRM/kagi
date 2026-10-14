@@ -424,6 +424,16 @@ pub struct TagPushIdentity {
     pub peeled_oid: String,
 }
 
+/// Frozen ordinary Rebase operands and complete candidate count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebaseScope {
+    pub current_ref: String,
+    pub current_oid: String,
+    pub onto_ref: String,
+    pub onto_oid: String,
+    pub total_commits: usize,
+}
+
 /// A complete plan describing an operation, its blockers and warnings.
 /// If blockers are non-empty the UI must not offer Execute.
 /// ADR-0129: the display layer localizes structured title/notes/recovery;
@@ -461,6 +471,7 @@ pub struct OperationPlan {
     /// `None` for non-Pull and remote-snapshot plans.
     pub pull_identity: Option<PullIdentity>,
     pub tag_push_identity: Option<TagPushIdentity>,
+    pub rebase_scope: Option<RebaseScope>,
     /// Read-only digest of approved index paths, OIDs, modes and conflict stages.
     /// Required for commit and staged/both amend; never includes stat-cache data.
     pub approved_index_digest: Option<String>,
@@ -474,9 +485,9 @@ pub struct OperationPlan {
     /// dry run.  Non-empty only for cherry-pick plans.  Used by the plan modal
     /// to render a preview file tree (T016).
     pub preview_files: Vec<FileStatus>,
-    /// Commits that will be pushed, as `"<short>  <summary>"` strings.
-    /// Non-empty only for push plans (T-HT-004).  Shown in the plan modal
-    /// (newest first, capped at 100 entries at plan time).
+    /// Commit previews as `"<short>  <summary>"`, capped at 100 entries.
+    /// Push is newest first; ordinary Rebase is oldest first, with its true
+    /// candidate count and frozen operands in `rebase_scope`.
     pub preview_commits: Vec<String>,
     /// History-rewriting flag (ADR-0023).  `true` for plans that rewrite
     /// history (e.g. amend), which the UI must gate behind a **two-stage

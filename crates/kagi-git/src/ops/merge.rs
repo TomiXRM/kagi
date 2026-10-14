@@ -141,6 +141,7 @@ pub fn plan_merge_branch(
 
     let blocked_plan =
         |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>, current: StateSummary| OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
@@ -296,6 +297,7 @@ pub fn plan_merge_branch(
 
     Ok((
         OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),

@@ -121,7 +121,12 @@ impl Render for CommitPanelSurfaceView {
                         .child(view.render_composer(true, window, pcx))
                         .into_any_element()
                 }
-                Surface::Changes => view.render_changes(pcx).into_any_element(),
+                Surface::Changes => {
+                    // A second reconcile from Composer would consume the focus
+                    // transition before lazy-list layout reveals its destination.
+                    view.reconcile_file_rows(window, pcx);
+                    view.render_changes(pcx).into_any_element()
+                }
             }
         })
     }

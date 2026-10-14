@@ -117,3 +117,13 @@ Existing local branches remain valid upstreams, matching the executor contract.
 EN/JA text directs the user to fetch a missing tracking ref first; planning never
 performs that fetch. Input Enter may record an existing Refused receipt, but
 blocked creation never admits a write or produces an execution receipt.
+
+## Revert AFTER summary amendment (2026-10-14, #1534)
+
+Only the Revert card and Copy all render localized generated AFTER prose from
+the typed Ready Revert title. Backend `predicted.head` retains its legacy bytes;
+footer/klog, toast, durable oplog receipts and Operation Log presentation are
+unchanged. Blocked predictions and user-owned branch/subject data remain verbatim.
+Presenter unit coverage includes Japanese user data in English and blocked
+predictions. Native `revert_card_en_summary` checks the card plus the exact
+legacy footer klog line and successful receipt AFTER state.

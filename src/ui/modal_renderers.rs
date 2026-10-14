@@ -17,7 +17,7 @@ use super::button_style::{modal_button, ModalButtonKind};
 use super::dialog_a11y::{apply_dialog, apply_group, dialog_a11y, ConfirmStage, DialogHandler};
 use super::i18n::Msg;
 use super::modal_command::{render_equivalent_command, render_recovery_commands};
-use super::modal_copy::{modal_copy_button, plan_clipboard_text};
+use super::modal_copy::plan_clipboard_text;
 use super::modal_shell::{
     modal_body, modal_card, modal_compact, modal_list_max_h, modal_list_panel, note_path_list,
     note_path_list_element, MODAL_LIST_ROW_H, MODAL_W_MD,
@@ -238,7 +238,7 @@ fn plan_status_chips(dirty: &str) -> Vec<gpui::AnyElement> {
 }
 
 fn plan_state(
-    head: &str,
+    head: SharedString,
     dirty: &str,
     label: &'static str,
     id: &'static str,
@@ -293,7 +293,7 @@ fn plan_state(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child(SharedString::from(head.to_owned()))
+                        .child(head)
                         .when(cfg!(feature = "gui-e2e"), |head| {
                             head.child(super::e2e::measure_inside(head_id))
                         }),
@@ -325,8 +325,14 @@ fn plan_state(
 }
 
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    let (current_head, predicted_head) = super::modal_copy::plan_display_heads(plan);
     let predicted_detail =
         kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_detail = if plan.rebase_scope.is_some() {
+        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
+    } else {
+        predicted_detail
+    };
     div()
         .id("plan-state-comparison")
         .relative()
@@ -340,7 +346,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
         .flex()
         .flex_col()
         .child(plan_state(
-            &plan.current.head,
+            SharedString::from(current_head.into_owned()),
             &plan.current.dirty,
             Msg::InputStashCurrent.t(),
             "plan-state-current",
@@ -353,7 +359,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
-                    &plan.predicted.head,
+                    SharedString::from(predicted_head.into_owned()),
                     &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",
@@ -738,6 +744,8 @@ fn render_plan_modal_card_styled(
     )
     .with_recovery(&plan_recovery_text(plan.recovery.as_ref()));
     let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
+    let copy_plan = plan.clone();
+    let copy_extra = extra.as_ref().map(|extra| extra.clipboard.clone());
     let card = apply_dialog(
         "plan-card",
         modal_card(MODAL_W_MD).id("plan-card"),
@@ -753,16 +761,19 @@ fn render_plan_modal_card_styled(
             current_theme().color_success,
         )),
         Some(
-            modal_copy_button(
+            super::modal_copy::modal_copy_button_lazy(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
-                match &extra {
-                    Some(extra) => format!(
-                        "{}\n{}",
-                        plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
-                        extra.clipboard
-                    ),
-                    None => plan_clipboard_text(&plan, &plan.preview_commits, ShellKind::current()),
+                move || {
+                    let text = plan_clipboard_text(
+                        &copy_plan,
+                        &copy_plan.preview_commits,
+                        ShellKind::current(),
+                    );
+                    match &copy_extra {
+                        Some(extra) => format!("{text}\n{extra}"),
+                        None => text,
+                    }
                 },
                 cx,
             )
@@ -778,6 +789,9 @@ fn render_plan_modal_card_styled(
             &plan.title,
             kagi_domain::plan_note::PlanTitle::Merge(_)
                 | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+                | kagi_domain::plan_note::PlanTitle::Stash(
+                    kagi_domain::plan_note::StashTitle::Pop { .. }
+                )
                 | kagi_domain::plan_note::PlanTitle::Github(
                     kagi_domain::plan_note::GithubTitle::MergePr { .. }
                 )
@@ -833,20 +847,14 @@ fn render_plan_modal_card_styled(
         body = body.child(div().flex_shrink_0().child(extra.element));
     }
 
-    // ── Commits to push (T-HT-004) ────────────────────────
-    // Shown only when preview_commits is non-empty (push plans).
-    //
-    // #454: was `take(total.min(10))` + an "… and N more" line — the count was
-    // honest but the remaining commits were unreachable. Every row is rendered
-    // now, inside the shared list panel with its own capped scroll box, so the
-    // list reads as a box and scrolls in place (user request 2026-09-06)
-    // instead of stretching the card.
-    //
-    // Plain rows, not a `uniform_list`: the producer caps the preview at 100
-    // (`build_push_preview_for_oid`, `MAX_PREVIEW`), so the row count is
-    // bounded and virtualization would buy nothing here.
+    // Producers cap previews at 100 rows. Rebase retains its true total
+    // separately, and shows a localized remainder without rendering it.
     if !plan.preview_commits.is_empty() {
-        let total = plan.preview_commits.len();
+        let visible = plan.preview_commits.len();
+        let total = plan
+            .rebase_scope
+            .as_ref()
+            .map_or(visible, |scope| scope.total_commits);
         // No row gap: the row pitch must equal MODAL_LIST_ROW_H exactly or the
         // height ceiling (rows x ROW_H) would cut a row short.
         let mut list = div()
@@ -854,8 +862,18 @@ fn render_plan_modal_card_styled(
             .flex()
             .flex_col()
             .min_h(gpui::px(0.))
-            .max_h(modal_list_max_h(total))
+            .max_h(modal_list_max_h(visible))
             .overflow_y_scroll();
+        if matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Rebase(
+                kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+            )
+        ) {
+            list = list
+                .role(gpui::Role::Group)
+                .aria_label(format!("{}: {total}", Msg::PlanRebaseCandidates.t()));
+        }
         #[cfg(feature = "gui-e2e")]
         {
             list = list
@@ -883,10 +901,51 @@ fn render_plan_modal_card_styled(
             list = list.child(row);
         }
         body = body.child(modal_list_panel(
-            SharedString::from("Commits to push"),
+            SharedString::from(
+                if matches!(
+                    &plan.title,
+                    kagi_domain::plan_note::PlanTitle::Rebase(
+                        kagi_domain::plan_note::RebaseTitle::RebaseCurrentOnto { .. }
+                    )
+                ) {
+                    Msg::PlanRebaseCandidates.t()
+                } else {
+                    "Commits to push"
+                },
+            ),
             total,
-            Some(("plan-commits-copy", plan.preview_commits.join("\n"))),
-            None,
+            Some({
+                let plan = plan.clone();
+                super::modal_copy::modal_copy_button_lazy(
+                    "plan-commits-copy",
+                    Msg::ModalCopyList.t(),
+                    move || {
+                        let mut text = plan.preview_commits.join("\n");
+                        if let Some(scope) = &plan.rebase_scope {
+                            let remaining = scope
+                                .total_commits
+                                .saturating_sub(plan.preview_commits.len());
+                            if remaining > 0 {
+                                text.push('\n');
+                                text.push_str(
+                                    &Msg::PlanRebaseMore
+                                        .t()
+                                        .replace("{}", &remaining.to_string()),
+                                );
+                            }
+                        }
+                        text
+                    },
+                    cx,
+                )
+            }),
+            (total > visible).then(|| {
+                div().child(
+                    Msg::PlanRebaseMore
+                        .t()
+                        .replace("{}", &(total - visible).to_string()),
+                )
+            }),
             list.into_any_element(),
             cx,
         ));

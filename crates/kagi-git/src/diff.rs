@@ -338,7 +338,7 @@ fn workdir_compare_options() -> DiffOptions {
     opts
 }
 
-fn diff_to_file_statuses(diff: &mut Diff<'_>) -> Result<Vec<FileStatus>, GitError> {
+pub(crate) fn diff_to_file_statuses(diff: &mut Diff<'_>) -> Result<Vec<FileStatus>, GitError> {
     let mut find_opts = DiffFindOptions::new();
     find_opts.renames(true);
     diff.find_similar(Some(&mut find_opts))

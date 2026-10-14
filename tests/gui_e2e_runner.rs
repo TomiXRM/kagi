@@ -113,6 +113,10 @@ mod plan_labels;
 mod plan_card_reachability;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/rebase_card_scope.rs"]
+mod rebase_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -321,6 +325,10 @@ mod app_stash;
 mod stash_entry_identity;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/stash_apply_manifest.rs"]
+mod stash_apply_manifest;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
 mod busy_label;
 
@@ -492,6 +500,9 @@ mod sidebar_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_panels.rs"]
 mod tab_panels;
+#[cfg(target_os = "macos")]
+#[path = "recovery/zoom_200.rs"]
+mod zoom_200;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_bar_fit.rs"]
@@ -659,6 +670,10 @@ mod recovery_plan_card_994;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_preview_files.rs"]
 mod recovery_plan_preview_files;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/revert_en_summary.rs"]
+mod recovery_revert_en_summary;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1547,6 +1562,10 @@ mod macos {
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
             ),
             (
+                "revert_card_en_summary",
+                Box::new(crate::recovery_revert_en_summary::scenario_revert_card_en_summary),
+            ),
+            (
                 "plan_preview_files_empty",
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
             ),
@@ -1854,7 +1873,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
-            ("neighbor_plan_labels", Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels)),
+            (
+                "rebase_card_scope",
+                Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "neighbor_plan_labels",
+                Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels),
+            ),
             ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
             ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (
@@ -2853,6 +2879,10 @@ mod macos {
                 Box::new(crate::settings_switches::scenario_settings_zoom_bound),
             ),
             (
+                "zoom_200_operable",
+                Box::new(crate::zoom_200::scenario_zoom_200_operable),
+            ),
+            (
                 "settings_groups",
                 Box::new(crate::settings_switches::scenario_settings_groups),
             ),
@@ -3146,6 +3176,10 @@ mod macos {
             (
                 "stash_entry_identity",
                 Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
+            ),
+            (
+                "stash_apply_manifest",
+                Box::new(crate::stash_apply_manifest::scenario_stash_apply_manifest),
             ),
             (
                 "stash_push_plan_accuracy",

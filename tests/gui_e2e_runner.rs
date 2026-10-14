@@ -2959,56 +2959,56 @@ mod macos {
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_light_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_light_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_light_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_100_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_en_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+                "tag_unloaded_target_ja_light_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_light_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_167_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_ja_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_167_1392",

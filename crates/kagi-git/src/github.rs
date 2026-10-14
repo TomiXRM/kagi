@@ -429,6 +429,11 @@ pub(crate) fn plan_pr_merge(
 
     let mut blockers: Vec<PlanNote> = Vec::new();
     let mut warnings: Vec<PlanNote> = Vec::new();
+    warnings.push(PlanNote::Github(GithubNote::MergeScope {
+        branch: pr.head.clone(),
+        head_sha: pr.head_sha.clone(),
+        totals: None,
+    }));
     if pr.head_sha.trim().is_empty() {
         blockers.push(PlanNote::Github(GithubNote::HeadUnavailable {
             number: pr.number,
@@ -484,6 +489,11 @@ pub(crate) fn plan_pr_merge(
     } else {
         warnings.push(PlanNote::Github(GithubNote::RemoteSideEffect));
     }
+    let destructive = delete_branch
+        && (!pr.cross_repository
+            || local_branch
+                .as_ref()
+                .is_some_and(|branch| branch.tip.is_some() && branch.keep_reason.is_none()));
     OperationPlan {
         rebase_scope: None,
         tag_push_identity: None,
@@ -498,11 +508,11 @@ pub(crate) fn plan_pr_merge(
             method: method.label().to_string(),
         }),
         current: StateSummary {
-            head: head_summary.clone(),
+            head: head_summary,
             dirty: format!("#{} open ({} → {})", pr.number, pr.head, pr.base),
         },
         predicted: StateSummary {
-            head: head_summary,
+            head: format!("{}:{}", pr.base_repo, pr.base),
             dirty: format!("#{} merged into {}", pr.number, pr.base),
         },
         warnings,
@@ -526,9 +536,9 @@ pub(crate) fn plan_pr_merge(
         stash_identity: None,
         pull_identity: None,
         worktree_digest: None,
-        // Local cleanup uses its own guarded ref-only deletion and mandatory
-        // backup root, and only follows server confirmation of the PR merge.
-        destructive: false,
+        // Danger is an interaction role, independent of guarded cleanup and
+        // its recovery root. The shared button/default/trap consume this bit.
+        destructive,
         equivalent_command: None,
         preview_files: Vec::new(),
         preview_commits: Vec::new(),
@@ -709,5 +719,26 @@ mod tests {
             note,
             PlanNote::Github(kagi_domain::plan_note::GithubNote::HeadUnavailable { number: 42 })
         )));
+    }
+    #[test]
+    fn merge_danger_tracks_remote_deletion_not_merge_method() {
+        for method in [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase] {
+            for cross_repository in [false, true] {
+                for delete in [false, true] {
+                    let pr = PullRequest {
+                        number: 42,
+                        head: "feature".into(),
+                        head_sha: "a".repeat(40),
+                        base: "release".into(),
+                        base_repo: "github.example/acme/widgets".into(),
+                        cross_repository,
+                        ..Default::default()
+                    };
+                    let plan = plan_pr_merge(&pr, method, delete, "local-only".into(), None);
+                    assert_eq!(plan.destructive, delete && !cross_repository);
+                    assert_eq!(plan.predicted.head, "github.example/acme/widgets:release");
+                }
+            }
+        }
     }
 }

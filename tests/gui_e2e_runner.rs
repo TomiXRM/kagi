@@ -54,6 +54,10 @@ mod open_picker;
 mod ref_validation;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/squash_safe_default.rs"]
+mod squash_safe_default;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -361,6 +365,9 @@ mod commit_paging;
 #[path = "recovery/context_menu_keys.rs"]
 mod context_menu_keys;
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_tab_stop.rs"]
+mod graph_tab_stop;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_empty_section_wording.rs"]
 mod home_empty_section_wording;
 #[cfg(target_os = "macos")]
@@ -612,6 +619,10 @@ mod compact_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/compact_rail.rs"]
 mod compact_rail;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/compact_select_changes.rs"]
+mod compact_select_changes;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
@@ -1907,6 +1918,10 @@ mod macos {
                 Box::new(crate::keyboard_nav::scenario_keyboard_nav),
             ),
             (
+                "graph_tab_stop",
+                Box::new(crate::graph_tab_stop::scenario_graph_tab_stop),
+            ),
+            (
                 "home_rows",
                 Box::new(crate::home_rows::scenario_home_rows),
             ),
@@ -2543,6 +2558,14 @@ mod macos {
             (
                 "oplog_append_failure_visible",
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
+            ),
+            (
+                "pr_merge_delete_branch_return_cancel",
+                Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
+            ),
+            (
+                "pr_merge_card_scope",
+                Box::new(crate::squash_safe_default::pr_merge_card_scope),
             ),
             (
                 "pr_merge_write_lease",
@@ -3294,6 +3317,10 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "diff_header_ax_unique",
+                Box::new(crate::recovery_header_fit::scenario_diff_header_ax_unique),
+            ),
+            (
                 "diff_mode_segment",
                 Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
             ),
@@ -3314,6 +3341,10 @@ mod macos {
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
+            (
+                "compact_select_changes",
+                Box::new(crate::compact_select_changes::scenario_compact_select_changes),
+            ),
             (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
@@ -3369,6 +3400,10 @@ mod macos {
             (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
+            ),
+            (
+                "compact_layout_state_tall",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
             ),
             (
                 "compact_layout_lifecycle",

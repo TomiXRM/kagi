@@ -567,6 +567,17 @@ impl KagiApp {
                     && self.view().status_summary.is_unborn
                     && prefix_count + row_count == 0
                 {
+                    // The cached unborn page replaces the entire list, so
+                    // release its retained focus before its tracker disappears.
+                    if self
+                        .graph_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window))
+                    {
+                        if let Some(root) = &self.root_focus {
+                            root.focus(window, cx);
+                        }
+                    }
                     self.render_unborn_empty_state(cx)
                 } else {
                     // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
@@ -693,12 +704,37 @@ impl KagiApp {
                             .flex_1()
                             .min_h(px(0.)),
                         );
+                    // One retained stop for the virtual commit list, not
+                    // one per recycled row. The inset ring leaves its
+                    // viewport and row geometry unchanged.
+                    let graph_focus = self
+                        .graph_focus
+                        .get_or_insert_with(|| cx.focus_handle())
+                        .clone()
+                        .tab_index(0)
+                        .tab_stop(true);
+                    let ring_visible =
+                        graph_focus.is_focused(window) && window.last_input_was_keyboard();
                     let list = with_vertical_scrollbar(
                         "commit-list-scroll",
                         &scrollbar_handle,
-                        super::list_a11y::list_box("commit-list", rows, Msg::A11yCommitList.t()),
+                        super::list_a11y::list_box(
+                            "commit-list",
+                            rows.track_focus(&graph_focus),
+                            Msg::A11yCommitList.t(),
+                        ),
                         true,
                     )
+                    .relative()
+                    .when(ring_visible, |list| {
+                        list.child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .border_2()
+                                .border_color(rgb(theme().ui_accent())),
+                        )
+                    })
                     .child(e2e::measure_inside("commit-list-viewport"));
                     // The pagination Button is a sibling, never a descendant of
                     // the ListBox, whose virtual children are all Options.

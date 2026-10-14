@@ -117,6 +117,10 @@ mod plan_card_reachability;
 mod toast_dismiss;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toast_stack_budget.rs"]
+mod toast_stack_budget;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/feedback_status.rs"]
 mod feedback_status;
 
@@ -2546,6 +2550,10 @@ mod macos {
             (
                 "toast_dismiss",
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
+            ),
+            (
+                "toast_stack_budget",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),
             (
                 "toast_live_status",

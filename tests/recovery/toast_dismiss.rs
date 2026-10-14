@@ -342,6 +342,15 @@ fn focused_eviction(
             stack.push_notify(ToastKind::Error, "Error preview", cx);
         }
     });
+    // Older controls are intentionally absent until the counted stack opens.
+    crate::native_ax::activate(cx);
+    paint(cx, window);
+    let count = cx.read(|cx| stack.read(cx).toasts().len() - 1);
+    let caption = kagi::ui::i18n::Msg::ToastMore
+        .t()
+        .replace("{count}", &count.to_string());
+    assert!(crate::native_ax::press(cx, window, &caption));
+    cx.run_until_parked();
     paint(cx, window);
     let focus = cx.read(|cx| {
         stack.read(cx).toasts()[0]

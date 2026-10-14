@@ -252,6 +252,8 @@ pub enum Msg {
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
+    ToastMore,
+    ToastCollapse,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -2428,6 +2430,10 @@ impl Msg {
             (Ja, ToastDismiss) => "通知を閉じる",
             (En, ToastOpenRepository) => "Open Repository",
             (Ja, ToastOpenRepository) => "リポジトリを開く",
+            (En, ToastMore) => "{count} more notifications",
+            (Ja, ToastMore) => "ほか{count}件の通知",
+            (En, ToastCollapse) => "Collapse notifications",
+            (Ja, ToastCollapse) => "通知を折りたたむ",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",

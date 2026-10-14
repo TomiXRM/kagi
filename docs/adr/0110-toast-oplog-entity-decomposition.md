@@ -129,3 +129,23 @@ nor exactly-once native VoiceOver speech is guaranteed. Tier A observes
 renderer-applied role/name and stable arrival identity, not announcements.
 The bounded previews, persistent errors, hover pause, keyboard dismissal and
 durable Operation Log ownership above are unchanged.
+
+## Viewport budget amendment (#1551, 2026-10-14)
+
+This dense in-app feedback surface follows the HIG Notifications principle of
+concise, non-invasive foreground presentation, not Notification Center styling.
+Show the newest existing preview and an EN/JA named counted disclosure for the
+remaining cards. Do not deduplicate by truncated preview: distinct failures can
+share a prefix, and every operation still owns its full durable receipt/cause.
+The pinned ghost Button owns Tab/Enter/Space and its focus ring; its localized
+name changes to Collapse when expanded. Expanded cards scroll inside the same
+30%-of-viewport height budget, independent of UI zoom. The empty/single-card,
+error lifetime, explicit dismissal and four-card eviction policies remain.
+The existing card role colours, typography, hover pause and motion are reused;
+there is no new global settings or notification owner.
+The shared out-of-flow host moves to the trailing side, below toolbar chrome,
+and uses at most 45% of the viewport width. This leaves Sidebar/search and the
+leading Graph hit lane available and avoids covering the bottom Operation Log.
+Disclosure stays above the card scroller so Collapse cannot scroll out of reach.
+Native Click actions share the disclosure/dismiss listeners, and hiding controls
+repairs their retained focus through the existing ToastRemoved contract.

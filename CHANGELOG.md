@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Notification stacks show the newest preview with an EN/JA counted disclosure for older notifications; expanded cards scroll within 30% of the window height, preserving foreground workspace access and all Operation Log receipts. Errors still require explicit dismissal. (#1551)
 - Compact Changes reconciles file-row focus only from the surface drawing its lists, so the pinned composer no longer moves End/arrow focus back to an earlier file before scrolling finishes. Keyboard Discard coverage compares its menu and planned path with the actual focused row's accessibility name.
 - Revert confirmation uses English generated AFTER prose in English and Japanese presentation in Japanese; commit subjects and branch names remain verbatim, including Copy all. (#1534)
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)

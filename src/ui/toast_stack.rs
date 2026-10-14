@@ -157,6 +157,8 @@ pub struct ToastStack {
     /// second one). Reset when the stack drains.
     ticker_alive: bool,
     removed_focus: Vec<(gpui::WindowId, gpui::FocusHandle)>,
+    pub(super) expanded: bool,
+    pub(super) summary_focus: super::types::ToastCloseFocus,
 }
 
 impl ToastStack {
@@ -167,6 +169,8 @@ impl ToastStack {
             ticker_alive: false,
             removed_focus: Vec::new(),
             arrival: None,
+            expanded: false,
+            summary_focus: Default::default(),
         }
     }
 
@@ -242,6 +246,9 @@ impl ToastStack {
 
     /// Release a retired host's controls without dismissing its shared feedback.
     pub(super) fn forget_window(&mut self, id: gpui::WindowId) {
+        self.summary_focus
+            .borrow_mut()
+            .retain(|(host, _)| *host != id);
         for toast in &self.toasts {
             toast
                 .close_focus
@@ -259,6 +266,11 @@ impl ToastStack {
             self.removed_focus = take_toast_focus(toast);
         }
         self.toasts.retain(|t| t.id != id);
+        if self.toasts.len() <= 1 {
+            self.expanded = false;
+            self.removed_focus
+                .extend(std::mem::take(&mut *self.summary_focus.borrow_mut()));
+        }
         if self.toasts.is_empty() {
             self.arrival = None;
         }
@@ -309,6 +321,17 @@ impl ToastStack {
     }
 
     // ── Entity orchestration (cx-driven) ─────────────────────────────────────
+    pub(super) fn toggle_expanded(&mut self, cx: &mut Context<Self>) {
+        self.expanded = !self.expanded;
+        if !self.expanded {
+            let mut hidden_focus = Vec::new();
+            for toast in self.toasts.iter().take(self.toasts.len().saturating_sub(1)) {
+                hidden_focus.extend(take_toast_focus(toast));
+            }
+            cx.emit(ToastRemoved(hidden_focus));
+        }
+        cx.notify();
+    }
     // These wrap the pure data methods with `cx.notify()` + timer tasks so the
     // overlay re-renders in isolation (ADR-0110 Phase 5).
 
@@ -321,6 +344,13 @@ impl ToastStack {
         cx: &mut Context<Self>,
     ) {
         let evicts = self.toasts.len() == TOASTS_MAX;
+        if !self.expanded {
+            let mut hidden_focus = Vec::new();
+            for toast in &self.toasts {
+                hidden_focus.extend(take_toast_focus(toast));
+            }
+            cx.emit(ToastRemoved(hidden_focus));
+        }
         self.push(kind, message);
         if evicts {
             cx.emit(ToastRemoved(std::mem::take(&mut self.removed_focus)));

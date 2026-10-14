@@ -176,3 +176,21 @@ Theme and language results use their existing settings-backed dispatch paths.
 The `palette_rows_ax_action` regression inspects real AccessKit nodes and sends
 AppKit's standard Press action through the production adapter, not a callback
 recorder. Selection, heading ownership and selected-child reveal remain unchanged.
+
+## Amendment (2026-10-15): Help shortcut glyphs (#1563)
+
+Help → Keyboard Shortcuts remains a dense read-only info panel. The reference is
+the existing native menu and command palette shortcut notation, not a new layout.
+`shortcut_listing` formats each current `effective_keystroke` with the existing
+`display_keystroke`; raw GPUI tokens never become the Help caption. On macOS this
+shares pinned `Kbd::format` modifier order and named keys; other platforms retain
+the existing text notation. EN/JA command labels retain their translation owner.
+
+Startup custom bindings and unassigned commands keep their existing semantics.
+The panel's scroll, focus, Escape/dismiss and return-focus behavior are unchanged;
+no interactive control, settings writer, Git read/write or log line is added.
+Hover/pressed/selected/loading/error states are not applicable to these static
+captions. Native `help_shortcuts_glyphs` covers EN/JA, 100%/167%, Apple Light/Dark
+and 940×660/1392×883, including startup remapping, named keys, unassignment,
+palette agreement and remapped action dispatch. Real-window EN/JA captures remain
+separate Tier B evidence, not native VoiceOver claims.

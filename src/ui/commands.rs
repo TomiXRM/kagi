@@ -1656,8 +1656,8 @@ pub fn dump_menu_states(app: &KagiApp) {
 // Keyboard-shortcuts listing (for the Help → Keyboard Shortcuts modal).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Produce `(label, keystroke)` pairs for every command that has a keystroke,
-/// used by the Keyboard Shortcuts modal (auto-generated from the registry).
+/// Produce `(label, display keystroke)` pairs for every bound command,
+/// using the palette/menu formatter for the Keyboard Shortcuts modal.
 pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
@@ -1665,7 +1665,7 @@ pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
             effective_keystroke(c.id).map(|key| {
                 (
                     super::command_palette::command_label(c.id, i18n::lang()).into(),
-                    SharedString::from(key),
+                    SharedString::from(display_keystroke(&key)),
                 )
             })
         })

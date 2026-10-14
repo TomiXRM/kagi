@@ -159,6 +159,9 @@ mod window_restore;
 #[path = "recovery/close_window_initial_home.rs"]
 mod close_window_initial_home;
 #[cfg(target_os = "macos")]
+#[path = "recovery/help_shortcuts_glyphs.rs"]
+mod help_shortcuts_glyphs;
+#[cfg(target_os = "macos")]
 #[path = "recovery/shortcuts_panel_scroll.rs"]
 mod shortcuts_panel_scroll;
 #[cfg(target_os = "macos")]
@@ -1759,6 +1762,10 @@ mod macos {
             (
                 "shortcuts_panel_scroll",
                 Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
+            ),
+            (
+                "help_shortcuts_glyphs",
+                Box::new(crate::help_shortcuts_glyphs::scenario_help_shortcuts_glyphs),
             ),
             (
                 "window_restore_position",
@@ -4489,8 +4496,11 @@ mod macos {
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         // Effective bindings are cached at startup, exactly as in the product.
-        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
-            .then(crate::palette_polish::install_shortcut_bindings);
+        let _shortcut_bindings = matches!(
+            exact.as_deref(),
+            Some("palette_shortcut_glyphs" | "help_shortcuts_glyphs")
+        )
+        .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

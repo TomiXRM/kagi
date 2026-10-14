@@ -1,7 +1,7 @@
 # Decision Log
 
 > **Status:** Active — append-only  
-> **Last updated:** 2026-10-14
+> **Last updated:** 2026-10-15
 
 ADR にするほどではないが、再計測や同じ失敗を避けるために残すべき決定と実測事実のログです。ADR を置き換えるものではありません。
 
@@ -15,6 +15,7 @@ ADR にするほどではないが、再計測や同じ失敗を避けるため�
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-15 | #1563: Help shortcut listing reuses the palette's platform-aware effective-binding formatter | Format only at the existing listing projection, keeping startup remapping/unassignment, localized labels, native modifier order and operation/log contracts unchanged. [ADR-0029 amendment](adr/0029-command-registry-menubar.md#amendment-2026-10-15-help-shortcut-glyphs-1563). |
 | 2026-10-14 | #1536: Changes uses shared selecting-row navigation and the existing deferred owner-bound diff selection | Finder-style keyboard movement selects the destination while retaining path-stable focus, lazy diff loading and unchanged pointer behavior. Only Changes applies automatic activation; no global RowFocus behavior or write approval changes. [ADR-0134](adr/0134-simpler-commit-pane.md), [ADR-0046](adr/0046-discard-changes.md). |
 | 2026-10-14 | #1543 review: guard final Escape against focused Inputs and hand off the entire bottom focus subtree before closure | Use the pinned component's current focused Input handle rather than a desktop-only field inventory. Track one non-Tab-stop scope around the existing bottom panel so PTY, selector, Activity and file-list descendants share the root handoff without changing tab order. [ADR-0224 amendment](adr/0224-compact-layout.md#amendment--2026-10-14-graph-return-and-final-escape-1543). |
 | 2026-10-14 | #1543: retain the compact selection reveal hook and add bottom-pane closure only as Graph's final Escape fallback | Code inspection establishes that compact (<1000 logical px) alone renders historical detail/files in bottom Changes; desktop renders the right Inspector and must not open a nonexistent Changes tab. Reuse `KagiApp::select` even when the pane is closed; clear selection on one Escape before closing the pane on the next, with resolved center/Conflict guards preserving other modes. [ADR-0224 amendment](adr/0224-compact-layout.md#amendment--2026-10-14-graph-return-and-final-escape-1543). |

@@ -327,6 +327,12 @@ fn plan_state(
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
     let predicted_detail =
         kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);
+    let predicted_head = kagi_ui_core::i18n::plan::cherry_revert::predicted_head_text(
+        &plan.title,
+        &plan.disposition,
+        &plan.predicted.head,
+        kagi_ui_core::i18n::lang(),
+    );
     div()
         .id("plan-state-comparison")
         .relative()
@@ -353,7 +359,7 @@ pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement
                 .border_t_1()
                 .border_color(rgb(current_theme().surface))
                 .child(plan_state(
-                    &plan.predicted.head,
+                    &predicted_head,
                     &predicted_detail,
                     Msg::InputStashAfter.t(),
                     "plan-state-after",

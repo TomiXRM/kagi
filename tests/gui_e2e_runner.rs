@@ -661,6 +661,10 @@ mod recovery_plan_card_994;
 mod recovery_plan_preview_files;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/revert_en_summary.rs"]
+mod recovery_revert_en_summary;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
@@ -1545,6 +1549,10 @@ mod macos {
             (
                 "plan_preview_files",
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
+            ),
+            (
+                "revert_card_en_summary",
+                Box::new(crate::recovery_revert_en_summary::scenario_revert_card_en_summary),
             ),
             (
                 "plan_preview_files_empty",

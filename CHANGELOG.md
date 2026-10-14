@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Revert confirmation uses English generated AFTER prose in English and Japanese presentation in Japanese; commit subjects and branch names remain verbatim, including Copy all. (#1534)
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)
   - Review: saved index-only content is explicitly labeled “not restored” (EN/JA), outside the restoration count; successful Pop loses that content because execution does not use `--index`. Apply/Pop Copy all includes the count, change kinds and full paths, and file/symlink changes retain their TypeChange badge.
   - Manifest read failures now remain explicit localized “unavailable” warnings in the card and Copy all, preserving the existing fail-closed Pop prediction blocker instead of failing plan creation. Unknown contents are not reported as zero files.

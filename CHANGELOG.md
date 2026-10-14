@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Editor History read failures retain their cause and show a localized Retry action instead of claiming that the file has no history. Retry uses the existing file/request owner; successful empty reads and stale responses remain distinct. (#1515)
+  - Review: display-control bytes in backend causes are escaped, previews are bounded to three lines/480 characters, and Retry stays pinned outside the cause scroller. History and Snapshot share one named Button adapter.
 - Conflict Editor Reset all confirmation is bound to the edited file and disarms on navigation, selection changes and blur. Result Preview/Edit uses explicit shared TabList selection, so pressing an already-selected segment preserves mode and manual edits; writer-busy controls remain inert. (#1511, #1512)
   - Review: keyboard arming keeps focus and its ring on the Reset Button, so a second Return or Space confirms without re-tabbing; pointer arming still enters the same blur-disarming focus scope.
 - Command palette result rows expose a standard accessibility Click action for commands, themes and languages, sharing the pointer/keyboard enabled gate without double pointer activation. Unavailable results remain selectable but do not execute. (#1513)

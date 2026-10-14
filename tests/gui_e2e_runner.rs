@@ -568,6 +568,10 @@ mod commit_panel_density;
 mod editor_snapshot_readonly;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_history_error.rs"]
+mod editor_history_error;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/blame_identity.rs"]
 mod blame_identity;
 
@@ -3199,6 +3203,10 @@ mod macos {
             (
                 "editor_snapshot_readonly",
                 Box::new(crate::editor_snapshot_readonly::scenario),
+            ),
+            (
+                "editor_history_fetch_error",
+                Box::new(crate::editor_history_error::scenario),
             ),
             (
                 "blame_dirty_mapping",

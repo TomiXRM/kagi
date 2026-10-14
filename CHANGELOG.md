@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Main repository windows enforce a native 940×660 logical-point minimum, shared by saved-frame restore and runtime resizing, preserving supported compact chrome instead of allowing an unusable 200×150 window. (#1550)
+  - Restore persistence coverage waits for each requested native resize before advancing its debounce clock, rather than comparing unchanged saved geometry with the initial clamped frame.
 - Inspector changed-file options now fill the available row width, so filename, diffstat and trailing-space clicks open the same diff. Selection, hover and the existing keyboard focus ring share that full-width frame in Path and Tree views; indentation and arrow navigation are unchanged. (#1559)
 - Inspector density and full-message desktop regressions now use the exact 1000×720 desktop breakpoint instead of expecting desktop-only frames in the 940px compact layout. Existing compact Inspector scenarios retain compact coverage; the small desktop density oracle caps downward movement without rejecting unrelated chrome improvements. (dev-red oracle repair, #1559)
 - Stage all and Unstage all now publish the Commit Panel, session status counts and WIP diffstat from one post-write read, instead of leaving status feedback to the filesystem watcher's debounce and repeating the panel refresh. Linked-worktree actions retain their own repository scope; index mutation and receipt behavior are unchanged. (#1569)

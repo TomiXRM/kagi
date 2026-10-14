@@ -182,6 +182,10 @@ mod tab_strip;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/update_notice.rs"]
+mod update_notice;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/create_branch_warnings.rs"]
 mod create_branch_warnings;
 
@@ -2019,6 +2023,10 @@ mod macos {
             (
                 "update_install_lifecycle",
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
+            ),
+            (
+                "update_notice_in_flight",
+                Box::new(crate::update_notice::scenario_update_notice_in_flight),
             ),
             (
                 "branch_menu_no_checkout_fallthrough",

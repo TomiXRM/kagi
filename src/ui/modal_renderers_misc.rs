@@ -371,13 +371,16 @@ pub(crate) fn render_update_modal(
     // Installation is the only primary action; release notes and skip are quieter.
     let actions = super::button_style::modal_button_row()
         .items_center()
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-skip",
-            Msg::UpdateSkipVersion.t(),
-            ModalButtonKind::Secondary,
-            None,
-            skip,
-            cx,
+            modal_button(
+                "update-skip",
+                Msg::UpdateSkipVersion.t(),
+                ModalButtonKind::Secondary,
+                installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
+                skip,
+                cx,
+            ),
         ))
         .child(modal_button(
             "update-page",
@@ -388,25 +391,35 @@ pub(crate) fn render_update_modal(
             cx,
         ))
         .child(div().flex_grow(1.))
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-cancel",
-            Msg::UpdateLater.t(),
-            ModalButtonKind::Cancel,
-            None,
-            cancel,
-            cx,
+            modal_button(
+                "update-cancel",
+                if installing {
+                    Msg::UpdateHideContinuing.t()
+                } else {
+                    Msg::UpdateLater.t()
+                },
+                ModalButtonKind::Cancel,
+                None,
+                cancel,
+                cx,
+            ),
         ))
-        .child(modal_button(
+        .child(super::e2e::measure_control(
             "update-now",
-            if installing {
-                Msg::UpdateInstalling.t()
-            } else {
-                Msg::UpdateNow.t()
-            },
-            ModalButtonKind::Primary,
-            installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
-            update_now,
-            cx,
+            modal_button(
+                "update-now",
+                if installing {
+                    Msg::UpdateInstalling.t()
+                } else {
+                    Msg::UpdateNow.t()
+                },
+                ModalButtonKind::Primary,
+                installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
+                update_now,
+                cx,
+            ),
         ));
     let card = card.child(body).child(div().flex_shrink_0().child(actions));
 

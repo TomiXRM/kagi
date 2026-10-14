@@ -1060,7 +1060,7 @@ pub fn scenario_remote_browse_modal_routing(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS remote_browse_modal_routing");
 }
 
-fn fake_update_offer() -> (
+pub(super) fn fake_update_offer() -> (
     kagi_domain::update::UpdatePlan,
     kagi_domain::update::ReleaseInfo,
 ) {

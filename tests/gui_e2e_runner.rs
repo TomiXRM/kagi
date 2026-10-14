@@ -690,6 +690,9 @@ mod recovery_revert_en_summary;
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_layout.rs"]
+mod recovery_oplog_layout;
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
@@ -4310,6 +4313,14 @@ mod macos {
             (
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
+            ),
+            (
+                "oplog_row_167_result_visible",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_row_167_result_visible),
+            ),
+            (
+                "oplog_revert_eligibility",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_revert_eligibility),
             ),
             (
                 "oplog_restore_card",

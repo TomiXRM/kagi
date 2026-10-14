@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Operation Log summaries reserve named EN/JA outcome labels and Copy ahead of supplementary actor/worktree metadata at enlarged zoom. Recorded operations with no ref movement disable Revert with a reason, while Restore to point retains its independent cumulative-history planning. (#1562, #1565)
 - Branch Rename opens with a neutral current-name prefill and disabled Rename action; unchanged Return is inert. Edited invalid names retain localized inline validation without repeating the same cause in the plan. (#1552)
   - Review: unchanged-name tooltip and accessibility description say “Enter a new name” / 「新しい名前を入力」, not a permanently running “Checking plan…” state.
 - Notification stacks show the newest preview with an EN/JA counted disclosure for older notifications; expanded cards scroll within 30% of the window height, preserving foreground workspace access and all Operation Log receipts. Errors still require explicit dismissal. (#1551)

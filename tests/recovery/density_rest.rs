@@ -182,7 +182,7 @@ fn inspect(cx: &mut VisualTestAppContext, log: bool) {
                         let panel = cx.read(|cx| app.read(cx).op_log.clone().unwrap());
                         let row = cx
                             .read(|cx| panel.read(cx).scroll_handle().bounds_for_item(0).unwrap());
-                        assert!((row.size.height - theme::scaled_px(22.)).abs() < px(0.6));
+                        assert!((row.size.height - theme::scaled_px(44.)).abs() < px(0.6));
                         drop(panel);
                     }
                     unmount(cx, app, window);

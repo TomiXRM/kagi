@@ -412,8 +412,8 @@ pub fn scenario_compact_bottom_third(cx: &mut VisualTestAppContext) {
     }
 }
 
-/// #1484 review: selection follows visible Changes, never commandeers another
-/// bottom surface; leaving compact restores its original desktop presentation.
+/// #1484/#1528: changed compact selection activates Changes; leaving compact
+/// still restores the original desktop bottom presentation.
 pub fn scenario_compact_bottom_presentation_restore(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let fixture = build_fixture();
@@ -443,15 +443,9 @@ pub fn scenario_compact_bottom_presentation_restore(cx: &mut VisualTestAppContex
         draw(cx, window);
         assert_eq!(
             cx.read(|cx| (app.read(cx).bottom_tab, app.read(cx).bottom_panel_open)),
-            (tab, open),
-            "compact commit selection must not open Changes or replace Terminal/Activity"
+            (kagi::ui::BottomTab::Changes, true),
+            "changed compact selection opens Changes without replacing saved desktop state"
         );
-        app.update(cx, |app, cx| {
-            app.bottom_tab = kagi::ui::BottomTab::Changes;
-            app.bottom_panel_open = true;
-            cx.notify();
-        });
-        draw(cx, window);
         resize(cx, window, 1392., 883.);
         assert_eq!(
             cx.read(|cx| (app.read(cx).bottom_tab, app.read(cx).bottom_panel_open)),

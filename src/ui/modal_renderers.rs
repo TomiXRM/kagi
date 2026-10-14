@@ -778,6 +778,9 @@ fn render_plan_modal_card_styled(
             &plan.title,
             kagi_domain::plan_note::PlanTitle::Merge(_)
                 | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+                | kagi_domain::plan_note::PlanTitle::Github(
+                    kagi_domain::plan_note::GithubTitle::MergePr { .. }
+                )
         );
     let mut body = if show_files {
         super::modal_shell::modal_scroll_body()

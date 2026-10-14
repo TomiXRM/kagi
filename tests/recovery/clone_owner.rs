@@ -266,6 +266,8 @@ fn home_picker_failure(
 pub fn scenario_clone_completion_navigation(cx: &mut VisualTestAppContext) {
     let _restore = crate::recovery_layout::GlobalSettings::capture();
     let _saved = crate::gui_isolation::SavedKeys::keep(&["theme", "lang", "ui_zoom"]);
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let _ports = crate::gui_isolation::PortStore::keep();
     let upstream = build_fixture();
     let bare_dir = tempfile::tempdir().unwrap();
     let bare = bare_dir.path().join("widgets.git");

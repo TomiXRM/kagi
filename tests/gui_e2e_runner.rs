@@ -349,6 +349,9 @@ mod branch_menu_compact;
 #[path = "recovery/clone_card.rs"]
 mod clone_card;
 #[cfg(target_os = "macos")]
+#[path = "recovery/clone_menu.rs"]
+mod clone_menu;
+#[cfg(target_os = "macos")]
 #[path = "recovery/clone_owner.rs"]
 mod clone_owner;
 #[cfg(target_os = "macos")]
@@ -621,6 +624,10 @@ mod recovery_commit_panel_polish;
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_keyboard.rs"]
 mod recovery_commit_panel_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_file.rs"]
+mod recovery_commit_panel_file;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
@@ -2012,6 +2019,10 @@ mod macos {
                 Box::new(crate::clone_card::scenario_clone_card_viewport),
             ),
             (
+                "clone_menu_routes_home",
+                Box::new(crate::clone_menu::scenario_clone_menu_routes_home),
+            ),
+            (
                 "clone_card_destination",
                 Box::new(crate::clone_card::scenario_clone_card_destination),
             ),
@@ -3322,6 +3333,10 @@ mod macos {
             (
                 "commit_panel_bulk_hover",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
+            ),
+            (
+                "commit_panel_file_middle_ellipsis",
+                Box::new(crate::recovery_commit_panel_file::scenario),
             ),
             (
                 "compact_bottom_third",

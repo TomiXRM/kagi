@@ -1539,6 +1539,7 @@ pub enum Msg {
     InputSetUpstream,
     InputRename,
     InputPlanPending,
+    InputRenameEnterNewName,
     CleanupEmpty,
     /// Branch Cleanup: shown while the background scan is still running.
     CleanupScanning,
@@ -4143,6 +4144,8 @@ impl Msg {
             (Ja, InputRename) => "リネーム",
             (En, InputPlanPending) => "Checking plan…",
             (Ja, InputPlanPending) => "plan を確認中…",
+            (En, InputRenameEnterNewName) => "Enter a new name",
+            (Ja, InputRenameEnterNewName) => "新しい名前を入力",
             (En, TagPushTo) => "Push tag to {}",
             (Ja, TagPushTo) => "tag を {} に push",
             (En, TagPush) => "Push tag",

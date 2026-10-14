@@ -237,6 +237,10 @@ mod graph_focus;
 mod input_names;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/rename_form_state.rs"]
+mod rename_form_state;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
 mod recovery_hairline_dividers;
 
@@ -1635,6 +1639,10 @@ mod macos {
             (
                 "input_names_inventory",
                 Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
+                "branch_rename_neutral_state",
+                Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),
             (
                 "hairline_dividers",

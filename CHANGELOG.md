@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Branch Rename opens with a neutral current-name prefill and disabled Rename action; unchanged Return is inert. Edited invalid names retain localized inline validation without repeating the same cause in the plan. (#1552)
+  - Review: unchanged-name tooltip and accessibility description say “Enter a new name” / 「新しい名前を入力」, not a permanently running “Checking plan…” state.
 - Notification stacks show the newest preview with an EN/JA counted disclosure for older notifications; expanded cards scroll within 30% of the window height, preserving foreground workspace access and all Operation Log receipts. Errors still require explicit dismissal. (#1551)
 - Settings fits its entire native frame inside its own display's visible area after opening, content-driven pane resizing, zoom changes and saved-frame restoration. Oversized pages keep the existing scroller; repository window sizing is unchanged. (#1549)
   - Page Up/Down scroll the native Settings page without changing the focused control, so the final setting remains keyboard-reachable when large content is clipped to the display.

@@ -2703,9 +2703,9 @@ pub fn scenario_input_confirm_disabled_cards(cx: &mut VisualTestAppContext) {
             });
         } else if case == "rename" {
             wait_painted(cx, &app, window, |app| {
+                // #1552: unchanged prefill stays neutral but unavailable.
                 app.rename_branch_modal()
-                    .and_then(|m| m.plan.plan())
-                    .is_some_and(|plan| !plan.blockers.is_empty())
+                    .is_some_and(|m| m.plan.plan().is_none() && m.error.is_none())
             });
         }
         kagi::ui::e2e::clear_control_bounds(window.window_id(), "input-recovery");

@@ -506,7 +506,13 @@ pub(crate) fn render_rename_branch_modal(
         // #510: a failed replan hands over no plan; the button remains visibly
         // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
-        Some(modal.validation),
+        (!matches!(
+            &modal.validation,
+            kagi_git::ops::BranchRenameValidation::Invalid(
+                kagi_git::ops::BranchNameError::SameName
+            )
+        ))
+        .then_some(modal.validation),
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputRename.t(),
         (

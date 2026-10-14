@@ -20,7 +20,7 @@ use gpui::{
 };
 use gpui_component::input::{Input, InputState};
 use gpui_component::tooltip::Tooltip;
-use kagi_domain::plan_note::{PlanNote, PushNote};
+use kagi_domain::plan_note::{CommonNote, PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
 
@@ -244,6 +244,16 @@ pub(crate) fn render_input_plan_modal(
             for blocker in &plan.blockers {
                 // The upstream format blocker is already the field's error.
                 if matches!(blocker, PlanNote::Push(PushNote::UpstreamFormatInvalid)) {
+                    continue;
+                }
+                // Rename validation already explains this exact cause at the field.
+                if matches!(
+                    (validation.as_ref(), blocker),
+                    (
+                        Some(BranchRenameValidation::Invalid(reason)),
+                        PlanNote::Common(CommonNote::BranchNameErrorKeyed(plan_reason))
+                    ) if reason == plan_reason
+                ) {
                     continue;
                 }
                 displayed = true;

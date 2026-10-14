@@ -57,3 +57,12 @@ modal を開かずに klog で終わり、利用者には無反応に見えた�
 GUI E2E は既存 `stash_replan_error` の兄弟として `create_branch_replan_error` を追加。
 Ready な plan の confirm bounds を取ってから repo を移動し、Enter と旧ボタン座標の双方で
 branch が作られないこと、slot が `Failed` になること、repo を戻した再試行が成功することを見る。
+
+## Amendment — 2026-10-14: neutral Rename prefill (#1552)
+
+The unchanged current branch name is an editing starting point, not a failed
+operation. Rename keeps its plan slot Pending while the trimmed input equals
+the old name; Return cannot execute without a Ready plan. The renderer omits
+SameName field validation in this state. Other invalid names retain their
+localized field reason, with the identical plan blocker displayed only once.
+Valid edits still use the existing plan, confirmation and preflight pipeline.

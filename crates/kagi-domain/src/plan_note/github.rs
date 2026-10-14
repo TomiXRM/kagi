@@ -8,6 +8,14 @@
 /// Plan notes for the GitHub PR ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GithubNote {
+    /// Frozen GitHub-owned change scope, separate from local branch cleanup.
+    MergeScope {
+        branch: String,
+        head_sha: String,
+        totals: Option<(u32, u32, u32)>,
+    },
+    /// No same-head whole-PR path manifest was available at plan time.
+    MergeFilesUnavailable,
     /// blocker — the L1 list did not provide the immutable head commit needed
     /// by `gh pr merge --match-head-commit`.
     HeadUnavailable { number: u64 },
@@ -119,6 +127,21 @@ impl GithubNote {
     /// Sole English renderer.
     pub fn message_en(&self) -> String {
         match self {
+            GithubNote::MergeScope {
+                branch,
+                head_sha,
+                totals,
+            } => match totals {
+                Some((files, additions, deletions)) => format!(
+                    "PR source: {branch}@{head_sha}\nFiles: {files} · +{additions} / −{deletions}"
+                ),
+                None => format!(
+                    "PR source: {branch}@{head_sha}\nPR file totals are unavailable for this head commit."
+                ),
+            },
+            GithubNote::MergeFilesUnavailable => {
+                "PR file paths are unavailable for this head commit.".into()
+            }
             GithubNote::HeadUnavailable { number } => {
                 format!(crate::advice_template_en!(GithubHeadUnavailable), number)
             }

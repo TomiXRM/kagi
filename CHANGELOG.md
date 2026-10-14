@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR merge confirmations classify branch deletion as destructive, reusing safe Return=Cancel and the alert focus trap. The card freezes the GitHub target/source identity, same-head L3 file and line totals, and a same-head file preview when available; unavailable totals/paths are explicit instead of L1 default zeros or an empty “no changes” list. PR Copy all includes the frozen paths without changing other cards' established rows. Local branch cleanup retains its separate guarded/recoverable scope. (#1529, #1531)
 - Graph is a single keyboard Tab stop between Sidebar and Inspector. Its inset accent ring is visible for keyboard focus; existing commit arrows and selection actions work there, and Shift-Tab returns without clicking. (#1532)
   - Review: keyboard focus belongs to the named Commits ListBox in the native accessibility tree; switching to a cached unborn repository releases the missing list's focus to root so Escape and ⌘J remain reachable.
 - Compact Graph commit selection now activates the Changes bottom tab and opens its existing Inspector detail/files projection for pointer and keyboard navigation, even after manually opening Terminal or Operation Log. Same-row reselection and refresh-retained selection leave the chosen tab alone; desktop selection remains unchanged. WIP keeps the existing working-tree Changes path. (#1528)

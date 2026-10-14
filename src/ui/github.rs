@@ -458,6 +458,28 @@ impl KagiApp {
             return;
         };
         let head_summary = self.view().status_summary.branch.clone();
+        let totals = matches!(
+            self.ui()
+                .pr_details
+                .availability(pr, super::github_pr_detail::PrDetailStage::Body,),
+            kagi_domain::github::PrDetailAvailability::Fresh
+                | kagi_domain::github::PrDetailAvailability::Stale
+        )
+        .then_some((pr.changed_files, pr.additions, pr.deletions));
+        // Never copy the selected commit's files as the whole-PR scope. Freeze
+        // only a diff base loaded for this exact repository/number/head.
+        let preview_base = self.pr_mode().and_then(|mode| {
+            mode.tabs
+                .iter()
+                .find(|tab| {
+                    tab.pr.number == pr.number
+                        && tab.pr.base_repo == pr.base_repo
+                        && tab.pr.head_sha == pr.head_sha
+                        && tab.head.0 == pr.head_sha
+                        && !tab.local_refs_loading
+                })
+                .map(|tab| tab.base.clone())
+        });
         // The PR merge plan is a merge plan: it takes the merge planning tag,
         // and with it the existing EN/JA snackbar label.
         self.planning = Some("merge-plan");
@@ -475,8 +497,34 @@ impl KagiApp {
             // whose worktree identity moved — the same identity
             // `plan_pr_merge` freezes into the local deletion it approves.
             let repo = crate::ui::blocking_ops::open_merge_backend(&bg_owner)?;
-            repo.plan_pr_merge(&bg_pr, method, delete_branch, head_summary)
-                .map_err(|e| e.to_string())
+            let mut plan = repo
+                .plan_pr_merge(&bg_pr, method, delete_branch, head_summary)
+                .map_err(|e| e.to_string())?;
+            for note in &mut plan.warnings {
+                if let kagi_domain::plan_note::PlanNote::Github(
+                    kagi_domain::plan_note::GithubNote::MergeScope {
+                        totals: frozen_totals,
+                        ..
+                    },
+                ) = note
+                {
+                    *frozen_totals = totals;
+                }
+            }
+            let files = preview_base.and_then(|base| {
+                repo.compare_commits(
+                    &base,
+                    &kagi_domain::commit::CommitId(bg_pr.head_sha.clone()),
+                )
+                .ok()
+            });
+            match files {
+                Some(files) => plan.preview_files = files,
+                None => plan.warnings.push(kagi_domain::plan_note::PlanNote::Github(
+                    kagi_domain::plan_note::GithubNote::MergeFilesUnavailable,
+                )),
+            }
+            Ok(plan)
         });
         self.finish_planning(cx, task, "merge-plan", move |result| match result {
             Ok(plan) => {

@@ -330,7 +330,7 @@ fn assert_fold_file_roles(
     std::fs::write(repo.join("Cargo.lock"), "# generated changed\n").unwrap();
     std::fs::write(repo.join(".mcp.json"), "{\"changed\":true}\n").unwrap();
     panel.update(cx, |view, cx| {
-        view.state.reload_status(repo);
+        view.reload_status(repo);
         view.state.generated_expanded = true;
         view.state.agent_expanded = true;
         cx.notify();
@@ -614,7 +614,7 @@ pub fn scenario_file_tree_roles(cx: &mut VisualTestAppContext) {
     // flags stay unchanged; all siblings, including off-screen ones, count.
     std::fs::write(repo.join("src/zeta.txt"), "new\n").unwrap();
     panel.update(cx, |view, cx| {
-        view.state.reload_status(&repo);
+        view.reload_status(&repo);
         cx.notify();
     });
     cx.run_until_parked();

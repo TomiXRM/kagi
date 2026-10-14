@@ -3384,6 +3384,10 @@ mod macos {
                 Box::new(crate::compact_select_changes::scenario_compact_select_changes),
             ),
             (
+                "compact_wip_first_frame",
+                Box::new(crate::compact_select_changes::scenario_compact_wip_first_frame),
+            ),
+            (
                 "graph_return_reopens_changes",
                 Box::new(crate::graph_return_changes::scenario_graph_return_reopens_changes),
             ),
@@ -6012,7 +6016,7 @@ mod macos {
         panel.update(cx, |v, _| {
             v.repo_path = own.clone();
             v.foreign = None;
-            v.state.reload_status(&own);
+            v.reload_status(&own);
         });
         cx.run_until_parked();
         assert!(

@@ -462,7 +462,7 @@ impl KagiApp {
         };
         let nothing_left = entity.update(cx, |v, _| {
             let repo_path = v.repo_path.clone();
-            v.state.reload_status(&repo_path);
+            v.reload_status(&repo_path);
             v.state.staged.is_empty() && v.state.unstaged.is_empty()
         });
         let has_draft = entity.read_with(cx, |panel, cx| {
@@ -725,7 +725,7 @@ impl KagiApp {
                 if let Some(entity) = app.ui().commit_panel.clone() {
                     entity.update(cx, |v, _| {
                         let rp = v.repo_path.clone();
-                        v.state.reload_status(&rp);
+                        v.reload_status(&rp);
                     });
                 }
                 cx.notify();

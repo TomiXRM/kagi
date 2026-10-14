@@ -671,6 +671,8 @@ pub enum Msg {
     CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
+    /// Smart Commit capabilities are still being discovered in the background.
+    SmartDetecting,
     /// Commit panel: tooltip on the person+ (co-author) icon.
     AddCoAuthor,
     /// Commit panel: tooltip on the amend icon.
@@ -3084,6 +3086,8 @@ impl Msg {
             (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
+            (En, SmartDetecting) => "Detecting Smart Commit providers…",
+            (Ja, SmartDetecting) => "Smart Commit のプロバイダーを検出中…",
             (En, AddCoAuthor) => "Add co-author",
             (Ja, AddCoAuthor) => "共同作成者を追加",
             (En, AmendLastCommit) => "Amend last commit",

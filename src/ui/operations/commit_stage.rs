@@ -53,7 +53,7 @@ impl KagiApp {
             Ok(n) => {
                 klog!("staged-all: {} file(s)", n);
                 if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+                    entity.update(cx, |v, _| v.reload_status(&repo_path));
                 }
                 self.start_wip_diffstat_scan(cx);
                 self.refresh_worktree_wip_row(&repo_path);
@@ -105,7 +105,7 @@ impl KagiApp {
             Ok(n) => {
                 klog!("unstaged-all: {} file(s)", n);
                 if let Some(entity) = self.ui().commit_panel.clone() {
-                    entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+                    entity.update(cx, |v, _| v.reload_status(&repo_path));
                 }
                 self.start_wip_diffstat_scan(cx);
                 self.refresh_worktree_wip_row(&repo_path);

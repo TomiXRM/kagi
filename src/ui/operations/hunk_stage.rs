@@ -93,7 +93,7 @@ impl KagiApp {
         }
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
-                v.state.reload_status(&repo_path);
+                v.reload_status(&repo_path);
                 klog!(
                     "commit-panel: unstaged={} staged={}",
                     v.state.unstaged.len(),

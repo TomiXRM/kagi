@@ -155,6 +155,8 @@ impl ModelPickerFocus {
 /// The modal lives in `ActiveModal`; generation status lives in `TabUiState`.
 #[derive(Clone, Debug)]
 pub struct SmartCommitState {
+    /// The current capability probe has not published its result yet.
+    pub detecting: bool,
     /// Whether an Ollama server was detected at startup (`Local LLM available`).
     pub ollama_available: bool,
     /// Models installed on the detected Ollama server (`/api/tags`).
@@ -178,6 +180,7 @@ pub struct SmartCommitState {
 impl Default for SmartCommitState {
     fn default() -> Self {
         SmartCommitState {
+            detecting: false,
             ollama_available: false,
             detected_models: Vec::new(),
             claude_available: false,

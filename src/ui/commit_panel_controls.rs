@@ -398,7 +398,8 @@ fn generation_glyph(accent: u32) -> gpui::AnyElement {
 
 pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>) -> gpui::Div {
     let llm_on = view.smart_snapshot.llm_offered();
-    let enabled = !view.state.staged.is_empty() && !view.smart_generating;
+    let detecting = view.smart_snapshot.llm_enabled && view.smart_snapshot.detecting;
+    let enabled = !view.state.staged.is_empty() && !view.smart_generating && !detecting;
     let generation = view
         .smart_generation
         .as_ref()
@@ -411,6 +412,8 @@ pub(super) fn icon_row(view: &CommitPanelView, cx: &mut Context<CommitPanelView>
             true,
         )
         .into()
+    } else if detecting {
+        Msg::SmartDetecting.t().into()
     } else if llm_on && enabled {
         let state = &view.smart_snapshot;
         let model = (state.provider == crate::ui::smart_commit::SmartProvider::Ollama)

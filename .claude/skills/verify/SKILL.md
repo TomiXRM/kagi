@@ -3392,6 +3392,23 @@ Escape in unified and split. Compare identical EN/JA data, viewport and zoom;
 selection Escape must leave the diff and copied notification visible.
 
 
+### Nonblocking WIP opening (#1570)
+
+Tier A: `KAGI_GUI_E2E_ONLY=compact_wip_first_frame` holds the real opening
+read before publication in compact and desktop windows. The placeholder and
+compact composer must paint while held; releasing it publishes all 200 files.
+A warm reopen retains the panel/title input and draft, and a newer status refresh
+invalidates the held older result. A separately held Smart Commit capability
+result exposes the localized detecting reason without falling back to rule-based
+generation while an enabled provider is still unknown.
+Neighbors: `compact_select_changes,compact_layout_changes,compact_layout_state,compact_layout_lifecycle,smart_commit_modal_and_probe,smart_commit_footer_provider,worktree_panel`.
+Use KEEP_GOING and the normal scoped native-run timeout.
+Tier B click dispatch and sample evidence can identify synchronous work, but
+an unchanged capture under shared-screen frame-delivery stalls is not paint
+latency evidence. Use a native Tier A pane paint callback for first-frame timing;
+`simulate_click` can drain later background work before returning, so timing its
+whole return overstates the first frame. Temporary timing probes do not ship.
+
 ### WIP diffstat after staging (#996)
 
 Tier A: `KAGI_GUI_E2E_ONLY=wip_diffstat_stage_order` in

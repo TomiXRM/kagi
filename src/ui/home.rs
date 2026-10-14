@@ -125,6 +125,7 @@ impl KagiApp {
     /// The Home tab's ×. With no repository tab, Home stays the window;
     /// otherwise the tab behind it is entered again.
     pub fn close_home_tab(&mut self, cx: &mut Context<Self>) {
+        self.home_github.recent.menu = None;
         let left = self
             .home
             .filter(|home| home.front)
@@ -158,6 +159,7 @@ impl KagiApp {
     /// A repository tab was clicked: Home (if open) waits in the strip.
     /// Returns the tab it had left, for [`KagiApp::return_to_tab`].
     pub(crate) fn send_home_back(&mut self) -> Option<crate::app::SessionId> {
+        self.home_github.recent.menu = None;
         let home = self.home.as_mut()?;
         let left = if home.front { home.left.take() } else { None };
         home.front = false;
@@ -167,6 +169,7 @@ impl KagiApp {
     /// A repository is being opened (or switched to) as a tab: if Home was in
     /// front, it becomes that tab. Returns the tab Home had left.
     pub(crate) fn home_yields_to_repository(&mut self) -> Option<crate::app::SessionId> {
+        self.home_github.recent.menu = None;
         let home = self.home.filter(|home| home.front)?;
         self.home = None;
         home.left
@@ -195,6 +198,7 @@ impl KagiApp {
     /// menu commands are attached here because this path returns before the
     /// workspace compositor.
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_menu_keys(window, cx);
         self.ensure_home_github(window, cx);
         let normal_sidebar = sidebar_width();
         let padding = theme::scaled_px(48.);
@@ -256,8 +260,8 @@ impl KagiApp {
         // The menu-driven overlays (Settings, About, Shortcuts, the command
         // palette) are window-global and stay enabled on Home, so they are
         // drawn here too, below the modals as in the workspace (#927 review).
-        // Home has no workspace/pane menus; its outer shell retains the
-        // MenuOverlay → modal slice → platform dropdown order in Z_ORDER.
+        // Home's recent menu occupies the shared workspace-menu layer below
+        // MenuOverlay → modal slice → platform dropdown, following Z_ORDER.
         debug_assert_eq!(
             super::front_layer::Z_ORDER[4],
             super::front_layer::LayerKind::MenuOverlay
@@ -267,6 +271,7 @@ impl KagiApp {
             Some(&super::front_layer::LayerKind::PlatformMenu)
         );
         let menu_overlay = self.render_menu_overlay(window, cx);
+        let recent_menu = self.render_recent_menu(window, cx);
         let home = self.register_menu_actions(
             div()
                 .flex()
@@ -274,6 +279,7 @@ impl KagiApp {
                 .relative()
                 .size_full()
                 .child(home)
+                .children(recent_menu)
                 .children(menu_overlay),
             cx,
         );
@@ -314,7 +320,13 @@ impl KagiApp {
                 Button::new("home-open-folder")
                     .primary()
                     .label(Msg::HomeOpenFolder.t())
-                    .on_click(open_folder),
+                    .on_click(open_folder)
+                    .map(|button| {
+                        super::home_recent::OpenFolderButton(
+                            button,
+                            self.home_github.recent.pending_focus.take().is_some(),
+                        )
+                    }),
             ))
             .child(super::e2e::measure_control(
                 "home-remote",

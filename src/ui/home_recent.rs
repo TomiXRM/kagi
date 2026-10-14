@@ -13,6 +13,8 @@ pub(super) struct RecentList {
     keys: Rc<[String]>,
     pub(super) keyboard: super::list_keyboard::ListKeyboard,
     scroll: gpui::ListState,
+    pub(super) menu: Option<(PathBuf, gpui::Point<gpui::Pixels>)>,
+    pub(super) pending_focus: Option<usize>,
 }
 impl Default for RecentList {
     fn default() -> Self {
@@ -21,11 +23,80 @@ impl Default for RecentList {
             keys: Rc::from([]),
             keyboard: Default::default(),
             scroll: gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.)),
+            menu: None,
+            pending_focus: None,
         }
     }
 }
 
 impl KagiApp {
+    fn open_recent_menu(
+        &mut self,
+        path: PathBuf,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.home_in_front()
+            || self.front_layer(cx) != super::front_layer::FrontLayer::None
+            || !super::tabs::recent_repos().contains(&path)
+        {
+            return;
+        }
+        self.home_github.recent.menu = Some((path, position));
+        cx.notify();
+    }
+
+    pub(super) fn render_recent_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (path, position) = self.home_github.recent.menu.clone()?;
+        use super::context_menu::{ItemState, MenuGroup, MenuItem};
+        let expected = path.clone();
+        Some(super::menu_overlay::render_menu_overlay(
+            "home-recent-menu",
+            "home-recent-menu-item",
+            280.,
+            "",
+            position,
+            Msg::HomeRecent.t().into(),
+            vec![MenuGroup {
+                title: None,
+                items: vec![MenuItem::command(
+                    path,
+                    Msg::HomeRemoveRecent.t(),
+                    ItemState::Enabled,
+                    false,
+                )],
+            }],
+            |app, _, cx| {
+                app.home_github.recent.menu = None;
+                cx.notify();
+            },
+            move |app, path, window, cx| {
+                if app.home_in_front()
+                    && app.home_github.recent.menu.as_ref().map(|m| &m.0) == Some(&expected)
+                {
+                    if let Some(at) = super::tabs::recent_repos().iter().position(|p| p == &path) {
+                        // Do not let menu dismissal restore the row being removed.
+                        if let Some(root) = app.root_focus.as_ref() {
+                            root.focus(window, cx);
+                        }
+                        super::tabs::remove_recent_repo(&path);
+                        app.home_github.recent.pending_focus = Some(at);
+                    }
+                }
+                app.home_github.recent.menu = None;
+                cx.notify();
+            },
+            Some(&self.menu_keys),
+            self.window_active,
+            window,
+            cx,
+        ))
+    }
+
     pub(super) fn render_home_sidebar(
         &mut self,
         width: gpui::Pixels,
@@ -56,6 +127,13 @@ impl KagiApp {
             window,
             cx,
         );
+        if count > 0 {
+            if let Some(at) = navigation.pending_focus.take() {
+                let at = at.min(count - 1);
+                rows.reveal_entry(at + 1);
+                rows.focus_row(at, window, cx);
+            }
+        }
         let list_rows = rows.clone();
         let render = cx.processor(move |_app: &mut KagiApp, index: usize, _window, cx| {
             if index == 0 {
@@ -165,6 +243,10 @@ fn recent_row(
     let full = safe_text(&path.display().to_string());
     let label = super::i18n::recent_row_name(&name);
     let tooltip = full.clone();
+    let menu_path = path.clone();
+    let keyboard_path = path.clone();
+    let anchor = super::menu_keys::RowAnchor::default();
+    let key_anchor = anchor.clone();
     let open = cx.listener(move |app, _: &gpui::ClickEvent, _, cx| {
         if !app.home_in_front() || !super::tabs::recent_repos().contains(&path) {
             return;
@@ -175,6 +257,8 @@ fn recent_row(
     let row = div()
         .id(("home-recent", i))
         .aria_description(full.clone())
+        .relative()
+        .child(anchor.probe())
         .tooltip(move |window, cx| {
             gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
         })
@@ -186,6 +270,19 @@ fn recent_row(
         .cursor(gpui::CursorStyle::Arrow)
         .hover(|s| s.bg(rgb(theme().surface)))
         .on_click(open)
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            cx.listener(move |app, event: &gpui::MouseDownEvent, _, cx| {
+                app.open_recent_menu(menu_path.clone(), event.position, cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_action(cx.listener(
+            move |app, _: &super::menu_keys::ContextMenuKey, window, cx| {
+                app.open_recent_menu(keyboard_path.clone(), key_anchor.point(window), cx);
+                cx.stop_propagation();
+            },
+        ))
         .child(
             div()
                 .text_sm()
@@ -205,4 +302,22 @@ fn recent_row(
         super::list_a11y::list_item("home-recent-list", row, i, count, label),
     );
     super::e2e::measure_control(format!("home-recent-{i}"), row).into_any_element()
+}
+
+/// Resolve the pinned Button's own keyed focus at its render location.
+#[derive(gpui::IntoElement)]
+pub(super) struct OpenFolderButton(pub gpui_component::button::Button, pub bool);
+
+impl gpui::RenderOnce for OpenFolderButton {
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        if self.1 {
+            window
+                .use_keyed_state("home-open-folder", cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone()
+                .focus(window, cx);
+        }
+        // Render directly so both calls resolve the same keyed focus namespace.
+        self.0.render(window, cx)
+    }
 }

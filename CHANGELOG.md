@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Home Recent items offer a localized “Remove from Recently Opened” context-menu action through right-click and Shift+F10/Menu. Removal persists only the history entry; repository/worktree files, Git state and open tabs remain unchanged. Empty history retains Open Folder. (#1567)
+  - Review: removal returns focus to the same row position (or its predecessor at the tail); removing the last row focuses Open Folder rather than the window root.
 - Inspector detects explicit HTTP(S) URLs in literal commit messages, with named Open Link and Copy Link actions for pointer, keyboard and accessibility in EN/JA. Authored HTML/Markdown stays literal; arbitrary schemes remain inert. (#1566)
 - Fetch authentication failures identify the remote and advise checking credentials in English/Japanese, while Operation Log Copy retains the complete Git diagnostic. Non-interactive Git no longer launches a nonexistent askpass helper on macOS. No automatic authentication retry is added. (#1561)
   - Review: remote-branch menu Fetch uses the same localized summary/full-detail split, and malformed additive receipt detail no longer discards the whole row.

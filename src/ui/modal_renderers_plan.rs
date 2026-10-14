@@ -17,7 +17,7 @@ use super::modal_renderers::{
     render_plan_modal_wrapper_extra, render_plan_modal_wrapper_staged,
     render_plan_modal_wrapper_styled, ModalIcon, PlanCardExtra,
 };
-use super::modal_renderers_input::render_input_plan_modal;
+use super::modal_renderers_input::{render_input_plan_modal, InputPlanValidation};
 use super::modal_renderers_stash::render_stash_planning;
 use super::modals::worktree::*;
 use super::modals::*;
@@ -506,7 +506,18 @@ pub(crate) fn render_rename_branch_modal(
         // #510: a failed replan hands over no plan; the button remains visibly
         // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
-        Some(modal.validation),
+        Some(
+            if matches!(
+                &modal.validation,
+                kagi_git::ops::BranchRenameValidation::Invalid(
+                    kagi_git::ops::BranchNameError::SameName
+                )
+            ) {
+                InputPlanValidation::Unchanged
+            } else {
+                InputPlanValidation::Rename(modal.validation)
+            },
+        ),
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputRename.t(),
         (
@@ -701,6 +712,53 @@ pub(crate) fn render_force_lease_push_modal(
         overrides,
         cx,
     )
+}
+
+/// Primary publication preview, projected only from the frozen plan identity.
+/// Local HEAD is unrelated to the published tag and stays secondary.
+pub(crate) fn render_tag_push_scope(
+    identity: &kagi_domain::plan::TagPushIdentity,
+) -> gpui::AnyElement {
+    let rows = kagi_ui_core::i18n::plan::tag::push_scope_rows(identity);
+    let mut description = format!("{}\n", Msg::PlanTagPublishScope.t());
+    for row in &rows {
+        description.push_str(row);
+        description.push('\n');
+    }
+    description.push_str(Msg::PlanTagLocalUnchanged.t());
+    div()
+        .id("plan-tag-push-scope")
+        .role(gpui::Role::Group)
+        .aria_label(description)
+        .w_full()
+        .min_w(gpui::px(0.))
+        .rounded(theme_mod::scaled_px(10.))
+        .bg(rgb(theme().bg_base))
+        .border_1()
+        .border_color(gpui::rgba(theme_mod::panel_style().1))
+        .p(theme_mod::scaled_px(12.))
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(Msg::PlanTagPublishScope.t()),
+        )
+        .children(rows.into_iter().map(|row| {
+            div()
+                .min_w(gpui::px(0.))
+                .font_family(MONO_FONT)
+                .text_sm()
+                .child(row)
+        }))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme().text_sub))
+                .child(Msg::PlanTagLocalUnchanged.t()),
+        )
+        .into_any_element()
 }
 
 /// Push-tag confirmation overlay (tag context menu, ADR-0140). Single confirm:

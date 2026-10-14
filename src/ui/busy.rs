@@ -316,10 +316,10 @@ mod tests {
 pub(super) fn toast_container() -> gpui::Div {
     div()
         .absolute()
-        .bottom(theme::scaled_px(34.))
-        .left(theme::scaled_px(super::TOAST_INSET_PX))
+        .top(gpui::relative(0.22))
+        .right(theme::scaled_px(super::TOAST_INSET_PX))
         .w(theme::scaled_px(460.))
-        .max_w(gpui::relative(0.9))
+        .max_w(gpui::relative(0.45))
         .flex()
         .flex_col()
         .gap_2()

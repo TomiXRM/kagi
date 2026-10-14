@@ -524,8 +524,8 @@ pub fn scenario_compact_rail_short_window(cx: &mut VisualTestAppContext) {
         };
         assert_eq!(
             restored.size,
-            size(px(width), px(height)),
-            "production restores the short size"
+            size(px(width).max(px(940.)), px(height).max(px(660.))),
+            "production clamps unsupported short sizes to the repository minimum"
         );
         let restored_case = Case {
             width: f32::from(restored.size.width),
@@ -533,7 +533,13 @@ pub fn scenario_compact_rail_short_window(cx: &mut VisualTestAppContext) {
             ..case
         };
         let (app, win) = mount(cx, fixture.path(), restored_case);
-        short_reach(cx, &app, win, case);
+        for id in TRIGGERS {
+            contained(
+                bounds(win, "compact-rail"),
+                bounds(win, id),
+                "supported restored rail",
+            );
+        }
         for width in [999., 1000., 940.] {
             resize(
                 cx,

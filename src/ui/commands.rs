@@ -1592,6 +1592,28 @@ pub fn display_keystroke(ks: &str) -> String {
 
 #[cfg(not(target_os = "macos"))]
 pub fn display_keystroke(ks: &str) -> String {
+    display_keystroke_text(ks)
+}
+
+// Keep the text projection testable on macOS without shipping unused code there.
+#[cfg(any(test, not(target_os = "macos")))]
+fn display_keystroke_text(ks: &str) -> String {
+    let mut formatted = String::with_capacity(ks.len());
+    for stroke in ks.split_whitespace() {
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        append_text_keystroke(stroke, &mut formatted);
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
+}
+
+#[cfg(any(test, not(target_os = "macos")))]
+fn append_text_keystroke(ks: &str, formatted: &mut String) {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
     let (mods_str, key) = if let Some(m) = ks.strip_suffix("--") {
@@ -1602,30 +1624,32 @@ pub fn display_keystroke(ks: &str) -> String {
         ("", ks)
     };
 
-    let mut parts: Vec<String> = Vec::new();
+    let start = formatted.len();
     if !mods_str.is_empty() {
         for m in mods_str.split('-') {
-            parts.push(
-                match m {
-                    "secondary" => "Ctrl",
-                    "cmd" | "super" | "win" => "Super",
-                    "ctrl" => "Ctrl",
-                    "alt" => "Alt",
-                    "shift" => "Shift",
-                    "fn" => "Fn",
-                    other => other,
-                }
-                .to_string(),
-            );
+            if formatted.len() > start {
+                formatted.push('+');
+            }
+            formatted.push_str(match m {
+                "secondary" => "Ctrl",
+                "cmd" | "super" | "win" => "Super",
+                "ctrl" => "Ctrl",
+                "alt" => "Alt",
+                "shift" => "Shift",
+                "fn" => "Fn",
+                other => other,
+            });
         }
     }
+    if formatted.len() > start {
+        formatted.push('+');
+    }
     // Uppercase a single-character key (j → J); leave named keys (escape) alone.
-    parts.push(if key.chars().count() == 1 {
-        key.to_uppercase()
-    } else {
-        key.to_string()
-    });
-    parts.join("+")
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(key), None) => formatted.extend(key.to_uppercase()),
+        _ => formatted.push_str(key),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1656,8 +1680,8 @@ pub fn dump_menu_states(app: &KagiApp) {
 // Keyboard-shortcuts listing (for the Help → Keyboard Shortcuts modal).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Produce `(label, keystroke)` pairs for every command that has a keystroke,
-/// used by the Keyboard Shortcuts modal (auto-generated from the registry).
+/// Produce `(label, display keystroke)` pairs for every bound command,
+/// using the palette/menu formatter for the Keyboard Shortcuts modal.
 pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
@@ -1665,7 +1689,7 @@ pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
             effective_keystroke(c.id).map(|key| {
                 (
                     super::command_palette::command_label(c.id, i18n::lang()).into(),
-                    SharedString::from(key),
+                    SharedString::from(display_keystroke(&key)),
                 )
             })
         })
@@ -2936,12 +2960,41 @@ mod keybinding_tests {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn display_keystrokes_retain_text_notation() {
-        assert_eq!(display_keystroke("secondary-shift-o"), "Ctrl+Shift+O");
-        assert_eq!(display_keystroke("ctrl-alt-shift-k"), "Ctrl+Alt+Shift+K");
-        assert_eq!(display_keystroke("secondary--"), "Ctrl+-");
+        assert_eq!(display_keystroke_text("secondary-shift-o"), "Ctrl+Shift+O");
+        assert_eq!(
+            display_keystroke_text("ctrl-alt-shift-k"),
+            "Ctrl+Alt+Shift+K"
+        );
+        assert_eq!(display_keystroke_text("secondary--"), "Ctrl+-");
+    }
+
+    #[test]
+    fn display_keystrokes_text_formats_each_chord_stroke() {
+        assert_eq!(
+            display_keystroke_text("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-k   ctrl-alt-shift-secondary-s"),
+            "Ctrl+K Ctrl+Alt+Shift+Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-- secondary-escape"),
+            "Ctrl+- Ctrl+escape"
+        );
+        assert_eq!(display_keystroke_text(""), "");
+        assert_eq!(display_keystroke_text("  "), "  ");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn display_keystrokes_route_chords_to_text_notation() {
+        assert_eq!(
+            display_keystroke("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
     }
 
     /// Every default keystroke in the registry must be unique — two commands

@@ -57,6 +57,16 @@ use super::i18n::Msg;
 use super::theme::{self, theme};
 use super::{terminal, DividerDrag, DividerGhost, DividerKind};
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static RESET_BUTTON_FOCUSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn take_reset_focus_probe() -> bool {
+    RESET_BUTTON_FOCUSED.with(|focused| focused.replace(false))
+}
+
 /// Render the full Conflict Editor, replacing the normal body while editing.
 pub fn render_editor(
     mode: &ConflictMode,
@@ -114,7 +124,9 @@ fn render_toolbar(
     let reset_focus = chrome.reset_focus.clone();
     let reset = cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
         if let Some(focus) = &reset_focus {
-            focus.focus(window, cx);
+            if !focus.contains_focused(window, cx) {
+                focus.focus(window, cx);
+            }
         }
         this.conflict_editor_reset_all_request(&p_reset);
         cx.notify();
@@ -191,22 +203,34 @@ fn render_toolbar(
                 .when_some(chrome.reset_focus.as_ref(), |el, focus| {
                     el.track_focus(focus)
                 })
-                .child(icon_button(
-                    "editor-reset",
-                    "icons/trash-2.svg",
-                    if reset_armed {
-                        Msg::EditorResetAllConfirm.t()
-                    } else {
-                        Msg::EditorReset.t()
-                    },
-                    if reset_armed {
-                        ButtonRole::Danger
-                    } else {
-                        ButtonRole::Warning
-                    },
-                    reset,
-                    cx,
-                )),
+                .child(
+                    icon_button(
+                        "editor-reset",
+                        "icons/trash-2.svg",
+                        if reset_armed {
+                            Msg::EditorResetAllConfirm.t()
+                        } else {
+                            Msg::EditorReset.t()
+                        },
+                        if reset_armed {
+                            ButtonRole::Danger
+                        } else {
+                            ButtonRole::Warning
+                        },
+                        reset,
+                        cx,
+                    )
+                    .when(cfg!(feature = "gui-e2e"), |button| {
+                        button.on_key_down(|event, _, _| {
+                            #[cfg(feature = "gui-e2e")]
+                            if event.keystroke.key == "f19" {
+                                RESET_BUTTON_FOCUSED.with(|focused| focused.set(true));
+                            }
+                            #[cfg(not(feature = "gui-e2e"))]
+                            let _ = event;
+                        })
+                    }),
+                ),
         ))
         .into_any_element()
 }

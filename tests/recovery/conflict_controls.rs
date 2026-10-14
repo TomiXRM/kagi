@@ -205,6 +205,66 @@ fn reset_leg(cx: &mut VisualTestAppContext, lang: Lang, zoom: f32) {
                 "busy cannot arm"
             )
         });
+        conflict.update(cx, |view, cx| {
+            view.writer_busy = false;
+            cx.notify();
+        });
+        for key in ["enter", "space"] {
+            conflict.update(cx, |view, cx| {
+                view.conflict_editor_set_hunk_side(
+                    Path::new("a.txt"),
+                    0,
+                    SelectionSide::Current,
+                    true,
+                );
+                cx.notify();
+            });
+            cx.update_window(window, |_, window, cx| {
+                let root = app.read(cx).root_focus.clone().unwrap();
+                window.focus(&root, cx);
+                window.draw(cx).clear();
+            })
+            .unwrap();
+            let mut found = false;
+            for _ in 0..80 {
+                kagi::ui::conflict_editor::take_reset_focus_probe();
+                crate::keyboard_nav::keys(cx, window, "tab");
+                crate::keyboard_nav::keys(cx, window, "f19");
+                if kagi::ui::conflict_editor::take_reset_focus_probe() {
+                    found = true;
+                    break;
+                }
+            }
+            assert!(found, "Reset all is reached through actual Tab navigation");
+            crate::keyboard_nav::keys(cx, window, key);
+            cx.read(|cx| {
+                assert_eq!(
+                    conflict.read(cx).reset_all_target.as_deref(),
+                    Some(Path::new("a.txt"))
+                )
+            });
+            kagi::ui::conflict_editor::take_reset_focus_probe();
+            crate::keyboard_nav::keys(cx, window, "f19");
+            assert!(
+                kagi::ui::conflict_editor::take_reset_focus_probe(),
+                "arming preserves Reset Button focus and ring"
+            );
+            crate::keyboard_nav::keys(cx, window, key);
+            cx.read(|cx| {
+                let view = conflict.read(cx);
+                assert!(view.reset_all_target.is_none());
+                assert_eq!(
+                    view.mode
+                        .as_ref()
+                        .unwrap()
+                        .buffer
+                        .hunk_model(Path::new("a.txt"))
+                        .unwrap()
+                        .resolved_hunk_count(),
+                    0
+                );
+            });
+        }
         assert_eq!(repo_fingerprint(fixture.path()), fingerprint);
         assert!(kagi_git::oplog::read_oplog_tail_for_repo(fixture.path(), 100).is_empty());
         drop(conflict);

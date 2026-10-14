@@ -113,6 +113,9 @@ currently edited path. File navigation, selection changes and leaving the reset
 control's focus scope retire the armed stage; a busy writer cannot arm or reset.
 Returning to a file never restores an earlier approval. This is buffer/draft
 editing only, not a new Git operation or confirmation manager.
+Keyboard activation retains focus on the actual Reset Button inside that scope,
+so the second Return/Space reaches the same final-confirm listener and the
+focus ring remains visible. Only activation from outside enters the scope.
 
 Result Preview/Edit uses the shared `TabList`, as the historical Inspector does
 (#1495), with explicit Preview=false and Edit=true activation. Re-activating the

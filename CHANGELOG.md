@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Conflict Editor Reset all confirmation is bound to the edited file and disarms on navigation, selection changes and blur. Result Preview/Edit uses explicit shared TabList selection, so pressing an already-selected segment preserves mode and manual edits; writer-busy controls remain inert. (#1511, #1512)
+  - Review: keyboard arming keeps focus and its ring on the Reset Button, so a second Return or Space confirms without re-tabbing; pointer arming still enters the same blur-disarming focus scope.
 - Operation Log summary time, operation and outcome now share the 13px dense-list identity role while retaining the 22px summary floor and variable-height details. Issues navigator age, comment count and number use the readable 13px secondary role without changing card height or selected foregrounds. (#1498, #1499)
   - Review: narrow Issues activity labels shrink and truncate so long ages and comment counts cannot clip the trailing Issue number, including 120px/160px sidebar widths.
 - Apple Light/Dark unselected Graph WIP hover uses a lighter 15% accent wash over its lane tint instead of opaque accent. Selection retains its 30% wash and counts/diffstat retain their normal colours. (#1497)

@@ -471,6 +471,10 @@ mod inventory;
 mod worktree_folder_picker;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/worktree_default_name.rs"]
+mod worktree_default_name;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
 mod refusal_reasons;
 
@@ -2759,6 +2763,10 @@ mod macos {
             (
                 "worktree_modal_prefill",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_modal_prefill),
+            ),
+            (
+                "worktree_create_default_name",
+                Box::new(crate::worktree_default_name::scenario_worktree_create_default_name),
             ),
             (
                 "repo_health_proposal",

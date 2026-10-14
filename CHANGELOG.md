@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Compact Changes reconciles file-row focus only from the surface drawing its lists, so the pinned composer no longer moves End/arrow focus back to an earlier file before scrolling finishes. Keyboard Discard coverage compares its menu and planned path with the actual focused row's accessibility name.
 - File → Clone Repository and its existing shortcut now open Home's Repositories picker instead of remaining disabled as an unimplemented placeholder. Selecting a repository uses the existing clone confirmation card and safety lifecycle. (#1522)
   - Review: another open modal or visible confirmation blocks navigation without stealing its focus; portable menu dismissal cannot restore the covered workspace's focus over the picker.
 - Editor Blame uses a named, keyboard-focusable toggle Button with a visible focus ring and toggled (pressed) accessibility state. Enter, Space and pointer activation share the existing on/off path in EN/JA. (#1524)

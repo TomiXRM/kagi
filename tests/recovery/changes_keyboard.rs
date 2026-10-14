@@ -231,15 +231,22 @@ fn inline_action_menu_anchor(
             (f32::from(viewport.width), f32::from(viewport.height))
         })
         .unwrap();
-    // Clear the high-zoom pane's responsive width clamp so its left edge moves.
-    for (resized_width, opener) in [(width + 320., "shift-f10"), (width, "menu")] {
+    // Stay in the presentation that owns the focused inline action. Desktop
+    // widening moves the panel's left edge; compact height changes move the
+    // bottom Changes surface without unmounting it at the 1000px breakpoint.
+    let enlarged = if width < 1000. {
+        (width, height + 120.)
+    } else {
+        (width + 320., height)
+    };
+    for (dimensions, opener) in [(enlarged, "shift-f10"), ((width, height), "menu")] {
         let old = bounds(window, row);
-        crate::pr_detail_adaptive::resize(cx, window, (resized_width, height));
-        draw(cx, window, (resized_width, height));
+        crate::pr_detail_adaptive::resize(cx, window, dimensions);
+        draw(cx, window, dimensions);
         paint(cx, window);
         let current = bounds(window, row);
         assert_ne!(
-            current.origin.x, old.origin.x,
+            current.origin, old.origin,
             "resize moves the row while its Stage button owns focus"
         );
         press(cx, window, opener);
@@ -373,9 +380,28 @@ fn discard_menu(
             press(cx, window, "end");
         }
         focus(cx, window, &row);
+        let focused_name = cx
+            .update_window(window, |_, window, _| {
+                (0..3)
+                    .map(|fi| format!("cp-us-row-{fi}"))
+                    .find(|id| labels::focused(id, window))
+                    .and_then(|id| labels::accessible_name(&id))
+                    .expect("a rendered Changes row owns keyboard focus")
+            })
+            .unwrap();
+        assert_focus(cx, window, &row);
         press(cx, window, opener);
         let expected = cx.read(|cx| app.read(cx).file_menu.clone().unwrap());
-        assert_eq!(expected.path, Path::new(path));
+        assert!(
+            focused_name.ends_with(&format!(" {}", expected.path.display())),
+            "Discard path {:?} must match the focused row AX name {focused_name:?}",
+            expected.path
+        );
+        assert_eq!(
+            expected.path,
+            Path::new(path),
+            "requested {row}; actual focused AX name {focused_name:?}"
+        );
         for (key, at) in [("end", 2), ("up", 1), ("home", 0), ("down", 1), ("end", 2)] {
             press(cx, window, key);
             assert_focus(
@@ -405,6 +431,10 @@ fn discard_menu(
         cx.read(|cx| {
             let modal = app.read(cx).discard_modal().unwrap();
             assert_eq!(modal.paths, vec![path.to_string()]);
+            assert!(
+                focused_name.ends_with(&format!(" {}", modal.paths[0])),
+                "planned Discard path must match its opener's focused row AX name"
+            );
             assert!(modal.plan.blockers.is_empty());
         });
         press(cx, window, "enter");

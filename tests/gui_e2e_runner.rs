@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/batch_staging_refresh.rs"]
+mod batch_staging_refresh;
+#[cfg(target_os = "macos")]
 #[path = "recovery/time_locale.rs"]
 mod time_locale;
 
@@ -117,8 +120,16 @@ mod plan_card_reachability;
 mod rebase_card_scope;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/push_tag_card_scope.rs"]
+mod push_tag_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/toast_stack_budget.rs"]
+mod toast_stack_budget;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/feedback_status.rs"]
@@ -154,6 +165,10 @@ mod settings_window;
 #[cfg(target_os = "macos")]
 #[path = "recovery/window_restore.rs"]
 mod window_restore;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/window_min_size.rs"]
+mod window_min_size;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/close_window_initial_home.rs"]
@@ -223,6 +238,9 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_search.rs"]
+mod sidebar_search;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_focus.rs"]
@@ -231,6 +249,10 @@ mod graph_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
 mod input_names;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/rename_form_state.rs"]
+mod rename_form_state;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -682,6 +704,9 @@ mod recovery_revert_en_summary;
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_layout.rs"]
+mod recovery_oplog_layout;
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
@@ -861,6 +886,9 @@ mod density_rest;
 #[path = "recovery/finder_scale_rest.rs"]
 mod finder_scale_rest;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_file_rows.rs"]
+mod inspector_file_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
 mod inspector_scale;
@@ -1617,12 +1645,24 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_search_escape",
+                Box::new(crate::sidebar_search::sidebar_search_escape),
+            ),
+            (
+                "sidebar_search_clear_ax",
+                Box::new(crate::sidebar_search::sidebar_search_clear_ax),
+            ),
+            (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
             (
                 "input_names_inventory",
                 Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
+                "branch_rename_neutral_state",
+                Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),
             (
                 "hairline_dividers",
@@ -1772,6 +1812,10 @@ mod macos {
                 Box::new(crate::window_restore::scenario_window_restore_position),
             ),
             (
+                "window_min_size",
+                Box::new(crate::window_min_size::scenario_window_min_size),
+            ),
+            (
                 "window_restore_display_identity",
                 Box::new(crate::window_restore::scenario_window_restore_display_identity),
             ),
@@ -1782,6 +1826,10 @@ mod macos {
             (
                 "window_restore_titlebar",
                 Box::new(crate::window_restore::scenario_window_restore_titlebar),
+            ),
+            (
+                "settings_window_screen_fit",
+                Box::new(crate::settings_window::scenario_settings_window_screen_fit),
             ),
             (
                 "settings_window_open_raise",
@@ -1883,6 +1931,10 @@ mod macos {
             (
                 "rebase_card_scope",
                 Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "push_tag_card_scope",
+                Box::new(crate::push_tag_card_scope::scenario_push_tag_card_scope),
             ),
             (
                 "neighbor_plan_labels",
@@ -2573,6 +2625,10 @@ mod macos {
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
             ),
             (
+                "toast_stack_budget",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
+            ),
+            (
                 "toast_live_status",
                 Box::new(crate::feedback_status::scenario_toast_live_status),
             ),
@@ -2958,56 +3014,56 @@ mod macos {
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_light_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_light_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_light_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_100_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_en_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+                "tag_unloaded_target_ja_light_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_light_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_167_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_ja_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_167_1392",
@@ -3901,6 +3957,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
             ),
             (
+                "batch_staging_refresh",
+                Box::new(crate::batch_staging_refresh::scenario_batch_staging_refresh),
+            ),
+            (
                 "hunk_staging",
                 Box::new(crate::hunk_staging::scenario_hunk_staging),
             ),
@@ -4288,6 +4348,14 @@ mod macos {
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
             ),
             (
+                "oplog_row_167_result_visible",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_row_167_result_visible),
+            ),
+            (
+                "oplog_revert_eligibility",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_revert_eligibility),
+            ),
+            (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
@@ -4363,6 +4431,10 @@ mod macos {
             (
                 "inspector_scale",
                 Box::new(crate::inspector_scale::scenario),
+            ),
+            (
+                "inspector_file_row_hit",
+                Box::new(crate::inspector_file_rows::scenario),
             ),
             (
                 "graph_subject_identity",

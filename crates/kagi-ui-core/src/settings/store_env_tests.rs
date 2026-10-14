@@ -231,7 +231,10 @@ fn settings_window_bounds_burst_coalesces_frame() {
     let tmp = tempfile::tempdir().expect("tempdir");
     run_child("settings_window_bounds_burst_child", tmp.path());
     let saved: serde_json::Value = serde_json::from_str(&settings_text(tmp.path())).expect("json");
-    assert_eq!(saved["settings_window_frame"], "99,198,599");
+    assert_eq!(
+        saved["settings_window_frame"],
+        "99,198,599,000000000000000000000000000000ab"
+    );
 }
 
 #[test]
@@ -244,6 +247,7 @@ fn settings_window_bounds_burst_child() {
             x: i as f32,
             y: (i * 2) as f32,
             height: (500 + i) as f32,
+            display_uuid: Some(0xab),
         });
     }
     flush();
@@ -276,6 +280,7 @@ fn settings_window_frame_migration_child() {
         x: -120.,
         y: 240.,
         height: 640.,
+        display_uuid: None,
     });
     assert_eq!(settings_window_frame(), expected);
     assert!(read_setting("settings_window_position").is_none());

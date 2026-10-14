@@ -513,7 +513,8 @@ pub(super) fn render_filter(app: &KagiApp, _cx: &mut Context<KagiApp>) -> gpui::
                     .role(input_role)
                     .xsmall()
                     .appearance(true)
-                    .cleanable(true),
+                    .cleanable(true)
+                    .clear_button_aria_label(Msg::A11ySidebarClearSearch.t()),
             )
         })
         .into_any_element()

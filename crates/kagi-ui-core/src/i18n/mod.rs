@@ -210,6 +210,8 @@ pub fn init_lang() {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Msg {
     AboutTitle,
+    InspectorOpenLink,
+    InspectorCopyLink,
     A11yCommandPaletteQuery,
     A11yCommitSummary,
     A11yCommitDescription,
@@ -1915,6 +1917,10 @@ impl Msg {
         use Lang::{En, Ja};
         use Msg::*;
         match (language, self) {
+            (En, InspectorOpenLink) => "Open Link",
+            (Ja, InspectorOpenLink) => "リンクを開く",
+            (En, InspectorCopyLink) => "Copy Link",
+            (Ja, InspectorCopyLink) => "リンクをコピー",
             (En, A11yCommandPaletteQuery) => "Command search",
             (Ja, A11yCommandPaletteQuery) => "コマンド検索",
             (En, A11yCommitSummary) => "Commit summary",

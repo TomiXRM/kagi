@@ -4,28 +4,72 @@
 //! exposes only InteractiveElement. Forward its stateful aria methods without
 //! adding a second element/focus target or replacing its keyboard click path.
 use gpui::prelude::*;
-use gpui::{App, IntoElement, RenderOnce, SharedString, Window};
+use gpui::{px, App, ElementId, IntoElement, RenderOnce, ScrollHandle, SharedString, Window};
 use gpui_component::button::Button;
+use gpui_component::ElementExt as _;
 
 #[derive(IntoElement)]
-pub(super) struct MetadataButton(Button);
+pub(super) struct MetadataButton(Button, bool, Option<(ElementId, ScrollHandle)>);
 impl InteractiveElement for MetadataButton {
     fn interactivity(&mut self) -> &mut gpui::Interactivity {
         self.0.interactivity()
     }
 }
 impl StatefulInteractiveElement for MetadataButton {}
+impl MetadataButton {
+    /// The kit owns focus; reveal that same control inside the message scroller.
+    pub(super) fn reveal_on_focus(
+        mut self,
+        id: impl Into<ElementId>,
+        scroll: ScrollHandle,
+    ) -> Self {
+        self.2 = Some((id.into(), scroll));
+        self
+    }
+}
 impl RenderOnce for MetadataButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        #[cfg(not(feature = "gui-e2e"))]
+        let _ = self.1;
         #[cfg(feature = "gui-e2e")]
-        {
+        if self.1 {
             let focus = window
                 .use_keyed_state("inspector-hash-chip", cx, |_, cx| cx.focus_handle())
                 .read(cx)
                 .clone();
             super::e2e::inspector_metadata::record_focus(focus);
         }
-        self.0.render(window, cx)
+        let mut button = self.0;
+        if let Some((id, scroll)) = self.2 {
+            let focus = window
+                .use_keyed_state(id, cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone();
+            button = button.on_prepaint(move |bounds, window, cx| {
+                if !focus.is_focused(window) {
+                    return;
+                }
+                let viewport = scroll.bounds();
+                let delta = if bounds.top() < viewport.top() + px(2.) {
+                    viewport.top() + px(2.) - bounds.top()
+                } else if bounds.bottom() > viewport.bottom() - px(2.) {
+                    viewport.bottom() - px(2.) - bounds.bottom()
+                } else {
+                    return;
+                };
+                let old = scroll.offset();
+                let mut offset = old;
+                offset.y = (old.y + delta).clamp(-scroll.max_offset().y, px(0.));
+                if offset != old {
+                    // Apply after parent prepaint releases its scroll borrow.
+                    window.defer(cx, move |window, _| {
+                        scroll.set_offset(offset);
+                        window.refresh();
+                    });
+                }
+            });
+        }
+        button.render(window, cx)
     }
 }
 pub(super) fn named_hash_button(
@@ -35,8 +79,18 @@ pub(super) fn named_hash_button(
 ) -> MetadataButton {
     #[cfg(feature = "gui-e2e")]
     super::e2e::inspector_metadata::record_hash(name.clone());
-    MetadataButton(button)
-        .role(gpui::Role::Button)
+    named_button(button, gpui::Role::Button, name, description, true)
+}
+
+pub(super) fn named_button(
+    button: Button,
+    role: gpui::Role,
+    name: SharedString,
+    description: SharedString,
+    hash: bool,
+) -> MetadataButton {
+    MetadataButton(button, hash, None)
+        .role(role)
         .aria_label(name)
         .aria_description(description)
 }

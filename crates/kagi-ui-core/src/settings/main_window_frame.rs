@@ -24,8 +24,8 @@ fn parse_frame(raw: &str) -> Option<MainWindowFrame> {
         && frame.y.is_finite()
         && frame.width.is_finite()
         && frame.height.is_finite()
-        && (400. ..=16384.).contains(&frame.width)
-        && (300. ..=16384.).contains(&frame.height))
+        && (1. ..=16384.).contains(&frame.width)
+        && (1. ..=16384.).contains(&frame.height))
     .then_some(frame)
 }
 
@@ -60,7 +60,7 @@ mod tests {
             "1,2,inf,480,id",
             "1,2,640,NaN,id",
             "1,2,0,480,id",
-            "1,2,640,299,id",
+            "1,2,640,-1,id",
             "1,2,640,480,id,extra",
             "1,2,16385,480,id",
             "1,2,640,16385,id",
@@ -73,5 +73,9 @@ mod tests {
             (-20., 30., 640., 480.)
         );
         assert_eq!(frame.display, "id");
+        assert!(
+            parse_frame("40,50,200,150,id").is_some(),
+            "placement clamps positive undersized frames"
+        );
     }
 }

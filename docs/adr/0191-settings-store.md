@@ -132,7 +132,8 @@ in logical coordinates relative to the identified display. Bounds events from
 the main repository window replace a 200ms trailing task, so moving/resizing
 commits only the settled frame through the existing store. Graceful quit and
 root release save the last pending frame; maximized/fullscreen bounds are not
-persisted. Parsed sizes must be finite and between 400×300 and 16384×16384.
+persisted. Parsed sizes must be finite, positive and at most 16384×16384;
+the placement owner, rather than the settings parser, enforces the product minimum.
 
 Restore requires a connected display with the saved UUID and a reachable
 titlebar: the entire upper 28 logical-pixel band and at least 100 logical
@@ -153,3 +154,15 @@ Legacy `window_size` is read only when no valid frame exists and is removed
 on the first frame save. `KAGI_NO_RESTORE=1` skips both reading and writing
 geometry; explicit `KAGI_WINDOW` retains its dev/test override. Secondary
 windows keep their separate geometry owners.
+
+## Amendment — 2026-10-14: supported repository-window minimum (#1550)
+
+The main repository window has one supported minimum of 940×660 logical
+points, the established compact viewport at EN/JA and 100%/167% zoom.
+`window_restore::minimum_size` supplies both `WindowOptions::window_min_size`
+(the native runtime resize constraint) and startup placement. Positive
+undersized saved frames, legacy sizes and explicit dev/test size overrides
+expand to this minimum. Display fitting still caps startup geometry to the
+usable area if the display itself is smaller; the native minimum remains the
+supported product size. Larger 1000×720 and 1400×900 requests stay unconstrained.
+Settings and other secondary windows remain independently owned.

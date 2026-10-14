@@ -49,7 +49,7 @@ pub(crate) fn scenario_window_restore_position(cx: &mut VisualTestAppContext) {
     let (uuid, display) = main_display_geometry(cx);
     let expected = Bounds {
         origin: point(display.origin.x + px(40.), display.origin.y + px(50.)),
-        size: size(px(640.), px(480.)),
+        size: window_restore::minimum_size(),
     };
     settings::write_setting(
         "window_frame",
@@ -98,7 +98,7 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
     let (entity, window) = mount_window(cx);
     cx.update_window(window, |_, window, app| {
         window_restore::observe(&entity, window, app);
-        window.resize(size(px(700.), px(520.)));
+        window.resize(size(px(1000.), px(720.)));
     })
     .expect("observe production repository window");
     crate::macos::drain_native_events();
@@ -125,7 +125,7 @@ fn check_persistence(cx: &mut VisualTestAppContext, default: Bounds<Pixels>) {
     );
     assert!(!saved.display.is_empty(), "save the connected display UUID");
     cx.update_window(window, |_, window, _| {
-        window.resize(size(px(720.), px(540.)))
+        window.resize(size(px(1100.), px(760.)))
     })
     .unwrap();
     crate::macos::drain_native_events();
@@ -170,8 +170,9 @@ fn main_display_geometry(cx: &mut VisualTestAppContext) -> (String, Bounds<Pixel
 }
 
 fn centered_in(visible: Bounds<Pixels>, width: f32, height: f32) -> Bounds<Pixels> {
-    let width = px(width).min(visible.size.width);
-    let height = px(height).min(visible.size.height);
+    let minimum = window_restore::minimum_size();
+    let width = px(width).max(minimum.width).min(visible.size.width);
+    let height = px(height).max(minimum.height).min(visible.size.height);
     Bounds {
         origin: point(
             (visible.origin.x + (visible.size.width - width) / 2.).round(),
@@ -220,7 +221,7 @@ pub(crate) fn scenario_window_restore_display_identity(cx: &mut VisualTestAppCon
         window_restore::restore_on_display(&secondary, "secondary", secondary_visible),
         Some(Bounds {
             origin: point(px(40.), px(50.)),
-            size: size(px(640.), px(480.))
+            size: window_restore::minimum_size()
         })
     );
     assert!(
@@ -260,7 +261,7 @@ pub(crate) fn scenario_window_restore_titlebar(cx: &mut VisualTestAppContext) {
         launch(cx),
         Bounds {
             origin: point(visible.origin.x, px(y)),
-            size: size(px(640.), px(480.))
+            size: window_restore::minimum_size()
         },
         "140px of reachable titlebar qualifies, then the complete window moves inward"
     );

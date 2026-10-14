@@ -152,6 +152,10 @@ mod settings_window;
 mod window_restore;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_min_size.rs"]
+mod window_min_size;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/close_window_initial_home.rs"]
 mod close_window_initial_home;
 #[cfg(target_os = "macos")]
@@ -1752,6 +1756,10 @@ mod macos {
             (
                 "window_restore_position",
                 Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_min_size",
+                Box::new(crate::window_min_size::scenario_window_min_size),
             ),
             (
                 "window_restore_display_identity",

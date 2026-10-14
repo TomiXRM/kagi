@@ -12,9 +12,7 @@ pub enum GithubNote {
     MergeScope {
         branch: String,
         head_sha: String,
-        files: u32,
-        additions: u32,
-        deletions: u32,
+        totals: Option<(u32, u32, u32)>,
     },
     /// No same-head whole-PR path manifest was available at plan time.
     MergeFilesUnavailable,
@@ -132,14 +130,15 @@ impl GithubNote {
             GithubNote::MergeScope {
                 branch,
                 head_sha,
-                files,
-                additions,
-                deletions,
-            } => {
-                format!(
+                totals,
+            } => match totals {
+                Some((files, additions, deletions)) => format!(
                     "PR source: {branch}@{head_sha}\nFiles: {files} · +{additions} / −{deletions}"
-                )
-            }
+                ),
+                None => format!(
+                    "PR source: {branch}@{head_sha}\nPR file totals are unavailable for this head commit."
+                ),
+            },
             GithubNote::MergeFilesUnavailable => {
                 "PR file paths are unavailable for this head commit.".into()
             }

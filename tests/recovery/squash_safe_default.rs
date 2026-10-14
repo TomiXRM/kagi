@@ -89,7 +89,12 @@ pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
         let raw = git2::Repository::open(fixture.path()).unwrap();
         let before = raw.refname_to_id("refs/heads/feature").unwrap();
         let head_before = raw.head().unwrap().target();
-        let request = pr(fixture.path());
+        let request = kagi_domain::github::PullRequest {
+            changed_files: 0,
+            additions: 0,
+            deletions: 0,
+            ..pr(fixture.path())
+        };
         let (app, window) = mount(cx, fixture.path());
         app.update(cx, |app, cx| {
             app.set_theme(palette, cx);
@@ -106,6 +111,16 @@ pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
             cx.read(|cx| app.read(cx).pr_merge_modal().unwrap().plan.destructive),
             "delete-branch Squash merge must not be Primary"
         );
+        let copy = e2e::control_bounds(window.window_id(), "plan-card-copy").unwrap();
+        cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        let copied = cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap());
+        assert!(
+            copied.contains("totals are unavailable")
+                || copied.contains("合計は取得できていません"),
+            "Missing L3 totals must disclose unavailable, not assert a default zero scope"
+        );
+        assert!(!copied.contains("Files: 0") && !copied.contains("ファイル: 0 件"));
         let calls_before = std::fs::read(&calls).unwrap_or_default();
         cx.simulate_keystrokes(window, "enter");
         cx.simulate_keystrokes(window, "enter");
@@ -163,7 +178,6 @@ pub fn pr_merge_delete_branch_return_cancel(cx: &mut VisualTestAppContext) {
 }
 
 pub fn pr_merge_card_scope(cx: &mut VisualTestAppContext) {
-    let _offline = crate::pr_fields_focus::OfflineGh::install();
     let _settings = crate::recovery_layout::GlobalSettings::capture();
     let _theme = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     for (language, palette, zoom) in matrix() {
@@ -197,6 +211,9 @@ pub fn pr_merge_card_scope(cx: &mut VisualTestAppContext) {
             deletions: 0,
             ..crate::pr_viewed::pr_at(&head)
         };
+        let _offline = crate::pr_fields_focus::OfflineGh::with_script(&format!(
+            "#!/bin/sh\ncase \"$1 $2\" in\n'pr view') echo '{{\"number\":7,\"headRefOid\":\"{head}\",\"body\":\"scope body\",\"changedFiles\":1,\"additions\":2,\"deletions\":0}}' ;;\n*) echo '{{}}' ;;\nesac\n"
+        ));
         let (app, window) = mount(cx, fixture.path());
         app.update(cx, |app, cx| app.set_theme(palette, cx));
         e2e::queue_github_pr_conversation(gpui::Task::ready((
@@ -205,6 +222,18 @@ pub fn pr_merge_card_scope(cx: &mut VisualTestAppContext) {
         )));
         app.update(cx, |app, cx| app.pr_mode_open(&request, cx));
         crate::pr_viewed::wait_loaded(cx, &app, &head);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !cx.read(|cx| {
+            app.read(cx)
+                .pr_mode()
+                .is_some_and(|mode| mode.tabs[0].pr.body == "scope body")
+        }) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "same-head L3 body must load"
+            );
+            cx.run_until_parked();
+        }
         app.update(cx, |app, cx| {
             app.pr_mode_select_commit(Some(0), cx);
             app.open_pr_merge_modal(&request, kagi_git::github::MergeMethod::Squash, false, cx);

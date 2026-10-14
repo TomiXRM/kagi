@@ -458,6 +458,14 @@ impl KagiApp {
             return;
         };
         let head_summary = self.view().status_summary.branch.clone();
+        let totals = matches!(
+            self.ui()
+                .pr_details
+                .availability(pr, super::github_pr_detail::PrDetailStage::Body,),
+            kagi_domain::github::PrDetailAvailability::Fresh
+                | kagi_domain::github::PrDetailAvailability::Stale
+        )
+        .then_some((pr.changed_files, pr.additions, pr.deletions));
         // Never copy the selected commit's files as the whole-PR scope. Freeze
         // only a diff base loaded for this exact repository/number/head.
         let preview_base = self.pr_mode().and_then(|mode| {
@@ -492,6 +500,17 @@ impl KagiApp {
             let mut plan = repo
                 .plan_pr_merge(&bg_pr, method, delete_branch, head_summary)
                 .map_err(|e| e.to_string())?;
+            for note in &mut plan.warnings {
+                if let kagi_domain::plan_note::PlanNote::Github(
+                    kagi_domain::plan_note::GithubNote::MergeScope {
+                        totals: frozen_totals,
+                        ..
+                    },
+                ) = note
+                {
+                    *frozen_totals = totals;
+                }
+            }
             let files = preview_base.and_then(|base| {
                 repo.compare_commits(
                     &base,

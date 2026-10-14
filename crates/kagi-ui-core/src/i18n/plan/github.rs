@@ -62,12 +62,15 @@ pub fn note_ja(note: &GithubNote) -> String {
         GithubNote::MergeScope {
             branch,
             head_sha,
-            files,
-            additions,
-            deletions,
-        } => {
-            format!("PR source: {branch}@{head_sha}\nファイル: {files} 件 · +{additions} / −{deletions}")
-        }
+            totals,
+        } => match totals {
+            Some((files, additions, deletions)) => format!(
+                "PR source: {branch}@{head_sha}\nファイル: {files} 件 · +{additions} / −{deletions}"
+            ),
+            None => format!(
+                "PR source: {branch}@{head_sha}\nこの head commit の PR ファイル合計は取得できていません。"
+            ),
+        },
         GithubNote::MergeFilesUnavailable => {
             "この head commit の PR ファイルパスは取得できていません。".into()
         }

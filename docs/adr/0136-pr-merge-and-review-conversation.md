@@ -105,3 +105,10 @@ commits, not from the currently selected commit's file list. Missing or failed
 path reads are explicitly unavailable; they never imply zero changed files.
 The shared preview/Copy all renderer displays the frozen paths. Local cleanup
 names/tips remain separate, and `--match-head-commit` still refuses head drift.
+
+Review clarification: file/line totals are optional evidence, not L1 default
+zeros. Only the existing Body-detail controller's Fresh or same-head Stale
+payload supplies totals; Missing, Loading, failed-without-success and moved-head
+details disclose unavailable in EN/JA and Copy all. Frozen path inclusion in
+Copy all is restricted to PR merge cards, leaving the established bespoke
+Amend, Cherry-pick, Stash and Discard row formatting unchanged.

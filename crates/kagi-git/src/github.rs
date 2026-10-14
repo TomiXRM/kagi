@@ -432,9 +432,7 @@ pub(crate) fn plan_pr_merge(
     warnings.push(PlanNote::Github(GithubNote::MergeScope {
         branch: pr.head.clone(),
         head_sha: pr.head_sha.clone(),
-        files: pr.changed_files,
-        additions: pr.additions,
-        deletions: pr.deletions,
+        totals: None,
     }));
     if pr.head_sha.trim().is_empty() {
         blockers.push(PlanNote::Github(GithubNote::HeadUnavailable {

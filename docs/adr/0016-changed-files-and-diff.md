@@ -100,3 +100,22 @@ title priority, geometry and icon-only fallback are unchanged.
 `diff_header_ax_unique` inspects the activated native AccessKit tree in EN/JA,
 narrow icon-only and wide labelled layouts; every header action appears once
 and no measurement-copy node is present.
+
+## Amendment — 2026-10-15: batch staging publication (#1569)
+
+Stage all / Unstage all retain the existing admitted, exact-path index
+mutation. Their post-write read now publishes the panel and the owning
+session's status together, retaining that same status as the watcher baseline.
+The WIP badge reuses the panel's already-computed staged/unstaged diffstats;
+advancing its request revision prevents an older background badge from landing.
+A linked-worktree panel updates only its matching worktree row, never the
+active repository's status or badge.
+
+This is a read/publication correction, not a staging executor change.
+`working_tree_status` remains pure, the watcher retains its debounce and
+stat-cache repair policy, and no graph snapshot, ahead/behind or stash read
+is added to the local index-write path. Existing receipt behavior is unchanged.
+The deterministic `batch_staging_refresh` native scenario checks 17 and
+200 paths' immediate panel/session agreement before background tasks or a
+watcher can run, with unchanged working-file bytes and expected index trees.
+

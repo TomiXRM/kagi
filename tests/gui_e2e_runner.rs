@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/batch_staging_refresh.rs"]
+mod batch_staging_refresh;
+#[cfg(target_os = "macos")]
 #[path = "recovery/time_locale.rs"]
 mod time_locale;
 
@@ -3892,6 +3895,10 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "batch_staging_refresh",
+                Box::new(crate::batch_staging_refresh::scenario_batch_staging_refresh),
             ),
             (
                 "hunk_staging",

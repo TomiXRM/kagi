@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Branch-menu Create worktree here starts with an empty new-branch field and a matching provisional path instead of proposing the already-existing source branch. Empty fields no longer show an inline required-name error; typed collisions retain normal EN/JA validation. Open worktree from branch, lock and removal safety are unchanged. (#1564)
 - Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)
 - Graph's final Escape now closes an open bottom pane only after existing overlays, diff and commit-selection dismissal. Returning from PRs/Issues keeps the pane hidden until a fresh compact commit click or Up/Down selection reveals Changes detail/files through the existing selection hook; same-row toggles do not reopen it. Desktop keeps its right Inspector, and Editor/Conflict Escape semantics remain unchanged. (#1543)
   - Review: focused text Inputs keep their Escape semantics, including desktop Commit Panel title/body. Closing from a bottom-pane descendant hands focus to the Graph root before hiding controls, keeping the next Escape and ⌘J reachable.

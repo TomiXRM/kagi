@@ -34,6 +34,9 @@ prefill and attachment semantics.
 State contract for the existing input card (geometry/density unchanged):
 - Empty branch: no inline required-name error; the placeholder requests input.
   The backend's blocker and disabled Create remain intact.
+  Return on an empty/whitespace-only new-name field is a no-op: the form stays
+  open, with no refusal receipt, toast or footer change. Existing-branch mode
+  and nonempty invalid input retain their ordinary refusal behavior.
 - Nonempty user input: ordinary localized validation, including collisions,
   remains visible. A valid new name enables Create through the same live plan.
 - Untouched path follows the typed branch; manually chosen paths retain their

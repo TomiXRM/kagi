@@ -83,6 +83,38 @@ pub fn scenario_worktree_create_default_name(cx: &mut VisualTestAppContext) {
                 .unwrap()
                 .disabled
         );
+        // Return on an unfilled new-name request is neutral, not a refused op.
+        let oplog = std::path::PathBuf::from(std::env::var_os("KAGI_LOG_DIR").unwrap())
+            .join("operations.jsonl");
+        let receipts = std::fs::read(&oplog).unwrap_or_default();
+        let feedback = |cx: &mut VisualTestAppContext| {
+            cx.read(|cx| {
+                let state = app.read(cx);
+                let toasts = state.toast_stack.as_ref().unwrap().read(cx);
+                (
+                    format!("{:?}", state.status_footer),
+                    toasts
+                        .toasts()
+                        .iter()
+                        .map(|toast| (toast.id, format!("{:?}", toast.kind), toast.message.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        };
+        let before_return = feedback(cx);
+        crate::keyboard_nav::keys(cx, window, "enter");
+        paint(cx, window);
+        assert_eq!(
+            std::fs::read(&oplog).unwrap_or_default(),
+            receipts,
+            "{lang:?}: Return on an empty new-branch request must not record Refused"
+        );
+        assert_eq!(
+            feedback(cx),
+            before_return,
+            "{lang:?}: empty Return must not change footer or toasts"
+        );
+        assert!(cx.read(|cx| app.read(cx).create_worktree_modal().is_some()));
         let branch_state = cx.read(|cx| {
             app.read(cx)
                 .create_worktree_modal()

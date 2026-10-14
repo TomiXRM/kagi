@@ -3354,6 +3354,14 @@ mod macos {
                 Box::new(crate::graph_return_changes::scenario_graph_return_reopens_changes),
             ),
             (
+                "graph_return_input_escape",
+                Box::new(crate::graph_return_changes::scenario_graph_return_input_escape),
+            ),
+            (
+                "graph_return_bottom_focus",
+                Box::new(crate::graph_return_changes::scenario_graph_return_bottom_focus),
+            ),
+            (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),

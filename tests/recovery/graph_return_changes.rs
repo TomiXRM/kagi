@@ -177,3 +177,109 @@ fn assert_projection(
         assert!(files.rows.values().any(|(name, _)| name.ends_with(path)));
     }
 }
+
+pub fn scenario_graph_return_input_escape(cx: &mut VisualTestAppContext) {
+    use gpui::Focusable as _;
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("README.md"), "unsent WIP\n").unwrap();
+    for locale in ["en", "ja"] {
+        for zoom in [1., 1.67] {
+            std::env::set_var("KAGI_LANG", locale);
+            i18n::init_lang();
+            theme::set_zoom(zoom);
+            let (app, win) = mount_state(cx, e2e::app_state(fixture.path()).unwrap());
+            resize(cx, win, 1200.);
+            cx.update_window(win, |_, window, cx| {
+                app.update(cx, |app, cx| {
+                    app.bottom_tab = BottomTab::OperationLog;
+                    app.bottom_panel_open = true;
+                    app.open_commit_panel(window, cx);
+                });
+            })
+            .unwrap();
+            settle(cx, win);
+            let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+            for body in [true, false] {
+                let input = cx.read(|cx| {
+                    let panel = panel.read(cx);
+                    if body {
+                        panel.body_input.clone()
+                    } else {
+                        panel.title_input.clone()
+                    }
+                    .unwrap()
+                });
+                cx.update_window(win, |_, window, cx| {
+                    input.focus_handle(cx).focus(window, cx)
+                })
+                .unwrap();
+                key(cx, win, "escape");
+                assert!(
+                    cx.read(|cx| app.read(cx).bottom_panel_open),
+                    "desktop focused Commit Panel input Escape must preserve bottom pane"
+                );
+                assert!(cx
+                    .update_window(win, |_, window, cx| input
+                        .focus_handle(cx)
+                        .is_focused(window))
+                    .unwrap());
+                drop(input);
+            }
+            drop(panel);
+            unmount(cx, app, win);
+        }
+    }
+}
+
+pub fn scenario_graph_return_bottom_focus(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _offline = crate::gui_isolation::OfflineNetwork::install();
+    let fixture = build_fixture();
+    for width in [900., 1200.] {
+        let (app, win) = mount_state(cx, e2e::app_state(fixture.path()).unwrap());
+        resize(cx, win, width);
+        app.update(cx, |app, cx| {
+            app.bottom_panel_open = true;
+            app.bottom_tab = BottomTab::OperationLog;
+            cx.notify();
+        });
+        focus_graph(cx, &app, win);
+        let mut reached = false;
+        for _ in 0..100 {
+            key(cx, win, "tab");
+            if cx
+                .update_window(win, |_, window, cx| {
+                    app.read(cx).bottom_tab_focused_for_e2e(window).is_some()
+                })
+                .unwrap()
+            {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "real Tab must enter the bottom selector");
+        // Check the handoff immediately, before repaint can repair hidden focus.
+        let keystroke = gpui::Keystroke::parse("escape").unwrap();
+        cx.dispatch_keystroke(win, keystroke.clone());
+        cx.simulate_event(win, gpui::KeyUpEvent { keystroke });
+        assert!(!cx.read(|cx| app.read(cx).bottom_panel_open));
+        assert!(
+            cx.update_window(win, |_, window, cx| app
+                .read(cx)
+                .root_focus
+                .as_ref()
+                .unwrap()
+                .is_focused(window))
+                .unwrap(),
+            "bottom Escape must hand focus to Graph root before hiding its controls"
+        );
+        key(cx, win, "cmd-j");
+        assert!(
+            cx.read(|cx| app.read(cx).bottom_panel_open),
+            "immediate Cmd-J remains reachable after bottom Escape"
+        );
+        unmount(cx, app, win);
+    }
+}

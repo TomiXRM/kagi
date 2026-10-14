@@ -554,3 +554,32 @@ an explicitly opened Terminal closes on the final Graph Escape. Each capture
 targets the launched PID's window ID. Brief own-PID activation was required for
 fresh frames; the prior foreground was restored and all four runs quit normally.
 
+Review focus correction: the final fallback ignores a currently focused text
+Input (including wide Commit Panel title/body), using the pinned component's
+focused Input owner rather than another input-field inventory. A single retained
+non-Tab-stop focus scope around the bottom panel hands every descendant's focus
+to the root before closing. It introduces no Tab stop and keeps keyboard entry,
+PTY, Activity, file-list and selector ownership unchanged.
+
+Regression-first `graph_return_input_escape` fails before this correction with
+`desktop focused Commit Panel input Escape must preserve bottom pane`.
+The real-Tab selector regression `graph_return_bottom_focus` already passes on
+the pre-review implementation through the renderer's existing hidden-selector
+handoff; it now also covers the explicit pre-close scope handoff and immediate
+Cmd-J reopening. Do not claim a reproduced selector-focus failure.
+
+After the review correction, the registered Graph-return and bottom-panel
+scenarios pass **8/8**. The separately selected `commit_panel_body_focus`,
+`commit_panel_segment_keys`, `commit_panel_footer_tab_order` and
+`commit_panel_coauthor_keys` pass **4/4**; `commit_panel_keyboard` is a module,
+not a registered scenario substring. Workspace tests, Clippy, formatting,
+`ci check-all`, locked build and the final plain build also pass.
+
+A final plain desktop launch at 100% confirms that Escape from the Commit Panel
+body preserves its input focus and the open bottom pane, and Escape from the
+bottom selector closes the pane before immediate Cmd-J reopens it. These
+`review-desktop-*` captures use the same isolated copy and owned window ID;
+the process quits normally and the prior foreground is restored. Earlier
+EN/JA compact/desktop captures use the existing migrated 111.1% native zoom;
+the deterministic Tier A matrix exercises the exact 100%/167% zoom values.
+

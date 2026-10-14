@@ -109,3 +109,10 @@ Historical detail/files occupy the bottom Changes tab only in compact windows
 opens that projection even after PRs or manual closure; desktop retains its
 right Inspector and does not reopen the bottom pane on commit selection.
 
+Review clarification: a currently focused text Input prevents this final
+fallback, including desktop Commit Panel title/body and other panel inputs.
+The existing component Input registry supplies the actual focused handle.
+A non-Tab-stop scope around the bottom panel detects every focused descendant;
+before closing from that subtree, return focus to the workspace root. Do not
+leave Terminal, tab-strip, Activity or file-list focus on an undrawn control.
+

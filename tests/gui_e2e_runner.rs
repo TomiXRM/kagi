@@ -622,6 +622,10 @@ mod recovery_commit_panel_polish;
 mod recovery_commit_panel_keyboard;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_file.rs"]
+mod recovery_commit_panel_file;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
 mod toolbar_count;
 
@@ -3328,6 +3332,10 @@ mod macos {
             (
                 "commit_panel_bulk_hover",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
+            ),
+            (
+                "commit_panel_file_middle_ellipsis",
+                Box::new(crate::recovery_commit_panel_file::scenario),
             ),
             (
                 "compact_bottom_third",

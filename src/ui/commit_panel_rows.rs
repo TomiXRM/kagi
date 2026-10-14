@@ -223,7 +223,7 @@ fn render_cp_file_row(
                 .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
                 .aria_label(full_path.clone())
                 .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(full_path.clone()).build(window, cx)
+                    super::render_helpers::subject_tooltip(full_path.clone(), window, cx)
                 })
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
@@ -240,8 +240,15 @@ fn render_cp_file_row(
                     rgb(theme().text_main).into()
                 })
                 .overflow_hidden()
-                .truncate()
-                .child(name),
+                .whitespace_nowrap()
+                .text_ellipsis_middle()
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    el.child(super::e2e::measure_control(
+                        format!("cp-{}-file-label-{fi}", if staged { "st" } else { "us" }),
+                        name.clone(),
+                    ))
+                })
+                .when(!cfg!(feature = "gui-e2e"), |el| el.child(name)),
         )
         .when(convention, |el| {
             // issue #338: emphasis badge on a convention-body file — these steer

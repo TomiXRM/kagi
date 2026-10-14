@@ -253,6 +253,9 @@ pub enum Msg {
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
+    ToastMore,
+    ToastMoreOne,
+    ToastCollapse,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -2434,6 +2437,12 @@ impl Msg {
             (Ja, ToastDismiss) => "通知を閉じる",
             (En, ToastOpenRepository) => "Open Repository",
             (Ja, ToastOpenRepository) => "リポジトリを開く",
+            (En, ToastMore) => "{count} more notifications",
+            (Ja, ToastMore) => "ほか{count}件の通知",
+            (En, ToastMoreOne) => "1 more notification",
+            (Ja, ToastMoreOne) => "ほか1件の通知",
+            (En, ToastCollapse) => "Collapse notifications",
+            (Ja, ToastCollapse) => "通知を折りたたむ",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
@@ -5191,5 +5200,20 @@ mod rebase_plan_label_tests {
                 format!("{branch} を replay")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod toast_count_tests {
+    use super::*;
+
+    #[test]
+    fn older_notification_caption_has_a_singular_english_form() {
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::En), "1 more notification");
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::Ja), "ほか1件の通知");
+        assert_eq!(
+            Msg::ToastMore.t_for(Lang::En).replace("{count}", "3"),
+            "3 more notifications"
+        );
     }
 }

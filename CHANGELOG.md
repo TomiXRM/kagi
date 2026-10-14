@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Notification stacks show the newest preview with an EN/JA counted disclosure for older notifications; expanded cards scroll within 30% of the window height, preserving foreground workspace access and all Operation Log receipts. Errors still require explicit dismissal. (#1551)
 - Settings fits its entire native frame inside its own display's visible area after opening, content-driven pane resizing, zoom changes and saved-frame restoration. Oversized pages keep the existing scroller; repository window sizing is unchanged. (#1549)
   - Page Up/Down scroll the native Settings page without changing the focused control, so the final setting remains keyboard-reachable when large content is clipped to the display.
   - Review: ordinary dragging and redraws preserve the user's partly offscreen or cross-display placement; fitting runs only for actual layout or display-configuration changes.

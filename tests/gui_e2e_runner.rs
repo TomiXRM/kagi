@@ -583,6 +583,10 @@ mod editor_history_error;
 mod blame_identity;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/blame_toggle.rs"]
+mod blame_toggle;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/header_fit.rs"]
 mod recovery_header_fit;
 
@@ -3218,6 +3222,10 @@ mod macos {
             (
                 "editor_history_fetch_error",
                 Box::new(crate::editor_history_error::scenario),
+            ),
+            (
+                "blame_toggle_a11y",
+                Box::new(crate::blame_toggle::blame_toggle_a11y),
             ),
             (
                 "blame_dirty_mapping",

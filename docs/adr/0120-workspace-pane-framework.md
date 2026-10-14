@@ -146,6 +146,19 @@ this projection. `uniform_list` still virtualizes the displayed rows; collapsed
 folders retain the selected editor buffer while their descendants leave the
 visible and accessibility projections.
 
+### Blame toggle interaction amendment (2026-10-14, #1524)
+
+The dense Editor Blame chip uses the pinned small compact ghost Button and
+the existing named Button adapter. Rest, hover, pressed and keyboard focus
+are owned by that component; `show_blame` supplies its selected state and
+`EditorWorkspaceBlame` supplies the EN/JA accessible and visible name.
+Tab traversal, Enter, Space and pointer activation share `toggle_blame`;
+activation retains chip focus rather than transferring it to the editor.
+The chip is present only for a loaded editable text buffer. Disabled, empty
+and error states are not separate chip states: existing buffer placeholders
+omit it, while blame read failures retain their existing presentation.
+No new read, settings owner, Git operation or modal is introduced.
+
 ## Consequences
 
 - ペイン内容の追加が「enum variant + render arm + open/close」の定型作業になり、

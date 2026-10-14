@@ -58,9 +58,10 @@ use gpui::{
     div, px, rgb, uniform_list, AnyElement, Context, Entity, EventEmitter, MouseButton,
     ScrollStrategy, SharedString, UniformListScrollHandle, Window,
 };
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::scroll::Scrollbar;
-use gpui_component::Sizable as _;
+use gpui_component::{Selectable as _, Sizable as _};
 use kagi_domain::file_history::{FileHistory, FileSnapshotContent};
 use kagi_domain::load_request::RequestSlot;
 use kagi_domain::status::{ChangeKind, WorkingTreeStatus};
@@ -3222,26 +3223,18 @@ fn render_center_pane(
             ));
         }
     }
-    let blame_on = view.show_blame;
+    let name: SharedString = Msg::EditorWorkspaceBlame.t().into();
+    let button = Button::new("ews-blame-toggle")
+        .ghost()
+        .small()
+        .compact()
+        .selected(view.show_blame)
+        .label(name.clone())
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_blame(cx)));
     chips = chips.child(
-        div()
-            .id("ews-blame-toggle")
-            .px_2()
-            .py_px()
-            .rounded_sm()
-            .cursor_pointer()
-            .text_xs()
-            .bg(rgb(if blame_on {
-                theme().selected
-            } else {
-                theme().surface
-            }))
-            .text_color(rgb(theme().text_main))
-            .hover(|s| s.bg(rgb(theme().selected)))
-            .on_click(cx.listener(|this, _e: &gpui::ClickEvent, _w, cx| {
-                this.toggle_blame(cx);
-            }))
-            .child(Msg::EditorWorkspaceBlame.t()),
+        named_button::NamedButton(button)
+            .role(gpui::Role::Button)
+            .aria_label(name),
     );
     if is_md {
         let previewing = view.preview_markdown;

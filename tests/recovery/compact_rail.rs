@@ -157,50 +157,21 @@ fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, case: Case) {
     }
     settle(cx, win);
 }
-// Calling the real NSView accessibility entry activates AccessKit's production
-// activation callback, without VoiceOver, foreground activation or a fake tree.
-fn activate_ax(cx: &mut VisualTestAppContext) {
-    cx.update(|_| unsafe {
-        use objc2::{class, msg_send, runtime::AnyObject};
-        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-        let windows: *mut AnyObject = msg_send![app, windows];
-        let count: usize = msg_send![windows, count];
-        for index in 0..count {
-            let window: *mut AnyObject = msg_send![windows, objectAtIndex: index];
-            let view: *mut AnyObject = msg_send![window, contentView];
-            if !view.is_null() {
-                let _: *mut AnyObject = msg_send![view, accessibilityChildren];
-            }
-        }
-    });
-}
-fn tree(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Value {
-    let json = cx
-        .update_window(win, |_, w, _| w.debug_a11y_tree_json())
-        .unwrap()
-        .expect("native accessibility adapter must produce a real tree");
-    serde_json::from_str(&json).unwrap()
-}
-fn ax_identity(id: &str) -> String {
-    let element: gpui::ElementId = if let Some(index) = id.strip_prefix("pr-mode-section-") {
+use crate::native_ax::{activate as activate_ax, tree};
+fn ax_element(id: &str) -> gpui::ElementId {
+    if let Some(index) = id.strip_prefix("pr-mode-section-") {
         ("pr-mode-section", index.parse::<usize>().unwrap()).into()
     } else if let Some(index) = id.strip_prefix("issue-filter-tab-") {
         ("issue-filter-tab", index.parse::<usize>().unwrap()).into()
     } else {
         id.to_owned().into()
-    };
-    format!("{element:?}")
+    }
+}
+fn ax_identity(id: &str) -> String {
+    format!("{:?}", ax_element(id))
 }
 fn node(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> Value {
-    let tree = tree(cx, win);
-    let identity = ax_identity(id);
-    tree["nodes"]
-        .as_object()
-        .unwrap()
-        .values()
-        .find(|node| node["element_id"].as_str() == Some(identity.as_str()))
-        .cloned()
-        .unwrap_or_else(|| panic!("missing actual AX node {id}: {tree}"))
+    crate::native_ax::node(cx, win, ax_element(id))
 }
 fn focused(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> bool {
     let tree = tree(cx, win);

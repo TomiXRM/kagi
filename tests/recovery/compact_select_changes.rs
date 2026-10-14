@@ -116,21 +116,120 @@ pub fn scenario_compact_wip_first_frame(cx: &mut VisualTestAppContext) {
         .unwrap();
         settle(cx, win);
         app.update(cx, |app, _| {
-            app.reads.invalidate(app.active_session().unwrap());
+            app.reads.invalidate_all();
         });
         release.send(());
         settle(cx, win);
-        assert!(
-            cx.read(|cx| panel.read(cx).state.unstaged.is_empty()),
-            "a full reload or write admission invalidates the opening payload"
+        assert_eq!(
+            cx.read(|cx| panel.read(cx).state.unstaged.len()),
+            200,
+            "an invalidated opening must reread even when no reload follows"
         );
+        drop(title);
+        drop(panel);
+        unmount(cx, app, win);
+    }
+    assert_eq!(before, crate::macos::repo_fingerprint(fixture.path()));
+}
+
+pub fn scenario_compact_wip_probe_superseded(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("staged.txt"), "staged\n").unwrap();
+    git(fixture.path(), &["add", "staged.txt"]);
+    let (app, win) = mount_state(cx, e2e::app_state(fixture.path()).unwrap());
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    let (probe_hold, probe_release) = crate::evidence_support::deferred::<()>(cx);
+    KagiApp::hold_next_commit_panel_read_for_e2e(hold);
+    KagiApp::hold_next_smart_probe_for_e2e(probe_hold);
+    app.update(cx, |app, _| app.smart_commit.llm_enabled = true);
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+    })
+    .unwrap();
+    let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+    panel.update(cx, |panel, cx| {
+        panel.reload_status(fixture.path());
+        cx.notify();
+    });
+    release.send(());
+    settle(cx, win);
+    assert!(
+        cx.read(|cx| app.read(cx).smart_commit.detecting),
+        "a superseded opening still starts provider discovery"
+    );
+    assert_eq!(
+        e2e::commit_panel_labels::accessible_description("cp-smart-suggest").as_deref(),
+        Some(i18n::Msg::SmartDetecting.t())
+    );
+    probe_release.send(());
+    settle(cx, win);
+    assert!(!cx.read(|cx| app.read(cx).smart_commit.detecting));
+    assert!(e2e::control_bounds(win.window_id(), "cp-smart-suggest").is_some());
+    drop(panel);
+    unmount(cx, app, win);
+}
+
+pub fn scenario_compact_wip_amend_loading(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let fixture = build_fixture();
+    std::fs::write(fixture.path().join("staged.txt"), "staged\n").unwrap();
+    git(fixture.path(), &["add", "staged.txt"]);
+    let before = crate::macos::repo_fingerprint(fixture.path());
+    for (width, lang, reason) in [
+        (900., i18n::Lang::En, "Amend: waiting for repository status"),
+        (1200., i18n::Lang::Ja, "Amend: リポジトリの状態を読み込み中"),
+    ] {
+        i18n::set_lang(lang);
+        let (app, win) = mount_state(cx, e2e::app_state(fixture.path()).unwrap());
+        resize(cx, win, width);
+        let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+        KagiApp::hold_next_commit_panel_read_for_e2e(hold);
         cx.update_window(win, |_, window, cx| {
             app.update(cx, |app, cx| app.open_commit_panel(window, cx));
         })
         .unwrap();
+        let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+        cx.update_window(win, |_, window, cx| {
+            let title = panel.read(cx).title_input.clone().unwrap();
+            title.update(cx, |input, cx| {
+                input.set_value("amended subject", window, cx)
+            });
+        })
+        .unwrap();
         settle(cx, win);
-        assert_eq!(cx.read(|cx| panel.read(cx).state.unstaged.len()), 200);
-        drop(title);
+        let description = e2e::commit_panel_labels::accessible_description("cp-amend-btn");
+        let amend = e2e::control_bounds(win.window_id(), "cp-amend-btn").unwrap();
+        cx.simulate_click(win, amend.center(), Modifiers::none());
+        settle(cx, win);
+        assert!(cx.read(|cx| app.read(cx).amend_modal().is_none()));
+        app.update(cx, |app, cx| {
+            app.commit_panel_amend(app.active_session().unwrap(), cx);
+        });
+        settle(cx, win);
+        assert_eq!(
+            (
+                cx.read(|cx| app.read(cx).amend_modal().is_some()),
+                description.as_deref()
+            ),
+            (false, Some(reason)),
+            "loading must block both amend dispatch and the rendered control"
+        );
+        release.send(());
+        settle(cx, win);
+        app.update(cx, |app, cx| {
+            app.commit_panel_amend(app.active_session().unwrap(), cx);
+        });
+        settle(cx, win);
+        assert_eq!(
+            cx.read(|cx| app.read(cx).amend_modal().unwrap().mode),
+            kagi_git::ops::AmendMode::Both
+        );
+        app.update(cx, |app, _| app.cancel_amend_modal());
         drop(panel);
         unmount(cx, app, win);
     }

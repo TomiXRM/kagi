@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)
+  - Review: invalidated opening reads retry even when no reload follows; Smart provider discovery starts independently of status publication; Amend waits for authoritative staged status, with English/Japanese unavailable help.
 - Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)
 - Graph's final Escape now closes an open bottom pane only after existing overlays, diff and commit-selection dismissal. Returning from PRs/Issues keeps the pane hidden until a fresh compact commit click or Up/Down selection reveals Changes detail/files through the existing selection hook; same-row toggles do not reopen it. Desktop keeps its right Inspector, and Editor/Conflict Escape semantics remain unchanged. (#1543)
   - Review: focused text Inputs keep their Escape semantics, including desktop Commit Panel title/body. Closing from a bottom-pane descendant hands focus to the Graph root before hiding controls, keeping the next Escape and ⌘J reachable.

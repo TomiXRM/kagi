@@ -466,6 +466,7 @@ pub enum Msg {
     NoLocalChanges,
     DirtyStashFirst,
     AmendNeedMessageOrStaged,
+    AmendStatusLoading,
 
     // ── Context-menu disabled reasons ───────────────────────────────
     CmDetachedHead,
@@ -2758,6 +2759,8 @@ impl Msg {
             }
             (En, AmendNeedMessageOrStaged) => "Amend: enter a message or stage changes",
             (Ja, AmendNeedMessageOrStaged) => "Amend: メッセージを入力するか変更を stage してください",
+            (En, AmendStatusLoading) => "Amend: waiting for repository status",
+            (Ja, AmendStatusLoading) => "Amend: リポジトリの状態を読み込み中",
 
             // ── Context-menu disabled reasons ───────────────────────
             (En, CmDetachedHead) => "detached HEAD",

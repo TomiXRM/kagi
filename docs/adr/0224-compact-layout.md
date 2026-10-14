@@ -601,14 +601,23 @@ publishing. A closed or replaced panel cannot update another tab's presentation.
 The owner read-store key also rejects a full reload or mutation admission that
 invalidated the repository revision while this opening read was in flight.
 This does not add a second read-model owner or change status's pure-read contract.
+If only the owner revision became stale, the still-current panel request starts
+a new background read and keeps its loading presentation. Invalidation alone
+(for example, fetch with no ref movement) does not guarantee a reload will publish.
+Superseded panel requests remain discarded without restarting.
 
 Smart Commit's first effective-PATH lookup can launch an interactive login shell;
 it is not an instant filesystem scan. Capability discovery is lazy and
 background-only, retains the existing process-global PATH cache and app probe
 revision, and keeps the offline network gate. No staged diff is sent by discovery.
+Discovery starts when the opening read starts, not when its payload is accepted:
+a newer synchronous publication must not suppress provider discovery.
 An enabled Smart provider remains unavailable with localized detecting help
 until discovery finishes, rather than silently generating a rule-based draft.
 The template/draft restore remains on the existing owner-bound path.
+Amend is unavailable while status is loading, with English/Japanese help and a
+matching dispatch guard. The temporary empty staged list must never choose a
+MessageOnly plan while the actual index contains staged changes.
 
 Plain-build native dispatch measurements on copied stress repositories:
 900×700/17 files: first 445.585ms, warm 35.193ms;

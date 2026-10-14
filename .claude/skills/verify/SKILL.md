@@ -3394,13 +3394,19 @@ selection Escape must leave the diff and copied notification visible.
 
 ### Nonblocking WIP opening (#1570)
 
-Tier A: `KAGI_GUI_E2E_ONLY=compact_wip_first_frame` holds the real opening
+Tier A: `KAGI_GUI_E2E_ONLY=compact_wip_` includes `compact_wip_first_frame`, holding the real opening
 read before publication in compact and desktop windows. The placeholder and
 compact composer must paint while held; releasing it publishes all 200 files.
 A warm reopen retains the panel/title input and draft, and a newer status refresh
 invalidates the held older result. A separately held Smart Commit capability
 result exposes the localized detecting reason without falling back to rule-based
 generation while an enabled provider is still unknown.
+Global read invalidation without a following reload must automatically reread
+and fill the pane. `compact_wip_probe_superseded` publishes synchronous status
+before releasing the opening read and still requires provider discovery.
+`compact_wip_amend_loading` checks compact EN / desktop JA unavailable help,
+inert pointer and direct Amend dispatch while held, then an authoritative Both
+plan after the staged payload arrives, with the repository unchanged.
 Neighbors: `compact_select_changes,compact_layout_changes,compact_layout_state,compact_layout_lifecycle,smart_commit_modal_and_probe,smart_commit_footer_provider,worktree_panel`.
 Use KEEP_GOING and the normal scoped native-run timeout.
 Tier B click dispatch and sample evidence can identify synchronous work, but

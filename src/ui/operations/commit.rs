@@ -203,6 +203,7 @@ impl KagiApp {
     /// Publish the shell first; status, diffstats and classification belong off
     /// the UI thread. Completion can only fill the same session/panel/request.
     fn load_commit_panel(&mut self, entity: &Entity<CommitPanelView>, cx: &mut Context<Self>) {
+        self.ensure_smart_commit_detection(cx);
         let (owner, repo_path, revision) = entity.update(cx, |panel, cx| {
             panel.status_revision = panel.status_revision.wrapping_add(1);
             panel.status_request.begin(panel.status_revision);
@@ -227,30 +228,28 @@ impl KagiApp {
                 if app.ui.get(&owner).and_then(|ui| ui.commit_panel.as_ref()) != Some(&entity) {
                     return;
                 }
-                let accepted = entity.update(cx, |panel, cx| {
-                    if !panel.status_request.accept(&revision) {
-                        return false;
-                    }
-                    if !app.reads.is_fresh(read_key) {
-                        cx.notify();
-                        return false;
-                    }
+                if !entity.update(cx, |panel, _| panel.status_request.accept(&revision)) {
+                    return;
+                }
+                if !app.reads.is_fresh(read_key) {
+                    // Invalidation (for example a no-op fetch) need not schedule
+                    // another publication. Keep loading until a current read lands.
+                    app.load_commit_panel(&entity, cx);
+                    return;
+                }
+                entity.update(cx, |panel, cx| {
                     state.tree_view = panel.state.tree_view;
                     state.commit_msg = std::mem::take(&mut panel.state.commit_msg);
                     panel.replace_state(state);
                     cx.notify();
-                    true
                 });
-                if accepted {
-                    let v = entity.read(cx);
-                    eprintln!(
-                        "[kagi] commit-panel: unstaged={} staged={}",
-                        v.state.unstaged.len(),
-                        v.state.staged.len()
-                    );
-                    app.ensure_smart_commit_detection(cx);
-                    cx.notify();
-                }
+                let v = entity.read(cx);
+                eprintln!(
+                    "[kagi] commit-panel: unstaged={} staged={}",
+                    v.state.unstaged.len(),
+                    v.state.staged.len()
+                );
+                cx.notify();
             });
         })
         .detach();
@@ -1263,6 +1262,14 @@ impl KagiApp {
     /// picks its mode from that worktree's index and plans against it.
     pub fn commit_panel_amend(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
         if !self.pane_mutation_admitted(owner) {
+            return;
+        }
+        if self
+            .ui()
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).status_request.is_loading())
+        {
             return;
         }
         let staged = self

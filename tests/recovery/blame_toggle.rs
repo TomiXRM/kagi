@@ -13,7 +13,7 @@ pub fn blame_toggle_a11y(cx: &mut VisualTestAppContext) {
             "Blame must expose a button role"
         );
         assert_eq!(node["aria"]["label"], Msg::EditorWorkspaceBlame.t());
-        assert_eq!(node["aria"]["selected"], true);
+        assert_eq!(node["aria"]["toggled"], "True");
         let reached = cx
             .update_window(window, |_, window, cx| {
                 for _ in 0..160 {
@@ -43,7 +43,10 @@ pub fn blame_toggle_a11y(cx: &mut VisualTestAppContext) {
             paint(cx, window);
             cx.read(|cx| assert_eq!(view.read(cx).show_blame, selected));
             let node = native_ax::node(cx, window, "ews-blame-toggle".into());
-            assert_eq!(node["aria"]["selected"], selected);
+            assert_eq!(
+                node["aria"]["toggled"],
+                if selected { "True" } else { "False" }
+            );
             assert_eq!(node["aria"]["label"], Msg::EditorWorkspaceBlame.t());
             let tree = native_ax::tree(cx, window);
             let focused = tree["gpui_focus"].as_str().expect("toggle retains focus");
@@ -61,8 +64,8 @@ pub fn blame_toggle_a11y(cx: &mut VisualTestAppContext) {
             )
         });
         assert_eq!(
-            native_ax::node(cx, window, "ews-blame-toggle".into())["aria"]["selected"],
-            false
+            native_ax::node(cx, window, "ews-blame-toggle".into())["aria"]["toggled"],
+            "False"
         );
     });
 }

@@ -3234,6 +3234,11 @@ fn render_center_pane(
     chips = chips.child(
         named_button::NamedButton(button)
             .role(gpui::Role::Button)
+            .aria_toggled(if view.show_blame {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
             .aria_label(name),
     );
     if is_md {

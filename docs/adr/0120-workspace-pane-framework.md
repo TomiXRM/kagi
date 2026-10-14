@@ -150,8 +150,10 @@ visible and accessibility projections.
 
 The dense Editor Blame chip uses the pinned small compact ghost Button and
 the existing named Button adapter. Rest, hover, pressed and keyboard focus
-are owned by that component; `show_blame` supplies its selected state and
-`EditorWorkspaceBlame` supplies the EN/JA accessible and visible name.
+are owned by that component; `show_blame` supplies its selected visual fill
+and explicit `aria_toggled` (pressed) state. Unlike `aria_selected` on a Button,
+this state survives the macOS accessibility adapter. `EditorWorkspaceBlame`
+supplies the EN/JA accessible and visible name.
 Tab traversal, Enter, Space and pointer activation share `toggle_blame`;
 activation retains chip focus rather than transferring it to the editor.
 The chip is present only for a loaded editable text buffer. Disabled, empty

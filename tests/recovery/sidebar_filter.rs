@@ -60,6 +60,15 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
     );
     cx.update_window(window, |_, window, cx| {
         assert!(
+            input.read(cx).focus_handle(cx).is_focused(window),
+            "first Escape retains search focus"
+        );
+    })
+    .unwrap();
+    keys(cx, window, "escape");
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        assert!(
             app.read(cx).sidebar_row_focused_for_e2e(window).is_some(),
             "Escape returns focus to the list"
         );

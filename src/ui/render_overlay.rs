@@ -75,6 +75,9 @@ fn toast_slide_offset(delta: f32) -> gpui::Pixels {
 impl gpui::Render for toast_stack::ToastStack {
     fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let error_line_height = (_window.rem_size() * 1.4).round();
+        // Keep the foreground workspace usable even at accessibility zoom.
+        // Expansion scrolls within the same budget; durable detail stays in OpLog.
+        let budget = _window.viewport_size().height * 0.3;
         // Pinned GPUI has no live/priority setter. A stable Status node exposes
         // arrival text without stealing focus or promoting dismissed old cards.
         let arrival = self.status();
@@ -88,10 +91,67 @@ impl gpui::Render for toast_stack::ToastStack {
             .aria_label(label.clone())
             .flex()
             .flex_col()
-            .gap_2();
+            .gap_2()
+            .max_h(budget)
+            .child(e2e::measure_inside("toast-stack"));
         #[cfg(feature = "gui-e2e")]
         toast_stack::record_status(Some(role), Some(label), arrival.map(|(id, _)| id));
-        for toast in self.toasts() {
+        if self.toasts().len() > 1 {
+            use gpui_component::button::{Button, ButtonVariants as _};
+            let owner = cx.entity().downgrade();
+            use gpui_component::Sizable as _;
+            let count = self.toasts().len() - 1;
+            let caption = if self.expanded {
+                Msg::ToastCollapse.t().to_string()
+            } else if count == 1 {
+                Msg::ToastMoreOne.t().to_string()
+            } else {
+                Msg::ToastMore.t().replace("{count}", &count.to_string())
+            };
+            stack = stack.child(
+                div()
+                    .w_full()
+                    .flex_shrink_0()
+                    .rounded(theme::scaled_px(8.))
+                    .bg(rgb(theme().elevated_surface(theme().panel)))
+                    .child(
+                        toast_stack::ToastButton(
+                            Button::new(("toast-summary", 0u64))
+                                .small()
+                                .ghost()
+                                .w_full()
+                                .label(caption.clone())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.toggle_expanded(cx);
+                                })),
+                            0,
+                            self.summary_focus.clone(),
+                            "toast-summary",
+                        )
+                        .aria_label(SharedString::from(caption))
+                        .aria_expanded(self.expanded)
+                        .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                            let _ = owner.update(cx, |stack, cx| stack.toggle_expanded(cx));
+                        })
+                        .on_key_down(super::keyboard_nav::stop_activation_keys),
+                    ),
+            );
+        }
+        let mut cards = div()
+            .id("toast-cards")
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_h_0()
+            .max_h(if self.toasts().len() > 1 {
+                (budget - theme::scaled_px(40.)).max(gpui::px(0.))
+            } else {
+                budget
+            })
+            .overflow_y_scroll();
+        for toast in self.toasts().iter().rev().filter(|toast| {
+            self.expanded || self.toasts().last().is_some_and(|last| last.id == toast.id)
+        }) {
             let id = toast.id;
             let leaving = toast.dismissing.is_some();
             let card = toast_card(toast, error_line_height, cx);
@@ -125,9 +185,9 @@ impl gpui::Render for toast_stack::ToastStack {
                 )
                 .into_any_element()
             };
-            stack = stack.child(animated);
+            cards = cards.child(animated);
         }
-        stack
+        stack.child(cards)
     }
 }
 
@@ -158,6 +218,7 @@ fn toast_card(
         .w_full()
         .id(("toast-card", id))
         .relative()
+        .flex_shrink_0()
         .child(e2e::measure_inside("toast-card"))
         .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
             this.set_hovered(id, *hovered);
@@ -197,6 +258,7 @@ fn toast_card(
         .when_some(toast.action_focus.clone(), |card, focus| {
             use gpui_component::button::{Button, ButtonVariants as _};
             use gpui_component::Sizable as _;
+            let owner = cx.entity().downgrade();
             card.child(e2e::measure_control(
                 "clone-completion-open",
                 toast_stack::ToastButton(
@@ -211,6 +273,9 @@ fn toast_card(
                     focus,
                     "toast-open-repository",
                 )
+                .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+                    let _ = owner.update(cx, |stack, cx| stack.activate_action(id, cx));
+                })
                 .on_key_down(super::keyboard_nav::stop_activation_keys),
             ))
         })
@@ -224,6 +289,7 @@ fn toast_close_control(
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::Sizable as _;
     let id = toast.id;
+    let owner = cx.entity().downgrade();
     let control = toast_stack::ToastButton(
         Button::new(("toast-dismiss", id))
             .ghost()
@@ -238,6 +304,9 @@ fn toast_close_control(
         "toast-dismiss",
     )
     .aria_label(SharedString::from(Msg::ToastDismiss.t()))
+    .on_a11y_action(gpui::AccessibleAction::Click, move |_, _, cx| {
+        let _ = owner.update(cx, |stack, cx| stack.begin_exit(id, cx));
+    })
     .on_key_down(super::keyboard_nav::stop_activation_keys);
     #[cfg(feature = "gui-e2e")]
     return e2e::measure_control(format!("toast-dismiss-{id}"), control);

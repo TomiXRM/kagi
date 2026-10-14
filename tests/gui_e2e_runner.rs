@@ -125,6 +125,10 @@ mod push_tag_card_scope;
 mod toast_dismiss;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/toast_stack_budget.rs"]
+mod toast_stack_budget;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/feedback_status.rs"]
 mod feedback_status;
 
@@ -224,6 +228,9 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_search.rs"]
+mod sidebar_search;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_focus.rs"]
@@ -232,6 +239,10 @@ mod graph_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
 mod input_names;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/rename_form_state.rs"]
+mod rename_form_state;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -682,6 +693,9 @@ mod recovery_revert_en_summary;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
+#[cfg(target_os = "macos")]
+#[path = "recovery/oplog_layout.rs"]
+mod recovery_oplog_layout;
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
@@ -1618,12 +1632,24 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_search_escape",
+                Box::new(crate::sidebar_search::sidebar_search_escape),
+            ),
+            (
+                "sidebar_search_clear_ax",
+                Box::new(crate::sidebar_search::sidebar_search_clear_ax),
+            ),
+            (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
             (
                 "input_names_inventory",
                 Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
+                "branch_rename_neutral_state",
+                Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),
             (
                 "hairline_dividers",
@@ -1779,6 +1805,10 @@ mod macos {
             (
                 "window_restore_titlebar",
                 Box::new(crate::window_restore::scenario_window_restore_titlebar),
+            ),
+            (
+                "settings_window_screen_fit",
+                Box::new(crate::settings_window::scenario_settings_window_screen_fit),
             ),
             (
                 "settings_window_open_raise",
@@ -2572,6 +2602,10 @@ mod macos {
             (
                 "toast_dismiss",
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
+            ),
+            (
+                "toast_stack_budget",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),
             (
                 "toast_live_status",
@@ -4287,6 +4321,14 @@ mod macos {
             (
                 "oplog_actor_reflog",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
+            ),
+            (
+                "oplog_row_167_result_visible",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_row_167_result_visible),
+            ),
+            (
+                "oplog_revert_eligibility",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_revert_eligibility),
             ),
             (
                 "oplog_restore_card",

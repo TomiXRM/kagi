@@ -496,6 +496,9 @@ mod sidebar_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_panels.rs"]
 mod tab_panels;
+#[cfg(target_os = "macos")]
+#[path = "recovery/zoom_200.rs"]
+mod zoom_200;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/status_bar_fit.rs"]
@@ -2859,6 +2862,10 @@ mod macos {
             (
                 "settings_zoom_bound",
                 Box::new(crate::settings_switches::scenario_settings_zoom_bound),
+            ),
+            (
+                "zoom_200_operable",
+                Box::new(crate::zoom_200::scenario_zoom_200_operable),
             ),
             (
                 "settings_groups",

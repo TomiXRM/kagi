@@ -505,3 +505,52 @@ EN/JA selected-row + Terminal before and the next row's Changes detail/files
 after. Captures target only each isolated launch's CGWindow ID; brief own-PID
 activation was needed for fresh painting, the prior foreground was restored,
 and both final plain-build application launches quit normally.
+
+## Amendment — 2026-10-14: Graph return and final Escape (#1543)
+
+The historical commit detail/files bottom projection exists only below the
+1000 logical-pixel breakpoint: `render_bottom` exposes Changes only in compact,
+and `render_body` renders the desktop Inspector in the right slot. Do not move
+desktop details to the bottom or activate its absent Changes selector.
+
+The existing #1528 `KagiApp::select` hook already assigns both Changes and
+`bottom_panel_open = true`, independent of prior open state. Keep that single
+pointer/keyboard transition, including its early same-row toggle return.
+Returning from PRs/Issues must not eagerly reopen the pane; only a fresh row
+selection reveals its existing compact Inspector projection. Retained selection,
+same-row pointer toggle, clamped arrows and desktop selection remain unchanged.
+
+After the existing Escape layers, main-diff dismissal and Graph selection clear,
+a final Escape closes the bottom panel only if Graph is the actual resolved
+center (CommitList), not Conflict Mode or Home. Selection-clear and pane closure
+are separate presses; no modal/menu/popover/palette route or Editor/Conflict
+meaning changes. Reuse the existing panel visibility state and motion path.
+
+Tier A `graph_return_reopens_changes` exercises EN/JA × 100%/167% at compact
+900px and desktop 1200px: PRs/Issues → Graph, real commit clicks and Up/Down,
+selected commit metadata/files, sequential Escape, keyboard reopening,
+same-row non-reopening, desktop right Inspector, Editor Escape and unchanged Git
+state. Tier B captures PRs → Graph (hidden) → selected detail/files → Escape
+(hidden) in real compact/desktop English/Japanese windows.
+
+Regression-first on the current `origin/dev` baseline: the PRs → Graph →
+click/Down/Up leg already passes for EN/100%/900px through #1528's hook
+(`[gui-e2e] graph_return selection PASS en/1/900/issues=false`).
+The new scenario then fails verbatim on its second Escape:
+`final Graph Escape: bottom pane must be closed`. The requested neighboring
+filter reports eight passed and this one failure before the Escape change.
+
+After the Graph-only final Escape fallback, the requested
+`graph_return,compact_select_changes,compact_bottom,bottom_panel` filter passes
+**9/9** with the 300-second deadline. The return scenario includes both
+PRs and Issues legs for every language/zoom/viewport. PR entry closes an open
+pane; Issues retains the previously closed state, preserving its existing policy.
+
+Tier B's plain-build runs confirm EN/JA at 900×700 and 1200×800: compact
+selection reopens Changes metadata/files after PRs → Graph, Escape first clears
+selection and then hides the pane, and the next selection reopens it. Desktop
+keeps detail/files in the right Inspector without reopening the bottom pane;
+an explicitly opened Terminal closes on the final Graph Escape. Each capture
+targets the launched PID's window ID. Brief own-PID activation was required for
+fresh frames; the prior foreground was restored and all four runs quit normally.
+

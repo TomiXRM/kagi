@@ -2095,8 +2095,9 @@ impl KagiApp {
         if deselect {
             return;
         }
-        // Explicit Graph selection reveals its Inspector in compact Changes.
-        // Refresh/reconcile retain selection separately and never enter here.
+        // Explicit Graph selection reveals its Inspector in compact Changes,
+        // including a pane closed by PR entry, Cmd-J or the final Escape layer.
+        // Desktop uses the right Inspector; refresh/reconcile never enter here.
         if self.compact.enabled {
             self.bottom_tab = BottomTab::Changes;
             self.bottom_panel_open = true;

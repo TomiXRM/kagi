@@ -625,6 +625,10 @@ mod compact_rail;
 mod compact_select_changes;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_return_changes.rs"]
+mod graph_return_changes;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
 
@@ -3344,6 +3348,10 @@ mod macos {
             (
                 "compact_select_changes",
                 Box::new(crate::compact_select_changes::scenario_compact_select_changes),
+            ),
+            (
+                "graph_return_reopens_changes",
+                Box::new(crate::graph_return_changes::scenario_graph_return_reopens_changes),
             ),
             (
                 "compact_layout_rail",

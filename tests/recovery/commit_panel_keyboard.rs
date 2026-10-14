@@ -23,7 +23,7 @@ mod focus_regressions;
 pub use bulk_hover::scenario_commit_panel_bulk_hover;
 pub use changes_keyboard::{
     scenario_changes_discard_keyboard, scenario_changes_file_menu_viewport,
-    scenario_changes_rows_keyboard,
+    scenario_changes_focus_follows_selection, scenario_changes_rows_keyboard,
 };
 
 #[path = "smart_footer_provider.rs"]

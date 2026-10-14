@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Remote/group header native coverage now mounts the exact 1000px desktop breakpoint instead of expecting inline navigator rows in the approved 940px compact rail. All eight appearances retain 120/240/340px sidebar widths, full-identity reveals, count-column/ellipsis geometry, accessibility hierarchy, targeted disclosure and unchanged-repository assertions; production rendering is unchanged. (#1481 regression audit)
 - Commit Panel file labels preserve both ends with native middle ellipsis, keeping long alpha/beta names distinguishable in List and Tree. Full-path hover text uses the existing viewport-bounded wrapping tooltip; accessibility retains the complete path. (#1533)
 - File → Clone Repository and its existing shortcut now open Home's Repositories picker instead of remaining disabled as an unimplemented placeholder. Selecting a repository uses the existing clone confirmation card and safety lifecycle. (#1522)
   - Review: another open modal or visible confirmation blocks navigation without stealing its focus; portable menu dismissal cannot restore the covered workspace's focus over the picker.

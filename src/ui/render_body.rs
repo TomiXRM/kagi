@@ -567,6 +567,17 @@ impl KagiApp {
                     && self.view().status_summary.is_unborn
                     && prefix_count + row_count == 0
                 {
+                    // The cached unborn page replaces the entire list, so
+                    // release its retained focus before its tracker disappears.
+                    if self
+                        .graph_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window))
+                    {
+                        if let Some(root) = &self.root_focus {
+                            root.focus(window, cx);
+                        }
+                    }
                     self.render_unborn_empty_state(cx)
                 } else {
                     // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
@@ -707,10 +718,13 @@ impl KagiApp {
                     let list = with_vertical_scrollbar(
                         "commit-list-scroll",
                         &scrollbar_handle,
-                        super::list_a11y::list_box("commit-list", rows, Msg::A11yCommitList.t()),
+                        super::list_a11y::list_box(
+                            "commit-list",
+                            rows.track_focus(&graph_focus),
+                            Msg::A11yCommitList.t(),
+                        ),
                         true,
                     )
-                    .track_focus(&graph_focus)
                     .relative()
                     .when(ring_visible, |list| {
                         list.child(

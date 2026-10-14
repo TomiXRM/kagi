@@ -65,6 +65,19 @@ pub fn scenario_graph_tab_stop(cx: &mut VisualTestAppContext) {
                     "Tab did not reach Graph ({lang:?}, {zoom}, {slug})"
                 );
                 assert!(sidebar_before, "Graph follows Sidebar");
+                let tree = crate::native_ax::tree(cx, window);
+                let focused = tree["gpui_focus"].as_str().expect("Graph AX focus");
+                assert_eq!(
+                    tree["nodes"][focused]["element_id"],
+                    format!("{:?}", gpui::ElementId::from("commit-list-roles")),
+                    "Graph focus belongs to the named ListBox"
+                );
+                let node = crate::native_ax::node(cx, window, "commit-list-roles".into());
+                assert_eq!(node["aria"]["role"], "ListBox");
+                assert_eq!(
+                    node["aria"]["label"],
+                    kagi::ui::i18n::Msg::A11yCommitList.t()
+                );
                 let bounds =
                     kagi::ui::e2e::control_bounds(window.window_id(), "commit-list-viewport")
                         .unwrap();
@@ -132,6 +145,42 @@ pub fn scenario_graph_tab_stop(cx: &mut VisualTestAppContext) {
                         "Shift-Tab returns to Graph"
                     );
                 }
+                let unborn = tempfile::tempdir().unwrap();
+                crate::macos::git(unborn.path(), &["init", "-q", "-b", "main"]);
+                app.update(cx, |app, cx| {
+                    assert!(app.open_repository(unborn.path().to_path_buf(), cx));
+                });
+                cx.run_until_parked();
+                app.update(cx, |app, cx| app.switch_repo(0, cx));
+                cx.run_until_parked();
+                draw(cx, window);
+                cx.update_window(window, |_, window, cx| {
+                    let focus = app.read(cx).graph_focus.clone().unwrap();
+                    focus.focus(window, cx);
+                })
+                .unwrap();
+                assert!(graph_focused(cx, &app, window));
+                app.update(cx, |app, cx| app.switch_repo(1, cx));
+                cx.run_until_parked();
+                draw(cx, window);
+                assert!(
+                    !graph_focused(cx, &app, window),
+                    "unborn page releases Graph focus"
+                );
+                cx.update_window(window, |_, window, cx| {
+                    assert!(app.read(cx).root_focus.as_ref().unwrap().is_focused(window));
+                })
+                .unwrap();
+                keys(cx, window, "escape");
+                draw(cx, window);
+                let before = cx.read(|cx| app.read(cx).bottom_panel_open);
+                keys(cx, window, "cmd-j");
+                draw(cx, window);
+                assert_ne!(
+                    before,
+                    cx.read(|cx| app.read(cx).bottom_panel_open),
+                    "unborn root still dispatches Cmd-J"
+                );
                 unmount(cx, app, window);
             }
         }

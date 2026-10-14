@@ -79,6 +79,12 @@ as the diff body does, without changing row or viewport geometry. Pointer
 selection retains the existing root-focus behavior and does not show the ring.
 Rest, hover, selected, loading and empty content keep their existing presentation;
 the new stop exists only when the actual commit list is drawn.
+The focus tracker belongs to the named ListBox itself, not its unroled scroll
+container, so the native adapter publishes the localized Commits list as focused.
+The ring remains on the outer container. A cached unborn repository can replace
+the list without a workspace-mode change; that exact empty-state branch returns
+retained Graph focus to root before removing the tracker. The regression switches
+from a focused Graph to that cached empty tab and checks Escape and Cmd-J routing.
 
 `graph_tab_stop` covers EN/JA, 100%/167%, Apple Light/Dark at 1000×720 with
 real Tab/Shift-Tab dispatch, Up/Down selection, native ring pixels and actual AX

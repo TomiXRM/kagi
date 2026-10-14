@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Graph is a single keyboard Tab stop between Sidebar and Inspector. Its inset accent ring is visible for keyboard focus; existing commit arrows and selection actions work there, and Shift-Tab returns without clicking. (#1532)
+  - Review: keyboard focus belongs to the named Commits ListBox in the native accessibility tree; switching to a cached unborn repository releases the missing list's focus to root so Escape and ⌘J remain reachable.
 - Editor Blame uses a named, keyboard-focusable toggle Button with a visible focus ring and toggled (pressed) accessibility state. Enter, Space and pointer activation share the existing on/off path in EN/JA. (#1524)
 - Activity chart hover and keyboard inspection targets now align with the plotted bucket positions, including narrow plots at 167% zoom; neighboring marks share midpoint hit boundaries without changing aggregation or series encoding. (#1510)
 - Smart Commit's first Settings enable now requires the same four localized privacy statements as Generate, including unstaged exclusion and the staged-secret warning. Approval only enables the preference; cancelling, Escape or closing Settings sends nothing and leaves it disabled. Consent survives OFF/re-enable independently from the enable flag, and older enabled settings without recorded consent must ask before generation. (#1509)

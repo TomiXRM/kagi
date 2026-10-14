@@ -185,13 +185,15 @@ pub(super) fn render_settings_overlay(
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> AnyElement {
-    let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, _w, cx| {
+    let dismiss = cx.listener(|this, _: &gpui::MouseDownEvent, window, cx| {
         this.menu_overlay = None;
+        this.clear_settings_smart_consent(window.window_handle().window_id());
         cx.stop_propagation();
         cx.notify();
     });
-    let close_click = cx.listener(|this, _: &gpui::ClickEvent, _w, cx| {
+    let close_click = cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
         this.menu_overlay = None;
+        this.clear_settings_smart_consent(window.window_handle().window_id());
         cx.notify();
     });
 
@@ -245,38 +247,52 @@ pub(super) fn render_settings_overlay(
         )
         // One persistent scroll owner for the whole body; the kit owns thumb
         // drag/visibility state under the stable scrollbar element id.
-        .child(super::render_helpers::with_system_vertical_scrollbar(
-            "settings-scrollbar",
-            &scroll,
+        .child(
             div()
-                .id("settings-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&scroll)
-                .px_5()
-                .py_4()
+                .relative()
                 .flex()
                 .flex_col()
-                .gap_6()
-                .child(appearance_section(&app, theme_select, &switches, cx))
-                .child(language_section(&app))
-                .child(smart_commit_section(
-                    &app,
-                    &smart,
-                    &switches,
-                    controls,
-                    trap.clone(),
+                .flex_1()
+                .min_h_0()
+                .child(super::render_helpers::with_system_vertical_scrollbar(
+                    "settings-scrollbar",
+                    &scroll,
+                    div()
+                        .id("settings-scroll")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll)
+                        .px_5()
+                        .py_4()
+                        .flex()
+                        .flex_col()
+                        .gap_6()
+                        .child(appearance_section(&app, theme_select, &switches, cx))
+                        .child(language_section(&app))
+                        .child(smart_commit_section(
+                            &app,
+                            &smart,
+                            &switches,
+                            controls,
+                            trap.clone(),
+                            cx,
+                        ))
+                        .child(analyze_ignore_section(
+                            &app,
+                            analyze_ignore_input,
+                            analyze_dirty,
+                            controls.ignore_error.as_deref(),
+                        )),
                     cx,
                 ))
-                .child(analyze_ignore_section(
-                    &app,
-                    analyze_ignore_input,
-                    analyze_dirty,
-                    controls.ignore_error.as_deref(),
-                )),
-            cx,
-        ));
+                // Keep the host's header close button and outer backdrop available.
+                .when_some(controls.smart_consent.clone(), |el, alert| {
+                    el.child(super::settings_controls::smart_consent_alert(
+                        &app, alert, cx,
+                    ))
+                }),
+        );
     controls.repair_focus(
         true,
         matches!(smart.provider, super::smart_commit::SmartProvider::Ollama)
@@ -990,10 +1006,8 @@ pub(super) fn smart_commit_section(
     let models = smart.detected_models.clone();
 
     // ── Enable Smart Commit (LLM) toggle ──
-    // Wired to SmartCommitState::set_enabled (persists `smart_commit_llm_enabled`).
-    // Turning it on also re-probes Ollama so the model picker below populates
-    // without needing to open the commit panel first. The sixth switch of
-    // Settings, after Appearance's five (#970).
+    // Initial ON is a pending host-owned approval, not an enabled preference.
+    // Re-enable after consent keeps the existing capability refresh behavior.
     let app_en = app.downgrade();
     let enabled_ctl = super::keyboard_nav::switch(
         "smart-commit-enabled",
@@ -1001,13 +1015,9 @@ pub(super) fn smart_commit_section(
         SharedString::from(Msg::SettingsSmartEnable.t()),
         SharedString::from(Msg::SettingsSmartEnableDesc.t()),
         smart.llm_enabled,
-        move |on, _w, cx| {
+        move |on, window, cx| {
             let _ = app_en.update(cx, |app, cx| {
-                app.smart_commit.set_enabled(on);
-                if on {
-                    app.refresh_smart_commit_detection(cx);
-                }
-                cx.notify();
+                app.request_settings_smart_enabled(on, window, cx)
             });
         },
     );

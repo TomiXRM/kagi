@@ -19,6 +19,81 @@ use gpui_component::IconName;
 // Smart Commit modal renderer (T-COMMIT-016, ADR-0044)
 // ──────────────────────────────────────────────────────────────
 
+/// One privacy disclosure for Generate and both Settings hosts.
+pub(super) fn smart_consent_card(
+    confirm: super::dialog_a11y::DialogHandler,
+    cancel: super::dialog_a11y::DialogHandler,
+    cx: &gpui::App,
+) -> gpui::Div {
+    let mut lines = div().flex().flex_col().gap_1();
+    for (index, line) in smart_commit::CONSENT_LINES.into_iter().enumerate() {
+        let text = line.t();
+        let row = div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .text_sm()
+            .child(
+                div()
+                    .text_color(rgb(current_theme().color_branch))
+                    .child("•"),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_color(rgb(current_theme().text_main))
+                    .child(text),
+            );
+        #[cfg(feature = "gui-e2e")]
+        let row = super::e2e::measure_control(format!("smart-consent-line-{index}-{text}"), row);
+        #[cfg(not(feature = "gui-e2e"))]
+        let _ = index;
+        lines = lines.child(row);
+    }
+    modal_card(MODAL_W_MD)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            Msg::SmartConsentTitle.t().into(),
+            Some((
+                ModalIcon::Path("icons/sparkles.svg"),
+                current_theme().color_success,
+            )),
+        )))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(current_theme().text_sub))
+                .child(Msg::SmartConsentIntro.t()),
+        )
+        .child(lines)
+        .child(
+            div().flex_shrink_0().child(
+                super::button_style::modal_button_row()
+                    .child(super::e2e::measure_control(
+                        "smart-consent-cancel",
+                        modal_button(
+                            "smart-consent-cancel",
+                            Msg::PlanCancel.t(),
+                            ModalButtonKind::Cancel,
+                            None,
+                            move |_, window, cx| cancel(window, cx),
+                            cx,
+                        ),
+                    ))
+                    .child(super::e2e::measure_control(
+                        "smart-consent-confirm",
+                        modal_button(
+                            "smart-consent-confirm",
+                            Msg::SmartConsentEnable.t(),
+                            ModalButtonKind::Primary,
+                            None,
+                            move |_, window, cx| confirm(window, cx),
+                            cx,
+                        ),
+                    )),
+            ),
+        )
+}
+
 /// Render the Smart Commit consent / model-picker overlay.
 ///
 /// * `Consent` — the first-time opt-in dialog carrying the four mandated
@@ -33,70 +108,15 @@ pub(crate) fn render_smart_commit_modal(
 ) -> impl IntoElement {
     let card = match modal {
         smart_commit::SmartCommitModal::Consent => {
-            let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {
-                this.cancel_smart_modal(cx);
+            let owner = cx.entity().downgrade();
+            let cancel: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |_, cx| {
+                let _ = owner.update(cx, |app, cx| app.cancel_smart_modal(cx));
             });
-            let confirm = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
-                this.confirm_smart_consent(window, cx);
+            let owner = cx.entity().downgrade();
+            let confirm: super::dialog_a11y::DialogHandler = std::rc::Rc::new(move |window, cx| {
+                let _ = owner.update(cx, |app, cx| app.confirm_smart_consent(window, cx));
             });
-            let mut lines_col = div().flex().flex_col().gap_1();
-            for line in smart_commit::CONSENT_LINES {
-                lines_col = lines_col.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .gap_1()
-                        .text_sm()
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().color_branch))
-                                .child(SharedString::from("•")),
-                        )
-                        .child(
-                            div()
-                                .text_color(rgb(current_theme().text_main))
-                                .child(SharedString::from(line.t())),
-                        ),
-                );
-            }
-            // The short intro and four fixed `CONSENT_LINES` are bounded;
-            // this card needs no scrolling body (#454).
-            modal_card(MODAL_W_MD)
-                .child(div().flex_shrink_0().child(render_modal_title_row(
-                    SharedString::from(Msg::SmartConsentTitle.t()),
-                    Some((
-                        ModalIcon::Path("icons/sparkles.svg"),
-                        current_theme().color_success,
-                    )),
-                )))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(current_theme().text_sub))
-                        .child(SharedString::from(Msg::SmartConsentIntro.t())),
-                )
-                .child(lines_col)
-                .child(
-                    div().flex_shrink_0().child(
-                        super::button_style::modal_button_row()
-                            .child(modal_button(
-                                "smart-consent-cancel",
-                                Msg::PlanCancel.t(),
-                                ModalButtonKind::Cancel,
-                                None,
-                                cancel,
-                                cx,
-                            ))
-                            .child(modal_button(
-                                "smart-consent-confirm",
-                                Msg::SmartConsentEnable.t(),
-                                ModalButtonKind::Primary,
-                                None,
-                                confirm,
-                                cx,
-                            )),
-                    ),
-                )
+            smart_consent_card(confirm, cancel, cx)
         }
         smart_commit::SmartCommitModal::ModelPicker { models } => {
             let cancel = cx.listener(|this, _e: &gpui::ClickEvent, _window, cx| {

@@ -198,6 +198,7 @@ impl KagiApp {
         }
         if !matches!(self.menu_overlay, Some(MenuOverlay::Settings)) {
             self.clear_analyze_reset_alert(window.window_handle().window_id());
+            self.clear_settings_smart_consent(window.window_handle().window_id());
         }
         // The menu sits above Settings and input modals. Release their focus
         // while it is open; when it closes, the existing pending/restored
@@ -240,9 +241,14 @@ impl KagiApp {
         // outside the app's tree is left alone.
         if self.front_layer(cx) == FrontLayer::Settings {
             let trap = self
-                .analyze_reset_alert()
+                .settings_smart_consent()
                 .filter(|alert| alert.window == window.window_handle().window_id())
                 .map(|alert| alert.focus.clone())
+                .or_else(|| {
+                    self.analyze_reset_alert()
+                        .filter(|alert| alert.window == window.window_handle().window_id())
+                        .map(|alert| alert.focus.clone())
+                })
                 .or_else(|| self.settings_focus.clone());
             if let Some(trap) = trap {
                 let behind = window.focused(cx).is_none()

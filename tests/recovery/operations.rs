@@ -1294,6 +1294,8 @@ pub fn scenario_app_notice_modal_replacement(cx: &mut VisualTestAppContext) {
 /// Switching cannot paint them onto another tab, and closing the owner drops the
 /// result rather than delivering it to a same-path reopen.
 pub fn scenario_smart_commit_generation_owner(cx: &mut VisualTestAppContext) {
+    let _consent = crate::gui_isolation::SavedKeys::keep(&["smart_commit_consent_accepted"]);
+    kagi::ui::settings::write_setting("smart_commit_consent_accepted", Some("1"));
     let fixture_a = build_fixture();
     let fixture_b = build_fixture();
     let repo_a = fixture_a.path().canonicalize().expect("canonical A");

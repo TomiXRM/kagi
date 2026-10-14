@@ -345,6 +345,9 @@ mod branch_menu_compact;
 #[path = "recovery/clone_card.rs"]
 mod clone_card;
 #[cfg(target_os = "macos")]
+#[path = "recovery/clone_menu.rs"]
+mod clone_menu;
+#[cfg(target_os = "macos")]
 #[path = "recovery/clone_owner.rs"]
 mod clone_owner;
 #[cfg(target_os = "macos")]
@@ -2005,6 +2008,10 @@ mod macos {
             (
                 "clone_card_viewport",
                 Box::new(crate::clone_card::scenario_clone_card_viewport),
+            ),
+            (
+                "clone_menu_routes_home",
+                Box::new(crate::clone_menu::scenario_clone_menu_routes_home),
             ),
             (
                 "clone_card_destination",

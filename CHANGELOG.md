@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Settings fits its entire native frame inside its own display's visible area after opening, content-driven pane resizing, zoom changes and saved-frame restoration. Oversized pages keep the existing scroller; repository window sizing is unchanged. (#1549)
+  - Page Up/Down scroll the native Settings page without changing the focused control, so the final setting remains keyboard-reachable when large content is clipped to the display.
+  - Review: ordinary dragging and redraws preserve the user's partly offscreen or cross-display placement; fitting runs only for actual layout or display-configuration changes.
 - Sidebar search now clears a nonempty query on the first Escape without losing input focus; a second, empty Escape returns to the list. Its Clear button exposes an independent localized EN/JA accessibility action and keeps search focused after native AXPress. IME cancellation is consumed before search cancellation. (#1547, #1548)
   - Neighbor disclosure coverage now mounts its inline Sidebar at the approved 1000px desktop breakpoint instead of looking for desktop rows inside the 940px compact rail; all filtering/disclosure assertions remain.
 - Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)

@@ -79,6 +79,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
+# Settings fits its native frame via the exact window's AppKit handle.
+raw-window-handle = "0.6"
+objc2-foundation = "0.3"
 
 # Windows-only: embeds assets/icon/icon.ico into kagi.exe's resources via
 # build.rs. No-op (unused) on other targets.

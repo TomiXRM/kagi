@@ -1788,6 +1788,10 @@ mod macos {
                 Box::new(crate::window_restore::scenario_window_restore_titlebar),
             ),
             (
+                "settings_window_screen_fit",
+                Box::new(crate::settings_window::scenario_settings_window_screen_fit),
+            ),
+            (
                 "settings_window_open_raise",
                 Box::new(crate::settings_window::scenario_settings_window_open_raise),
             ),

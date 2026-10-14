@@ -106,7 +106,7 @@ pub fn scenario_compact_select_changes(cx: &mut VisualTestAppContext) {
     assert_eq!(before, crate::macos::repo_fingerprint(fixture.path()));
 }
 
-fn assert_changes(
+pub(crate) fn assert_changes(
     cx: &VisualTestAppContext,
     app: &Entity<KagiApp>,
     win: AnyWindowHandle,
@@ -161,13 +161,15 @@ fn assert_changes(
     );
 }
 
-fn settle(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
+pub(crate) fn settle(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     for id in [
         "compact-inspector-details",
         "compact-inspector-files",
         "inspector-file-0",
         "compact-changes-unstaged",
         "compact-changes-staged",
+        "bottom-panel",
+        "right-pane-clip",
     ] {
         e2e::clear_control_bounds(win.window_id(), id);
     }
@@ -183,7 +185,7 @@ fn settle(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
         .unwrap();
     }
 }
-fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f32) {
+pub(crate) fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f32) {
     let wanted = size(px(width), px(720.));
     cx.update_window(win, |_, window, _| window.resize(wanted))
         .unwrap();
@@ -205,19 +207,23 @@ fn resize(cx: &mut VisualTestAppContext, win: AnyWindowHandle, width: f32) {
     }
     settle(cx, win);
 }
-fn click(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
+pub(crate) fn click(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) {
     let bounds = e2e::control_bounds(win.window_id(), id).unwrap_or_else(|| panic!("missing {id}"));
     cx.simulate_mouse_move(win, bounds.center(), None, Modifiers::none());
     cx.simulate_click(win, bounds.center(), Modifiers::none());
     settle(cx, win);
 }
-fn focus_graph(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {
+pub(crate) fn focus_graph(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+) {
     let root = cx.read(|cx| app.read(cx).root_focus.clone().unwrap());
     cx.update_window(win, |_, window, cx| root.focus(window, cx))
         .unwrap();
     settle(cx, win);
 }
-fn key(cx: &mut VisualTestAppContext, win: AnyWindowHandle, key: &str) {
+pub(crate) fn key(cx: &mut VisualTestAppContext, win: AnyWindowHandle, key: &str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     cx.dispatch_keystroke(win, keystroke.clone());
     cx.simulate_event(win, gpui::KeyUpEvent { keystroke });

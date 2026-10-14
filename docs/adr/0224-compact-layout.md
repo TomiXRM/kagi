@@ -505,3 +505,81 @@ EN/JA selected-row + Terminal before and the next row's Changes detail/files
 after. Captures target only each isolated launch's CGWindow ID; brief own-PID
 activation was needed for fresh painting, the prior foreground was restored,
 and both final plain-build application launches quit normally.
+
+## Amendment — 2026-10-14: Graph return and final Escape (#1543)
+
+The historical commit detail/files bottom projection exists only below the
+1000 logical-pixel breakpoint: `render_bottom` exposes Changes only in compact,
+and `render_body` renders the desktop Inspector in the right slot. Do not move
+desktop details to the bottom or activate its absent Changes selector.
+
+The existing #1528 `KagiApp::select` hook already assigns both Changes and
+`bottom_panel_open = true`, independent of prior open state. Keep that single
+pointer/keyboard transition, including its early same-row toggle return.
+Returning from PRs/Issues must not eagerly reopen the pane; only a fresh row
+selection reveals its existing compact Inspector projection. Retained selection,
+same-row pointer toggle, clamped arrows and desktop selection remain unchanged.
+
+After the existing Escape layers, main-diff dismissal and Graph selection clear,
+a final Escape closes the bottom panel only if Graph is the actual resolved
+center (CommitList), not Conflict Mode or Home. Selection-clear and pane closure
+are separate presses; no modal/menu/popover/palette route or Editor/Conflict
+meaning changes. Reuse the existing panel visibility state and motion path.
+
+Tier A `graph_return_reopens_changes` exercises EN/JA × 100%/167% at compact
+900px and desktop 1200px: PRs/Issues → Graph, real commit clicks and Up/Down,
+selected commit metadata/files, sequential Escape, keyboard reopening,
+same-row non-reopening, desktop right Inspector, Editor Escape and unchanged Git
+state. Tier B captures PRs → Graph (hidden) → selected detail/files → Escape
+(hidden) in real compact/desktop English/Japanese windows.
+
+Regression-first on the current `origin/dev` baseline: the PRs → Graph →
+click/Down/Up leg already passes for EN/100%/900px through #1528's hook
+(`[gui-e2e] graph_return selection PASS en/1/900/issues=false`).
+The new scenario then fails verbatim on its second Escape:
+`final Graph Escape: bottom pane must be closed`. The requested neighboring
+filter reports eight passed and this one failure before the Escape change.
+
+After the Graph-only final Escape fallback, the requested
+`graph_return,compact_select_changes,compact_bottom,bottom_panel` filter passes
+**9/9** with the 300-second deadline. The return scenario includes both
+PRs and Issues legs for every language/zoom/viewport. PR entry closes an open
+pane; Issues retains the previously closed state, preserving its existing policy.
+
+Tier B's plain-build runs confirm EN/JA at 900×700 and 1200×800: compact
+selection reopens Changes metadata/files after PRs → Graph, Escape first clears
+selection and then hides the pane, and the next selection reopens it. Desktop
+keeps detail/files in the right Inspector without reopening the bottom pane;
+an explicitly opened Terminal closes on the final Graph Escape. Each capture
+targets the launched PID's window ID. Brief own-PID activation was required for
+fresh frames; the prior foreground was restored and all four runs quit normally.
+
+Review focus correction: the final fallback ignores a currently focused text
+Input (including wide Commit Panel title/body), using the pinned component's
+focused Input owner rather than another input-field inventory. A single retained
+non-Tab-stop focus scope around the bottom panel hands every descendant's focus
+to the root before closing. It introduces no Tab stop and keeps keyboard entry,
+PTY, Activity, file-list and selector ownership unchanged.
+
+Regression-first `graph_return_input_escape` fails before this correction with
+`desktop focused Commit Panel input Escape must preserve bottom pane`.
+The real-Tab selector regression `graph_return_bottom_focus` already passes on
+the pre-review implementation through the renderer's existing hidden-selector
+handoff; it now also covers the explicit pre-close scope handoff and immediate
+Cmd-J reopening. Do not claim a reproduced selector-focus failure.
+
+After the review correction, the registered Graph-return and bottom-panel
+scenarios pass **8/8**. The separately selected `commit_panel_body_focus`,
+`commit_panel_segment_keys`, `commit_panel_footer_tab_order` and
+`commit_panel_coauthor_keys` pass **4/4**; `commit_panel_keyboard` is a module,
+not a registered scenario substring. Workspace tests, Clippy, formatting,
+`ci check-all`, locked build and the final plain build also pass.
+
+A final plain desktop launch at 100% confirms that Escape from the Commit Panel
+body preserves its input focus and the open bottom pane, and Escape from the
+bottom selector closes the pane before immediate Cmd-J reopens it. These
+`review-desktop-*` captures use the same isolated copy and owned window ID;
+the process quits normally and the prior foreground is restored. Earlier
+EN/JA compact/desktop captures use the existing migrated 111.1% native zoom;
+the deterministic Tier A matrix exercises the exact 100%/167% zoom values.
+

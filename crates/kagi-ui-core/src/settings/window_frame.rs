@@ -6,6 +6,8 @@ pub struct SettingsWindowFrame {
     pub x: f32,
     pub y: f32,
     pub height: f32,
+    /// Stable display UUID as hexadecimal; legacy frames have no display.
+    pub display_uuid: Option<u128>,
 }
 
 const FRAME_KEY: &str = "settings_window_frame";
@@ -16,6 +18,11 @@ fn parse_frame(value: &str) -> Option<SettingsWindowFrame> {
         x: parts.next()?.parse::<f32>().ok()?,
         y: parts.next()?.parse::<f32>().ok()?,
         height: parts.next()?.parse::<f32>().ok()?,
+        display_uuid: match parts.next() {
+            Some(uuid) if uuid.len() == 32 => Some(u128::from_str_radix(uuid, 16).ok()?),
+            Some(_) => return None,
+            None => None,
+        },
     };
     (parts.next().is_none()
         && frame.x.is_finite()
@@ -53,10 +60,11 @@ pub fn settings_window_frame() -> Option<SettingsWindowFrame> {
 
 /// One changing key lets the sole settings store coalesce a bounds burst.
 pub fn write_settings_window_frame(frame: SettingsWindowFrame) {
-    write_setting(
-        FRAME_KEY,
-        Some(&format!("{},{},{}", frame.x, frame.y, frame.height)),
-    );
+    let value = match frame.display_uuid {
+        Some(uuid) => format!("{},{},{},{uuid:032x}", frame.x, frame.y, frame.height),
+        None => format!("{},{},{}", frame.x, frame.y, frame.height),
+    };
+    write_setting(FRAME_KEY, Some(&value));
 }
 
 #[cfg(test)]
@@ -74,7 +82,16 @@ mod tests {
                 x: -20.,
                 y: 30.,
                 height: 500.,
+                display_uuid: None,
             })
         );
+    }
+
+    #[test]
+    fn settings_window_frame_preserves_display_uuid() {
+        let frame = parse_frame("20,30,640,000000000000000000000000000000ab").unwrap();
+        assert_eq!(frame.display_uuid, Some(0xab));
+        assert!(parse_frame("20,30,640,000000000000000000000000000000ab,extra").is_none());
+        assert!(parse_frame("20,30,640,gggggggggggggggggggggggggggggggg").is_none());
     }
 }

@@ -27,7 +27,9 @@ impl KagiApp {
         false
     }
 
-    fn cancel_workspace_key_target(&mut self, _window: &Window, cx: &mut Context<Self>) {
+    fn cancel_workspace_key_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui::Focusable as _;
+        use gpui_component::WindowExt as _;
         if self.pr_mode_visible() {
             if self.pr_mode().is_some_and(|m| m.active.is_some()) {
                 self.pr_mode_home(cx);
@@ -40,11 +42,32 @@ impl KagiApp {
             self.close_main_diff();
             cx.notify();
         } else if self.workspace_mode() == super::workspace_mode::WorkspaceMode::Graph {
-            // Last in the chain: with nothing else to close, Escape clears the
-            // Graph selection (and with it the commit details pane). `select`
-            // on the selected row is the existing toggle-off path.
+            // Selection clearing precedes the final bottom-pane close. Each
+            // Escape consumes only one layer; same-row select toggles off.
             if let Some(index) = self.ui().selected {
                 self.select(index);
+                cx.notify();
+            } else if self.bottom_panel_open
+                && !self.home_in_front()
+                && !self.conflict_body_visible()
+                && !window
+                    .focused_input(cx)
+                    .is_some_and(|input| input.focus_handle(cx).contains_focused(window, cx))
+                && workspace::resolve_workspace(&self.workspace_inputs(false, false, false)).center
+                    == workspace::CenterPane::CommitList
+            {
+                // Hand off every bottom descendant (selector, PTY, lists,
+                // Activity controls), not just controls known to the renderer.
+                if self
+                    .bottom_panel_focus
+                    .as_ref()
+                    .is_some_and(|scope| scope.contains_focused(window, cx))
+                {
+                    if let Some(root) = &self.root_focus {
+                        root.focus(window, cx);
+                    }
+                }
+                self.bottom_panel_open = false;
                 cx.notify();
             }
         }

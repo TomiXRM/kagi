@@ -27,9 +27,18 @@ pub(crate) fn modal_copy_button(
     text: String,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    modal_copy_button_lazy(id, tooltip, move || text.clone(), cx)
+}
+
+pub(crate) fn modal_copy_button_lazy(
+    id: &'static str,
+    tooltip: &'static str,
+    text: impl Fn() -> String + 'static,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let copy = cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
-        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.clone()));
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text()));
         this.push_toast(
             ToastKind::Info,
             SharedString::from(Msg::ModalCopied.t()),
@@ -67,6 +76,31 @@ pub(crate) fn modal_copy_button(
     .into_any_element()
 }
 
+/// Display-only identities; semantic summaries remain unchanged for receipts.
+pub(crate) fn plan_display_heads(
+    plan: &OperationPlan,
+) -> (std::borrow::Cow<'_, str>, std::borrow::Cow<'_, str>) {
+    use std::borrow::Cow;
+    match &plan.rebase_scope {
+        Some(scope) => (
+            Cow::Owned(format!("{} @ {}", scope.current_ref, scope.current_oid)),
+            Cow::Owned(format!(
+                "{} onto {} @ {}",
+                scope.current_ref, scope.onto_ref, scope.onto_oid
+            )),
+        ),
+        None => (
+            Cow::Borrowed(&plan.current.head),
+            plan::cherry_revert::predicted_head_text(
+                &plan.title,
+                &plan.disposition,
+                &plan.predicted.head,
+                kagi_ui_core::i18n::lang(),
+            ),
+        ),
+    }
+}
+
 /// The whole popup as plain text, for [`modal_copy_button`].
 ///
 /// Copies the complete plan: full title, state, warnings, blockers, rows and
@@ -79,18 +113,17 @@ pub(crate) fn plan_clipboard_text(
     shell: kagi_domain::plan_note::ShellKind,
 ) -> String {
     let mut out = String::new();
-    let predicted_dirty = plan::after_state_detail(&plan.title, &plan.predicted.dirty);
-    let predicted_head = plan::cherry_revert::predicted_head_text(
-        &plan.title,
-        &plan.disposition,
-        &plan.predicted.head,
-        kagi_ui_core::i18n::lang(),
-    );
+    let predicted_dirty = if plan.rebase_scope.is_some() {
+        std::borrow::Cow::Borrowed(Msg::PlanRebaseResultUnknown.t())
+    } else {
+        plan::after_state_detail(&plan.title, &plan.predicted.dirty)
+    };
+    let (current_head, predicted_head) = plan_display_heads(plan);
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
     out.push_str(&format!(
         "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        plan.current.head, plan.current.dirty, predicted_head, predicted_dirty
+        current_head, plan.current.dirty, predicted_head, predicted_dirty
     ));
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));
@@ -131,9 +164,27 @@ pub(crate) fn plan_clipboard_text(
     }
     if !rows.is_empty() {
         out.push('\n');
+        if let Some(scope) = &plan.rebase_scope {
+            out.push_str(&format!(
+                "{}: {}\n",
+                Msg::PlanRebaseCandidates.t(),
+                scope.total_commits
+            ));
+        }
         for r in rows {
             out.push_str(r);
             out.push('\n');
+        }
+        if let Some(scope) = &plan.rebase_scope {
+            let remaining = scope.total_commits.saturating_sub(rows.len());
+            if remaining > 0 {
+                out.push_str(
+                    &Msg::PlanRebaseMore
+                        .t()
+                        .replace("{}", &remaining.to_string()),
+                );
+                out.push('\n');
+            }
         }
     }
     if !plan.preview_files.is_empty()
@@ -219,6 +270,7 @@ mod tests {
 
         let deep = "crates/kagi-git/src/ops/very/deeply/nested/file.rs".to_string();
         let mut plan = OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             title: PlanTitle::Discard {
@@ -360,6 +412,7 @@ mod tests {
 
         let command = "git push origin main";
         let mut plan = OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             title: PlanTitle::Push(PushTitle::Push {

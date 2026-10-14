@@ -300,8 +300,12 @@ impl KagiApp {
         // The BottomPanel drag math converts the raw cursor back to this
         // unscaled space (see divider_drag_move).
         let panel_h = height + BOTTOM_PANEL_DIVIDER_H + BOTTOM_PANEL_TAB_H;
+        let panel_focus = self
+            .bottom_panel_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(false));
         let panel = div()
             .id("bottom-panel")
+            .track_focus(panel_focus)
             .relative()
             .flex()
             .flex_col()

@@ -617,7 +617,7 @@ pub(crate) fn frame(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     cx.run_until_parked();
 }
 
-fn open_keyboard_overflow(
+pub(crate) fn open_keyboard_overflow(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     win: AnyWindowHandle,

@@ -124,15 +124,13 @@ pub(super) fn focus_filter(window: &mut Window, cx: &mut Context<KagiApp>) {
         .active
         .filter(|index| *index < 5)
         .unwrap_or(0);
-    open_changed(
-        &cached.downgrade(),
-        &cx.weak_entity(),
-        index,
-        true,
-        window,
-        cx,
-    );
-    cached.update(cx, |state, _| state.filter_pending = true);
+    // The shortcut runs inside KagiApp's update; open_changed checks that same
+    // owner's suspension state, so release its mutable lease before opening.
+    let app = cx.weak_entity();
+    window.defer(cx, move |window, cx| {
+        open_changed(&cached.downgrade(), &app, index, true, window, cx);
+        cached.update(cx, |state, _| state.filter_pending = true);
+    });
     cx.notify();
 }
 

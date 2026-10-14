@@ -7,7 +7,10 @@
 //! you would land in (user report).
 
 use super::{theme, EditorPendingIntent, KagiApp};
-use gpui::{div, prelude::*, px, relative, rgb, Context, SharedString};
+use gpui::{
+    div, prelude::*, px, relative, rgb, App, Context, Div, IntoElement, Role, SharedString,
+    Stateful, Window,
+};
 
 use super::i18n::Msg;
 use super::workspace::WorkspaceItem;
@@ -75,6 +78,42 @@ pub(super) enum SectionCount {
     Unknown,
 }
 
+/// The shared header keeps its actual focus handle when its rows change.
+/// Unlike a compact leaf, activating it never dismisses the navigator.
+#[derive(IntoElement)]
+struct SidebarSectionHeader {
+    id: (&'static str, usize),
+    label: &'static str,
+    open: bool,
+    header: Stateful<Div>,
+}
+
+impl RenderOnce for SidebarSectionHeader {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let focus = window
+            .use_keyed_state(self.id, cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::commit_panel_labels::focus(&format!("{}-{}", self.id.0, self.id.1), &focus);
+        super::keyboard_nav::focusable(self.header)
+            .track_focus(&focus.clone().tab_index(0).tab_stop(true))
+            .role(Role::Button)
+            .aria_label(self.label)
+            .aria_expanded(self.open)
+            // Issue headers select one category; PR headers independently
+            // disclose buckets and therefore do not claim a selection.
+            .when(self.id.0 == "issue-filter-tab", |header| {
+                header.aria_selected(self.open)
+            })
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                focus.focus(window, cx);
+                // Do not let the navigator's pane-focus handler steal it.
+                cx.stop_propagation();
+            })
+    }
+}
+
 /// Shared PR/Issue navigator section chrome: disclosure state, label, count,
 /// padding and hover behavior stay identical across both GitHub pages.
 pub(super) fn sidebar_section_header(
@@ -94,9 +133,9 @@ pub(super) fn sidebar_section_header(
         .flex_row()
         .items_center()
         .gap_1()
-        .px_3()
-        .pt_2()
-        .pb_1()
+        .px(super::keyboard_nav::inset(12.))
+        .pt(super::keyboard_nav::inset(8.))
+        .pb(super::keyboard_nav::inset(4.))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme::theme().surface)))
         .on_click(cx.listener(on_click))
@@ -150,7 +189,17 @@ pub(super) fn sidebar_section_header(
             id.0, id.1
         )))
     });
-    header.into_any_element()
+    #[cfg(feature = "gui-e2e")]
+    let header = header
+        .relative()
+        .child(super::e2e::measure_inside(format!("{}-{}", id.0, id.1)));
+    SidebarSectionHeader {
+        id,
+        label,
+        open,
+        header,
+    }
+    .into_any_element()
 }
 
 /// Shared selectable row shell for GitHub sidebar lists. Feature renderers

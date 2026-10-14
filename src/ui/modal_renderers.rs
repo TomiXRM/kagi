@@ -781,6 +781,9 @@ fn render_plan_modal_card_styled(
                 | kagi_domain::plan_note::PlanTitle::Stash(
                     kagi_domain::plan_note::StashTitle::Pop { .. }
                 )
+                | kagi_domain::plan_note::PlanTitle::Github(
+                    kagi_domain::plan_note::GithubTitle::MergePr { .. }
+                )
         );
     let mut body = if show_files {
         super::modal_shell::modal_scroll_body()

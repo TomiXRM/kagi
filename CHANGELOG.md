@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Home Recent items offer a localized “Remove from Recently Opened” context-menu action through right-click and Shift+F10/Menu. Removal persists only the history entry; repository/worktree files, Git state and open tabs remain unchanged. Empty history retains Open Folder. (#1567)
+  - Review: removal returns focus to the same row position (or its predecessor at the tail); removing the last row focuses Open Folder rather than the window root.
 - Changes keyboard arrows, Home/End and PageUp/PageDown select the focused file through the existing lazy diff path, keeping its fill, accessibility selection and file-menu target together in desktop and compact layouts. (#1536)
 - Graph's final Escape now closes an open bottom pane only after existing overlays, diff and commit-selection dismissal. Returning from PRs/Issues keeps the pane hidden until a fresh compact commit click or Up/Down selection reveals Changes detail/files through the existing selection hook; same-row toggles do not reopen it. Desktop keeps its right Inspector, and Editor/Conflict Escape semantics remain unchanged. (#1543)
   - Review: focused text Inputs keep their Escape semantics, including desktop Commit Panel title/body. Closing from a bottom-pane descendant hands focus to the Graph root before hiding controls, keeping the next Escape and ⌘J reachable.

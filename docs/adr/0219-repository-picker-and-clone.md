@@ -153,8 +153,12 @@ recycled row position.
 
 `tabs` removes only that exact path from the existing `recent_repos` key via
 the settings store. It does not open Git, mutate a repository/worktree, close
-or switch tabs, or record a repository receipt. Existing list reconciliation
-hands removed-row focus to a surviving row (or root for empty history).
+or switch tabs, or record a repository receipt. Dispatch remembers the removed
+row's index and prevents menu dismissal from restoring its obsolete handle.
+After list reconciliation, focus moves to the same index (the new row in that
+position), or to the predecessor if the removed row was last. When no recent
+row survives, the pinned Open Folder Button's own keyed handle receives focus
+and draws its normal focus ring; the window root is only a transient handoff.
 Open Folder remains available with the normal empty Recent message. Opening
 that repository explicitly again may record it normally.
 

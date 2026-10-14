@@ -320,7 +320,13 @@ impl KagiApp {
                 Button::new("home-open-folder")
                     .primary()
                     .label(Msg::HomeOpenFolder.t())
-                    .on_click(open_folder),
+                    .on_click(open_folder)
+                    .map(|button| {
+                        super::home_recent::OpenFolderButton(
+                            button,
+                            self.home_github.recent.pending_focus.take().is_some(),
+                        )
+                    }),
             ))
             .child(super::e2e::measure_control(
                 "home-remote",

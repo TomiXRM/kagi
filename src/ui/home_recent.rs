@@ -14,6 +14,7 @@ pub(super) struct RecentList {
     pub(super) keyboard: super::list_keyboard::ListKeyboard,
     scroll: gpui::ListState,
     pub(super) menu: Option<(PathBuf, gpui::Point<gpui::Pixels>)>,
+    pub(super) pending_focus: Option<usize>,
 }
 impl Default for RecentList {
     fn default() -> Self {
@@ -23,6 +24,7 @@ impl Default for RecentList {
             keyboard: Default::default(),
             scroll: gpui::ListState::new(2, gpui::ListAlignment::Top, px(0.)),
             menu: None,
+            pending_focus: None,
         }
     }
 }
@@ -72,12 +74,18 @@ impl KagiApp {
                 app.home_github.recent.menu = None;
                 cx.notify();
             },
-            move |app, path, _, cx| {
+            move |app, path, window, cx| {
                 if app.home_in_front()
                     && app.home_github.recent.menu.as_ref().map(|m| &m.0) == Some(&expected)
-                    && super::tabs::recent_repos().contains(&path)
                 {
-                    super::tabs::remove_recent_repo(&path);
+                    if let Some(at) = super::tabs::recent_repos().iter().position(|p| p == &path) {
+                        // Do not let menu dismissal restore the row being removed.
+                        if let Some(root) = app.root_focus.as_ref() {
+                            root.focus(window, cx);
+                        }
+                        super::tabs::remove_recent_repo(&path);
+                        app.home_github.recent.pending_focus = Some(at);
+                    }
                 }
                 app.home_github.recent.menu = None;
                 cx.notify();
@@ -119,6 +127,13 @@ impl KagiApp {
             window,
             cx,
         );
+        if count > 0 {
+            if let Some(at) = navigation.pending_focus.take() {
+                let at = at.min(count - 1);
+                rows.reveal_entry(at + 1);
+                rows.focus_row(at, window, cx);
+            }
+        }
         let list_rows = rows.clone();
         let render = cx.processor(move |_app: &mut KagiApp, index: usize, _window, cx| {
             if index == 0 {
@@ -287,4 +302,22 @@ fn recent_row(
         super::list_a11y::list_item("home-recent-list", row, i, count, label),
     );
     super::e2e::measure_control(format!("home-recent-{i}"), row).into_any_element()
+}
+
+/// Resolve the pinned Button's own keyed focus at its render location.
+#[derive(gpui::IntoElement)]
+pub(super) struct OpenFolderButton(pub gpui_component::button::Button, pub bool);
+
+impl gpui::RenderOnce for OpenFolderButton {
+    fn render(self, window: &mut Window, cx: &mut gpui::App) -> impl IntoElement {
+        if self.1 {
+            window
+                .use_keyed_state("home-open-folder", cx, |_, cx| cx.focus_handle())
+                .read(cx)
+                .clone()
+                .focus(window, cx);
+        }
+        // Render directly so both calls resolve the same keyed focus namespace.
+        self.0.render(window, cx)
+    }
 }

@@ -880,6 +880,9 @@ mod density_rest;
 mod finder_scale_rest;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/inspector_file_rows.rs"]
+mod inspector_file_rows;
+#[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
 mod inspector_scale;
 
@@ -4413,6 +4416,10 @@ mod macos {
             (
                 "inspector_scale",
                 Box::new(crate::inspector_scale::scenario),
+            ),
+            (
+                "inspector_file_row_hit",
+                Box::new(crate::inspector_file_rows::scenario),
             ),
             (
                 "graph_subject_identity",

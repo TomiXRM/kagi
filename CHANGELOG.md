@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Inspector changed-file options now fill the available row width, so filename, diffstat and trailing-space clicks open the same diff. Selection, hover and the existing keyboard focus ring share that full-width frame in Path and Tree views; indentation and arrow navigation are unchanged. (#1559)
+- Inspector density and full-message desktop regressions now use the exact 1000×720 desktop breakpoint instead of expecting desktop-only frames in the 940px compact layout. Existing compact Inspector scenarios retain compact coverage; the small desktop density oracle caps downward movement without rejecting unrelated chrome improvements. (dev-red oracle repair, #1559)
 - Stage all and Unstage all now publish the Commit Panel, session status counts and WIP diffstat from one post-write read, instead of leaving status feedback to the filesystem watcher's debounce and repeating the panel refresh. Linked-worktree actions retain their own repository scope; index mutation and receipt behavior are unchanged. (#1569)
 - Push tag confirmation shows the frozen tag object OID, peeled target OID, lightweight/annotated kind and every actual push destination instead of unrelated active-branch state. EN/JA presentation and Copy all redact URL credentials, query and fragment; receipt and klog summaries remain unchanged. (#1560)
 - Dev-red tag navigation oracles now exercise inline-sidebar desktop behavior at the exact 1000×720 breakpoint instead of compact 940px; all tooltip, keyboard, pagination, Solo and unchanged-repository assertions remain, and 1392px variants are unchanged. (#1537 regression audit)

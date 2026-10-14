@@ -354,6 +354,9 @@ mod commit_paging;
 #[path = "recovery/context_menu_keys.rs"]
 mod context_menu_keys;
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_tab_stop.rs"]
+mod graph_tab_stop;
+#[cfg(target_os = "macos")]
 #[path = "recovery/home_empty_section_wording.rs"]
 mod home_empty_section_wording;
 #[cfg(target_os = "macos")]
@@ -1893,6 +1896,10 @@ mod macos {
             (
                 "keyboard_nav",
                 Box::new(crate::keyboard_nav::scenario_keyboard_nav),
+            ),
+            (
+                "graph_tab_stop",
+                Box::new(crate::graph_tab_stop::scenario_graph_tab_stop),
             ),
             (
                 "home_rows",

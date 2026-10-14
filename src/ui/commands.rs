@@ -1755,6 +1755,7 @@ pub struct FetchFlight {
 #[derive(Clone)]
 struct FetchFailure {
     message: String,
+    auth_remote: Option<String>,
     termination_unknown: bool,
     /// The local refs the attempt moved (#885). Observed, not assumed: a
     /// fetch writes wherever `remote.<name>.fetch` points, and a mirror-style
@@ -1772,6 +1773,39 @@ impl std::fmt::Display for FetchFailure {
 }
 
 impl FetchFailure {
+    fn auth_summary(&self) -> Option<String> {
+        self.auth_remote.as_deref().map(fetch_auth_summary)
+    }
+
+    fn record(
+        &mut self,
+        app: &mut KagiApp,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+        cx: &mut Context<KagiApp>,
+    ) {
+        let entry = self.entry(before, repo_path);
+        app.record_op_impl(entry, cx, true, self.auth_summary());
+    }
+
+    fn entry(
+        &mut self,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+    ) -> kagi_git::oplog::OpLogEntry {
+        let mut entry = kagi_git::oplog::OpLogEntry::new(
+            "fetch",
+            repo_path.display().to_string(),
+            before,
+            self.outcome(),
+        )
+        .with_ref_moves(self.ref_moves.take());
+        if self.auth_remote.is_some() {
+            entry.technical_detail = Some(self.message.clone());
+        }
+        entry
+    }
+
     fn outcome(&self) -> kagi_git::oplog::OpOutcome {
         if self.termination_unknown {
             kagi_git::oplog::OpOutcome::Unknown {
@@ -1783,10 +1817,21 @@ impl FetchFailure {
             }
         } else {
             kagi_git::oplog::OpOutcome::Failed {
-                error: i18n::op_failed(i18n::Op::Fetch, &self.message),
+                error: match self.auth_summary() {
+                    Some(summary) => summary,
+                    None => i18n::op_failed(i18n::Op::Fetch, &self.message),
+                },
             }
         }
     }
+}
+
+pub(super) fn fetch_auth_summary(remote: &str) -> String {
+    Msg::FetchAuthenticationRequired.t().replacen(
+        "{}",
+        &kagi_domain::text_safety::sanitize_control_bytes(remote),
+        1,
+    )
 }
 
 impl KagiApp {
@@ -2410,6 +2455,12 @@ impl KagiApp {
             Some(match result {
                 Ok(outcome) => Ok((outcome, ref_moves)),
                 Err(error) => Err(FetchFailure {
+                    auth_remote: match &error {
+                        kagi_git::GitError::FetchAuthentication { remote, .. } => {
+                            Some(remote.clone())
+                        }
+                        _ => None,
+                    },
                     termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
                     ref_moves,
                     message: if open_failed {
@@ -2425,6 +2476,7 @@ impl KagiApp {
                 let error = abandonment.into_unknown();
                 Err(FetchFailure {
                     message: error.to_string(),
+                    auth_remote: None,
                     termination_unknown: true,
                     ref_moves: None,
                 })
@@ -2475,14 +2527,7 @@ impl KagiApp {
                     match &mut result {
                         Err(failure) => {
                             if current_waiter {
-                                app.record_op_persist_moves(
-                                    "fetch",
-                                    flight.before,
-                                    failure.outcome(),
-                                    failure.ref_moves.take(),
-                                    &repo_path_guard,
-                                    cx,
-                                );
+                                failure.record(app, flight.before, &repo_path_guard, cx);
                             } else {
                                 app.record_ref_fetch_failure(
                                     "fetch",
@@ -2491,6 +2536,10 @@ impl KagiApp {
                                     flight.before,
                                     failure.outcome(),
                                     failure.ref_moves.take(),
+                                    failure
+                                        .auth_remote
+                                        .as_ref()
+                                        .map(|_| failure.message.clone()),
                                     &repo_path_guard,
                                     cx,
                                 );
@@ -2554,18 +2603,10 @@ impl KagiApp {
                     Err(mut e) => {
                         // Record even a silent auto-fetch failure. A stopped
                         // child with an uncertain effect is Unknown, not Failed.
-                        let outcome = e.outcome();
                         if !silent || current_waiter {
                             // The receipt presenter owns the single failure
                             // toast and footer, including joined Pull waiters.
-                            app.record_op_persist_moves(
-                                "fetch",
-                                flight.before,
-                                outcome,
-                                e.ref_moves.take(),
-                                &repo_path_guard,
-                                cx,
-                            );
+                            e.record(app, flight.before, &repo_path_guard, cx);
                         } else {
                             // No presentation owner: preserve the receipt and
                             // recording-failure notice without changing the UI.
@@ -2574,8 +2615,9 @@ impl KagiApp {
                                 None,
                                 None,
                                 flight.before,
-                                outcome,
+                                e.outcome(),
                                 e.ref_moves.take(),
+                                e.auth_remote.as_ref().map(|_| e.message.clone()),
                                 &repo_path_guard,
                                 cx,
                             );

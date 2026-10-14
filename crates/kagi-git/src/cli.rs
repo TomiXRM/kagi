@@ -374,7 +374,10 @@ fn git_command_with_executable(repo_dir: &Path, executable: &Path) -> std::proce
         .env("GIT_ADVICE", "0")
         .env("LC_ALL", "C")
         .env("GIT_EDITOR", "true")
-        .env("GIT_ASKPASS", "/bin/false");
+        // Empty overrides disable Git's askpass chain, including SSH_ASKPASS.
+        // A synthetic helper path is neither portable nor necessary (#1561).
+        .env("GIT_ASKPASS", "")
+        .env("SSH_ASKPASS", "");
     cmd
 }
 
@@ -405,7 +408,7 @@ pub fn gh_command() -> std::process::Command {
 /// | `GIT_TERMINAL_PROMPT`| `0`   | Disable interactive credential prompts  |
 /// | `LC_ALL`             | `C`   | Stable locale for output parsing        |
 /// | `GIT_EDITOR`         | `true`| No interactive editor (e.g. `--continue` message prompts) |
-/// | `GIT_ASKPASS`        | `/bin/false` | No askpass helper is ever run     |
+/// | `GIT_ASKPASS`, `SSH_ASKPASS` | empty | Disable askpass helpers without launching a process |
 ///
 /// `GIT_CONFIG_NOSYSTEM` is deliberately **not** set: the system config is not
 /// attacker-controlled (it needs root to write) and on macOS it is where
@@ -575,7 +578,8 @@ mod tests {
         }
         // Clearing must not have taken the non-interactive hardening with it.
         assert!(has_env(&git, "GIT_TERMINAL_PROMPT", "0"));
-        assert!(has_env(&git, "GIT_ASKPASS", "/bin/false"));
+        assert!(has_env(&git, "GIT_ASKPASS", ""));
+        assert!(has_env(&git, "SSH_ASKPASS", ""));
         assert!(has_env(&git, "LC_ALL", "C"));
     }
     #[test]

@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn technical_detail_round_trips_without_changing_ordinary_receipts() {
+    let mut entry = OpLogEntry::new(
+        "fetch",
+        "/repo",
+        StateSummary {
+            head: "main".into(),
+            dirty: "clean".into(),
+        },
+        OpOutcome::Failed {
+            error: "Check your credentials.".into(),
+        },
+    );
+    let ordinary = entry_to_json(&entry);
+    assert!(!ordinary.contains("technical_detail"));
+    assert!(parse_oplog_line(&ordinary)
+        .unwrap()
+        .technical_detail
+        .is_none());
+    let raw = "git error: fetch failed (exit 128): fatal: could not read Username\nterminal prompts disabled\n";
+    entry.technical_detail = Some(raw.into());
+    let read = parse_oplog_line(&entry_to_json(&entry)).unwrap();
+    assert_eq!(read.technical_detail.as_deref(), Some(raw));
+    assert!(
+        matches!(read.outcome, OpOutcome::Failed { error } if error == "Check your credentials.")
+    );
+}
+
+#[test]
 fn test_runtime_without_log_dir_refuses_home_fallback() {
     let error = log_file_path_from_env(None, Some(Path::new("/home/tester")), true)
         .expect_err("test runtime must not fall back to HOME");
@@ -59,6 +87,7 @@ fn oplog_filter_scopes_to_bound_repo() {
         ref_scope: Default::default(),
         repo_identity: RecordedIdentity::Absent,
         issue_fields: None,
+        technical_detail: None,
         id: 0,
         parent: None,
         actor: Actor::Human,
@@ -215,6 +244,7 @@ fn synthetic_entry(id: u64, repo: &str) -> OpLogEntry {
         ref_scope: Default::default(),
         repo_identity: RecordedIdentity::Absent,
         issue_fields: None,
+        technical_detail: None,
     }
 }
 

@@ -498,3 +498,23 @@ continues to cancel, now dismissing its presentation rather than reopening an
 unarmed copy. Unread notices already queued may present next; a notice displaced
 by another user-opened dialog is still unread and remains queued under #718.
 
+
+## Amendment — 2026-10-15: Fetch authentication failures (#1561)
+
+Fetch retains a typed authentication failure with the attempted remote name and
+complete CLI diagnostic. Its Failed outcome is a single-line localized EN/JA
+summary identifying the remote and asking the user to check credentials. The
+optional receipt `technical_detail` holds the unchanged full CLI diagnostic,
+rendered in expanded detail and Operation Log Copy, never in the toast or row
+summary. The wire codec omits this field when absent, so ordinary/old receipt
+bytes remain unchanged; old lines read it as `None`. Manual, quiet and departed
+Fetch attempts retain the same detail and exactly one receipt.
+The existing bounded toast/footer presenter and frozen session/visit ownership
+remain the only delivery path. Other failure and Unknown wording is unchanged.
+
+Non-interactive Git sets `GIT_ASKPASS` and `SSH_ASKPASS` to empty strings, retains
+`core.askPass=` hardening and `GIT_TERMINAL_PROMPT=0`, and launches no synthetic
+helper. Global credential helpers remain available; this does not add credential
+storage, automatic authentication retry or a success fallback. A loopback HTTP
+Basic 401 fixture covers the backend and real native Fetch presentation in both
+languages and Apple themes, with unchanged refs and full diagnostic Copy.

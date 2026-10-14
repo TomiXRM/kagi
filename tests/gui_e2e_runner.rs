@@ -728,6 +728,10 @@ mod remote_refresh_owner;
 mod fetch_owner;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/fetch_auth_error.rs"]
+mod fetch_auth_error;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/guard_writer_panic.rs"]
 mod guard_writer_panic;
 
@@ -3660,6 +3664,10 @@ mod macos {
             (
                 "remote_refresh_newest_request",
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_newest_request),
+            ),
+            (
+                "fetch_auth_failure_toast",
+                Box::new(crate::fetch_auth_error::scenario_fetch_auth_failure_toast),
             ),
             (
                 "fetch_same_owner_piggybacks",

@@ -89,12 +89,15 @@ impl KagiApp {
             self.yield_compact_input_focus(window, cx);
         }
         self.compact.enabled = enabled;
-        self.compact.suspended =
+        let suspended =
             enabled && (self.has_modal_or_visible_plan(cx) || self.menu_overlay.is_some());
-        if self.compact.suspended {
+        // Retire the covered projections once, not on every modal repaint:
+        // repeated rail dismissal would steal each Tab back to the root.
+        if suspended && !self.compact.suspended {
             super::compact_sidebar::dismiss(window, cx);
             self.dismiss_compact_presentation(window, cx, true);
         }
+        self.compact.suspended = suspended;
         if self.ui().commit_panel.is_none()
             || self.compact.popup_owner.is_none()
             || self.conflict_body_visible()

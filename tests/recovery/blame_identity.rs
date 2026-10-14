@@ -169,7 +169,7 @@ fn blame_fixture() -> tempfile::TempDir {
     fixture
 }
 
-fn matrix(
+pub(crate) fn matrix(
     cx: &mut VisualTestAppContext,
     check: impl Fn(&mut VisualTestAppContext, &Entity<EditorWorkspaceView>, AnyWindowHandle, Lang),
 ) {

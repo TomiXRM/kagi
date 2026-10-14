@@ -61,8 +61,12 @@ branch が作られないこと、slot が `Failed` になること、repo を�
 ## Amendment — 2026-10-14: neutral Rename prefill (#1552)
 
 The unchanged current branch name is an editing starting point, not a failed
-operation. Rename keeps its plan slot Pending while the trimmed input equals
-the old name; Return cannot execute without a Ready plan. The renderer omits
-SameName field validation in this state. Other invalid names retain their
+operation. Rename keeps its plan slot non-actionable while the trimmed input
+equals the old name; Return cannot execute without a Ready plan. The renderer
+uses typed `InputPlanValidation::Unchanged`, omits SameName field validation,
+and supplies EN “Enter a new name” / JA “新しい名前を入力” as the disabled
+action's tooltip and accessibility description, never the running-plan reason.
+The unpopulated plan slot alone does not imply an active plan read.
+Other invalid names retain their
 localized field reason, with the identical plan blocker displayed only once.
 Valid edits still use the existing plan, confirmation and preflight pipeline.

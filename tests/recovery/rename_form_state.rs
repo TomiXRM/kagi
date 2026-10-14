@@ -8,6 +8,20 @@ use kagi_git::ops::BranchRenameValidation;
 #[path = "../support/git_fixture.rs"]
 mod git_fixture;
 
+fn assert_neutral_reason(language: Lang) {
+    let expected = match language {
+        Lang::En => "Enter a new name",
+        Lang::Ja => "新しい名前を入力",
+    };
+    let button = kagi::ui::button_style::recorded_modal_button("branch-input-confirm").unwrap();
+    assert!(button.disabled);
+    assert_eq!(
+        button.description.as_deref(),
+        Some(expected),
+        "neutral is not a running plan"
+    );
+}
+
 pub fn scenario_branch_rename_neutral_state(cx: &mut VisualTestAppContext) {
     let _restore = crate::recovery_layout::GlobalSettings::capture();
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "recent_repos", "ui_zoom"]);
@@ -41,6 +55,7 @@ pub fn scenario_branch_rename_neutral_state(cx: &mut VisualTestAppContext) {
             );
             assert!(modal.error.is_none());
         });
+        assert_neutral_reason(language);
         assert!(kagi::ui::e2e::control_bounds(window.window_id(), "input-field-error").is_none());
         let confirm = kagi::ui::e2e::confirm_bounds(window.window_id()).unwrap();
         cx.simulate_click(window, confirm.center(), gpui::Modifiers::none());
@@ -96,6 +111,9 @@ pub fn scenario_branch_rename_neutral_state(cx: &mut VisualTestAppContext) {
                         .is_none(),
                     "{name}: field validation must not repeat as a plan blocker"
                 );
+            }
+            if name == "main" {
+                assert_neutral_reason(language);
             }
         }
         keys(cx, window, "escape");

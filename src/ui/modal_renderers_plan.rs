@@ -17,7 +17,7 @@ use super::modal_renderers::{
     render_plan_modal_wrapper_extra, render_plan_modal_wrapper_staged,
     render_plan_modal_wrapper_styled, ModalIcon, PlanCardExtra,
 };
-use super::modal_renderers_input::render_input_plan_modal;
+use super::modal_renderers_input::{render_input_plan_modal, InputPlanValidation};
 use super::modal_renderers_stash::render_stash_planning;
 use super::modals::worktree::*;
 use super::modals::*;
@@ -506,13 +506,18 @@ pub(crate) fn render_rename_branch_modal(
         // #510: a failed replan hands over no plan; the button remains visibly
         // unavailable with the failure reason instead of disappearing.
         modal.plan.plan().cloned(),
-        (!matches!(
-            &modal.validation,
-            kagi_git::ops::BranchRenameValidation::Invalid(
-                kagi_git::ops::BranchNameError::SameName
-            )
-        ))
-        .then_some(modal.validation),
+        Some(
+            if matches!(
+                &modal.validation,
+                kagi_git::ops::BranchRenameValidation::Invalid(
+                    kagi_git::ops::BranchNameError::SameName
+                )
+            ) {
+                InputPlanValidation::Unchanged
+            } else {
+                InputPlanValidation::Rename(modal.validation)
+            },
+        ),
         plan_or_exec_error(&modal.plan, modal.error),
         Msg::InputRename.t(),
         (

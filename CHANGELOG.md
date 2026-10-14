@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Branch Rename opens with a neutral current-name prefill and disabled Rename action; unchanged Return is inert. Edited invalid names retain localized inline validation without repeating the same cause in the plan. (#1552)
+  - Review: unchanged-name tooltip and accessibility description say “Enter a new name” / 「新しい名前を入力」, not a permanently running “Checking plan…” state.
 - Compact Changes reconciles file-row focus only from the surface drawing its lists, so the pinned composer no longer moves End/arrow focus back to an earlier file before scrolling finishes. Keyboard Discard coverage compares its menu and planned path with the actual focused row's accessibility name.
 - Revert confirmation uses English generated AFTER prose in English and Japanese presentation in Japanese; commit subjects and branch names remain verbatim, including Copy all. (#1534)
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)

@@ -579,6 +579,10 @@ mod recovery_commit_panel_viewport;
 mod compact_layout;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_rail.rs"]
+mod compact_rail;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
 
@@ -3241,6 +3245,11 @@ mod macos {
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
+            ("compact_rail_cmd_f", Box::new(crate::compact_rail::scenario_compact_rail_cmd_f)),
+            ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
+            ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
+            ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
+            ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),

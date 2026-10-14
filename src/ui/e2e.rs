@@ -29,6 +29,9 @@ pub mod inspector_metadata;
 pub mod tab_strip;
 
 #[cfg(feature = "gui-e2e")]
+pub mod compact_rail;
+
+#[cfg(feature = "gui-e2e")]
 pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]

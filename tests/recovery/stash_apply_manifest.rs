@@ -83,6 +83,64 @@ pub fn scenario_stash_apply_manifest(cx: &mut VisualTestAppContext) {
                 );
                 unmount(cx, app, window);
             }
+            {
+                let repository = git2::Repository::open(&repo).unwrap();
+                let tree = repository.head().unwrap().peel_to_tree().unwrap();
+                let signature = repository.signature().unwrap();
+                let orphan = repository
+                    .commit(None, &signature, &signature, "orphan stash", &tree, &[])
+                    .unwrap();
+                repository
+                    .reference("refs/stash", orphan, true, "orphan stash")
+                    .unwrap();
+            }
+            for action in ["apply", "pop"] {
+                let (app, window) = mount(cx, &repo);
+                app.update(cx, |app, cx| match action {
+                    "apply" => app.open_stash_apply_modal(0, cx),
+                    _ => app.open_pop_modal(0, cx),
+                });
+                cx.run_until_parked();
+                crate::recovery_operations::paint(cx, window);
+                let unavailable = if lang == i18n::Lang::En {
+                    "Stash manifest unavailable"
+                } else {
+                    "stash manifest を取得できません"
+                };
+                crate::native_ax::activate(cx);
+                crate::recovery_operations::paint(cx, window);
+                assert!(
+                    crate::native_ax::tree(cx, window)
+                        .to_string()
+                        .contains(unavailable),
+                    "{action} must expose the actual unavailable-manifest warning"
+                );
+                let copy_id = if action == "apply" {
+                    "stash-apply-card-copy"
+                } else {
+                    "plan-card-copy"
+                };
+                let copy = e2e::control_bounds(window.window_id(), copy_id).unwrap();
+                cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+                cx.run_until_parked();
+                let copied = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .unwrap();
+                assert!(copied.contains(unavailable));
+                assert!(
+                    !copied.contains(&i18n::Msg::ModalFilesToChange.t().replace("{}", "0")),
+                    "unavailable is not an empty restoration manifest"
+                );
+                if action == "pop" {
+                    assert!(
+                        kagi::ui::button_style::recorded_modal_button("plan-confirm")
+                            .unwrap()
+                            .disabled
+                    );
+                }
+                unmount(cx, app, window);
+            }
         }
     }
     i18n::set_lang(original);

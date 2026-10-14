@@ -114,3 +114,50 @@ fn stash_manifest_preserves_file_symlink_type_changes_both_directions() {
         );
     }
 }
+
+#[test]
+fn parentless_stash_preserves_plan_and_reports_unavailable_manifest() {
+    use kagi_domain::plan_note::{PlanNote, StashNote};
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path();
+    init_repo(path, "main");
+    write_file(path, "README.md", "base\n");
+    git(path, &["add", "."]);
+    git(path, &["commit", "-qm", "base"]);
+    let orphan = git_output(path, &["commit-tree", "HEAD^{tree}", "-m", "orphan stash"]);
+    git(
+        path,
+        &[
+            "update-ref",
+            "--create-reflog",
+            "refs/stash",
+            &orphan,
+            "-m",
+            "orphan stash",
+        ],
+    );
+    let before_refs = git_output(path, &["show-ref"]);
+    let before_reflog = std::fs::read(path.join(".git/logs/refs/stash")).unwrap();
+    let mut repo = git2::Repository::open(path).unwrap();
+    let apply = kagi_git::plan_stash_apply(&mut repo, 0).unwrap();
+    let pop = kagi_git::plan_stash_pop(&mut repo, 0).unwrap();
+    assert!(
+        pop.blockers.iter().any(|note| matches!(
+            note,
+            PlanNote::Stash(StashNote::PopPredictionUnavailable { .. })
+        )),
+        "manifest failure must not replace the fail-closed prediction blocker"
+    );
+    for plan in [apply, pop] {
+        assert!(plan.preview_files.is_empty());
+        assert!(plan.warnings.iter().any(|note| matches!(
+            note, PlanNote::Stash(StashNote::ManifestUnavailable { reason })
+                if reason.contains("parent 0 does not exist")
+        )));
+    }
+    assert_eq!(git_output(path, &["show-ref"]), before_refs);
+    assert_eq!(
+        std::fs::read(path.join(".git/logs/refs/stash")).unwrap(),
+        before_reflog
+    );
+}

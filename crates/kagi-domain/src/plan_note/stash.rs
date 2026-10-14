@@ -41,6 +41,9 @@ pub enum StashNote {
     IndexOnlyNotRestored {
         files: Vec<crate::status::FileStatus>,
     },
+    /// The selected stash's files could not be read. Preserve prediction
+    /// blockers/warnings rather than replacing the plan with a preview error.
+    ManifestUnavailable { reason: String },
     /// blocker (`plan_stash_apply` / `plan_stash_pop` / `plan_stash_drop`):
     /// `index` names a stash entry that doesn't exist. The singular/plural
     /// "entry"/"entries" tail is computed inside `message_en` — JA needs no
@@ -102,6 +105,9 @@ impl StashNote {
                 "Index-only content not restored ({}): Apply/Pop does not use --index; successful Pop deletes this saved content.\n{}",
                 files.len(),
                 files.iter().map(|file| format!("{} {}", file.change.label(), file.path.display())).collect::<Vec<_>>().join("\n")
+            ),
+            StashNote::ManifestUnavailable { reason } => format!(
+                "Stash manifest unavailable: {reason}. Restored file names, count and change kinds are unknown."
             ),
             StashNote::IndexOutOfRange { index, count } => format!(
                 "Stash index {} is out of range (only {} stash entr{} exist).",

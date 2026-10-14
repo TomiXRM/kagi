@@ -65,6 +65,9 @@ pub fn note_ja(note: &StashNote) -> String {
             files.len(),
             files.iter().map(|file| format!("{} {}", file.change.label(), file.path.display())).collect::<Vec<_>>().join("\n")
         ),
+        StashNote::ManifestUnavailable { reason } => format!(
+            "stash manifest を取得できません: {reason}。復元するファイル名・件数・変更種別は不明です。"
+        ),
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
         StashNote::IndexOutOfRange { index, count } => {
             format!(

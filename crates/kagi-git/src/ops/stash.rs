@@ -201,7 +201,13 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         commands: vec!["git stash list".to_string()],
     };
 
-    let preview_files = restoration_manifest(repo, &entries, index, &mut warnings)?;
+    let preview_files =
+        restoration_manifest(repo, &entries, index, &mut warnings).unwrap_or_else(|error| {
+            warnings.push(PlanNote::Stash(StashNote::ManifestUnavailable {
+                reason: error.to_string(),
+            }));
+            Vec::new()
+        });
     Ok(OperationPlan {
         tag_push_identity: None,
         approved_index_digest: None,
@@ -406,7 +412,13 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         commands: vec!["git stash list".to_string()],
     };
 
-    let preview_files = restoration_manifest(repo, &stashes_with_oid, index, &mut warnings)?;
+    let preview_files = restoration_manifest(repo, &stashes_with_oid, index, &mut warnings)
+        .unwrap_or_else(|error| {
+            warnings.push(PlanNote::Stash(StashNote::ManifestUnavailable {
+                reason: error.to_string(),
+            }));
+            Vec::new()
+        });
     Ok(OperationPlan {
         tag_push_identity: None,
         approved_index_digest: None,

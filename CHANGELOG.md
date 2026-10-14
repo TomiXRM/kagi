@@ -9,6 +9,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)
   - Review: saved index-only content is explicitly labeled “not restored” (EN/JA), outside the restoration count; successful Pop loses that content because execution does not use `--index`. Apply/Pop Copy all includes the count, change kinds and full paths, and file/symlink changes retain their TypeChange badge.
+  - Manifest read failures now remain explicit localized “unavailable” warnings in the card and Copy all, preserving the existing fail-closed Pop prediction blocker instead of failing plan creation. Unknown contents are not reported as zero files.
 - File → Clone Repository and its existing shortcut now open Home's Repositories picker instead of remaining disabled as an unimplemented placeholder. Selecting a repository uses the existing clone confirmation card and safety lifecycle. (#1522)
   - Review: another open modal or visible confirmation blocks navigation without stealing its focus; portable menu dismissal cannot restore the covered workspace's focus over the picker.
 - Editor Blame uses a named, keyboard-focusable toggle Button with a visible focus ring and toggled (pressed) accessibility state. Enter, Space and pointer activation share the existing on/off path in EN/JA. (#1524)

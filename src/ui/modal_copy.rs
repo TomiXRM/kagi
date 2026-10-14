@@ -101,7 +101,14 @@ pub(crate) fn plan_clipboard_text(
             kagi_domain::plan_note::StashTitle::Apply { .. }
                 | kagi_domain::plan_note::StashTitle::Pop { .. }
         )
-    ) {
+    ) && !plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ManifestUnavailable { .. }
+            )
+        )
+    }) {
         out.push('\n');
         out.push_str(
             &Msg::ModalFilesToChange

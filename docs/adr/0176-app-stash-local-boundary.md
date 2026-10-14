@@ -151,8 +151,12 @@ Saved index changes absent from the restored worktree manifest are a separate
 localized `IndexOnlyNotRestored` warning with count, kind and full path.
 Execution retains its non-`--index` policy: index-only content is **not restored**,
 not merely restored unstaged. Successful Pop deletes that saved content.
-Missing entries retain their existing blocker and an empty preview. Read errors
-fail planning rather than presenting incomplete contents as a complete manifest.
+Missing entries retain their existing blocker and an empty preview. Manifest
+read errors become a typed, localized `ManifestUnavailable` warning, preserving
+the original prediction warnings/blockers and plan disposition. A malformed
+parentless stash still yields the existing fail-closed Pop prediction blocker.
+The card and Copy all identify file names/count/kinds as unknown, never as a
+complete or zero-file manifest. This does not relax preflight or execution.
 Both cards reuse the localized, bounded plan-file list inside the body scroller;
 the action footer and stash identity/preflight pipeline are unchanged.
 Apply and Pop Copy all both include the localized manifest count heading and

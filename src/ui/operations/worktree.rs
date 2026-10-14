@@ -228,6 +228,11 @@ impl KagiApp {
             Some(m) => m,
             None => return,
         };
+        // An unfilled new-name request is not an attempted operation. Return
+        // must remain as quiet as the disabled Create button.
+        if !modal.allow_existing_branch && modal.branch_input.trim().is_empty() {
+            return;
+        }
         // #510: pending/failed yield None, refusing Enter and the button alike.
         let Some(plan) = modal.plan.plan().cloned() else {
             return;

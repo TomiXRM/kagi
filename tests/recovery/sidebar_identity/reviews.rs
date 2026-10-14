@@ -18,7 +18,7 @@ pub fn scenario_tag_unloaded_target_solo(cx: &mut VisualTestAppContext) {
         git(repo, &["checkout", "-q", "main"]);
         git(repo, &["tag", "solo-hidden-tag"]);
         let target = kagi_git::CommitId(output(repo, &["rev-parse", "HEAD"]));
-        let (app, window) = mount_dimensions(cx, repo, (940., 660.));
+        let (app, window) = mount_dimensions(cx, repo, (1000., 720.));
         appearance(cx, &app, window, language, "apple-light", 1., 3);
         app.update(cx, |app, cx| {
             app.toggle_branch_solo("other".into(), other.clone(), cx)
@@ -100,7 +100,7 @@ fn tag_no_more_cell(cx: &mut VisualTestAppContext, language: Lang) {
     let repo = fixture.path();
     git(repo, &["tag", "no-more-tag", "HEAD~1"]);
     git(repo, &["commit", "--allow-empty", "-qm", "latest"]);
-    let (app, window) = mount_dimensions(cx, repo, (940., 660.));
+    let (app, window) = mount_dimensions(cx, repo, (1000., 720.));
     appearance(cx, &app, window, language, "apple-light", 1., 3);
     let snapshot = kagi_git::Backend::open(repo).unwrap().snapshot(2).unwrap();
     super::tag::install_history_page(cx, &app, repo, &snapshot);

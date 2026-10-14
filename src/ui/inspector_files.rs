@@ -370,6 +370,13 @@ fn file_row(
     let focus = rows.clone();
     let selected = presentation.selected == Some(index);
     let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
+    let stat = super::diffstat_bar::diffstat_unit(
+        index,
+        file.stat.as_ref(),
+        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active)),
+    );
+    #[cfg(feature = "gui-e2e")]
+    let stat = super::e2e::measure_leaf(format!("inspector-file-stat-{index}"), stat);
     let row = super::list_a11y::list_option(
         LIST,
         rows.row(slot, div().id(("inspector-file", index))),
@@ -382,6 +389,7 @@ fn file_row(
         el.role(gpui::Role::TreeItem).aria_level(depth + 1)
     })
     .flex()
+    .w_full()
     .items_center()
     .gap_1()
     .pl(theme::scaled_px(*depth as f32 * 12.))
@@ -440,10 +448,6 @@ fn file_row(
                 )))
             }),
     )
-    .child(super::diffstat_bar::diffstat_unit(
-        index,
-        file.stat.as_ref(),
-        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active)),
-    ));
-    super::e2e::measure_control(format!("inspector-file-{index}"), row)
+    .child(stat);
+    super::e2e::measure_leaf(format!("inspector-file-{index}"), row)
 }

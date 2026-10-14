@@ -395,5 +395,5 @@ pub fn scenario_tag_unloaded_target_cell(
 }
 
 pub fn scenario_tag_unloaded_target(cx: &mut VisualTestAppContext) {
-    scenario_tag_unloaded_target_cell(cx, Lang::En, "apple-light", 1., (940., 660.));
+    scenario_tag_unloaded_target_cell(cx, Lang::En, "apple-light", 1., (1000., 720.));
 }

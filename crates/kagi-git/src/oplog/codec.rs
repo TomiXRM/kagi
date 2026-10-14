@@ -93,6 +93,8 @@ struct EntryRef<'a> {
     before: &'a StateSummary,
     #[serde(serialize_with = "OutcomeRecord::serialize")]
     outcome: &'a OpOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    technical_detail: Option<&'a str>,
     backup_refs: &'a [String],
     #[serde(serialize_with = "recovery::serialize")]
     recovery: &'a [recovery::RecoveryHandle],
@@ -234,6 +236,8 @@ struct EntryRecord {
     repo_identity: RecordedIdentity,
     #[serde(default, deserialize_with = "issue_fields")]
     issue_fields: Option<IssueCreateFields>,
+    #[serde(default, deserialize_with = "technical_detail")]
+    technical_detail: Option<String>,
 }
 
 pub(super) fn to_json(entry: &OpLogEntry) -> String {
@@ -247,6 +251,7 @@ pub(super) fn to_json(entry: &OpLogEntry) -> String {
         worktree: entry.worktree.as_deref(),
         before: &entry.before,
         outcome: &entry.outcome,
+        technical_detail: entry.technical_detail.as_deref(),
         backup_refs: &entry.backup_refs,
         recovery: &entry.recovery,
         recovery_plan: entry.recovery_plan.as_ref(),
@@ -302,6 +307,7 @@ pub(super) fn from_value(value: Value) -> Option<OpLogEntry> {
         worktree: record.worktree,
         before: record.before,
         outcome: record.outcome,
+        technical_detail: record.technical_detail,
         backup_refs: record.backup_refs,
         recovery: record.recovery,
         recovery_plan: record.recovery_plan,
@@ -358,6 +364,13 @@ fn actor<'de, D: Deserializer<'de>>(d: D) -> Result<Actor, D::Error> {
 
 fn worktree<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(scalar(Value::deserialize(d)?).filter(|text| text != "null"))
+}
+
+fn technical_detail<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::String(text) => Some(text),
+        _ => None,
+    })
 }
 
 fn failure_code<'de, D: Deserializer<'de>>(d: D) -> Result<Option<FailureCode>, D::Error> {

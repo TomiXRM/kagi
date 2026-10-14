@@ -793,6 +793,96 @@ pub(super) fn render_inspector(
             )
             .selectable(true),
         )
+        // TextView supplies literal selection and inline URL styling, but the
+        // pinned kit has no per-link keyboard/AX interface. Keep its explicit
+        // link actions in the same independently scrolling message region.
+        .children(
+            model
+                .message_links()
+                .iter()
+                .enumerate()
+                .map(|(index, url)| {
+                    let open_id = SharedString::from(format!("inspector-message-link-{index}"));
+                    let copy_id =
+                        SharedString::from(format!("inspector-message-copy-link-{index}"));
+                    let open_url = url.clone();
+                    let copy_url = url.clone();
+                    let open_name: SharedString =
+                        format!("{}: {url}", Msg::InspectorOpenLink.t()).into();
+                    let copy_name: SharedString =
+                        format!("{}: {url}", Msg::InspectorCopyLink.t()).into();
+                    let open = Button::new(open_id.clone())
+                        .link()
+                        .xsmall()
+                        .compact()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .h(theme::scaled_px(24.))
+                        .tooltip(url.clone())
+                        .on_click(move |_, _, cx| KagiApp::open_link_url(&open_url, cx))
+                        .child(
+                            div()
+                                .min_w(px(0.))
+                                .truncate()
+                                .text_decoration_1()
+                                .child(url.clone()),
+                        );
+                    let copy = Button::new(copy_id.clone())
+                        .ghost()
+                        .xsmall()
+                        .compact()
+                        .flex_shrink_0()
+                        .h(theme::scaled_px(24.))
+                        .child(Msg::InspectorCopyLink.t())
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                copy_url.to_string(),
+                            ));
+                        });
+                    #[cfg(feature = "gui-e2e")]
+                    let open = {
+                        let window_id = window.window_handle().window_id();
+                        let name = open_id.clone();
+                        open.bounds_probe(move |bounds| {
+                            super::e2e::record_control_bounds(window_id, &name, bounds)
+                        })
+                    };
+                    #[cfg(feature = "gui-e2e")]
+                    let copy = {
+                        let window_id = window.window_handle().window_id();
+                        let name = copy_id.clone();
+                        copy.bounds_probe(move |bounds| {
+                            super::e2e::record_control_bounds(window_id, &name, bounds)
+                        })
+                    };
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .w_full()
+                        .min_w(px(0.))
+                        .child(
+                            super::inspector_metadata::named_button(
+                                open,
+                                gpui::Role::Link,
+                                open_name,
+                                url.clone(),
+                                false,
+                            )
+                            .reveal_on_focus(open_id, message_handle.clone()),
+                        )
+                        .child(
+                            super::inspector_metadata::named_button(
+                                copy,
+                                gpui::Role::Button,
+                                copy_name,
+                                url.clone(),
+                                false,
+                            )
+                            .reveal_on_focus(copy_id, message_handle.clone()),
+                        )
+                }),
+        )
         .children(coauthors_block)
         .children(trailers_block);
     // The scroll lives on an inner size_full child, NOT on the flex-sized box:

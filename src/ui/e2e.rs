@@ -376,6 +376,30 @@ pub fn measure_control(
         control.into_any_element()
     }
 }
+
+#[cfg(feature = "gui-e2e")]
+mod measured_leaf;
+
+/// Record the leaf's outer bounds without introducing a layout/AX wrapper.
+pub(crate) fn measure_leaf(
+    name: impl Into<String>,
+    control: impl gpui::IntoElement,
+) -> gpui::AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    {
+        use gpui::IntoElement as _;
+        measured_leaf::MeasuredLeaf {
+            name: name.into(),
+            control: control.into_any_element(),
+        }
+        .into_any_element()
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = name;
+        control.into_any_element()
+    }
+}
 /// Record a container's own bounds from *inside* it: an absolute, full-size
 /// canvas to add as one more child of an already-sized element.
 ///

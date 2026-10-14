@@ -370,7 +370,7 @@ pub fn scenario_worktree_folder_picker(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS worktree_folder_picker");
 }
 
-/// #1045: the branch menu's prefill survives lazy InputState creation.
+/// #1045 / #1564: the existing-branch action preserves its lazy Input prefill.
 pub fn scenario_worktree_modal_prefill(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
     let fixture = build_fixture();
@@ -391,8 +391,8 @@ pub fn scenario_worktree_modal_prefill(cx: &mut VisualTestAppContext) {
         crate::keyboard_nav::keys(cx, window, "right");
         paint(cx, window);
         let create =
-            kagi::ui::e2e::control_bounds(window.window_id(), "branch-menu-item-3-1-submenu-1-1")
-                .expect("Create worktree here is drawn in the Worktree submenu");
+            kagi::ui::e2e::control_bounds(window.window_id(), "branch-menu-item-3-1-submenu-1-0")
+                .expect("Open worktree from branch is drawn in the Worktree submenu");
         cx.simulate_click(window, create.center(), gpui::Modifiers::none());
         settle(cx, &app, window, "prefilled modal inputs", |app| {
             app.create_worktree_modal()
@@ -415,6 +415,7 @@ pub fn scenario_worktree_modal_prefill(cx: &mut VisualTestAppContext) {
                 "{lang:?}: branch Input must preserve the context-menu prefill"
             );
             assert_eq!(modal.branch_input, "prefill/topic");
+            assert!(modal.allow_existing_branch);
             assert!(
                 modal.path_input.ends_with("/prefill-topic"),
                 "{lang:?}: {}",

@@ -610,6 +610,10 @@ mod compact_layout;
 mod compact_rail;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_select_changes.rs"]
+mod compact_select_changes;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
 
@@ -3314,6 +3318,10 @@ mod macos {
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (
+                "compact_select_changes",
+                Box::new(crate::compact_select_changes::scenario_compact_select_changes),
+            ),
+            (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),
@@ -3368,6 +3376,10 @@ mod macos {
             (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
+            ),
+            (
+                "compact_layout_state_tall",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
             ),
             (
                 "compact_layout_lifecycle",

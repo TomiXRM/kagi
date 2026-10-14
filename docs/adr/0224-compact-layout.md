@@ -358,11 +358,11 @@ when that WIP gate is closed or a historical commit is selected.
 
 Entering compact saves the desktop bottom tab and open/closed presentation in
 window-local transient state; widening restores both along with the preferred
-height. Selecting a normal commit updates content only when Changes is already
-being shown. It does not open a closed panel or replace Terminal, Activity or
-Operation Log. The existing explicit WIP/composer activation may select Changes
-inside compact, but cannot overwrite the saved desktop presentation. This
-supersedes the earlier Operation Log canonicalization on compact exit.
+height. The original normal-commit content-only policy is superseded by #1528's
+explicit-user-selection activation amendment below. WIP/composer and normal
+commit activation inside compact cannot overwrite the saved desktop presentation.
+This restoration contract supersedes the earlier Operation Log canonicalization
+on compact exit.
 
 Native Graph pointer-focus coverage must target the drawn navigator: at compact
 widths open the rail Popover before its filter; desktop Cmd-F/filter coverage
@@ -447,3 +447,44 @@ captions on neutral `surface` hover. These secondary operation controls do not
 borrow opaque active-row accent fill, so no on-accent replacement is necessary.
 Disabled controls never acquire accent hover or execute keyboard activation.
 Existing confirmation, staging and repository ownership are unchanged.
+
+## Amendment — 2026-10-14: user Graph selection activates Changes (#1528)
+
+The owner's explicit selection request supersedes #1484's compact bottom-tab
+non-activation rule. In the existing `KagiApp::select` transition shared by Graph
+pointer and keyboard input, selecting a different commit while the compact
+viewport predicate is enabled selects `BottomTab::Changes` and opens the bottom
+panel. Its existing Inspector adapter displays that selected commit's detail and
+changed files; there is no second selection path or read owner.
+
+The established same-row pointer toggle returns before activation, and clamped
+keyboard navigation never calls the transition for the current row. Refresh and
+reconcile retain selection directly and must not activate Changes. A manually
+chosen Terminal, Operation Log or Activity tab stays chosen until the next actual
+row selection. WIP retains its existing open-commit-panel path and working-tree
+Changes projection. At exactly 1000 logical pixels and above, selection and the
+suspended desktop bottom-tab/open-state restoration remain unchanged.
+
+Tier A `compact_select_changes` covers EN/JA × 100%/167%, actual row clicks,
+Up/Down dispatch, Terminal reopening, same-row pointer/keyboard input, retained
+selection after refresh, WIP staging columns and the exact-1000×720 desktop
+boundary. Tier B compares the real compact window with a selected graph row and
+Terminal visible before selecting another row, then its Changes Inspector after,
+in English and Japanese.
+
+The neighboring `compact_bottom_presentation_restore` oracle now expects explicit
+compact selection to open Changes while retaining its desktop restoration proof.
+The unchanged 16-cell ownership/real-commit matrix originally exceeded the
+300-second native deadline; `compact_layout_state` and `_tall` partition its
+660/1000px heights into two eight-cell processes. All EN/JA × 100%/167% × Apple
+Light/Dark cells and existing assertions remain, with no deadline increase.
+
+Regression-first evidence: the unchanged production baseline failed with
+`changed graph selection must activate Changes`, actual `Terminal`, expected
+`Changes`. After the shared selection hook and matrix partition, the requested
+`compact_select_changes,compact_` native filter passes **20/20** with the
+300-second per-scenario deadline. Real-window Tier B at 900×700/100% confirms
+EN/JA selected-row + Terminal before and the next row's Changes detail/files
+after. Captures target only each isolated launch's CGWindow ID; brief own-PID
+activation was needed for fresh painting, the prior foreground was restored,
+and both final plain-build application launches quit normally.

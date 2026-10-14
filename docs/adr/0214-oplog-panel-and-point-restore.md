@@ -372,3 +372,46 @@ RowFocus space, variable-height expanded details and full-entry copy.
 Long operation names truncate inside their fixed column rather than wrapping
 past the summary mask. No global text helper or density setting changes.
 
+
+## Amendment — 2026-10-15: summary priorities and Revert availability (#1562/#1565)
+
+The dense Operation Log list follows macOS Console's severity-first hierarchy
+and HIG Lists and Tables / Buttons guidance: status and Copy are essential;
+actor, worktree and full outcome detail are supplementary. Reuse the existing
+disclosure, focus owner, quiet Copy control, variable-height list and pinned
+recovery Buttons rather than add an interaction convention.
+
+Collapsed summaries use two scaled lines. The first reserves a non-truncated
+localized outcome name and Copy, with the operation name taking the remaining
+width. The second fits time, actor/worktree badges and truncated outcome detail.
+Full detail and exact Copy text remain available. Rest/hover/pressed/focus,
+selection, list scroll anchoring and empty states retain existing owners; the
+status is informational, not another action or Tab stop.
+
+Revert eligibility requires a persisted nonempty ref-move record. A known empty
+record has a disabled Revert with an EN/JA visible and accessibility reason;
+an absent record retains the existing unavailable reason. Restore to point
+continues to require a record, including an empty one, because its meaning is
+the cumulative history after that point rather than this operation's inverse.
+These are UI availability checks only: backend plan, replan, confirmation,
+preflight and execution checks remain mandatory. No receipt, klog or exact
+clipboard serialization change is part of this amendment.
+
+Native regression coverage: `oplog_row_167_result_visible` checks all five named
+outcomes and Copy containment with Inspector open at 1000×720 / 1400×900,
+100% / 167%, EN / JA and Apple Light / Dark, including long worktree names.
+`oplog_revert_eligibility` checks empty Fetch/lock records, visible/native AX
+reasons, inert Revert clicks, independent Restore planning and nonempty Revert.
+The neighboring `oplog_` filter passes all 25 scenarios. Existing geometry
+oracles intentionally follow the new two-line height, reveal older actor rows,
+and start detail selection below the actual summary bounds.
+
+Tier B uses a copied stress repository and explicit five-outcome visual fixture
+receipts in an isolated default-build app. At 167%, EN/JA × Light/Dark × both
+viewports retain every named status and Copy beside an open Inspector; expanded
+empty records visibly disable Revert and retain Restore with localized reason.
+Evidence lives outside Git under
+`/tmp/kagi-hig-audit-20261008/oplog-167-layout-tierb/`. The supplied round-16
+baseline captures show the former field-priority failure; their receipt data is
+not the same five-outcome fixture. Hidden native AX assertions and screenshots
+are not VoiceOver, IME or Full Keyboard Access evidence.

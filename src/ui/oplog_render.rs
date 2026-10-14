@@ -13,7 +13,7 @@
 //!    the count once and splices new receipts/retention cuts, preserving the
 //!    measured rows and scrolled focus. Detail lines are free to wrap (no
 //!    truncation) — a 200-char `error:` is readable instead of clipped. The
-//!    summary row stays one fixed-height truncated line.
+//!    summary uses two scaled lines, reserving named status and Copy first.
 //! 2. **Selection + copy.** The detail block renders through a selectable
 //!    `gpui_component::text::TextView` (escaped HTML, the same trick
 //!    `inspector.rs` uses for commit messages — GPUI has no selection for a
@@ -42,9 +42,8 @@ use super::theme::theme;
 use super::{format_hms, oplog_panel, theme as theme_mod};
 use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 
-/// Height of the collapsed summary line (issue #468's E2E asserts that an
-/// expanded row grows past it).
-const SUMMARY_ROW_H: f32 = 22.;
+/// Two collapsed summary lines: required status/Copy, then quiet metadata.
+const SUMMARY_ROW_H: f32 = 44.;
 
 /// Issue #548: above this many bytes of detail text the block stops being
 /// selectable.
@@ -140,9 +139,8 @@ fn rows_container() -> gpui::Stateful<gpui::Div> {
         .min_h(px(0.))
 }
 
-/// One op-log row: the fixed-height truncated summary line plus, when
-/// expanded (`detail` is `Some`), the selectable detail block underneath with
-/// the entry's reflog section.
+/// One op-log row: a two-line summary plus, when expanded (`detail` is `Some`),
+/// the selectable detail block underneath with the entry's reflog section.
 fn render_row(
     i: usize,
     entry: &OpLogEntry,
@@ -228,7 +226,7 @@ fn render_summary(
         ),
     )
     .flex()
-    .flex_row()
+    .flex_col()
     .items_center()
     .px(super::keyboard_nav::inset(12.))
     .h(theme_mod::scaled_px(SUMMARY_ROW_H))
@@ -240,11 +238,68 @@ fn render_summary(
             cx.notify();
         });
     })
-    .children(summary_fields(i, entry, time, outcome))
-    .child(render_copy(
-        i, entry, expanded, copy_name, entity, stable_key,
-    ))
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .w_full()
+            .min_w(px(0.))
+            .h(theme_mod::scaled_px(22.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+                    .text_color(rgb(theme().text_sub))
+                    .truncate()
+                    .child(SharedString::from(
+                        kagi_domain::text_safety::sanitize_control_bytes(&entry.op),
+                    ))
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!("oplog-operation-{i}")))
+                    }),
+            )
+            .child(render_status(i, &entry.outcome))
+            .child(render_copy(
+                i, entry, expanded, copy_name, entity, stable_key,
+            )),
+    )
+    .child(
+        div()
+            .flex()
+            .items_center()
+            .w_full()
+            .min_w(px(0.))
+            .h(theme_mod::scaled_px(22.))
+            .children(summary_fields(i, entry, time, outcome)),
+    )
     .into_any_element()
+}
+
+fn render_status(i: usize, outcome: &OpOutcome) -> gpui::AnyElement {
+    let (kind, message, color) = match outcome {
+        OpOutcome::Success { .. } => ("Success", P::StatusSuccess, theme().color_success),
+        OpOutcome::Failed { .. } => ("Failed", P::StatusFailed, theme().color_blocker),
+        OpOutcome::Unknown { .. } => ("Unknown", P::StatusUnknown, theme().color_blocker),
+        OpOutcome::Partial { .. } => ("Partial", P::StatusPartial, theme().color_warning),
+        OpOutcome::Refused { .. } => ("Refused", P::StatusRefused, theme().color_warning),
+    };
+    let label = Msg::OplogPanel(message).t();
+    div()
+        .id(("oplog-status", i))
+        .role(gpui::Role::Status)
+        .aria_label(label)
+        .flex_shrink_0()
+        .ml(theme_mod::scaled_px(6.))
+        .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
+        .text_color(rgb(color))
+        .child(label)
+        .when(cfg!(feature = "gui-e2e"), |status| {
+            status.child(super::e2e::measure_inside(format!(
+                "oplog-status-{i}-{kind}"
+            )))
+        })
+        .into_any_element()
 }
 
 fn summary_fields(
@@ -252,7 +307,7 @@ fn summary_fields(
     entry: &OpLogEntry,
     time: SharedString,
     outcome: SharedString,
-) -> [gpui::AnyElement; 5] {
+) -> [gpui::AnyElement; 4] {
     let color = match &entry.outcome {
         OpOutcome::Success { .. } => theme().color_success,
         OpOutcome::Partial { .. } | OpOutcome::Refused { .. } => theme().color_warning,
@@ -269,22 +324,11 @@ fn summary_fields(
                 label.child(super::e2e::measure_inside(format!("oplog-time-{i}")))
             })
             .into_any_element(),
-        div()
-            .w(theme_mod::scaled_px(100.))
-            .flex_shrink_0()
-            .ml(theme_mod::scaled_px(6.))
-            .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
-            .text_color(rgb(theme().text_sub))
-            .truncate()
-            .child(SharedString::from(entry.op.clone()))
-            .when(cfg!(feature = "gui-e2e"), |label| {
-                label.child(super::e2e::measure_inside(format!("oplog-operation-{i}")))
-            })
-            .into_any_element(),
         actor_badge(i, entry.actor),
         worktree_badge(i, entry),
         div()
             .flex_1()
+            .min_w(px(0.))
             .ml(theme_mod::scaled_px(6.))
             .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
             .text_color(rgb(color))
@@ -449,6 +493,10 @@ fn worktree_badge(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
     div()
         .id(("oplog-worktree", i))
         .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(path.clone()).build(w, cx))
+        .min_w(px(0.))
+        .max_w(theme_mod::scaled_px(140.))
+        .flex_shrink(1.)
+        .overflow_hidden()
         .child(badge(
             format!("oplog-worktree-{i}-{name}"),
             name.into(),
@@ -460,7 +508,7 @@ fn worktree_badge(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
 fn badge(probe: String, label: SharedString, color: u32) -> gpui::AnyElement {
     div()
         .relative()
-        .flex_shrink_0()
+        .min_w(px(0.))
         .max_w(theme_mod::scaled_px(140.))
         .ml(theme_mod::scaled_px(6.))
         .px_1()
@@ -615,30 +663,47 @@ fn render_restore_actions(
     entry: &OpLogEntry,
     entity: &Entity<oplog_panel::OpLogPanel>,
 ) -> gpui::AnyElement {
-    let enabled = oplog_panel::restorable(entry);
-    let state = if enabled { "enabled" } else { "disabled" };
-    let button =
-        |kind: &'static str, icon: &'static str, label: &'static str, op: kagi_git::Operation| {
-            let entity = entity.clone();
-            div()
-                .relative()
-                .child(
-                    Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
-                        .icon(gpui_component::Icon::empty().path(icon))
-                        .label(label)
-                        .small()
-                        .disabled(!enabled)
-                        .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+    let restore_enabled = oplog_panel::restorable(entry);
+    let revert_enabled = oplog_panel::revertible(entry);
+    let reason = if !restore_enabled {
+        Some(Msg::OplogPanel(P::RestoreUnavailable).t())
+    } else if !revert_enabled {
+        Some(Msg::OplogPanel(P::RevertNoMoves).t())
+    } else {
+        None
+    };
+    let button = |kind: &'static str,
+                  icon: &'static str,
+                  label: &'static str,
+                  enabled: bool,
+                  op: kagi_git::Operation| {
+        let entity = entity.clone();
+        let state = if enabled { "enabled" } else { "disabled" };
+        div()
+            .relative()
+            .child(super::button_style::named_button_with_description(
+                Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
+                    .icon(gpui_component::Icon::empty().path(icon))
+                    .label(label)
+                    .small()
+                    .disabled(!enabled)
+                    .on_click(move |_: &ClickEvent, _w: &mut Window, cx: &mut App| {
+                        if enabled {
                             let op = op.clone();
                             entity.update(cx, |_, cx| {
                                 cx.emit(oplog_panel::OpLogPanelEvent::Restore(op))
                             });
-                        }),
-                )
-                .child(super::e2e::measure_inside(format!(
-                    "oplog-{kind}-{i}-{state}"
-                )))
-        };
+                        }
+                    }),
+                label.into(),
+                None,
+                (!enabled).then(|| reason.unwrap_or_default().into()),
+                !enabled,
+            ))
+            .child(super::e2e::measure_inside(format!(
+                "oplog-{kind}-{i}-{state}"
+            )))
+    };
     let entry_id = entry.id;
     div()
         .id(("oplog-row-restore", i))
@@ -654,25 +719,36 @@ fn render_restore_actions(
                 .flex()
                 .flex_row()
                 .gap_2()
+                .flex_wrap()
                 .child(button(
                     "revert",
                     "icons/undo-2.svg",
                     Msg::OplogPanel(P::RevertButton).t(),
+                    revert_enabled,
                     kagi_git::Operation::OpRevert { entry_id },
                 ))
                 .child(button(
                     "restore",
                     "icons/history.svg",
                     Msg::OplogPanel(P::RestoreButton).t(),
+                    restore_enabled,
                     kagi_git::Operation::RestoreToPoint { entry_id },
                 )),
         )
-        .when(!enabled, |d| {
+        .when_some(reason, |d, reason| {
             d.child(
                 div()
+                    .id(("oplog-revert-reason", i))
+                    .role(gpui::Role::Status)
+                    .aria_label(reason)
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .child(Msg::OplogPanel(P::RestoreUnavailable).t()),
+                    .child(reason)
+                    .when(cfg!(feature = "gui-e2e"), |label| {
+                        label.child(super::e2e::measure_inside(format!(
+                            "oplog-revert-reason-{i}"
+                        )))
+                    }),
             )
         })
         .into_any_element()

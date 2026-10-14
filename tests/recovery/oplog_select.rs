@@ -91,7 +91,7 @@ pub fn scenario_oplog_detail_select_copy(cx: &mut VisualTestAppContext) {
     );
     let start = gpui::point(
         recovery.origin.x + gpui::px(14.),
-        summary.origin.y + gpui::px(30.),
+        summary.bottom() + gpui::px(8.),
     );
     let end = gpui::point(
         moved.origin.x + gpui::px(200.),

@@ -121,10 +121,22 @@ pub(crate) fn plan_clipboard_text(
     let (current_head, predicted_head) = plan_display_heads(plan);
     out.push_str(&plan_title_text(&plan.title));
     out.push('\n');
-    out.push_str(&format!(
-        "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-        current_head, plan.current.dirty, predicted_head, predicted_dirty
-    ));
+    if let Some(identity) = &plan.tag_push_identity {
+        out.push('\n');
+        out.push_str(Msg::PlanTagPublishScope.t());
+        out.push('\n');
+        for row in plan::tag::push_scope_rows(identity) {
+            out.push_str(&row);
+            out.push('\n');
+        }
+        out.push_str(Msg::PlanTagLocalUnchanged.t());
+        out.push('\n');
+    } else {
+        out.push_str(&format!(
+            "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
+            current_head, plan.current.dirty, predicted_head, predicted_dirty
+        ));
+    }
     for w in &plan.warnings {
         out.push_str(&format!("\nwarning: {}", plan_note_text(w)));
     }

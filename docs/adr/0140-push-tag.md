@@ -83,3 +83,26 @@ hint and preserves Solo without paging. Once visible and loaded, activation
 jumps normally; paging does not silently change the current selection or
 create a tag-operation receipt. Push/Delete menu plans, approval targets and
 safety checks remain unchanged.
+
+## Amendment (2026-10-15): publish scope (#1560)
+
+The dense confirmation preview presents the already-approved `TagPushIdentity`:
+tag name, raw tag object OID, ultimate peeled target OID, lightweight/annotated
+kind and every resolved push URL (not the fetch URL). The tag object's type is
+resolved with the identity at planning time; rendering performs no Git reads.
+The current active branch is not the publication target: replace its duplicate
+CURRENT/AFTER rows with this scope and a quieter unchanged-local-state note.
+Blocked plans without an approved identity retain the existing blocker preview.
+
+The existing Copy all action includes the same complete scope. Presentation
+sanitizes control bytes and redacts all URL userinfo, query and fragment data;
+the unmodified URLs stay private to execution authority and drift checks.
+Do not replace semantic `StateSummary` values with display prose: receipts,
+klog and operation verification remain unchanged.
+
+Reference: macOS publication alerts name what leaves the machine and its
+destination. Reuse the existing card, typography, focus trap, Copy all and
+single confirm rather than introduce a new control. Rest, native accessibility
+and Copy expose identical frozen data; loading/error/blocked handling and
+Escape/Return safety stay with the existing modal lifecycle. The read-only
+scope has no hover/pressed/selected state.

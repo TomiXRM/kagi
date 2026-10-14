@@ -567,6 +567,16 @@ impl KagiApp {
             .map(|(name, _)| name.clone())
             .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
+        // The prefilled current name is neutral, not a failed operation.
+        // Retire any previous Ready plan so unchanged Return remains inert.
+        if input.trim() == old_name {
+            if let Some(m) = self.rename_branch_modal_mut() {
+                m.validation = validation;
+                m.plan = ModalPlan::Pending;
+                m.error = None;
+            }
+            return;
+        }
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,
@@ -1200,7 +1210,7 @@ impl KagiApp {
                 self.open_merge_modal(state.name, None, cx);
             }
             BranchAction::CreateWorktreeFromHere => {
-                self.open_create_worktree_modal_prefilled(state.target, state.name, false, cx);
+                self.open_create_worktree_modal(state.target, cx);
             }
             BranchAction::CreateTagHere => {
                 self.open_create_tag_modal(state.target, cx);

@@ -42,6 +42,9 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/batch_staging_refresh.rs"]
+mod batch_staging_refresh;
+#[cfg(target_os = "macos")]
 #[path = "recovery/time_locale.rs"]
 mod time_locale;
 
@@ -117,8 +120,16 @@ mod plan_card_reachability;
 mod rebase_card_scope;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/push_tag_card_scope.rs"]
+mod push_tag_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/toast_stack_budget.rs"]
+mod toast_stack_budget;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/feedback_status.rs"]
@@ -156,8 +167,15 @@ mod settings_window;
 mod window_restore;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/window_min_size.rs"]
+mod window_min_size;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/close_window_initial_home.rs"]
 mod close_window_initial_home;
+#[cfg(target_os = "macos")]
+#[path = "recovery/help_shortcuts_glyphs.rs"]
+mod help_shortcuts_glyphs;
 #[cfg(target_os = "macos")]
 #[path = "recovery/shortcuts_panel_scroll.rs"]
 mod shortcuts_panel_scroll;
@@ -220,6 +238,9 @@ mod dnd_self;
 #[cfg(target_os = "macos")]
 #[path = "recovery/sidebar_filter.rs"]
 mod sidebar_filter;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_search.rs"]
+mod sidebar_search;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_focus.rs"]
@@ -228,6 +249,10 @@ mod graph_focus;
 #[cfg(target_os = "macos")]
 #[path = "recovery/input_names.rs"]
 mod input_names;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/rename_form_state.rs"]
+mod rename_form_state;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/hairline_dividers.rs"]
@@ -444,6 +469,10 @@ mod inventory;
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_folder_picker.rs"]
 mod worktree_folder_picker;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/worktree_default_name.rs"]
+mod worktree_default_name;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/refusal_reasons.rs"]
@@ -679,6 +708,9 @@ mod recovery_revert_en_summary;
 #[path = "recovery/oplog_keyboard.rs"]
 mod recovery_oplog_keyboard;
 #[cfg(target_os = "macos")]
+#[path = "recovery/oplog_layout.rs"]
+mod recovery_oplog_layout;
+#[cfg(target_os = "macos")]
 #[path = "recovery/oplog_panel.rs"]
 mod recovery_oplog_panel;
 #[cfg(target_os = "macos")]
@@ -726,6 +758,10 @@ mod remote_refresh_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/fetch_owner.rs"]
 mod fetch_owner;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/fetch_auth_error.rs"]
+mod fetch_auth_error;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/guard_writer_panic.rs"]
@@ -862,6 +898,9 @@ mod density_rest;
 #[path = "recovery/finder_scale_rest.rs"]
 mod finder_scale_rest;
 
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_file_rows.rs"]
+mod inspector_file_rows;
 #[cfg(target_os = "macos")]
 #[path = "recovery/inspector_scale.rs"]
 mod inspector_scale;
@@ -1618,12 +1657,24 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_search_escape",
+                Box::new(crate::sidebar_search::sidebar_search_escape),
+            ),
+            (
+                "sidebar_search_clear_ax",
+                Box::new(crate::sidebar_search::sidebar_search_clear_ax),
+            ),
+            (
                 "sidebar_filter_tab_entry",
                 Box::new(crate::sidebar_filter::scenario_sidebar_filter_tab_entry),
             ),
             (
                 "input_names_inventory",
                 Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
+                "branch_rename_neutral_state",
+                Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),
             (
                 "hairline_dividers",
@@ -1765,8 +1816,16 @@ mod macos {
                 Box::new(crate::shortcuts_panel_scroll::scenario_shortcuts_panel_scroll),
             ),
             (
+                "help_shortcuts_glyphs",
+                Box::new(crate::help_shortcuts_glyphs::scenario_help_shortcuts_glyphs),
+            ),
+            (
                 "window_restore_position",
                 Box::new(crate::window_restore::scenario_window_restore_position),
+            ),
+            (
+                "window_min_size",
+                Box::new(crate::window_min_size::scenario_window_min_size),
             ),
             (
                 "window_restore_display_identity",
@@ -1779,6 +1838,10 @@ mod macos {
             (
                 "window_restore_titlebar",
                 Box::new(crate::window_restore::scenario_window_restore_titlebar),
+            ),
+            (
+                "settings_window_screen_fit",
+                Box::new(crate::settings_window::scenario_settings_window_screen_fit),
             ),
             (
                 "settings_window_open_raise",
@@ -1880,6 +1943,10 @@ mod macos {
             (
                 "rebase_card_scope",
                 Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "push_tag_card_scope",
+                Box::new(crate::push_tag_card_scope::scenario_push_tag_card_scope),
             ),
             (
                 "neighbor_plan_labels",
@@ -2570,6 +2637,10 @@ mod macos {
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
             ),
             (
+                "toast_stack_budget",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
+            ),
+            (
                 "toast_live_status",
                 Box::new(crate::feedback_status::scenario_toast_live_status),
             ),
@@ -2700,6 +2771,10 @@ mod macos {
             (
                 "worktree_modal_prefill",
                 Box::new(crate::worktree_folder_picker::scenario_worktree_modal_prefill),
+            ),
+            (
+                "worktree_create_default_name",
+                Box::new(crate::worktree_default_name::scenario_worktree_create_default_name),
             ),
             (
                 "repo_health_proposal",
@@ -2955,56 +3030,56 @@ mod macos {
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_light_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_light_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_light_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_100_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_en_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_en_dark_167_940",
-                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_en_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_en_dark_167_1392",
                 Box::new(|cx| tag_cell(cx, En, "apple-dark", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (940., 660.))),
+                "tag_unloaded_target_ja_light_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_light_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_light_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_light_167_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-light", 1.67, (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_100_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (940., 660.))),
+                "tag_unloaded_target_ja_dark_100_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_100_1392",
                 Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1., (1392., 883.))),
             ),
             (
-                "tag_unloaded_target_ja_dark_167_940",
-                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (940., 660.))),
+                "tag_unloaded_target_ja_dark_167_1000",
+                Box::new(|cx| tag_cell(cx, Ja, "apple-dark", 1.67, (1000., 720.))),
             ),
             (
                 "tag_unloaded_target_ja_dark_167_1392",
@@ -3666,6 +3741,10 @@ mod macos {
                 Box::new(crate::remote_refresh_owner::scenario_remote_refresh_newest_request),
             ),
             (
+                "fetch_auth_failure_toast",
+                Box::new(crate::fetch_auth_error::scenario_fetch_auth_failure_toast),
+            ),
+            (
                 "fetch_same_owner_piggybacks",
                 Box::new(crate::fetch_owner::scenario_fetch_same_owner_piggybacks),
             ),
@@ -3896,6 +3975,10 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "batch_staging_refresh",
+                Box::new(crate::batch_staging_refresh::scenario_batch_staging_refresh),
             ),
             (
                 "hunk_staging",
@@ -4285,6 +4368,14 @@ mod macos {
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_actor_reflog),
             ),
             (
+                "oplog_row_167_result_visible",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_row_167_result_visible),
+            ),
+            (
+                "oplog_revert_eligibility",
+                Box::new(crate::recovery_oplog_layout::scenario_oplog_revert_eligibility),
+            ),
+            (
                 "oplog_restore_card",
                 Box::new(crate::recovery_oplog_panel::scenario_oplog_restore_card),
             ),
@@ -4364,6 +4455,10 @@ mod macos {
             (
                 "inspector_scale",
                 Box::new(crate::inspector_scale::scenario),
+            ),
+            (
+                "inspector_file_row_hit",
+                Box::new(crate::inspector_file_rows::scenario),
             ),
             (
                 "graph_subject_identity",
@@ -4497,8 +4592,11 @@ mod macos {
         // Shared context: real Mac platform + bundled assets, one-time app init
         // (fonts, gpui_component, theme sync, the cmd-j / cmd-c bindings).
         // Effective bindings are cached at startup, exactly as in the product.
-        let _palette_bindings = (exact.as_deref() == Some("palette_shortcut_glyphs"))
-            .then(crate::palette_polish::install_shortcut_bindings);
+        let _shortcut_bindings = matches!(
+            exact.as_deref(),
+            Some("palette_shortcut_glyphs" | "help_shortcuts_glyphs")
+        )
+        .then(crate::palette_polish::install_shortcut_bindings);
         theme::init_active();
         let mut cx = VisualTestAppContext::with_asset_source(e2e::platform(), e2e::asset_source());
         let native_pool = NativeAutoreleasePool::new();

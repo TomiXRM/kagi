@@ -1592,6 +1592,28 @@ pub fn display_keystroke(ks: &str) -> String {
 
 #[cfg(not(target_os = "macos"))]
 pub fn display_keystroke(ks: &str) -> String {
+    display_keystroke_text(ks)
+}
+
+// Keep the text projection testable on macOS without shipping unused code there.
+#[cfg(any(test, not(target_os = "macos")))]
+fn display_keystroke_text(ks: &str) -> String {
+    let mut formatted = String::with_capacity(ks.len());
+    for stroke in ks.split_whitespace() {
+        if !formatted.is_empty() {
+            formatted.push(' ');
+        }
+        append_text_keystroke(stroke, &mut formatted);
+    }
+    if formatted.is_empty() {
+        ks.to_owned()
+    } else {
+        formatted
+    }
+}
+
+#[cfg(any(test, not(target_os = "macos")))]
+fn append_text_keystroke(ks: &str, formatted: &mut String) {
     // Peel the key (last segment) off the modifiers. The key itself may be "-"
     // (zoom out, written "secondary--"), so handle that trailing case first.
     let (mods_str, key) = if let Some(m) = ks.strip_suffix("--") {
@@ -1602,30 +1624,32 @@ pub fn display_keystroke(ks: &str) -> String {
         ("", ks)
     };
 
-    let mut parts: Vec<String> = Vec::new();
+    let start = formatted.len();
     if !mods_str.is_empty() {
         for m in mods_str.split('-') {
-            parts.push(
-                match m {
-                    "secondary" => "Ctrl",
-                    "cmd" | "super" | "win" => "Super",
-                    "ctrl" => "Ctrl",
-                    "alt" => "Alt",
-                    "shift" => "Shift",
-                    "fn" => "Fn",
-                    other => other,
-                }
-                .to_string(),
-            );
+            if formatted.len() > start {
+                formatted.push('+');
+            }
+            formatted.push_str(match m {
+                "secondary" => "Ctrl",
+                "cmd" | "super" | "win" => "Super",
+                "ctrl" => "Ctrl",
+                "alt" => "Alt",
+                "shift" => "Shift",
+                "fn" => "Fn",
+                other => other,
+            });
         }
     }
+    if formatted.len() > start {
+        formatted.push('+');
+    }
     // Uppercase a single-character key (j → J); leave named keys (escape) alone.
-    parts.push(if key.chars().count() == 1 {
-        key.to_uppercase()
-    } else {
-        key.to_string()
-    });
-    parts.join("+")
+    let mut chars = key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(key), None) => formatted.extend(key.to_uppercase()),
+        _ => formatted.push_str(key),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1656,8 +1680,8 @@ pub fn dump_menu_states(app: &KagiApp) {
 // Keyboard-shortcuts listing (for the Help → Keyboard Shortcuts modal).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Produce `(label, keystroke)` pairs for every command that has a keystroke,
-/// used by the Keyboard Shortcuts modal (auto-generated from the registry).
+/// Produce `(label, display keystroke)` pairs for every bound command,
+/// using the palette/menu formatter for the Keyboard Shortcuts modal.
 pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
     COMMANDS
         .iter()
@@ -1665,7 +1689,7 @@ pub fn shortcut_listing() -> Vec<(SharedString, SharedString)> {
             effective_keystroke(c.id).map(|key| {
                 (
                     super::command_palette::command_label(c.id, i18n::lang()).into(),
-                    SharedString::from(key),
+                    SharedString::from(display_keystroke(&key)),
                 )
             })
         })
@@ -1755,6 +1779,7 @@ pub struct FetchFlight {
 #[derive(Clone)]
 struct FetchFailure {
     message: String,
+    auth_remote: Option<String>,
     termination_unknown: bool,
     /// The local refs the attempt moved (#885). Observed, not assumed: a
     /// fetch writes wherever `remote.<name>.fetch` points, and a mirror-style
@@ -1772,6 +1797,39 @@ impl std::fmt::Display for FetchFailure {
 }
 
 impl FetchFailure {
+    fn auth_summary(&self) -> Option<String> {
+        self.auth_remote.as_deref().map(fetch_auth_summary)
+    }
+
+    fn record(
+        &mut self,
+        app: &mut KagiApp,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+        cx: &mut Context<KagiApp>,
+    ) {
+        let entry = self.entry(before, repo_path);
+        app.record_op_impl(entry, cx, true, self.auth_summary());
+    }
+
+    fn entry(
+        &mut self,
+        before: kagi_git::StateSummary,
+        repo_path: &std::path::Path,
+    ) -> kagi_git::oplog::OpLogEntry {
+        let mut entry = kagi_git::oplog::OpLogEntry::new(
+            "fetch",
+            repo_path.display().to_string(),
+            before,
+            self.outcome(),
+        )
+        .with_ref_moves(self.ref_moves.take());
+        if self.auth_remote.is_some() {
+            entry.technical_detail = Some(self.message.clone());
+        }
+        entry
+    }
+
     fn outcome(&self) -> kagi_git::oplog::OpOutcome {
         if self.termination_unknown {
             kagi_git::oplog::OpOutcome::Unknown {
@@ -1783,10 +1841,21 @@ impl FetchFailure {
             }
         } else {
             kagi_git::oplog::OpOutcome::Failed {
-                error: i18n::op_failed(i18n::Op::Fetch, &self.message),
+                error: match self.auth_summary() {
+                    Some(summary) => summary,
+                    None => i18n::op_failed(i18n::Op::Fetch, &self.message),
+                },
             }
         }
     }
+}
+
+pub(super) fn fetch_auth_summary(remote: &str) -> String {
+    Msg::FetchAuthenticationRequired.t().replacen(
+        "{}",
+        &kagi_domain::text_safety::sanitize_control_bytes(remote),
+        1,
+    )
 }
 
 impl KagiApp {
@@ -2410,6 +2479,12 @@ impl KagiApp {
             Some(match result {
                 Ok(outcome) => Ok((outcome, ref_moves)),
                 Err(error) => Err(FetchFailure {
+                    auth_remote: match &error {
+                        kagi_git::GitError::FetchAuthentication { remote, .. } => {
+                            Some(remote.clone())
+                        }
+                        _ => None,
+                    },
                     termination_unknown: matches!(error, kagi_git::GitError::TerminationUnknown(_)),
                     ref_moves,
                     message: if open_failed {
@@ -2425,6 +2500,7 @@ impl KagiApp {
                 let error = abandonment.into_unknown();
                 Err(FetchFailure {
                     message: error.to_string(),
+                    auth_remote: None,
                     termination_unknown: true,
                     ref_moves: None,
                 })
@@ -2475,14 +2551,7 @@ impl KagiApp {
                     match &mut result {
                         Err(failure) => {
                             if current_waiter {
-                                app.record_op_persist_moves(
-                                    "fetch",
-                                    flight.before,
-                                    failure.outcome(),
-                                    failure.ref_moves.take(),
-                                    &repo_path_guard,
-                                    cx,
-                                );
+                                failure.record(app, flight.before, &repo_path_guard, cx);
                             } else {
                                 app.record_ref_fetch_failure(
                                     "fetch",
@@ -2491,6 +2560,10 @@ impl KagiApp {
                                     flight.before,
                                     failure.outcome(),
                                     failure.ref_moves.take(),
+                                    failure
+                                        .auth_remote
+                                        .as_ref()
+                                        .map(|_| failure.message.clone()),
                                     &repo_path_guard,
                                     cx,
                                 );
@@ -2554,18 +2627,10 @@ impl KagiApp {
                     Err(mut e) => {
                         // Record even a silent auto-fetch failure. A stopped
                         // child with an uncertain effect is Unknown, not Failed.
-                        let outcome = e.outcome();
                         if !silent || current_waiter {
                             // The receipt presenter owns the single failure
                             // toast and footer, including joined Pull waiters.
-                            app.record_op_persist_moves(
-                                "fetch",
-                                flight.before,
-                                outcome,
-                                e.ref_moves.take(),
-                                &repo_path_guard,
-                                cx,
-                            );
+                            e.record(app, flight.before, &repo_path_guard, cx);
                         } else {
                             // No presentation owner: preserve the receipt and
                             // recording-failure notice without changing the UI.
@@ -2574,8 +2639,9 @@ impl KagiApp {
                                 None,
                                 None,
                                 flight.before,
-                                outcome,
+                                e.outcome(),
                                 e.ref_moves.take(),
+                                e.auth_remote.as_ref().map(|_| e.message.clone()),
                                 &repo_path_guard,
                                 cx,
                             );
@@ -2936,12 +3002,41 @@ mod keybinding_tests {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
     fn display_keystrokes_retain_text_notation() {
-        assert_eq!(display_keystroke("secondary-shift-o"), "Ctrl+Shift+O");
-        assert_eq!(display_keystroke("ctrl-alt-shift-k"), "Ctrl+Alt+Shift+K");
-        assert_eq!(display_keystroke("secondary--"), "Ctrl+-");
+        assert_eq!(display_keystroke_text("secondary-shift-o"), "Ctrl+Shift+O");
+        assert_eq!(
+            display_keystroke_text("ctrl-alt-shift-k"),
+            "Ctrl+Alt+Shift+K"
+        );
+        assert_eq!(display_keystroke_text("secondary--"), "Ctrl+-");
+    }
+
+    #[test]
+    fn display_keystrokes_text_formats_each_chord_stroke() {
+        assert_eq!(
+            display_keystroke_text("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-k   ctrl-alt-shift-secondary-s"),
+            "Ctrl+K Ctrl+Alt+Shift+Ctrl+S"
+        );
+        assert_eq!(
+            display_keystroke_text("secondary-- secondary-escape"),
+            "Ctrl+- Ctrl+escape"
+        );
+        assert_eq!(display_keystroke_text(""), "");
+        assert_eq!(display_keystroke_text("  "), "  ");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn display_keystrokes_route_chords_to_text_notation() {
+        assert_eq!(
+            display_keystroke("secondary-k secondary-s"),
+            "Ctrl+K Ctrl+S"
+        );
     }
 
     /// Every default keystroke in the registry must be unique — two commands

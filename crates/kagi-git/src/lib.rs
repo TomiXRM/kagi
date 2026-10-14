@@ -391,6 +391,9 @@ pub enum GitError {
     /// repository settings. The underlying Git failure is retained for oplog
     /// and CLI consumers; presentation must not attribute a specific cause.
     RebaseCannotStartWithRepoSettingsDisabled(String),
+    /// A Fetch authentication failure. Keep remote identity separate from the
+    /// complete technical diagnostic so the UI can lead with localized advice.
+    FetchAuthentication { remote: String, detail: String },
     /// Direct revision resolution failed without changing repository state.
     Revision(revision::RevisionError),
     /// Any other libgit2 error.
@@ -433,6 +436,7 @@ impl std::fmt::Display for GitError {
             GitError::Blocked(note) => f.write_str(&note.message_en()),
             GitError::Revision(error) => std::fmt::Display::fmt(error, f),
             GitError::TerminationUnknown(t) => write!(f, "git error: {}", t.reason()),
+            GitError::FetchAuthentication { detail, .. } => f.write_str(detail),
             GitError::Other(msg)
             | GitError::StashIdentityUnverified(msg)
             | GitError::RebaseCannotStartWithRepoSettingsDisabled(msg) => {

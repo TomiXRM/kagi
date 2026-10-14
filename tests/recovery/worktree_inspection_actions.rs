@@ -378,7 +378,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     let original_theme = theme::theme().slug.to_string();
     let (_fixture, repo, port) = fixture();
     let other = build_fixture();
-    for dimensions in [(940., 660.), (1392., 883.)] {
+    for dimensions in [(1000., 720.), (1392., 883.)] {
         for zoom in [1., 1.67] {
             for theme in ["apple-light", "apple-dark"] {
                 for locale in ["en", "ja"] {
@@ -406,5 +406,5 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         }
     }
     assert!(theme::set_active(&original_theme));
-    eprintln!("[gui-e2e] PASS worktree_inspection_actions: names/focus, row Enter → Tab Refresh → Tab URL, Enter/Space once, retained focus, Escape return, owner switch, no-port, hover; EN/JA 100/167 Apple Light/Dark 940×660/1392×883");
+    eprintln!("[gui-e2e] PASS worktree_inspection_actions: names/focus, row Enter → Tab Refresh → Tab URL, Enter/Space once, retained focus, Escape return, owner switch, no-port, hover; EN/JA 100/167 Apple Light/Dark 1000×720/1392×883");
 }

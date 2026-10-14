@@ -332,6 +332,20 @@ at 167% after compact integration; the 700px leg requires a contained rail and
 no desktop side-pane clips, with preferred widths unchanged. Pure unit tests
 retain the sub-minimum non-collapsed fit cases.
 
+For #1550 use `KAGI_GUI_E2E_ONLY='window_,restore_'` with KEEP_GOING.
+`window_min_size` checks restore clamping and reads the actual `NSWindow`
+`contentMinSize` (940×660) with objc2. Its renderer resize leg must first
+observe 1000×720, then change to the inspected native minimum; beginning at
+the expected minimum would permit an undelivered request to pass.
+The hidden runner cannot prove AXSize delivery: same-process AX requests
+returned -25208 and an external runner child returned -25204, including an
+offscreen-visible attempt. The legacy NSWindow accessibility setter was a
+no-op. Do not treat any of those as successful runtime resize evidence.
+Tier B must use external Swift `AXUIElementSetAttributeValue(AXSize)` against
+the isolated plain app's PID, request 200×150, and confirm 940×660 with both
+AX readback and the PID-owned CGWindow bounds. Capture EN/JA at 100%/167%,
+the compact rail and toolbar overflow; attach `evidence.json` with images.
+
 For #1316 use `KAGI_GUI_E2E_ONLY='toolbar_,workspace_mode_toolbar,toolbar_a11y'`
 with KEEP_GOING. `toolbar_overflow_priority` shrinks and expands native chrome
 across EN/JA × 100%/167% × Apple Light/Dark, preserves Git-first priority and

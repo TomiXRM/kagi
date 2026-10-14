@@ -76,3 +76,114 @@ pub fn recovery_ja(recovery: &TagRecovery) -> String {
         ),
     }
 }
+
+/// Complete display-only publication scope, shared by the card and Copy all.
+/// Transport authority keeps the original URLs; only this projection redacts.
+pub fn push_scope_rows(identity: &kagi_domain::plan::TagPushIdentity) -> Vec<String> {
+    use kagi_domain::{plan::TagKind, text_safety::sanitize_control_bytes};
+    let kind = match identity.kind {
+        TagKind::Lightweight => "lightweight",
+        TagKind::Annotated => "annotated",
+    };
+    let mut rows = vec![
+        format!(
+            "{}: {}",
+            Msg::PlanTagName.t(),
+            sanitize_control_bytes(&identity.name)
+        ),
+        format!("{}: {kind}", Msg::PlanTagKind.t()),
+        format!("{}: {}", Msg::PlanTagObject.t(), identity.object_oid),
+        format!("{}: {}", Msg::PlanTagTarget.t(), identity.peeled_oid),
+        format!(
+            "{}: {}",
+            Msg::PlanTagRemote.t(),
+            sanitize_control_bytes(&identity.remote)
+        ),
+    ];
+    rows.extend(identity.push_urls.iter().map(|url| {
+        format!(
+            "{}: {}",
+            Msg::PlanTagPushDestination.t(),
+            display_push_url(url)
+        )
+    }));
+    rows
+}
+
+/// Git accepts URL, scp-style SSH and filesystem destinations. Redact complete
+/// userinfo (a username alone can be a token) and opaque query/fragment values.
+/// Do this before control-byte escaping so secrets never enter display text.
+fn display_push_url(url: &str) -> String {
+    let (without_fragment, fragment) = url
+        .split_once('#')
+        .map_or((url, false), |(base, _)| (base, true));
+    let (base, query) = without_fragment
+        .split_once('?')
+        .map_or((without_fragment, false), |(base, _)| (base, true));
+    let mut out = String::with_capacity(base.len());
+    if let Some((scheme, rest)) = base.split_once("://") {
+        out.push_str(scheme);
+        out.push_str("://");
+        let end = rest.find('/').unwrap_or(rest.len());
+        let (authority, path) = rest.split_at(end);
+        if let Some((_, host)) = authority.rsplit_once('@') {
+            out.push_str("***@");
+            out.push_str(host);
+        } else {
+            out.push_str(authority);
+        }
+        out.push_str(path);
+    } else if let Some((host, path)) = base.split_once(':').filter(|(host, _)| !host.contains('/'))
+    {
+        if let Some((_, host)) = host.rsplit_once('@') {
+            out.push_str("***@");
+            out.push_str(host);
+        } else {
+            out.push_str(host);
+        }
+        out.push(':');
+        out.push_str(path);
+    } else {
+        out.push_str(base);
+    }
+    if query {
+        out.push_str("?***");
+    }
+    if fragment {
+        out.push_str("#***");
+    }
+    kagi_domain::text_safety::sanitize_control_bytes(&out)
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::display_push_url;
+
+    #[test]
+    fn push_tag_scope_redacts_secrets_without_changing_the_destination() {
+        for (input, expected) in [
+            (
+                "https://user:password@example/repo.git?token=secret#private",
+                "https://***@example/repo.git?***#***",
+            ),
+            (
+                "https://token@example/repo.git",
+                "https://***@example/repo.git",
+            ),
+            (
+                "ssh://git:secret@[::1]:2222/repo",
+                "ssh://***@[::1]:2222/repo",
+            ),
+            ("git@example:org/repo.git", "***@example:org/repo.git"),
+            ("file:///tmp/repo.git", "file:///tmp/repo.git"),
+            ("/tmp/user@repo.git", "/tmp/user@repo.git"),
+            ("https://example/日本語.git", "https://example/日本語.git"),
+            (
+                "https://secret@example/repo\u{1b}",
+                "https://***@example/repo\\x1B",
+            ),
+        ] {
+            assert_eq!(display_push_url(input), expected);
+        }
+    }
+}

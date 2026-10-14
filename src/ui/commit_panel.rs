@@ -198,57 +198,60 @@ impl CommitPanelState {
             }
         };
         match backend.working_tree_status() {
-            Ok(status) => {
-                // Track conflicted paths for UI (these cannot be staged).
-                self.conflicted_paths = status.conflicted.iter().cloned().collect();
-
-                // Whether there are tracked modifications (the only thing
-                // unstaged_diffstat covers) — captured before `status` is moved.
-                let has_tracked_modifications = !status.unstaged.is_empty();
-
-                // Unstaged = modified + untracked combined
-                let mut unstaged = status.unstaged;
-                // Append untracked as Added entries
-                for p in &status.untracked {
-                    unstaged.push(FileStatus {
-                        path: p.clone(),
-                        change: ChangeKind::Added,
-                    });
-                }
-                // Append conflicted as non-stageable entries (shown in unstaged section)
-                for p in &status.conflicted {
-                    unstaged.push(FileStatus {
-                        path: p.clone(),
-                        change: ChangeKind::Modified, // displayed with "C" badge via is_conflicted()
-                    });
-                }
-                self.unstaged = unstaged;
-                self.staged = status.staged;
-                // W16-DIFFSTAT: aggregate additions/deletions for both sides.
-                // Best-effort: on error leave the lists empty (bar omitted).
-                // unstaged_diffstat covers tracked modifications only — skip the
-                // (working-tree-walking) call entirely when there are none, so a
-                // dir full of untracked files costs nothing here.
-                self.unstaged_stats = if has_tracked_modifications {
-                    backend.unstaged_diffstat().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                self.staged_stats = backend.staged_diffstat().unwrap_or_default();
-                // issue #348: classify each side's files as generated / lockfile
-                // (reads blob heads + .gitattributes) so the panel can fold them.
-                let unstaged_gen = backend.wip_generated_flags(&self.unstaged, false);
-                let staged_gen = backend.wip_generated_flags(&self.staged, true);
-                // Clear selection on status change.
-                self.selected_file = None;
-                // PERF: recompute the cached tree rows and diffstat indices once
-                // per status change (NOT per frame).
-                self.rebuild_derived(&unstaged_gen, &staged_gen);
-            }
+            Ok(status) => self.apply_status(&backend, status),
             Err(e) => {
                 klog!("commit_panel: working_tree_status error: {}", e);
             }
         }
+    }
+
+    /// Apply a read already owned by the caller, without another status walk.
+    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+        // Track conflicted paths for UI (these cannot be staged).
+        self.conflicted_paths = status.conflicted.iter().cloned().collect();
+
+        // Whether there are tracked modifications (the only thing
+        // unstaged_diffstat covers) — captured before `status` is moved.
+        let has_tracked_modifications = !status.unstaged.is_empty();
+
+        // Unstaged = modified + untracked combined
+        let mut unstaged = status.unstaged;
+        // Append untracked as Added entries
+        for p in &status.untracked {
+            unstaged.push(FileStatus {
+                path: p.clone(),
+                change: ChangeKind::Added,
+            });
+        }
+        // Append conflicted as non-stageable entries (shown in unstaged section)
+        for p in &status.conflicted {
+            unstaged.push(FileStatus {
+                path: p.clone(),
+                change: ChangeKind::Modified, // displayed with "C" badge via is_conflicted()
+            });
+        }
+        self.unstaged = unstaged;
+        self.staged = status.staged;
+        // W16-DIFFSTAT: aggregate additions/deletions for both sides.
+        // Best-effort: on error leave the lists empty (bar omitted).
+        // unstaged_diffstat covers tracked modifications only — skip the
+        // (working-tree-walking) call entirely when there are none, so a
+        // dir full of untracked files costs nothing here.
+        self.unstaged_stats = if has_tracked_modifications {
+            backend.unstaged_diffstat().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        self.staged_stats = backend.staged_diffstat().unwrap_or_default();
+        // issue #348: classify each side's files as generated / lockfile
+        // (reads blob heads + .gitattributes) so the panel can fold them.
+        let unstaged_gen = backend.wip_generated_flags(&self.unstaged, false);
+        let staged_gen = backend.wip_generated_flags(&self.staged, true);
+        // Clear selection on status change.
+        self.selected_file = None;
+        // PERF: recompute the cached tree rows and diffstat indices once
+        // per status change (NOT per frame).
+        self.rebuild_derived(&unstaged_gen, &staged_gen);
     }
 
     /// PERF: rebuild the cached tree rows and diffstat path→index maps from the

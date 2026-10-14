@@ -101,12 +101,20 @@ pub enum OpLogPanelEvent {
 
 impl gpui::EventEmitter<OpLogPanelEvent> for OpLogPanel {}
 
-/// Whether an entry can be reverted / restored to: it carries recorded ref
-/// moves (ADR-0214 §5 — never the estimate). A receipt whose append failed
-/// has its record dropped in [`OpLogPanel::entry_for_recording`], so this
-/// also means "persisted" (ids are 0-based, so `id` cannot tell).
+/// Whether an entry is a recorded restore point (ADR-0214 §5).
+/// Empty records remain valid points for cumulative-history restoration.
+/// An append failure drops the record in [`OpLogPanel::entry_for_recording`].
 pub fn restorable(entry: &OpLogEntry) -> bool {
     entry.ref_moves.is_some()
+}
+
+/// Reverting one operation needs an actual recorded move, unlike restoring
+/// the cumulative history after a point. Backend planning still rechecks it.
+pub fn revertible(entry: &OpLogEntry) -> bool {
+    entry
+        .ref_moves
+        .as_ref()
+        .is_some_and(|moves| !moves.is_empty())
 }
 
 /// The working tree an entry ran in — the worktree badge and the reflog's
@@ -772,6 +780,11 @@ mod tests {
         let shown = OpLogPanel::entry_for_recording(&appended);
         assert_eq!(shown.id, 0);
         assert!(restorable(&shown), "the first real entry has id 0");
+        assert!(
+            !revertible(&shown),
+            "an empty record is only a restore point"
+        );
         assert!(!restorable(&OpLogPanel::entry_for_recording(&failed)));
+        assert!(!revertible(&OpLogPanel::entry_for_recording(&failed)));
     }
 }

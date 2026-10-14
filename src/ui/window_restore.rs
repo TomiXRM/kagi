@@ -5,6 +5,11 @@ use gpui::{
 };
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
+/// Smallest supported repository viewport, including compact chrome at 167% zoom.
+pub fn minimum_size() -> gpui::Size<Pixels> {
+    size(px(940.), px(660.))
+}
+
 fn enabled() -> bool {
     std::env::var("KAGI_NO_RESTORE").as_deref() != Ok("1") && std::env::var("KAGI_WINDOW").is_err()
 }
@@ -27,6 +32,7 @@ pub fn options(cx: &App) -> gpui::WindowOptions {
         .map_or(bounds, |display| bounds + display.bounds().origin);
     gpui::WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_min_size: Some(minimum_size()),
         display_id,
         titlebar: super::main_window_titlebar(),
         app_owns_titlebar_drag: true,
@@ -61,8 +67,13 @@ pub fn restore_on_display(
     {
         return None;
     }
-    let width = bounds.size.width.min(visible.size.width);
-    let height = bounds.size.height.min(visible.size.height);
+    let minimum = minimum_size();
+    let width = bounds.size.width.max(minimum.width).min(visible.size.width);
+    let height = bounds
+        .size
+        .height
+        .max(minimum.height)
+        .min(visible.size.height);
     Some(Bounds {
         origin: point(
             bounds
@@ -84,7 +95,12 @@ fn initial_placement(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
         let (w, h) = raw.split_once('x')?;
         Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?))
     }) {
-        let bounds = Bounds::centered(None, size(px(w), px(h)), cx);
+        let minimum = minimum_size();
+        let bounds = Bounds::centered(
+            None,
+            size(px(w).max(minimum.width), px(h).max(minimum.height)),
+            cx,
+        );
         #[cfg(not(target_os = "macos"))]
         let bounds = primary
             .as_ref()
@@ -111,16 +127,18 @@ fn initial_placement(cx: &App) -> (Bounds<Pixels>, Option<DisplayId>) {
             .filter(|(w, h)| {
                 w.is_finite()
                     && h.is_finite()
-                    && (400. ..=16384.).contains(w)
-                    && (300. ..=16384.).contains(h)
+                    && (1. ..=16384.).contains(w)
+                    && (1. ..=16384.).contains(h)
             })
     });
-    let ((w, h), (min_w, min_h)) = match restored {
-        Some(wh) => (wh, (400_f32, 300_f32)),
-        None => ((1440., 920.), (900_f32, 600_f32)),
-    };
+    let (w, h) = restored.unwrap_or((1440., 920.));
+    let minimum = minimum_size();
+    let (min_w, min_h) = (f32::from(minimum.width), f32::from(minimum.height));
     let Some(primary) = primary else {
-        return (Bounds::centered(None, size(px(w), px(h)), cx), None);
+        return (
+            Bounds::centered(None, size(px(w.max(min_w)), px(h.max(min_h))), cx),
+            None,
+        );
     };
     let visible = visible_bounds(primary.as_ref());
     let (max_w, max_h) = (

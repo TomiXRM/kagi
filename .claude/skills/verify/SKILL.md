@@ -56,6 +56,16 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
+`update_notice_in_flight` queues an installer completion with
+`e2e::queue_update_install` before clicking the real Update now button; it
+disables startup checking before mounting, so that scenario never contacts the
+update service. The held failure checks EN/JA × Apple Light/Dark × 100%/167%,
+inert pointer/keyboard Skip, explicit continuing Hide, retained offer/status,
+duplicate-start suppression and restored Skip/Later after failure. The seam
+is compile-gated; it does not install or relaunch the working app. Plain builds
+have no deterministic update fixture, so Tier B for this ticket is waived.
+
 For #1498/#1499, `KAGI_GUI_E2E_ONLY='oplog_,issues_'` retains the existing
 expansion/copy/keyboard oracles and adds `oplog_row_typography` and
 `issues_row_secondary_text` (`tests/recovery/density_rest.rs`). Their paint-stage

@@ -44,6 +44,15 @@ open gpui-kit Popovers containing the **existing** sidebar sections and filters.
 Navigation selection, filtering, empty/loading/error states and their operation
 callbacks remain owned by the existing navigator/session models.
 
+The eight `remote_group_header_fit*` desktop-oracle appearances mount the exact
+1000×660 logical-pixel breakpoint, not the former 940×660 inline navigator.
+They retain 120/240/340-reference-pixel sidebar widths, six long local/remote
+group identities, 0/1/1000 counts, nonoverlapping fixed disclosure/count columns,
+name-only ellipsis, full hover/keyboard reveals, accessibility hierarchy and
+targeted toggles with no Git writes. Requiring those inline rows before opening
+a rail Popover at 940px contradicts this approved cutover; compact navigator
+behavior remains covered by the dedicated rail scenarios below.
+
 Keep `toolbar_display`, both toolbar presentations and the existing overflow
 fitting/menu contract. Compact layout must not force Icon Only or introduce a
 second toolbar. Keep existing graph columns, row heights, lane geometry and

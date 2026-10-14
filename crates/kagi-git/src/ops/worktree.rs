@@ -369,6 +369,7 @@ fn plan_create_worktree_impl(
             }));
         }
         OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),
@@ -661,6 +662,7 @@ pub fn plan_unlock_worktree(repo: &Repository, name: &str) -> Result<OperationPl
     warnings.extend(lock_leftover_note(repo, name));
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),

@@ -126,6 +126,7 @@ pub fn plan_pr_comment(pr: &PullRequest, body: &str) -> OperationPlan {
         blockers.push(PlanNote::Github(GithubNote::CommentBodyEmpty));
     }
     OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: if blockers.is_empty() {

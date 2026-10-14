@@ -113,6 +113,10 @@ mod plan_labels;
 mod plan_card_reachability;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/rebase_card_scope.rs"]
+mod rebase_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -1865,7 +1869,14 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
-            ("neighbor_plan_labels", Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels)),
+            (
+                "rebase_card_scope",
+                Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "neighbor_plan_labels",
+                Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels),
+            ),
             ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
             ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (

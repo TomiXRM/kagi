@@ -165,6 +165,7 @@ pub fn plan_merge_into_branch(
     };
 
     let blocked = |blockers: Vec<PlanNote>, warnings: Vec<PlanNote>| OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -323,6 +324,7 @@ pub fn plan_merge_into_branch(
 
     Ok((
         OperationPlan {
+            rebase_scope: None,
             tag_push_identity: None,
             approved_index_digest: None,
             disposition: PlanDisposition::for_blockers(&blockers),

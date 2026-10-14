@@ -170,6 +170,7 @@ pub fn plan_create_branch(
     };
 
     let mut plan = OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -582,6 +583,7 @@ pub fn plan_rename_branch(
     }));
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),
@@ -845,6 +847,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
                 dirty: current.dirty.clone(),
             };
             return Ok(OperationPlan {
+                rebase_scope: None,
                 tag_push_identity: None,
                 approved_index_digest: None,
                 disposition: PlanDisposition::for_blockers(&blockers),
@@ -1002,6 +1005,7 @@ pub fn plan_delete_branch(repo: &Repository, name: &str) -> Result<OperationPlan
     };
 
     Ok(OperationPlan {
+        rebase_scope: None,
         tag_push_identity: None,
         approved_index_digest: None,
         disposition: PlanDisposition::for_blockers(&blockers),

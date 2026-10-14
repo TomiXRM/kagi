@@ -7,6 +7,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Rebase confirmation discloses the oldest-first commit range to replay, its count and commit identities instead of only repeating the unchanged branch/clean summary. The scoped list is localized in EN/JA; planning remains read-only. (#1530)
+  - Review: planning is session-owned and off-thread, keeps 100 preview rows with the true count and EN/JA remainder, and formats Copy only on activation. Linear ancestor/no-merge ranges are already up to date. CURRENT freezes the current full OID; AFTER identifies the approved target OID and explicitly leaves the result unknown. Preflight refuses target drift before writes; execution uses the frozen OID.
+  - Second review: refuse duplicate/in-flight planning before changing its latch and register the shared busy label. Frozen identities and uncertainty are display-only projections; semantic branch/clean summaries and successful durable receipts remain unchanged.
 - UI Zoom now reaches 200% through Settings and the existing zoom shortcuts, persists across reopening, and describes the 70%–200% range in English and Japanese. Existing 100%/167% and migrated zoom values remain supported. (#1553)
   - Native Settings pane tabs wrap at high zoom rather than clipping the first/last pane outside the existing window.
   - Compact Sidebar search defers navigator opening until the shortcut handler releases its app update, avoiding a reentrant-owner read panic.

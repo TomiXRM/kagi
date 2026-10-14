@@ -7,6 +7,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Stage all and Unstage all now publish the Commit Panel, session status counts and WIP diffstat from one post-write read, instead of leaving status feedback to the filesystem watcher's debounce and repeating the panel refresh. Linked-worktree actions retain their own repository scope; index mutation and receipt behavior are unchanged. (#1569)
 - Push tag confirmation shows the frozen tag object OID, peeled target OID, lightweight/annotated kind and every actual push destination instead of unrelated active-branch state. EN/JA presentation and Copy all redact URL credentials, query and fragment; receipt and klog summaries remain unchanged. (#1560)
 - Dev-red tag navigation oracles now exercise inline-sidebar desktop behavior at the exact 1000×720 breakpoint instead of compact 940px; all tooltip, keyboard, pagination, Solo and unchanged-repository assertions remain, and 1392px variants are unchanged. (#1537 regression audit)
 - Operation Log summaries reserve named EN/JA outcome labels and Copy ahead of supplementary actor/worktree metadata at enlarged zoom. Recorded operations with no ref movement disable Revert with a reason, while Restore to point retains its independent cumulative-history planning. (#1562, #1565)

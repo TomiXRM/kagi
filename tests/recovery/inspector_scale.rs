@@ -187,7 +187,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
                 cx.update(theme::sync_gpui_component_theme);
-                for (width, height) in [(1392., 883.), (940., 660.)] {
+                // The desktop Inspector starts at 1000px; 940px now draws compact Changes.
+                for (width, height) in [(1392., 883.), (1000., 720.)] {
                     let (app, window) = mount(cx, fixture.path());
                     app.update(cx, |app, cx| {
                         app.inspector_visible = true;
@@ -231,17 +232,22 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 "high-zoom hit target must remain at least 20 logical pixels"
             );
         }
-        // Frozen pre-change native measurements, identical for both themes/languages.
-        let old_offset = match (zoom == 1., width == 1392.) {
-            (true, true) => 416.5,
-            (true, false) => 338.5,
-            (false, true) => 487.5,
-            (false, false) => 436.5,
-        };
-        assert!(
-            offset < old_offset - 1.,
-            "first row must move up: {offset} vs old {old_offset} at {width}/{zoom}"
-        );
+        if width == 1000. {
+            // Native 1000×720 measurements, identical across EN/JA and both themes.
+            // The old 940×660 offsets cannot be compared across a viewport/reflow change.
+            let expected = if zoom == 1. { 340. } else { 433.5 };
+            assert!(
+                (offset - expected).abs() <= 0.6,
+                "desktop-breakpoint first row: {offset} vs {expected} at {width}/{zoom}"
+            );
+        } else {
+            // Frozen pre-density measurements at the unchanged 1392×883 viewport.
+            let old_offset = if zoom == 1. { 416.5 } else { 487.5 };
+            assert!(
+                offset < old_offset - 1.,
+                "first row must move up: {offset} vs old {old_offset} at {width}/{zoom}"
+            );
+        }
     }
     eprintln!("[gui-e2e] PASS inspector_scale");
 }

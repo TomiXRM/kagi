@@ -656,9 +656,9 @@ pub fn themes_by_name() -> Vec<ThemeHandle> {
 /// Base (1.0×) rem size in pixels; matches the previous 0.9× visual scale.
 pub const BASE_REM_PX: f32 = 14.4;
 
-/// Zoom bounds include the converted former 150% setting (`1500 / 0.9 = 1667` permille).
+/// Global text/layout zoom supports 70%–200%, including migrated legacy values.
 pub const ZOOM_MIN: f32 = 0.7;
-pub const ZOOM_MAX: f32 = 1.67;
+pub const ZOOM_MAX: f32 = 2.0;
 
 /// One zoom step (cmd-+ / cmd--).
 pub const ZOOM_STEP: f32 = 0.1;
@@ -2159,7 +2159,8 @@ mod tests {
     #[test]
     fn zoom_clamps_to_bounds() {
         assert_eq!(clamp_zoom(0.5), ZOOM_MIN);
-        assert_eq!(clamp_zoom(2.0), ZOOM_MAX);
+        assert_eq!(clamp_zoom(2.5), ZOOM_MAX);
+        assert_eq!(clamp_zoom(2.0), 2.0, "200% is supported");
         assert_eq!(clamp_zoom(1.0), 1.0);
         assert_eq!(clamp_zoom(1.556), 1.556, "legacy 140% stays visible");
         assert_eq!(clamp_zoom(1.667), 1.667, "legacy 150% stays visible");
@@ -2174,8 +2175,10 @@ mod tests {
         assert_eq!(step_zoom(ZOOM_MIN, false), ZOOM_MIN);
         assert_eq!(step_zoom(ZOOM_MAX, true), ZOOM_MAX);
         assert_eq!(step_zoom(1.667, false), 1.6);
-        assert_eq!(step_zoom(1.667, true), 1.67);
+        assert_eq!(step_zoom(1.667, true), 1.7);
         assert_eq!(step_zoom(1.67, false), 1.6);
+        assert_eq!(step_zoom(1.9, true), 2.0);
+        assert_eq!(step_zoom(2.0, false), 1.9);
     }
 
     /// T-SYNTAX-001: every theme must produce a usable highlight theme —

@@ -70,3 +70,29 @@ or Primary palette. Custom themes inherit or explicitly override `link`; a
 standalone file that omits it defaults to its own `color_branch` for compatibility
 with pre-link files. Existing TextView underlining, activation and selection
 remain unchanged. See [the body-link guide](../themes.md#body-links).
+
+## Amendment — 2026-10-14: 200% global UI zoom (#1553)
+
+Extend the existing `theme::ZOOM_MAX` to 2.0 rather than introduce a second
+text-size setting. Text and scaled geometry share the existing 14.4px/rem
+base; 200% therefore doubles the current 100% presentation. The existing
+10% stepping, shortcuts, permille settings store and legacy 156%/167%
+values remain supported. Only 200% disables Increase; Decrease reaches 190%.
+The Settings range description is updated in EN and JA.
+Native Settings' existing pane TabList wraps when its natural label widths
+exceed the existing 715px host. At 200% EN, the previous single centered
+row placed General at x=-19.5 in a 715px viewport. Wrapping retains complete
+labels, all four targets and the original one-stop/arrow-key owner without
+shrinking text or widening the Settings host.
+
+Reuse the existing bounded composer, toolbar overflow and compact navigator.
+Compact Cmd-F defers its existing `open_changed` callback until the shortcut's
+KagiApp update releases its mutable lease: the suspension guard reads that
+same owner. The previous immediate call panicked on the real compact search
+path; no new search, read-model or focus state is introduced.
+The compact breakpoint remains strictly below 1000 logical px, independent
+of zoom; exact 1000px continues exercising desktop layout. Native regression
+`zoom_200_operable` covers 1000×720, 1400×900 and compact 940×720 across EN/JA
+and Apple Light/Dark, including search input, footer containment/editing,
+native Settings pane/stepper operations, persistence and reopening. This is
+not OS Dynamic Type support or native VoiceOver-delivery evidence.

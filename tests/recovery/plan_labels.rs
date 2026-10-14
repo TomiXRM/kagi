@@ -142,7 +142,18 @@ fn rebase_keys(cx: &mut VisualTestAppContext, branch: &str, onto: &str, key: &st
     let target = git_fixture::git_output(repo, &["rev-parse", onto]);
     let (app, window) = mount(cx, repo, (940., 660.));
     app.update(cx, |app, cx| app.open_rebase_modal(onto.into(), cx));
-    crate::recovery_operations::wait_idle(cx, &app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| app.read(cx).planning.is_none()) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "rebase planning did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
     paint(cx, window);
     cx.read(|cx| {
         let modal = app.read(cx).rebase_current_onto_modal().unwrap();

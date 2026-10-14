@@ -315,6 +315,60 @@ fn select_file_once(
     });
 }
 
+pub fn scenario_changes_focus_follows_selection(cx: &mut VisualTestAppContext) {
+    let _restore = GlobalSettings::capture();
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);
+    let fixture = fixture(3);
+    for case in matrix() {
+        let (app, window) = focus_regressions::open_changes(cx, fixture.path(), case);
+        for side in ["us", "st"] {
+            let first = bounds(window, &format!("cp-{side}-row-0"));
+            cx.simulate_click(window, first.center(), gpui::Modifiers::none());
+            paint(cx, window);
+            for (key, index) in [
+                ("end", 2),
+                ("home", 0),
+                ("down", 1),
+                ("up", 0),
+                ("pagedown", 2),
+                ("pageup", 0),
+            ] {
+                press(cx, window, key);
+                let row = format!("cp-{side}-row-{index}");
+                assert_focus(cx, window, &row);
+                cx.read(|cx| {
+                    let diff = app.read(cx).ui().main_diff.as_ref().unwrap().read(cx);
+                    let path = match &diff.view.source {
+                        kagi::ui::MainDiffSource::Staged { path } if side == "st" => path,
+                        kagi::ui::MainDiffSource::Unstaged { path } if side == "us" => path,
+                        _ => panic!("wrong Changes diff section"),
+                    };
+                    assert_eq!(
+                        path,
+                        &PathBuf::from(format!("changes-{index:03}.txt")),
+                        "keyboard focus and active diff must select the same Changes row"
+                    );
+                });
+                assert_eq!(labels::accessible_selected(&row), Some(true));
+                if side == "us" {
+                    press(cx, window, "shift-f10");
+                    cx.read(|cx| {
+                        assert_eq!(
+                            app.read(cx).file_menu.as_ref().unwrap().path,
+                            PathBuf::from(format!("changes-{index:03}.txt")),
+                            "file menu target follows the selected and focused row"
+                        );
+                    });
+                    press(cx, window, "escape");
+                    assert_focus(cx, window, &row);
+                }
+            }
+        }
+        labels::clear();
+        unmount(cx, app, window);
+    }
+}
+
 pub fn scenario_changes_discard_keyboard(cx: &mut VisualTestAppContext) {
     let _restore = GlobalSettings::capture();
     let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);

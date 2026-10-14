@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Sidebar search now clears a nonempty query on the first Escape without losing input focus; a second, empty Escape returns to the list. Its Clear button exposes an independent localized EN/JA accessibility action and keeps search focused after native AXPress. IME cancellation is consumed before search cancellation. (#1547, #1548)
+  - Neighbor disclosure coverage now mounts its inline Sidebar at the approved 1000px desktop breakpoint instead of looking for desktop rows inside the 940px compact rail; all filtering/disclosure assertions remain.
 - Compact Changes reconciles file-row focus only from the surface drawing its lists, so the pinned composer no longer moves End/arrow focus back to an earlier file before scrolling finishes. Keyboard Discard coverage compares its menu and planned path with the actual focused row's accessibility name.
 - Revert confirmation uses English generated AFTER prose in English and Japanese presentation in Japanese; commit subjects and branch names remain verbatim, including Copy all. (#1534)
 - Stash Apply and Pop approval cards show the selected stash's frozen file count, paths and change badges, including index-only and untracked entries, using the existing EN/JA scrollable plan preview. (#1525)

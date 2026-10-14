@@ -194,9 +194,10 @@ impl From<&crate::GitError> for FailureCode {
                 FailureCode::RebaseBlockedByRepoSettings
             }
             GitError::NotARepository(_) | GitError::PathNotFound(_) => FailureCode::NotARepository,
-            GitError::BareRepository(_) | GitError::Other(_) | GitError::Revision(_) => {
-                FailureCode::Other
-            }
+            GitError::BareRepository(_)
+            | GitError::Other(_)
+            | GitError::FetchAuthentication { .. }
+            | GitError::Revision(_) => FailureCode::Other,
         }
     }
 }
@@ -345,6 +346,9 @@ pub struct OpLogEntry {
     pub before: StateSummary,
     /// Outcome of the operation.
     pub outcome: OpOutcome,
+    /// Complete technical diagnostic when `outcome` carries a concise user
+    /// summary. Omitted from older and ordinary receipts (#1561).
+    pub technical_detail: Option<String>,
     /// Mandatory recovery roots, retained for the lifetime of this entry (#523).
     pub backup_refs: Vec<String>,
     /// Typed recovery handles — savepoint / stash OIDs and path→blob backups
@@ -398,6 +402,7 @@ impl OpLogEntry {
             worktree: None,
             before,
             outcome,
+            technical_detail: None,
             backup_refs: Vec::new(),
             recovery: Vec::new(),
             recovery_plan: None,

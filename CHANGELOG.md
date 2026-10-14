@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Fetch authentication failures identify the remote and advise checking credentials in English/Japanese, while Operation Log Copy retains the complete Git diagnostic. Non-interactive Git no longer launches a nonexistent askpass helper on macOS. No automatic authentication retry is added. (#1561)
+  - Review: remote-branch menu Fetch uses the same localized summary/full-detail split, and malformed additive receipt detail no longer discards the whole row.
 - Branch-menu Create worktree here starts with an empty new-branch field and a matching provisional path instead of proposing the already-existing source branch. Empty fields no longer show an inline required-name error; typed collisions retain normal EN/JA validation. Open worktree from branch, lock and removal safety are unchanged. (#1564)
   - Review: Return on an empty new-branch request is neutral, matching disabled Create; it does not append a Refused receipt or change the toast/footer.
 - Help → Keyboard Shortcuts formats effective bindings with the same platform-aware shortcut glyphs as the command palette and menus, including remapped modifiers and named keys; EN/JA labels and unassigned-command omission stay unchanged. (#1563)

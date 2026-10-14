@@ -204,6 +204,12 @@ impl KagiApp {
                 let current = owner.is_some_and(|owner| {
                     app.active_session() == Some(owner) && app.app_sessions.visit(owner) == visit
                 });
+                let auth_summary = match &result {
+                    Err(kagi_git::GitError::FetchAuthentication { remote, .. }) => {
+                        Some(crate::ui::commands::fetch_auth_summary(remote))
+                    }
+                    _ => None,
+                };
                 if let Err(error) = &result {
                     let outcome = if let kagi_git::GitError::TerminationUnknown(reason) = error {
                         kagi_git::oplog::OpOutcome::Unknown {
@@ -214,7 +220,9 @@ impl KagiApp {
                             evidence: reason.to_string(),
                         }
                     } else {
-                        let detail = if open_failed {
+                        let detail = if let Some(summary) = &auth_summary {
+                            summary.clone()
+                        } else if open_failed {
                             i18n::op_failed(i18n::Op::RepoOpen, error)
                         } else {
                             error.to_string()
@@ -231,6 +239,7 @@ impl KagiApp {
                         },
                         outcome,
                         None,
+                        auth_summary.as_ref().map(|_| error.to_string()),
                         &repo_path,
                         cx,
                     );
@@ -270,7 +279,8 @@ impl KagiApp {
                         );
                     }
                     Err(e) => {
-                        let msg = i18n::op_failed(i18n::Op::Fetch, e);
+                        let msg =
+                            auth_summary.unwrap_or_else(|| i18n::op_failed(i18n::Op::Fetch, e));
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
                         app.push_toast(ToastKind::Error, msg, cx);
                     }
@@ -494,6 +504,7 @@ impl KagiApp {
                         },
                         outcome,
                         ref_moves,
+                        None,
                         &recorded_repo,
                         cx,
                     );
@@ -621,12 +632,14 @@ impl KagiApp {
         before: kagi_git::StateSummary,
         outcome: kagi_git::oplog::OpOutcome,
         ref_moves: Option<Vec<kagi_domain::ref_moves::RefMove>>,
+        technical_detail: Option<String>,
         repo_path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let entry =
+        let mut entry =
             kagi_git::oplog::OpLogEntry::new(op, repo_path.display().to_string(), before, outcome)
                 .with_ref_moves(ref_moves);
+        entry.technical_detail = technical_detail;
         let current = owner.is_some_and(|owner| {
             self.active_session() == Some(owner) && self.app_sessions.visit(owner) == visit
         });

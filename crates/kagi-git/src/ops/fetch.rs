@@ -20,8 +20,8 @@ use super::*;
 ///
 /// # Errors
 ///
-/// Returns [`GitError::Other`] when the git CLI fails to start or exits
-/// non-zero.
+/// Returns [`GitError::FetchAuthentication`] for a recognized authentication
+/// failure, or [`GitError::Other`] for other CLI failures.
 pub(crate) fn fetch_remote(repo: &Repository, repo_path: &Path) -> Result<FetchOutcome, GitError> {
     fetch_remote_with(repo, repo_path, resolve_fetch_remote(repo))
 }
@@ -70,11 +70,12 @@ fn fetch_remote_with(
     let out = run_git(repo_path, &args).map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if out.status != 0 {
-        return Err(GitError::Other(format!(
-            "fetch failed (exit {}): {}",
+        return Err(fetch_error(
+            repo,
+            remote.as_deref(),
             out.status,
-            out.stderr.trim()
-        )));
+            &out.stderr,
+        ));
     }
 
     let after = remote_ref_oids(repo);
@@ -83,6 +84,40 @@ fn fetch_remote_with(
         remote: remote.unwrap_or_else(|| "--all".to_string()),
         changed: before != after,
     })
+}
+
+/// Classify stable C-locale Git authentication diagnostics, never generic
+/// permission errors (which may instead concern local files).
+fn fetch_error(repo: &Repository, remote: Option<&str>, status: i32, stderr: &str) -> GitError {
+    let detail = format!("fetch failed (exit {status}): {}", stderr.trim());
+    let authentication = stderr.lines().any(|line| {
+        line.starts_with("fatal: Authentication failed")
+            || line.starts_with("fatal: could not read Username for ")
+            || line.starts_with("fatal: could not read Password for ")
+            || line.starts_with("fatal: unable to access ")
+                && line.ends_with("The requested URL returned error: 401")
+    });
+    if authentication {
+        // `--all` may fail for several remotes. Report the attempted scope
+        // instead of guessing one remote from an arbitrary diagnostic URL.
+        let remote = remote.map(str::to_owned).unwrap_or_else(|| {
+            repo.remotes()
+                .map(|names| {
+                    names
+                        .iter()
+                        .filter_map(|name| name.ok().flatten())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|_| "--all".into())
+        });
+        GitError::FetchAuthentication {
+            remote,
+            detail: format!("git error: {detail}"),
+        }
+    } else {
+        GitError::Other(detail)
+    }
 }
 
 /// Snapshot every remote-tracking ref (`refs/remotes/**`) as `(name, oid hex)`,
@@ -128,11 +163,7 @@ pub(crate) fn fetch_remote_branch(
         .map_err(|e| crate::cli::context("fetch failed", e))?;
 
     if out.status != 0 {
-        return Err(GitError::Other(format!(
-            "fetch failed (exit {}): {}",
-            out.status,
-            out.stderr.trim()
-        )));
+        return Err(fetch_error(repo, Some(remote), out.status, &out.stderr));
     }
 
     let after = remote_ref_oids(repo);
@@ -316,6 +347,31 @@ fn resolve_fetch_remote(repo: &Repository) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fetch_authentication_does_not_classify_local_permission_failures() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init(root.path()).unwrap();
+        for stderr in [
+            "fatal: Authentication failed for 'http://localhost/'",
+            "fatal: could not read Username for 'http://localhost': terminal prompts disabled",
+            "fatal: could not read Password for 'http://localhost': terminal prompts disabled",
+            "fatal: unable to access 'http://localhost/': The requested URL returned error: 401",
+        ] {
+            assert!(matches!(fetch_error(&repo, Some("origin"), 128, stderr),
+                GitError::FetchAuthentication { remote, detail } if remote == "origin" && detail.contains(stderr)));
+        }
+        for stderr in [
+            "error: cannot open .git/FETCH_HEAD: Permission denied",
+            "fatal: unable to access 'http://localhost/': Could not resolve host: localhost",
+            "fatal: unable to access 'http://localhost/': The requested URL returned error: 403",
+        ] {
+            assert!(matches!(
+                fetch_error(&repo, Some("origin"), 128, stderr),
+                GitError::Other(_)
+            ));
+        }
+    }
 
     fn commit(
         repo: &Repository,

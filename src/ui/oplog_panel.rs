@@ -427,6 +427,9 @@ pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
             }
         }
     }
+    if let Some(detail) = &entry.technical_detail {
+        lines.push(format!("  detail:  {detail}"));
+    }
     lines
 }
 

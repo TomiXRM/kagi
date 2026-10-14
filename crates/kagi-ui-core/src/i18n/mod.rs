@@ -530,6 +530,8 @@ pub enum Msg {
     SnapshotCreated,
     /// Toast prefix when a manual snapshot fails (ADR-0154 / #335).
     SnapshotFailed,
+    /// Fetch authentication failure; `{}` is the sanitized remote identity.
+    FetchAuthenticationRequired,
     OpenedInFinder,
     /// Label on the "load more commits" row at the bottom of the commit list.
     LoadMoreCommits,
@@ -2874,6 +2876,8 @@ impl Msg {
             (Ja, SnapshotCreated) => "スナップショットを作成しました",
             (En, SnapshotFailed) => "Snapshot failed",
             (Ja, SnapshotFailed) => "スナップショットの作成に失敗しました",
+            (En, FetchAuthenticationRequired) => "Fetch from {} requires authentication. Check your credentials.",
+            (Ja, FetchAuthenticationRequired) => "{} からの Fetch には認証が必要です。認証情報を確認してください。",
             (En, LoadMoreCommits) => "Load more commits",
             (Ja, LoadMoreCommits) => "commit をさらに読み込む",
             (En, OpenedInFinder) => "Opened in Finder",

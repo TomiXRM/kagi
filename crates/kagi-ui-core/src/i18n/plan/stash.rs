@@ -60,6 +60,11 @@ pub fn note_ja(note: &StashNote) -> String {
         StashNote::UntrackedExcluded { count } => {
             super::advice_text(Msg::AdviceUntrackedExcluded, &[count])
         }
+        StashNote::IndexOnlyNotRestored { files } => format!(
+            "復元されない index のみの内容 ({}): Apply/Pop は --index を使いません。Pop 成功時にこの保存内容は削除されます。\n{}",
+            files.len(),
+            files.iter().map(|file| format!("{} {}", file.change.label(), file.path.display())).collect::<Vec<_>>().join("\n")
+        ),
         // JA には単複の別がないため、count は複数形サフィックスを持たず自然に読める。
         StashNote::IndexOutOfRange { index, count } => {
             format!(

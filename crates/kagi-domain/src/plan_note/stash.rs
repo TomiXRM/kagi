@@ -36,6 +36,11 @@ pub enum StashNote {
     /// warning (`plan_stash_push`, `include_untracked=false`): untracked
     /// files are left behind in the working tree.
     UntrackedExcluded { count: usize },
+    /// Saved index changes absent from the stash worktree tree. The existing
+    /// non-`--index` Apply/Pop does not restore them; successful Pop loses them.
+    IndexOnlyNotRestored {
+        files: Vec<crate::status::FileStatus>,
+    },
     /// blocker (`plan_stash_apply` / `plan_stash_pop` / `plan_stash_drop`):
     /// `index` names a stash entry that doesn't exist. The singular/plural
     /// "entry"/"entries" tail is computed inside `message_en` — JA needs no
@@ -93,6 +98,11 @@ impl StashNote {
             StashNote::UntrackedExcluded { count } => {
                 format!(crate::advice_template_en!(UntrackedExcluded), count)
             }
+            StashNote::IndexOnlyNotRestored { files } => format!(
+                "Index-only content not restored ({}): Apply/Pop does not use --index; successful Pop deletes this saved content.\n{}",
+                files.len(),
+                files.iter().map(|file| format!("{} {}", file.change.label(), file.path.display())).collect::<Vec<_>>().join("\n")
+            ),
             StashNote::IndexOutOfRange { index, count } => format!(
                 "Stash index {} is out of range (only {} stash entr{} exist).",
                 index,

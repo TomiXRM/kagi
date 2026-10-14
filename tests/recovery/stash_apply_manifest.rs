@@ -12,27 +12,77 @@ pub fn scenario_stash_apply_manifest(cx: &mut VisualTestAppContext) {
             kagi::ui::theme::set_zoom(scale);
             let fixture = build_fixture();
             let repo = fixture.path().canonicalize().unwrap();
+            std::fs::write(repo.join("index-only.txt"), "base\n").unwrap();
+            git(&repo, &["add", "index-only.txt"]);
+            git(&repo, &["commit", "-qm", "index-only base"]);
+            std::fs::write(repo.join("index-only.txt"), "saved index only\n").unwrap();
+            git(&repo, &["add", "index-only.txt"]);
+            std::fs::write(repo.join("index-only.txt"), "base\n").unwrap();
             std::fs::write(repo.join("README.md"), "modified\n").unwrap();
             std::fs::write(repo.join("index-entry.txt"), "staged\n").unwrap();
             git(&repo, &["add", "index-entry.txt"]);
             std::fs::write(repo.join("untracked-entry.txt"), "untracked\n").unwrap();
             git(&repo, &["stash", "push", "-u", "-qm", "manifest"]);
-            let (app, window) = mount(cx, &repo);
-            app.update(cx, |app, cx| app.open_stash_apply_modal(0, cx));
-            cx.run_until_parked();
-            crate::recovery_operations::paint(cx, window);
-            assert!(
-                e2e::control_bounds(window.window_id(), "plan-preview-files").is_some(),
-                "Apply approval must render the restoration manifest"
-            );
-            for row in 0..3 {
-                assert!(e2e::control_bounds(
-                    window.window_id(),
-                    &format!("plan-preview-file-{row}")
-                )
-                .is_some());
+            for action in ["apply", "pop"] {
+                let (app, window) = mount(cx, &repo);
+                app.update(cx, |app, cx| match action {
+                    "apply" => app.open_stash_apply_modal(0, cx),
+                    _ => app.open_pop_modal(0, cx),
+                });
+                cx.run_until_parked();
+                crate::recovery_operations::paint(cx, window);
+                assert!(
+                    e2e::control_bounds(window.window_id(), "plan-preview-files").is_some(),
+                    "Apply/Pop approval must render the restoration manifest"
+                );
+                for row in 0..3 {
+                    assert!(e2e::control_bounds(
+                        window.window_id(),
+                        &format!("plan-preview-file-{row}")
+                    )
+                    .is_some());
+                }
+                let copy_id = if action == "apply" {
+                    "stash-apply-card-copy"
+                } else {
+                    "plan-card-copy"
+                };
+                let copy = e2e::control_bounds(window.window_id(), copy_id).unwrap();
+                cx.simulate_click(window, copy.center(), gpui::Modifiers::none());
+                cx.run_until_parked();
+                let copied = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .unwrap();
+                let heading = i18n::Msg::ModalFilesToChange.t().replace("{}", "3");
+                assert!(copied.contains(&heading), "{action} {lang:?}: {copied}");
+                for row in [
+                    "Modified README.md",
+                    "Added index-entry.txt",
+                    "Added untracked-entry.txt",
+                ] {
+                    assert!(copied.contains(row), "{action} {lang:?}: {copied}");
+                }
+                let not_restored = if lang == i18n::Lang::En {
+                    "Index-only content not restored (1)"
+                } else {
+                    "復元されない index のみの内容 (1)"
+                };
+                assert!(copied.contains(not_restored));
+                assert!(copied.contains("Modified index-only.txt"));
+                let manifest = copied
+                    .split(&heading)
+                    .nth(1)
+                    .unwrap()
+                    .split("\n\n")
+                    .next()
+                    .unwrap();
+                assert!(
+                    !manifest.contains("index-only.txt"),
+                    "non-restored content must not be called a restoration"
+                );
+                unmount(cx, app, window);
             }
-            unmount(cx, app, window);
         }
     }
     i18n::set_lang(original);

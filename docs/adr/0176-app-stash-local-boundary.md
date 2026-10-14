@@ -143,13 +143,19 @@ prompt が残らないことも検証する。E は実 KagiApp の continue と�
 ## Amendment — 2026-10-14: restoration manifest (#1525)
 
 Apply / Pop planning freezes `OperationPlan.preview_files` from the same selected
-OID as approval identity. The stash worktree and index trees are compared with
-its base; the optional third-parent tree contributes untracked entries. Paths
-are deduplicated and sorted, with worktree change kinds taking precedence over
-index-only changes. This is a content manifest, not a promise that saved index
-entries become staged: execution retains its existing non-`--index` policy.
+OID as approval identity. The stash worktree tree is compared with its base;
+the optional third-parent tree contributes untracked entries. Paths are
+deduplicated and sorted. Both tree diffs include type changes so regular-file /
+symlink transitions remain one `TypeChange` entry rather than an added/deleted pair.
+Saved index changes absent from the restored worktree manifest are a separate
+localized `IndexOnlyNotRestored` warning with count, kind and full path.
+Execution retains its non-`--index` policy: index-only content is **not restored**,
+not merely restored unstaged. Successful Pop deletes that saved content.
 Missing entries retain their existing blocker and an empty preview. Read errors
 fail planning rather than presenting incomplete contents as a complete manifest.
 Both cards reuse the localized, bounded plan-file list inside the body scroller;
 the action footer and stash identity/preflight pipeline are unchanged.
+Apply and Pop Copy all both include the localized manifest count heading and
+change-kind/full-path rows, plus the separate not-restored warning. Clipboard
+payloads derive from the approved plan rather than a new Git read.
 

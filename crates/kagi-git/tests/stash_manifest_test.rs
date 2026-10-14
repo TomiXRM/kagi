@@ -37,11 +37,27 @@ fn stash_manifest_contains_worktree_index_and_untracked_without_writes() {
             files,
             vec![
                 ("deleted.txt".into(), ChangeKind::Deleted),
-                ("index-only.txt".into(), ChangeKind::Modified),
                 ("modified.txt".into(), ChangeKind::Modified),
                 ("staged.txt".into(), ChangeKind::Added),
                 ("untracked.txt".into(), ChangeKind::Added),
             ]
+        );
+        let index_only = plan
+            .warnings
+            .iter()
+            .find_map(|note| match note {
+                kagi_domain::plan_note::PlanNote::Stash(
+                    kagi_domain::plan_note::StashNote::IndexOnlyNotRestored { files },
+                ) => Some(files),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            index_only,
+            &vec![kagi_domain::status::FileStatus {
+                path: "index-only.txt".into(),
+                change: ChangeKind::Modified,
+            }]
         );
     }
     assert_eq!(
@@ -55,4 +71,41 @@ fn stash_manifest_contains_worktree_index_and_untracked_without_writes() {
         .unwrap()
         .preview_files
         .is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn stash_manifest_preserves_file_symlink_type_changes_both_directions() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path();
+    init_repo(path, "main");
+    write_file(path, "file-to-link", "base\n");
+    symlink("file-to-link", path.join("link-to-file")).unwrap();
+    git(path, &["add", "."]);
+    git(path, &["commit", "-qm", "base types"]);
+    std::fs::remove_file(path.join("file-to-link")).unwrap();
+    symlink("link-to-file", path.join("file-to-link")).unwrap();
+    std::fs::remove_file(path.join("link-to-file")).unwrap();
+    write_file(path, "link-to-file", "regular now\n");
+    git(path, &["stash", "push", "-qm", "type changes"]);
+    let mut repo = git2::Repository::open(path).unwrap();
+    for plan in [
+        kagi_git::plan_stash_apply(&mut repo, 0).unwrap(),
+        kagi_git::plan_stash_pop(&mut repo, 0).unwrap(),
+    ] {
+        assert_eq!(plan.preview_files.len(), 2);
+        assert!(plan
+            .preview_files
+            .iter()
+            .all(|file| file.change == ChangeKind::TypeChange));
+        assert_eq!(
+            plan.preview_files[0].path,
+            std::path::PathBuf::from("file-to-link")
+        );
+        assert_eq!(
+            plan.preview_files[1].path,
+            std::path::PathBuf::from("link-to-file")
+        );
+    }
 }

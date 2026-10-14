@@ -188,7 +188,7 @@ fn keyboard_reveal(
         Some(identity)
     );
     contained(
-        Bounds::new(point(px(0.), px(0.)), size(px(940.), px(660.))),
+        Bounds::new(point(px(0.), px(0.)), size(px(1000.), px(660.))),
         bounds(window, &card),
         "keyboard identity card",
     );
@@ -309,7 +309,9 @@ fn group_cell(cx: &mut VisualTestAppContext, language: Lang, slug: &str, zoom: f
     for name in [format!("{prefix}/local"), format!("{prefix_other}/local")] {
         git(repo, &["branch", &name]);
     }
-    let (app, window) = mount_dimensions(cx, repo, (940., 660.));
+    // ADR-0224 replaces the inline navigator below 1000 logical px. Keep this
+    // desktop header oracle at the exact breakpoint; sidebar widths stay narrow.
+    let (app, window) = mount_dimensions(cx, repo, (1000., 660.));
     appearance(cx, &app, window, language, slug, zoom, 1);
     let before = Witness::read(repo);
     let subgroup = format!("remote:{remote}:{prefix}");

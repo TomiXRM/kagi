@@ -7,10 +7,10 @@
 //!
 //! "Too little room" is measured, not guessed: [`HeaderFit::probes`] adds
 //! the row's own width probe and an off-screen copy of the labelled buttons
-//! (same `Button` style, no handlers, outside every content mask) whose
-//! natural width is what the labels need in the current language and zoom.
-//! Both land at prepaint; a change that flips the decision asks for one more
-//! frame, so the header settles one frame after a resize.
+//! (same `Button` style, layout only) whose natural width is what the labels
+//! need in the current language and zoom. The copy never prepaints or paints,
+//! so it contributes no accessibility nodes, focus or hit targets. Both
+//! measurements land at prepaint; a changed decision asks for one more frame.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -118,7 +118,6 @@ impl HeaderFit {
         .size_full()
         .into_any_element();
 
-        let natural = self.clone();
         let copy = div()
             .relative()
             .flex()
@@ -138,22 +137,6 @@ impl HeaderFit {
                 texts
                     .iter()
                     .map(|text| div().flex_shrink_0().text_sm().child(text.clone())),
-            )
-            .child(
-                canvas(
-                    move |bounds, window, _| {
-                        let before = natural.compact();
-                        natural.0.natural.set(Some(bounds.size.width));
-                        if natural.compact() != before {
-                            window.request_animation_frame();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
             );
         // A wide absolute box so the copy takes its max-content width.
         let offscreen = div()
@@ -163,9 +146,77 @@ impl HeaderFit {
             .w(px(-OFFSCREEN / 2.))
             .flex()
             .flex_row()
-            .child(copy)
+            .child(NaturalWidthProbe {
+                copy,
+                fit: self.clone(),
+            })
             .into_any_element();
         [row_probe, offscreen]
+    }
+}
+
+/// Keep the exact Button layout without entering its interactive/AX lifecycle.
+struct NaturalWidthProbe {
+    copy: gpui::Div,
+    fit: HeaderFit,
+}
+
+impl IntoElement for NaturalWidthProbe {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for NaturalWidthProbe {
+    type RequestLayoutState = <gpui::Div as gpui::Element>::RequestLayoutState;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&gpui::GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        self.copy.request_layout(id, inspector_id, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut gpui::Window,
+        _: &mut gpui::App,
+    ) {
+        let before = self.fit.compact();
+        self.fit.0.natural.set(Some(bounds.size.width));
+        if self.fit.compact() != before {
+            window.request_animation_frame();
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        _: &mut gpui::Window,
+        _: &mut gpui::App,
+    ) {
     }
 }
 

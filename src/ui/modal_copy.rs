@@ -101,10 +101,60 @@ pub(crate) fn plan_clipboard_text(
     if !plan.warnings.is_empty() || !plan.blockers.is_empty() {
         out.push('\n');
     }
+    if matches!(
+        &plan.title,
+        kagi_domain::plan_note::PlanTitle::Stash(
+            kagi_domain::plan_note::StashTitle::Apply { .. }
+                | kagi_domain::plan_note::StashTitle::Pop { .. }
+        )
+    ) && !plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ManifestUnavailable { .. }
+            )
+        )
+    }) {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(file.change.label());
+            out.push(' ');
+            out.push_str(&file.path.to_string_lossy());
+            out.push('\n');
+        }
+    }
     if !rows.is_empty() {
         out.push('\n');
         for r in rows {
             out.push_str(r);
+            out.push('\n');
+        }
+    }
+    if !plan.preview_files.is_empty()
+        && matches!(
+            &plan.title,
+            kagi_domain::plan_note::PlanTitle::Github(
+                kagi_domain::plan_note::GithubTitle::MergePr { .. }
+            )
+        )
+    {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(&kagi_domain::text_safety::sanitize_control_bytes(
+                &file.path.to_string_lossy(),
+            ));
             out.push('\n');
         }
     }
@@ -203,6 +253,38 @@ mod tests {
             destructive: true,
             equivalent_command: None,
         };
+        plan.preview_files = vec![kagi_domain::status::FileStatus {
+            path: deep.clone().into(),
+            change: kagi_domain::status::ChangeKind::Modified,
+        }];
+        let original_title = plan.title.clone();
+        for title in [
+            original_title.clone(),
+            PlanTitle::History(kagi_domain::plan_note::HistoryTitle::Amend {
+                sha: "a".repeat(40),
+                summary: "message".into(),
+                mode: kagi_domain::plan::AmendMode::Staged,
+                blocked: false,
+            }),
+            PlanTitle::CherryRevert(kagi_domain::plan_note::CherryRevertTitle::CherryPick {
+                sha: "b".repeat(40),
+                summary: None,
+                branch: "main".into(),
+            }),
+        ] {
+            plan.title = title;
+            let copied = plan_clipboard_text(
+                &plan,
+                std::slice::from_ref(&deep),
+                kagi_domain::plan_note::ShellKind::Posix,
+            );
+            assert_eq!(
+                copied.matches(&deep).count(),
+                1,
+                "one full path per Copy all"
+            );
+        }
+        plan.title = original_title;
 
         let text = plan_clipboard_text(
             &plan,

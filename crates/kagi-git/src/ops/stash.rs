@@ -11,6 +11,44 @@ use kagi_domain::plan_note::{
 };
 use kagi_domain::remote::shell_quote;
 
+/// Freeze the selected stash's complete file manifest without touching live state.
+/// Index-only paths remain relevant even when reverted again in its worktree tree.
+fn restoration_manifest(
+    repo: &Repository,
+    entries: &[(usize, String, git2::Oid)],
+    index: usize,
+) -> Result<Vec<FileStatus>, GitError> {
+    let Some((_, _, oid)) = entries.iter().find(|(i, _, _)| *i == index) else {
+        return Ok(Vec::new());
+    };
+    let error =
+        |e: git2::Error| GitError::Other(format!("stash manifest read failed: {}", e.message()));
+    let stash = repo.find_commit(*oid).map_err(error)?;
+    let base = stash.parent(0).map_err(error)?.tree().map_err(error)?;
+    let mut files = std::collections::BTreeMap::new();
+    for tree in [
+        stash.tree().map_err(error)?,
+        stash.parent(1).map_err(error)?.tree().map_err(error)?,
+    ] {
+        let mut diff = repo
+            .diff_tree_to_tree(Some(&base), Some(&tree), None)
+            .map_err(error)?;
+        for file in crate::diff::diff_to_file_statuses(&mut diff)? {
+            files.entry(file.path.clone()).or_insert(file);
+        }
+    }
+    if stash.parent_count() > 2 {
+        let tree = stash.parent(2).map_err(error)?.tree().map_err(error)?;
+        let mut diff = repo
+            .diff_tree_to_tree(None, Some(&tree), None)
+            .map_err(error)?;
+        for file in crate::diff::diff_to_file_statuses(&mut diff)? {
+            files.entry(file.path.clone()).or_insert(file);
+        }
+    }
+    Ok(files.into_values().collect())
+}
+
 // ────────────────────────────────────────────────────────────
 // plan_stash_apply
 // ────────────────────────────────────────────────────────────
@@ -167,7 +205,7 @@ pub fn plan_stash_apply(repo: &mut Repository, index: usize) -> Result<Operation
         pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
-        preview_files: Vec::new(),
+        preview_files: restoration_manifest(repo, &entries, index)?,
         preview_commits: Vec::new(),
         destructive: false,
         equivalent_command: None,
@@ -371,7 +409,7 @@ pub fn plan_stash_pop(repo: &mut Repository, index: usize) -> Result<OperationPl
         pull_identity: None,
         // #295: pin the tree so a dirty/conflict transition after planning is refused.
         worktree_digest: Some(status.digest()),
-        preview_files: Vec::new(),
+        preview_files: restoration_manifest(repo, &stashes_with_oid, index)?,
         preview_commits: Vec::new(),
         // issue #280: pop irreversibly deletes the stash entry — Destructive class,
         // so the confirm UI treats it like drop/reset rather than a plain apply.

@@ -139,3 +139,17 @@ prompt が残らないことも検証する。E は実 KagiApp の continue と�
 再open 後に payload/modal が無いことを検証する。
 旧 stash conflict/pop/oplog の実 mutation assertions は保持し、preflight outcome assertion のみ
 承認済み Refused に変更。remove 24 件・1b admission 8 件は既存 assertion を変更しない。
+
+## Amendment — 2026-10-14: restoration manifest (#1525)
+
+Apply / Pop planning freezes `OperationPlan.preview_files` from the same selected
+OID as approval identity. The stash worktree and index trees are compared with
+its base; the optional third-parent tree contributes untracked entries. Paths
+are deduplicated and sorted, with worktree change kinds taking precedence over
+index-only changes. This is a content manifest, not a promise that saved index
+entries become staged: execution retains its existing non-`--index` policy.
+Missing entries retain their existing blocker and an empty preview. Read errors
+fail planning rather than presenting incomplete contents as a complete manifest.
+Both cards reuse the localized, bounded plan-file list inside the body scroller;
+the action footer and stash identity/preflight pipeline are unchanged.
+

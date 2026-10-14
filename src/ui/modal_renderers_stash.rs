@@ -454,6 +454,9 @@ pub(crate) fn render_stash_apply_modal(
     if let Some(entry) = stash_entry_label(&plan) {
         body = body.child(entry);
     }
+    if !plan.preview_files.is_empty() {
+        body = body.child(super::modal_preview_files::render(&plan));
+    }
     if !plan.warnings.is_empty() {
         let mut warnings = div().flex().flex_col().gap_1().flex_shrink_0();
         for (index, warning) in plan.warnings.iter().enumerate() {

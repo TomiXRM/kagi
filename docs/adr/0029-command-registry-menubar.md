@@ -185,6 +185,11 @@ the existing native menu and command palette shortcut notation, not a new layout
 `display_keystroke`; raw GPUI tokens never become the Help caption. On macOS this
 shares pinned `Kbd::format` modifier order and named keys; other platforms retain
 the existing text notation. EN/JA command labels retain their translation owner.
+Each whitespace-separated chord stroke is formatted independently and joined
+with one space on both platform paths. The non-macOS text projection is a pure
+helper, also compiled into macOS unit tests, so chord and minus/named-key
+coverage does not depend on a Linux/Windows runner. It appends into one output
+buffer rather than allocating a vector of modifier strings for each stroke.
 
 Startup custom bindings and unassigned commands keep their existing semantics.
 The panel's scroll, focus, Escape/dismiss and return-focus behavior are unchanged;

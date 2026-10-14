@@ -166,5 +166,10 @@ Keyboard focus reveals the actual control through the existing message scroll
 handle, including when the default 1:1 split puts link actions below the viewport.
 Reveal is deferred until the parent scroll's prepaint borrow ends; no second
 focus handle or message scroll owner is created.
+As with inspection-list reveal (#1382), reveal converges once per focus change
+and then respects wheel/thumb scrolling. Oversized controls align only their
+top edge; clamped offsets complete reveal instead of generating endless frames.
+URL detection uses one `match_indices("http")` scan and disjoint consumed spans,
+so large messages containing only one scheme do not trigger quadratic searches.
 
 No settings, operation admission, confirmation, receipt or Git state changes.

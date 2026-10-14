@@ -92,6 +92,46 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                     bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
                     "focused Link must be revealed: {bounds:?} in {viewport:?}"
                 );
+                let revealed = cx.read(|cx| app.read(cx).ui().inspector_message_scroll.offset());
+                if revealed.y < gpui::px(0.) {
+                    cx.simulate_event(
+                        window,
+                        gpui::ScrollWheelEvent {
+                            position: viewport.center(),
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                                gpui::px(0.),
+                                gpui::px(10_000.),
+                            )),
+                            touch_phase: gpui::TouchPhase::Moved,
+                            ..Default::default()
+                        },
+                    );
+                    for _ in 0..3 {
+                        cx.run_until_parked();
+                        cx.update_window(window, |_, w, cx| {
+                            w.refresh();
+                            w.draw(cx).clear();
+                        })
+                        .unwrap();
+                    }
+                    let after = cx.read(|cx| app.read(cx).ui().inspector_message_scroll.offset());
+                    assert_eq!(
+                        after.y,
+                        gpui::px(0.),
+                        "wheel scrolling must not be pulled back to the focused Link"
+                    );
+                    crate::keyboard_nav::keys(cx, window, "shift-tab tab");
+                    for _ in 0..3 {
+                        cx.run_until_parked();
+                        cx.update_window(window, |_, w, cx| {
+                            w.refresh();
+                            w.draw(cx).clear();
+                        })
+                        .unwrap();
+                    }
+                }
+                let bounds =
+                    e2e::control_bounds(window.window_id(), "inspector-message-link-0").unwrap();
                 cx.simulate_mouse_move(window, bounds.center(), None, gpui::Modifiers::none());
                 cx.simulate_click(window, bounds.center(), gpui::Modifiers::none());
                 assert_eq!(e2e::take_opened_urls(), vec![URL]);

@@ -7,6 +7,7 @@ use gpui::prelude::*;
 use gpui::{px, App, ElementId, IntoElement, RenderOnce, ScrollHandle, SharedString, Window};
 use gpui_component::button::Button;
 use gpui_component::ElementExt as _;
+use std::cell::Cell;
 
 #[derive(IntoElement)]
 pub(super) struct MetadataButton(Button, bool, Option<(ElementId, ScrollHandle)>);
@@ -42,19 +43,31 @@ impl RenderOnce for MetadataButton {
         let mut button = self.0;
         if let Some((id, scroll)) = self.2 {
             let focus = window
-                .use_keyed_state(id, cx, |_, cx| cx.focus_handle())
+                .use_keyed_state(id.clone(), cx, |_, cx| cx.focus_handle())
                 .read(cx)
                 .clone();
+            let revealed = window.with_element_namespace(id, |window| {
+                window.use_keyed_state("message-link-revealed", cx, |_, _| Cell::new(false))
+            });
             button = button.on_prepaint(move |bounds, window, cx| {
                 if !focus.is_focused(window) {
+                    revealed.read(cx).set(false);
+                    return;
+                }
+                if revealed.read(cx).get() {
                     return;
                 }
                 let viewport = scroll.bounds();
-                let delta = if bounds.top() < viewport.top() + px(2.) {
+                // A control taller than the viewport can only align its top.
+                // Do not alternate top/bottom corrections forever.
+                let delta = if bounds.size.height > viewport.size.height - px(4.)
+                    || bounds.top() < viewport.top() + px(2.)
+                {
                     viewport.top() + px(2.) - bounds.top()
                 } else if bounds.bottom() > viewport.bottom() - px(2.) {
                     viewport.bottom() - px(2.) - bounds.bottom()
                 } else {
+                    revealed.read(cx).set(true);
                     return;
                 };
                 let old = scroll.offset();
@@ -66,6 +79,10 @@ impl RenderOnce for MetadataButton {
                         scroll.set_offset(offset);
                         window.refresh();
                     });
+                } else {
+                    // Clamping can prevent full visibility; stop retrying until
+                    // focus changes, and leave subsequent wheel/thumb input alone.
+                    revealed.read(cx).set(true);
                 }
             });
         }

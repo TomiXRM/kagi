@@ -434,21 +434,18 @@ mod reflow_tests {
 pub fn message_url_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
     let mut ranges = Vec::new();
     let mut offset = 0;
-    while offset < text.len() {
-        let remaining = &text[offset..];
-        let Some(relative) = remaining
-            .find("http://")
-            .into_iter()
-            .chain(remaining.find("https://"))
-            .min()
-        else {
-            break;
-        };
-        let start = offset + relative;
-        let scheme_len = if text[start..].starts_with("https://") {
+    for (start, _) in text.match_indices("http") {
+        // A scheme-looking substring inside an already consumed URL is inert.
+        if start < offset {
+            continue;
+        }
+        let suffix = &text[start + 4..];
+        let scheme_len = if suffix.starts_with("s://") {
             8
-        } else {
+        } else if suffix.starts_with("://") {
             7
+        } else {
+            continue;
         };
         let mut end = start + scheme_len;
         let mut brackets = [0usize; 3];
@@ -654,6 +651,20 @@ mod message_link_tests {
             urls("[https://example.com/a?q=x&n=2#part]."),
             ["https://example.com/a?q=x&n=2#part"]
         );
+    }
+
+    #[test]
+    fn large_single_scheme_input_remains_linear() {
+        let text = "https://a ".repeat(20_000);
+        let start = std::time::Instant::now();
+        let ranges = message_url_ranges(&text);
+        assert_eq!(ranges.len(), 20_000);
+        for (index, range) in ranges.iter().enumerate() {
+            assert_eq!(*range, index * 10..index * 10 + 9);
+        }
+        // Deliberately loose for busy CI hosts; the one match_indices scan and
+        // disjoint consumed spans prevent repeated searches of the suffix.
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

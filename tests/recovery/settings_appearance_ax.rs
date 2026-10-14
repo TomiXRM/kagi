@@ -150,7 +150,7 @@ pub fn scenario_settings_theme_select_ax(cx: &mut VisualTestAppContext) {
 }
 
 fn zoom_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {
-    for zoom in [1.0, 0.7, 1.67, 1.556, 1.667] {
+    for zoom in [1.0, 0.7, 1.67, 1.556, 1.667, 2.0] {
         theme::set_zoom(zoom);
         cx.update(theme::sync_gpui_component_theme);
         cx.update(|cx| cx.refresh_windows());
@@ -186,7 +186,7 @@ fn zoom_ax_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: Any
 
 pub fn scenario_settings_zoom_stepper_ax(cx: &mut VisualTestAppContext) {
     appearance_matrix(cx, zoom_ax_leg);
-    eprintln!("[gui-e2e] PASS settings_zoom_stepper_ax EN/JA Light/Dark 70/100/167%");
+    eprintln!("[gui-e2e] PASS settings_zoom_stepper_ax EN/JA Light/Dark 70/100/167/200%");
 }
 
 struct CustomThemeRestore {
@@ -261,7 +261,9 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         (1., true, 1.1),
         (1.556, false, 1.5),
         (1.556, true, 1.6),
-        (1.667, true, 1.67),
+        (1.667, true, 1.7),
+        (1.9, true, 2.),
+        (2., false, 1.9),
         (0.8, false, 0.7),
     ] {
         theme::set_zoom(start);
@@ -298,10 +300,7 @@ fn zoom_keyboard_ax(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
             assert_boundary_focus(cx, app, window, increase);
         }
     }
-    for (zoom, id, next) in [
-        (0.7, "zoom-dec", "zoom-inc"),
-        (1.67, "zoom-inc", "zoom-dec"),
-    ] {
+    for (zoom, id, next) in [(0.7, "zoom-dec", "zoom-inc"), (2., "zoom-inc", "zoom-dec")] {
         theme::set_zoom(zoom);
         cx.update(theme::sync_gpui_component_theme);
         cx.update(|cx| cx.refresh_windows());

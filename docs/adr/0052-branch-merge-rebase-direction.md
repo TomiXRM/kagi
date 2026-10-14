@@ -50,3 +50,33 @@ visible action, not the requirement to disclose operation direction.
 Replay retains its warning caption and existing two-stage approval gate.
 The armed warning has no branch name and uses the ordinary, unellipsized
 button so its complete safety wording remains visible in both languages.
+
+## Amendment — 2026-10-14: Rebase plan scope (#1530)
+
+The current branch remains attached and clean after a successful rebase, but
+that alone does not disclose the operation. Plan time enumerates non-merge
+commits reachable from HEAD but not the target, oldest first, with short OIDs
+and subjects. The shared scrollable list shows the full candidate count and
+supports Copy. EN/JA captions identify replay candidates, not pushes.
+Git may skip equivalent patches or commits that become empty; this is a
+candidate range, not a promise of a particular final SHA or replay count.
+No render-time Git reads or plan-time repository writes are introduced.
+Replay's ref-update script stays separate and is not relabeled as commits.
+Planning runs off the UI thread through the existing session/visit-owned
+planning lifecycle. The preview retains at most 100 subjects; a separate
+typed scope retains the true total and presents a localized remaining count.
+Copy formatting/joining happens only on activation. Linear ancestry with
+no merge commits is already up to date, matching Git's no-op behavior.
+The scope freezes the current ref/full OID and target operand/full OID.
+CURRENT shows the original tip; AFTER identifies the target tip and marks
+the result OID unknown. Mandatory preflight refuses target drift before
+backup/write admission, and execution uses the approved target OID rather
+than resolving the branch name again.
+Rebase planning admission uses the same operation latch as writes, refusing
+repeat selection and other in-flight plans before changing any planning tag.
+Its tag is registered in the shared EN/JA busy-label table. Frozen scope is
+projected only by the UI display/Copy adapter; semantic current/predicted
+summaries remain `branch: X` / `clean`, preserving durable success receipts.
+
+
+

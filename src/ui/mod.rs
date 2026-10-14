@@ -1144,6 +1144,8 @@ pub struct KagiApp {
     pub(crate) panel_motion: panel_motion::PanelMotions,
     /// Active tab in the bottom panel.
     pub bottom_tab: BottomTab,
+    /// Non-Tab-stop scope for handing off focus before the panel disappears.
+    pub(crate) bottom_panel_focus: Option<FocusHandle>,
     /// Shared roving focus for the bottom-panel pane selector.
     pub(crate) bottom_tab_focus: keyboard_nav::TabFocus,
     pub(crate) activity_period_focus: keyboard_nav::TabFocus,
@@ -1539,6 +1541,7 @@ impl KagiApp {
             bottom_panel_drag_origin: None,
             panel_motion: Default::default(),
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
+            bottom_panel_focus: None,
             bottom_tab_focus: Default::default(),
             activity_period_focus: Default::default(),
             activity_bucket_focus: Default::default(),
@@ -2095,8 +2098,9 @@ impl KagiApp {
         if deselect {
             return;
         }
-        // Explicit Graph selection reveals its Inspector in compact Changes.
-        // Refresh/reconcile retain selection separately and never enter here.
+        // Explicit Graph selection reveals its Inspector in compact Changes,
+        // including a pane closed by PR entry, Cmd-J or the final Escape layer.
+        // Desktop uses the right Inspector; refresh/reconcile never enter here.
         if self.compact.enabled {
             self.bottom_tab = BottomTab::Changes;
             self.bottom_panel_open = true;

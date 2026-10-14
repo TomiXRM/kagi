@@ -226,7 +226,12 @@ pub(crate) fn render_amend_modal(
         body = body.child(modal_list_panel(
             Msg::AmendFoldedFiles.t(),
             total,
-            Some(("amend-files-copy", paths.join("\n"))),
+            Some(modal_copy_button(
+                "amend-files-copy",
+                Msg::ModalCopyList.t(),
+                paths.join("\n"),
+                cx,
+            )),
             modal_change_summary(
                 &plan
                     .preview_files
@@ -580,7 +585,12 @@ pub(crate) fn render_discard_modal(
         body = body.child(modal_list_panel(
             Msg::ModalTargetFiles.t(),
             target_count,
-            Some(("discard-files-copy", modal.paths.join("\n"))),
+            Some(modal_copy_button(
+                "discard-files-copy",
+                Msg::ModalCopyList.t(),
+                modal.paths.join("\n"),
+                cx,
+            )),
             // Count the same kinds the rows show, including untracked additions.
             modal_change_summary(
                 &modal

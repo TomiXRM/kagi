@@ -94,3 +94,25 @@ The pinned component library has no matching chart hit-region component, so
 the existing custom canvas and focusable overlay remain, with shared geometry.
 Native regression inputs target actual painter-recorded series coordinates,
 not overlay centers; focused regions must contain those same coordinates.
+
+## Graph Escape amendment (2026-10-14, #1543)
+
+With Graph as the resolved center and no higher Escape target remaining, Escape
+closes an open bottom panel. The existing modal/menu/popover/palette, diff-line
+selection, notifications, composer, main-diff and Graph selection dismissal
+layers retain their precedence; selection clearing and pane closure consume
+separate key presses. Editor, Conflict Mode and other takeovers do not gain this
+fallback. PRs/Issues entry and return retain their existing visibility policy.
+
+Historical detail/files occupy the bottom Changes tab only in compact windows
+(logical width <1000px, ADR-0224). Fresh selection through `KagiApp::select`
+opens that projection even after PRs or manual closure; desktop retains its
+right Inspector and does not reopen the bottom pane on commit selection.
+
+Review clarification: a currently focused text Input prevents this final
+fallback, including desktop Commit Panel title/body and other panel inputs.
+The existing component Input registry supplies the actual focused handle.
+A non-Tab-stop scope around the bottom panel detects every focused descendant;
+before closing from that subtree, return focus to the workspace root. Do not
+leave Terminal, tab-strip, Activity or file-list focus on an undrawn control.
+

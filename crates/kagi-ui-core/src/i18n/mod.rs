@@ -220,6 +220,7 @@ pub enum Msg {
     A11yHomeFilter,
     A11yListTitleFilter,
     A11ySidebarFilter,
+    A11ySidebarClearSearch,
     SidebarGroupFilterExpanded,
     A11yPrReviewersFilter,
     A11yPrAssigneesFilter,
@@ -252,6 +253,9 @@ pub enum Msg {
     AppNoticeDismiss,
     ToastDismiss,
     ToastOpenRepository,
+    ToastMore,
+    ToastMoreOne,
+    ToastCollapse,
     /// Title row of the shared app-notice card (#792). One neutral title for
     /// every notice: `AppNotice` carries no outcome kind, so a card that named
     /// one ("refused", "aborted") would be guessing.
@@ -1432,6 +1436,9 @@ pub enum Msg {
     PlanMerge,
     /// Confirm button on the rebase modal, `{}` = branch.
     PlanRebaseOnto,
+    PlanRebaseCandidates,
+    PlanRebaseMore,
+    PlanRebaseResultUnknown,
     PlanReplayOnto,
     PlanReplayOntoArmed,
     ThemeColorVision,
@@ -1933,6 +1940,8 @@ impl Msg {
             (Ja, A11yListTitleFilter) => "タイトルで絞り込み",
             (En, A11ySidebarFilter) => "Filter sidebar",
             (Ja, A11ySidebarFilter) => "サイドバーを絞り込み",
+            (En, A11ySidebarClearSearch) => "Clear search",
+            (Ja, A11ySidebarClearSearch) => "検索内容を消去",
             (En, SidebarGroupFilterExpanded) => "Groups stay expanded while filtering. Clear the filter to collapse a group.",
             (Ja, SidebarGroupFilterExpanded) => "絞り込み中はグループを展開したままにします。グループを折りたたむには絞り込みを解除してください。",
             (En, A11yPrReviewersFilter) => "Filter pull request reviewers",
@@ -2429,6 +2438,12 @@ impl Msg {
             (Ja, ToastDismiss) => "通知を閉じる",
             (En, ToastOpenRepository) => "Open Repository",
             (Ja, ToastOpenRepository) => "リポジトリを開く",
+            (En, ToastMore) => "{count} more notifications",
+            (Ja, ToastMore) => "ほか{count}件の通知",
+            (En, ToastMoreOne) => "1 more notification",
+            (Ja, ToastMoreOne) => "ほか1件の通知",
+            (En, ToastCollapse) => "Collapse notifications",
+            (Ja, ToastCollapse) => "通知を折りたたむ",
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
@@ -3658,8 +3673,8 @@ impl Msg {
             (Ja, SettingsThemesFolderUnavailable) => "テーマフォルダーのパスが見つかりません",
             (En, SettingsZoom) => "UI Zoom",
             (Ja, SettingsZoom) => "UI ズーム",
-            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–1.67×).",
-            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜1.67×)。",
+            (En, SettingsZoomDesc) => "Scale all text and layout (0.7×–2.0×).",
+            (Ja, SettingsZoomDesc) => "テキストとレイアウト全体を拡大縮小します(0.7×〜2.0×)。",
             // "graph" is a domain word and stays English in both arms (ADR-0048).
             (En, SettingsCompact) => "Compact graph",
             (Ja, SettingsCompact) => "graph をコンパクト表示",
@@ -3939,6 +3954,12 @@ impl Msg {
             (Ja, PlanMerge) => "merge",
             (En, PlanRebaseOnto) => "Rebase {}",
             (Ja, PlanRebaseOnto) => "{} を rebase",
+            (En, PlanRebaseCandidates) => "Replay candidates",
+            (Ja, PlanRebaseCandidates) => "replay 候補の commit",
+            (En, PlanRebaseMore) => "… and {} more",
+            (Ja, PlanRebaseMore) => "…ほか {} 個の commit",
+            (En, PlanRebaseResultUnknown) => "Result OID is not yet known",
+            (Ja, PlanRebaseResultUnknown) => "実行後の OID は未確定",
             (En, A11yCommitList) => "Commits",
             (Ja, A11yCommitList) => "commit 一覧",
             (En, A11yCommitRow) => "{}, by {}, {}, commit {}",
@@ -5105,6 +5126,7 @@ mod input_name_tests {
             Msg::A11yHomeFilter,
             Msg::A11yListTitleFilter,
             Msg::A11ySidebarFilter,
+            Msg::A11ySidebarClearSearch,
             Msg::A11yPrReviewersFilter,
             Msg::A11yPrAssigneesFilter,
             Msg::A11yPrLabelsFilter,
@@ -5181,5 +5203,20 @@ mod rebase_plan_label_tests {
                 format!("{branch} を replay")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod toast_count_tests {
+    use super::*;
+
+    #[test]
+    fn older_notification_caption_has_a_singular_english_form() {
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::En), "1 more notification");
+        assert_eq!(Msg::ToastMoreOne.t_for(Lang::Ja), "ほか1件の通知");
+        assert_eq!(
+            Msg::ToastMore.t_for(Lang::En).replace("{count}", "3"),
+            "3 more notifications"
+        );
     }
 }

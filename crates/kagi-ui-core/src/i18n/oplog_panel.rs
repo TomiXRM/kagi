@@ -43,6 +43,12 @@ pub enum OplogPanelMsg {
     RestoreButton,
     /// Why both buttons are disabled for an entry without recorded ref moves.
     RestoreUnavailable,
+    RevertNoMoves,
+    StatusSuccess,
+    StatusFailed,
+    StatusUnknown,
+    StatusPartial,
+    StatusRefused,
     /// First confirmation on the restore card.
     RestoreConfirm,
     CopyCommand,
@@ -96,6 +102,18 @@ impl OplogPanelMsg {
             (Lang::Ja, RestoreUnavailable) => {
                 "この操作には ref の移動の記録が無いため、正確に戻せません。"
             }
+            (Lang::En, RevertNoMoves) => "This operation did not change any ref.",
+            (Lang::Ja, RevertNoMoves) => "この操作は ref を変更していません。",
+            (Lang::En, StatusSuccess) => "Success",
+            (Lang::Ja, StatusSuccess) => "成功",
+            (Lang::En, StatusFailed) => "Failed",
+            (Lang::Ja, StatusFailed) => "失敗",
+            (Lang::En, StatusUnknown) => "Unknown",
+            (Lang::Ja, StatusUnknown) => "不明",
+            (Lang::En, StatusPartial) => "Partial",
+            (Lang::Ja, StatusPartial) => "一部完了",
+            (Lang::En, StatusRefused) => "Refused",
+            (Lang::Ja, StatusRefused) => "拒否",
             (Lang::En, RestoreConfirm) => "Restore",
             (Lang::Ja, RestoreConfirm) => "戻す",
             (Lang::En, CopyCommand) => "Copy command",

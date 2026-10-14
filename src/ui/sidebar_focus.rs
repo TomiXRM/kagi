@@ -192,10 +192,27 @@ impl KagiApp {
         }
     }
 
-    /// Escape leaves the filter and restores the first local list stop.
+    /// Clear a populated search in place; only an empty Escape leaves it.
     pub(super) fn clear_sidebar_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(input) = &self.sidebar.filter {
-            input.update(cx, |input, cx| input.set_value("", window, cx));
+            let cancelled_composition = input.update(cx, |input, cx| {
+                use gpui::EntityInputHandler as _;
+                if input.marked_text_range(window, cx).is_some() {
+                    input.unmark_text(window, cx);
+                    true
+                } else {
+                    false
+                }
+            });
+            if cancelled_composition {
+                cx.notify();
+                return;
+            }
+            if !input.read(cx).value().is_empty() {
+                input.update(cx, |input, cx| input.set_value("", window, cx));
+                cx.notify();
+                return;
+            }
         }
         self.sidebar.focus.headers.get(0, cx).focus(window, cx);
         self.sidebar.focus.open_first[0] = true;

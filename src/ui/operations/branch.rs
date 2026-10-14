@@ -567,6 +567,16 @@ impl KagiApp {
             .map(|(name, _)| name.clone())
             .collect();
         let validation = validate_branch_rename(&old_name, &input, &existing);
+        // The prefilled current name is neutral, not a failed operation.
+        // Retire any previous Ready plan so unchanged Return remains inert.
+        if input.trim() == old_name {
+            if let Some(m) = self.rename_branch_modal_mut() {
+                m.validation = validation;
+                m.plan = ModalPlan::Pending;
+                m.error = None;
+            }
+            return;
+        }
         let _repo_path = match self.repo_path.clone() {
             Some(p) => p,
             None => return,

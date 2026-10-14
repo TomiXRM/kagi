@@ -17,6 +17,26 @@ use kagi_ui_core::commit_row::{commit_row_model, render_commit_row, CommitRowLay
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::theme;
 
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    Sizable,
+};
+
+#[derive(gpui::IntoElement)]
+struct HistoryButton {
+    button: Button,
+}
+impl gpui::InteractiveElement for HistoryButton {
+    fn interactivity(&mut self) -> &mut gpui::Interactivity {
+        self.button.interactivity()
+    }
+}
+impl gpui::StatefulInteractiveElement for HistoryButton {}
+impl gpui::RenderOnce for HistoryButton {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+        self.button.render(window, cx)
+    }
+}
 /// Fixed top:bottom ratio for the History pane's commit-detail header vs.
 /// the commit list (user request — "3:7"; not a drag-resizable
 /// `InspectorSplit`-style divider, at least not in this v1).
@@ -46,16 +66,66 @@ pub(crate) fn render_history_pane(
     view: &EditorWorkspaceView,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> AnyElement {
+    #[cfg(feature = "gui-e2e")]
+    view.history_presentation.borrow_mut().clear();
     if view.history_loading() {
         return placeholder_text(Msg::EditorWorkspaceLoading.t()).into_any_element();
     }
-    // Same lesson as `render_snapshot_pane` below (#489): with no load in
-    // flight, "no list" is a settled outcome — a failed or never-started
-    // load — not a spinner that will resolve on its own.
+    if let Some(error) = &view.history_error {
+        let heading = Msg::EditorHistoryFailed.t();
+        let retry = Msg::EditorHistoryRetry.t();
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = format!("{heading}\n{error}\n{retry}");
+        }
+        let button = Button::new("ews-history-retry")
+            .ghost()
+            .small()
+            .label(retry)
+            .on_click(cx.listener(|view, _, window, cx| {
+                view.retry_history(cx);
+                window.focus(&view.root_focus, cx);
+            }));
+        #[cfg(feature = "gui-e2e")]
+        let button = button.on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, _, cx| {
+            if event.keystroke.key == "f19" {
+                view.history_retry_focused = true;
+                cx.stop_propagation();
+            }
+        }));
+        return div()
+            .id("ews-history-error")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_2()
+            .p_3()
+            .text_sm()
+            .text_color(rgb(theme().text_main))
+            .child(heading)
+            .child(div().w_full().child(error.clone()))
+            .child(
+                HistoryButton { button }
+                    .role(gpui::Role::Button)
+                    .aria_label(retry),
+            )
+            .into_any_element();
+    }
     let Some(history) = view.history.as_ref() else {
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = Msg::EditorHistoryEmpty.t().into();
+        }
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     };
     if history.entries.is_empty() {
+        #[cfg(feature = "gui-e2e")]
+        {
+            *view.history_presentation.borrow_mut() = Msg::EditorHistoryEmpty.t().into();
+        }
         return placeholder_text(Msg::EditorHistoryEmpty.t()).into_any_element();
     }
 

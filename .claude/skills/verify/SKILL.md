@@ -142,6 +142,16 @@ The `gui-e2e` feature forwards `gpui_platform/test-support` as well as GPUI's:
 without the platform feature `Window::render_to_image` returns the default
 not-implemented error. Default application builds keep capture disabled.
 
+For #1515 use `KAGI_GUI_E2E_ONLY='editor_history,editor_'` with KEEP_GOING.
+`editor_history_fetch_error` queues an `Err` through `e2e::queue_editor_history`
+at production `start_editor_history_load`; it does not seed the view directly.
+EN/JA × Apple Light/Dark × 100%/167% checks cause/empty separation, real Tab
+and Enter/Space Retry dispatch, successful commits, successful zero entries,
+stale A-after-B rejection and mode/commit ownership. The seam replaces only
+the transport Task and is compile-time GUI-only. Tier B uses a disposable
+repository copy and a real Git read failure, restores it, then retries in the
+same pane; screenshots and native AX are separate from renderer-fed text.
+
 `inactive_selection` (#1176) measures selected repository-tab and conflict-row native
 Metal fills across key/non-key/reactivated presentation, with unchanged bounds,
 selected session and selected file. `KagiApp::set_window_active_for_e2e` overrides only the

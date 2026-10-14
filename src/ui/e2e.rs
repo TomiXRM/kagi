@@ -969,6 +969,21 @@ pub(crate) fn pr_merge_terminal_fault(
     })
 }
 
+#[cfg(feature = "gui-e2e")]
+type EditorHistoryTask = gpui::Task<Result<kagi_domain::file_history::FileHistory, String>>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static EDITOR_HISTORY: RefCell<Option<EditorHistoryTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_editor_history(task: EditorHistoryTask) {
+    EDITOR_HISTORY.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_editor_history() -> Option<EditorHistoryTask> {
+    EDITOR_HISTORY.with(|slot| slot.borrow_mut().take())
+}
+
 /// Supply only the transport task; dispatch, owner capture and settlement stay real.
 #[cfg(feature = "gui-e2e")]
 type RemoteRefreshTask = gpui::Task<Result<kagi_git::RepoSnapshot, String>>;

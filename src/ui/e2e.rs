@@ -29,6 +29,9 @@ pub mod inspector_metadata;
 pub mod tab_strip;
 
 #[cfg(feature = "gui-e2e")]
+pub mod compact_rail;
+
+#[cfg(feature = "gui-e2e")]
 pub mod text_caps;
 
 #[cfg(feature = "gui-e2e")]
@@ -562,6 +565,31 @@ pub fn begin_update_install_for_test(app: &mut KagiApp) -> bool {
 #[cfg(feature = "gui-e2e")]
 pub fn fail_update_install_for_test(app: &mut KagiApp, error: &str) {
     app.finish_update_install_failure(error);
+}
+
+/// Queued installer completion keeps native tests off the network and away
+/// from the running application's installation directory.
+#[cfg(feature = "gui-e2e")]
+type UpdateInstallTask = gpui::Task<Result<crate::update::Relaunch, String>>;
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static UPDATE_INSTALL: RefCell<Option<UpdateInstallTask>> = const { RefCell::new(None) };
+}
+#[cfg(feature = "gui-e2e")]
+pub fn queue_update_install(task: UpdateInstallTask) {
+    UPDATE_INSTALL.with(|slot| assert!(slot.borrow_mut().replace(task).is_none()));
+}
+#[cfg(feature = "gui-e2e")]
+pub(crate) fn take_update_install() -> Option<UpdateInstallTask> {
+    UPDATE_INSTALL.with(|slot| slot.borrow_mut().take())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn update_install_queued() -> bool {
+    UPDATE_INSTALL.with(|slot| slot.borrow().is_some())
+}
+#[cfg(feature = "gui-e2e")]
+pub fn discard_queued_update_install() {
+    drop(take_update_install());
 }
 
 /// The real Mac platform for `VisualTestAppContext::with_asset_source`.

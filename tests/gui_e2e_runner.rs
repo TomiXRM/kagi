@@ -182,6 +182,10 @@ mod tab_strip;
 mod recovery_operations;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/update_notice.rs"]
+mod update_notice;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/create_branch_warnings.rs"]
 mod create_branch_warnings;
 
@@ -379,6 +383,9 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_controls.rs"]
+mod conflict_controls;
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_file_selection.rs"]
 mod conflict_file_selection;
 #[cfg(target_os = "macos")]
@@ -429,8 +436,14 @@ mod modal_viewports;
 mod remote_browse_focus;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/native_ax.rs"]
+mod native_ax;
+#[cfg(target_os = "macos")]
 #[path = "recovery/overlay_focus.rs"]
 mod overlay_focus;
+#[cfg(target_os = "macos")]
+#[path = "recovery/palette_ax.rs"]
+mod palette_ax;
 #[cfg(target_os = "macos")]
 #[path = "recovery/palette_polish.rs"]
 mod palette_polish;
@@ -577,6 +590,10 @@ mod recovery_commit_panel_viewport;
 #[cfg(target_os = "macos")]
 #[path = "recovery/compact_layout.rs"]
 mod compact_layout;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/compact_rail.rs"]
+mod compact_rail;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
@@ -2015,6 +2032,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_update_install_lifecycle),
             ),
             (
+                "update_notice_in_flight",
+                Box::new(crate::update_notice::scenario_update_notice_in_flight),
+            ),
+            (
                 "branch_menu_no_checkout_fallthrough",
                 Box::new(crate::recovery_operations::scenario_branch_menu_no_checkout_fallthrough),
             ),
@@ -2529,6 +2550,14 @@ mod macos {
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
             ),
             (
+                "conflict_reset_disarm",
+                Box::new(crate::conflict_controls::scenario_conflict_reset_disarm),
+            ),
+            (
+                "conflict_result_segment",
+                Box::new(crate::conflict_controls::scenario_conflict_result_segment),
+            ),
+            (
                 "conflict_file_selection",
                 Box::new(crate::conflict_file_selection::scenario_conflict_file_selection),
             ),
@@ -2684,6 +2713,10 @@ mod macos {
             (
                 "palette_selection_scroll",
                 Box::new(crate::overlay_focus::scenario_palette_selection_scroll),
+            ),
+            (
+                "palette_rows_ax_action",
+                Box::new(crate::palette_ax::scenario_palette_rows_ax_action),
             ),
             (
                 "palette_viewport",
@@ -3241,6 +3274,11 @@ mod macos {
                 "commit_panel_viewport",
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
+            ("compact_rail_cmd_f", Box::new(crate::compact_rail::scenario_compact_rail_cmd_f)),
+            ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
+            ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
+            ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
+            ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),

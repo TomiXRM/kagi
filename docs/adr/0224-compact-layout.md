@@ -155,6 +155,23 @@ on an unmounted Commit or Amend control prevents Escape reaching the visible mod
 Direct execution and wide modal presentation remain unchanged. Native lifecycle
 coverage checks the drawn plan heading, modal root focus, Escape returning the same
 pinned owner/inputs/draft, next Escape dismissal, and unchanged Git index.
+
+Suspension retires rail/composer projections only on entry, not on every modal
+repaint. Repeatedly dismissing the rail sees a Tab-focused background trigger
+as its owner and resets focus to the workspace root before non-danger plan
+cards can be reached. First-parent bisection identifies the initial compact
+merge (#1481, `e5c21131`); its parent `32214ba6` passes the unchanged
+`rebase_plan_labels` oracle. Keep that oracle and ordinary confirmation policy
+unchanged; `neighbor_plan_labels` also traverses the real cherry-pick, revert and
+merge Cancel/Confirm buttons across both viewports, languages, themes and zooms.
+
+Covered rail triggers retain their Tab stops but reject pointer, Enter and Space
+activation while suspended. The open-change owner independently rejects covered
+opens before queuing any workspace-mode change. Suspension also dismisses any
+actually open rail as a defensive reconciliation, never a merely focused trigger.
+The neighbor-card regression activates the real PR rail trigger with Enter and
+Space, asserts unchanged mode/no expanded popover, then continues Tab to Confirm.
+
 Incoming narrow keyboard fixtures provide real untracked WIP; wide fixtures stay
 unchanged. Localization tests close the occluding composer before pointer-selecting
 Changes, then reopen the same WIP owner rather than clicking through a pinned popup.

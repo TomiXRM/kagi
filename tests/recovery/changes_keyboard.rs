@@ -55,7 +55,7 @@ fn replace(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, repo: &Path) {
             .as_ref()
             .unwrap()
             .update(cx, |panel, cx| {
-                panel.state.reload_status(repo);
+                panel.reload_status(repo);
                 cx.notify();
             });
     });
@@ -155,7 +155,7 @@ fn file_section_keys(
                 .as_ref()
                 .unwrap()
                 .update(cx, |panel, cx| {
-                    panel.state.reload_status(repo);
+                    panel.reload_status(repo);
                     panel.state.unstaged.reverse();
                     panel.state.staged.reverse();
                     cx.notify();
@@ -473,7 +473,7 @@ fn discard_menu(
                 .as_ref()
                 .unwrap()
                 .update(cx, |panel, cx| {
-                    panel.state.reload_status(repo);
+                    panel.reload_status(repo);
                     panel.state.unstaged.swap(0, 1);
                     cx.notify();
                 });

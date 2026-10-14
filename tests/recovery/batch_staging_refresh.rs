@@ -35,6 +35,8 @@ pub fn scenario_batch_staging_refresh(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| {
             e2e::open_local_panel_no_inputs(app, repo.clone(), cx)
         });
+        // #1570 opens with a placeholder; settle only that initial read.
+        // Assertions after each batch write below must remain synchronous.
         cx.run_until_parked();
         let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
         for staged in [true, false] {

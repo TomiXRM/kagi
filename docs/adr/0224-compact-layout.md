@@ -583,3 +583,88 @@ the process quits normally and the prior foreground is restored. Earlier
 EN/JA compact/desktop captures use the existing migrated 111.1% native zoom;
 the deterministic Tier A matrix exercises the exact 100%/167% zoom values.
 
+
+## Amendment — 2026-10-15: nonblocking WIP opening (#1570)
+
+The WIP click attaches the existing session-owned CommitPanelView immediately,
+creates/reuses its message inputs, and selects Changes/pins the composer without
+waiting for status, diffstats or generated-file classification. Desktop uses the
+same opening path. These repository reads run on the background executor; the
+file surface shows the existing localized loading label until publication.
+Reopening retains the input entities and draft, but never exposes old indexed
+file actions while their replacement read is pending.
+
+The completion checks the creating SessionId, current panel entity and its
+RequestSlot revision. Newer openings supersede older ones; synchronous
+post-write/watcher refreshes and whole-state replacement clear the slot before
+publishing. A closed or replaced panel cannot update another tab's presentation.
+The owner read-store key also rejects a full reload or mutation admission that
+invalidated the repository revision while this opening read was in flight.
+This does not add a second read-model owner or change status's pure-read contract.
+If only the owner revision became stale, the still-current panel request starts
+a new background read and keeps its loading presentation. Invalidation alone
+(for example, fetch with no ref movement) does not guarantee a reload will publish.
+Superseded panel requests remain discarded without restarting.
+Batch staging (#1569) publishes through `CommitPanelView::apply_status`, which
+clears this request before delegating to the shared state-level `apply_status`.
+Its one post-write read still supplies session counts, the watcher baseline and
+WIP diffstat. Admission invalidates the owner read revision; clearing the panel
+request makes the old opening completion a no-op, not an unnecessary retry.
+Background `from_repo` uses the same state-level status application.
+
+Smart Commit's first effective-PATH lookup can launch an interactive login shell;
+it is not an instant filesystem scan. Capability discovery is lazy and
+background-only, retains the existing process-global PATH cache and app probe
+revision, and keeps the offline network gate. No staged diff is sent by discovery.
+Discovery starts when the opening read starts, not when its payload is accepted:
+a newer synchronous publication must not suppress provider discovery.
+An enabled Smart provider remains unavailable with localized detecting help
+until discovery finishes, rather than silently generating a rule-based draft.
+The template/draft restore remains on the existing owner-bound path.
+Amend is unavailable while status is loading, with English/Japanese help and a
+matching dispatch guard. The temporary empty staged list must never choose a
+MessageOnly plan while the actual index contains staged changes.
+
+Plain-build native dispatch measurements on copied stress repositories:
+900×700/17 files: first 445.585ms, warm 35.193ms;
+900×700/200 files: first 878.110ms, warm 341.386ms;
+1200×800/17 files: first 310.491ms, warm 33.466ms;
+1200×800/200 files: first 631.103ms, warm 333.257ms.
+The compact first shell probes alone cost 401.828/426.024ms. A three-second
+native sample also records 407 main-thread samples beneath
+`start_smart_commit_detection → effective_path → login_shell_path`; 403
+are in the child wait path. These are dispatch/stall measurements, not
+screenshot-derived first-frame claims: shared-screen Tier B capture stalled.
+After the cutover, the same plain-build PID-scoped click handler takes
+8.150/0.332ms (900×700, 17), 8.450/0.235ms (900×700, 200),
+6.953/0.188ms (1200×800, 17), and 11.942/0.242ms (1200×800, 200),
+first/warm respectively. Background diffstat work still costs 257–278ms in
+the plain 200-file cases; it no longer blocks this interaction.
+
+The native `compact_wip_first_frame` regression fails the synchronous baseline
+before dispatch returns. Its held real read requires the loading pane/composer
+to paint before publication, then checks data arrival, warm input identity and
+supersession by a newer refresh or owner read revision, and Smart provider
+detecting help. Existing compact lifecycle, Changes selection, worktree panel
+and Smart Commit scenarios remain the neighboring contracts.
+
+Native Tier A first-pane-paint evidence (same copied fixtures, actual WIP
+pointer dispatch, 100% zoom, Apple Dark; milliseconds):
+
+| Viewport | Modified files | Before first / warm | After first / warm |
+|---|---:|---:|---:|
+| 900×700 | 17 | 101.290 / 34.303 | 7.715 / 11.768 |
+| 900×700 | 200 | 287.238 / 276.179 | 8.707 / 7.767 |
+| 1200×800 | 17 | 65.595 / 38.338 | 44.272 / 16.138 |
+| 1200×800 | 200 | 533.478 / 319.120 | 14.223 / 11.962 |
+
+The temporary Instant begins in the production WIP opening handler; a canvas in
+the pane records its first paint callback. The Tier A baseline temporarily
+restores the original synchronous status and CLI-discovery calls; after uses
+their background cutover. Both use the same runner, fixture and drawing path.
+The runner's `simulate_click` drains subsequent async work before returning, so
+its total wall duration is deliberately **not** reported as first paint.
+The test-process shell probe is faster than the plain-launch probe above; those
+two measurement lanes must not be conflated. All measurement instrumentation
+and the synchronous baseline switch are removed from the production change.
+

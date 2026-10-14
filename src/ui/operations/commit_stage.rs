@@ -134,7 +134,7 @@ impl KagiApp {
         };
         let diffstat = self.ui().commit_panel.clone().map(|panel| {
             panel.update(cx, |panel, cx| {
-                panel.state.apply_status(&backend, status);
+                panel.apply_status(&backend, status);
                 let mut diffstat = WipDiffStat::default();
                 for stat in panel
                     .state

@@ -153,9 +153,9 @@ fn fold_extra_rows(count: usize, expanded: bool) -> usize {
 }
 
 impl CommitPanelState {
-    /// Create a new CommitPanelState from the current repo status.
-    pub fn from_repo(repo_path: &Path) -> Self {
-        let mut state = CommitPanelState {
+    /// Empty presentation while the first repository read is in flight.
+    pub(crate) fn empty() -> Self {
+        Self {
             unstaged: Vec::new(),
             staged: Vec::new(),
             unstaged_stats: Vec::new(),
@@ -178,7 +178,12 @@ impl CommitPanelState {
             unstaged_artifact_files: Vec::new(),
             staged_artifact_files: Vec::new(),
             agent_expanded: false,
-        };
+        }
+    }
+
+    /// Create a new CommitPanelState from the current repo status.
+    pub fn from_repo(repo_path: &Path) -> Self {
+        let mut state = Self::empty();
         state.reload_status(repo_path);
         state
     }
@@ -414,6 +419,8 @@ impl CommitPanelState {
 pub struct CommitPanelView {
     /// The staging lists / stats / trees / selection / plan-modal data.
     pub state: CommitPanelState,
+    pub(crate) status_request: kagi_domain::load_request::RequestSlot<u64>,
+    pub(crate) status_revision: u64,
     pub(crate) view_focus: super::keyboard_nav::TabFocus,
     pub(crate) staged_view_focus: super::keyboard_nav::TabFocus,
     pub(crate) controls_focus: super::keyboard_nav::FocusSlots,
@@ -520,6 +527,8 @@ impl CommitPanelView {
     ) -> Self {
         Self {
             state,
+            status_request: Default::default(),
+            status_revision: 0,
             view_focus: super::keyboard_nav::TabFocus::default(),
             staged_view_focus: super::keyboard_nav::TabFocus::default(),
             controls_focus: super::keyboard_nav::FocusSlots::default(),
@@ -565,7 +574,25 @@ impl CommitPanelView {
     /// view-owned layout key before replacing it, or equal revision/fold flags
     /// would reuse positions from the previous file set.
     pub(crate) fn replace_state(&mut self, state: CommitPanelState) {
+        self.invalidate_status_read();
         self.state = state;
+    }
+
+    /// A synchronous post-write refresh supersedes any older opening read.
+    pub fn reload_status(&mut self, repo_path: &Path) {
+        self.invalidate_status_read();
+        self.state.reload_status(repo_path);
+    }
+
+    /// Publish an already-read status, superseding any pending opening payload.
+    pub(crate) fn apply_status(&mut self, backend: &Backend, status: kagi_git::WorkingTreeStatus) {
+        self.invalidate_status_read();
+        self.state.apply_status(backend, status);
+    }
+
+    /// Invalidate an opening read before a newer in-place status publication.
+    pub(crate) fn invalidate_status_read(&mut self) {
+        self.status_request.clear();
         self.tree_layout_for = None;
         self.unstaged_navigation.invalidate();
         self.staged_navigation.invalidate();

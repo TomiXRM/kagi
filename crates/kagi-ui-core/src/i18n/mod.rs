@@ -472,6 +472,7 @@ pub enum Msg {
     NoLocalChanges,
     DirtyStashFirst,
     AmendNeedMessageOrStaged,
+    AmendStatusLoading,
 
     // ── Context-menu disabled reasons ───────────────────────────────
     CmDetachedHead,
@@ -679,6 +680,8 @@ pub enum Msg {
     CommitDraftSaveRetry,
     /// Commit panel: tooltip on the sparkles (AI message) icon.
     GenerateMessage,
+    /// Smart Commit capabilities are still being discovered in the background.
+    SmartDetecting,
     /// Commit panel: tooltip on the person+ (co-author) icon.
     AddCoAuthor,
     /// Commit panel: tooltip on the amend icon.
@@ -2786,6 +2789,8 @@ impl Msg {
             }
             (En, AmendNeedMessageOrStaged) => "Amend: enter a message or stage changes",
             (Ja, AmendNeedMessageOrStaged) => "Amend: メッセージを入力するか変更を stage してください",
+            (En, AmendStatusLoading) => "Amend: waiting for repository status",
+            (Ja, AmendStatusLoading) => "Amend: リポジトリの状態を読み込み中",
 
             // ── Context-menu disabled reasons ───────────────────────
             (En, CmDetachedHead) => "detached HEAD",
@@ -3116,6 +3121,8 @@ impl Msg {
             (Ja, CommitDraftSaveRetry) => "下書きを保存",
             (En, GenerateMessage) => "Generate commit message",
             (Ja, GenerateMessage) => "commit メッセージを生成",
+            (En, SmartDetecting) => "Detecting Smart Commit providers…",
+            (Ja, SmartDetecting) => "Smart Commit のプロバイダーを検出中…",
             (En, AddCoAuthor) => "Add co-author",
             (Ja, AddCoAuthor) => "共同作成者を追加",
             (En, AmendLastCommit) => "Amend last commit",

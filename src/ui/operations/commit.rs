@@ -7,7 +7,25 @@ use crate::ui::blocking_ops::*;
 use super::{CommitPanelFailure, RunHistory, RunHistorySummary, RunPresentation};
 use crate::ui::*;
 
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static PANEL_READ_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+    static SMART_PROBE_HOLD: std::cell::RefCell<Option<gpui::Task<()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl KagiApp {
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_commit_panel_read_for_e2e(hold: gpui::Task<()>) {
+        PANEL_READ_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn hold_next_smart_probe_for_e2e(hold: gpui::Task<()>) {
+        SMART_PROBE_HOLD.with(|slot| assert!(slot.borrow_mut().replace(hold).is_none()));
+    }
+
     // ADR-0118 (Phase 5.2) / T-ENTITY-COMMITPANEL-001: the input-sync, template
     // toggle, effective-message, and draft-autosave helpers MOVED ONTO the
     // `CommitPanelView` entity (see `commit_panel.rs`) — they operate on the
@@ -152,7 +170,7 @@ impl KagiApp {
         });
         let (entity, is_new) = if let Some(existing) = reusable {
             let prev_tree_view = existing.read(cx).state.tree_view;
-            let mut panel = CommitPanelState::from_repo(&repo_path);
+            let mut panel = CommitPanelState::empty();
             panel.tree_view = prev_tree_view;
             existing.update(cx, |v, _| {
                 v.replace_state(panel);
@@ -164,7 +182,7 @@ impl KagiApp {
             // (this method is always called from a deferred/parent path — never
             // from a leased CommitPanelView listener), so creating it here cannot
             // re-lease a leased panel (correction #6).
-            let panel = CommitPanelState::from_repo(&repo_path);
+            let panel = CommitPanelState::empty();
             let weak_app = cx.weak_entity();
             let foreign = foreign.clone();
             (
@@ -178,12 +196,68 @@ impl KagiApp {
             )
         };
         self.with_ui(|ui| ui.open_commit_panel(entity.clone()));
+        self.load_commit_panel(&entity, cx);
         (entity, is_new)
     }
 
+    /// Publish the shell first; status, diffstats and classification belong off
+    /// the UI thread. Completion can only fill the same session/panel/request.
+    fn load_commit_panel(&mut self, entity: &Entity<CommitPanelView>, cx: &mut Context<Self>) {
+        self.ensure_smart_commit_detection(cx);
+        let (owner, repo_path, revision) = entity.update(cx, |panel, cx| {
+            panel.status_revision = panel.status_revision.wrapping_add(1);
+            panel.status_request.begin(panel.status_revision);
+            cx.notify();
+            (panel.owner, panel.repo_path.clone(), panel.status_revision)
+        });
+        let read_key = self.reads.current_key(owner);
+        let weak_panel = entity.downgrade();
+        let task = cx.background_spawn(async move { CommitPanelState::from_repo(&repo_path) });
+        #[cfg(feature = "gui-e2e")]
+        let hold = PANEL_READ_HOLD.with(|slot| slot.borrow_mut().take());
+        cx.spawn(async move |this, acx| {
+            let mut state = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
+            let _ = this.update(acx, |app, cx| {
+                let Some(entity) = weak_panel.upgrade() else {
+                    return;
+                };
+                if app.ui.get(&owner).and_then(|ui| ui.commit_panel.as_ref()) != Some(&entity) {
+                    return;
+                }
+                if !entity.update(cx, |panel, _| panel.status_request.accept(&revision)) {
+                    return;
+                }
+                if !app.reads.is_fresh(read_key) {
+                    // Invalidation (for example a no-op fetch) need not schedule
+                    // another publication. Keep loading until a current read lands.
+                    app.load_commit_panel(&entity, cx);
+                    return;
+                }
+                entity.update(cx, |panel, cx| {
+                    state.tree_view = panel.state.tree_view;
+                    state.commit_msg = std::mem::take(&mut panel.state.commit_msg);
+                    panel.replace_state(state);
+                    cx.notify();
+                });
+                let v = entity.read(cx);
+                eprintln!(
+                    "[kagi] commit-panel: unstaged={} staged={}",
+                    v.state.unstaged.len(),
+                    v.state.staged.len()
+                );
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// The `Window`-bound tail of [`Self::open_commit_panel_at`]: template read,
-    /// draft restore, focus, and the smart-commit probe — all keyed by the
-    /// PANEL's `repo_path` (#476), never the tab's.
+    /// draft restore and focus — all keyed by the PANEL's `repo_path` (#476),
+    /// never the tab's.
     fn finish_commit_panel_open(
         &mut self,
         entity: Entity<CommitPanelView>,
@@ -255,20 +329,6 @@ impl KagiApp {
                 state.focus(window, cx);
             });
         }
-
-        // Log for headless verification.
-        {
-            let v = entity.read(cx);
-            eprintln!(
-                "[kagi] commit-panel: unstaged={} staged={}",
-                v.state.unstaged.len(),
-                v.state.staged.len()
-            );
-        }
-
-        // T-COMMIT-016: probe process-global generation capabilities
-        // (reachability only; no diff is sent). Runs once unless refreshed.
-        self.ensure_smart_commit_detection(cx);
     }
 
     /// Probe process-global Smart Commit capabilities in the background.
@@ -287,40 +347,48 @@ impl KagiApp {
         }
         self.smart_commit_probe_revision = self.smart_commit_probe_revision.wrapping_add(1).max(1);
         let revision = self.smart_commit_probe_revision;
+        self.smart_commit.detecting = true;
+        cx.notify();
 
-        // CLI availability is just a PATH scan (instant, no spawn, no network),
-        // so detect it inline even when offline — "is it installed" is unrelated
-        // to the offline gate, which is applied later at generate time (ADR-0099).
-        self.smart_commit.claude_available =
-            message_gen::cli_available(message_gen::CliProvider::ClaudeCode);
-        self.smart_commit.codex_available =
-            message_gen::cli_available(message_gen::CliProvider::Codex);
-        klog!(
-            "smart-commit: cli claude={} codex={}",
-            self.smart_commit.claude_available,
-            self.smart_commit.codex_available
-        );
-
-        if message_gen::offline() {
-            klog!("smart-commit: offline (ollama detection skipped)");
-            cx.notify();
-            return;
-        }
-
+        // Resolving the effective PATH may spawn the user's interactive login
+        // shell. Cache ownership stays in message_gen, but even the first
+        // resolution must never block a WIP click (including offline mode).
+        let offline = message_gen::offline();
         let host = smart_commit::SmartCommitState::ollama_host();
         let task = cx.background_spawn(async move {
-            let available = message_gen::ollama_available(&host);
+            let claude = message_gen::cli_available(message_gen::CliProvider::ClaudeCode);
+            let codex = message_gen::cli_available(message_gen::CliProvider::Codex);
+            let available = !offline && message_gen::ollama_available(&host);
             let models = if available {
                 message_gen::ollama_list_models(&host)
             } else {
                 Vec::new()
             };
-            (available, models)
+            (claude, codex, available, models)
         });
+        #[cfg(feature = "gui-e2e")]
+        let hold = SMART_PROBE_HOLD.with(|slot| slot.borrow_mut().take());
         cx.spawn(async move |this, acx| {
-            let (available, models) = task.await;
+            let (claude, codex, available, models) = task.await;
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let _ = this.update(acx, |app, cx| {
                 if app.smart_commit_probe_revision != revision {
+                    return;
+                }
+                app.smart_commit.detecting = false;
+                app.smart_commit.claude_available = claude;
+                app.smart_commit.codex_available = codex;
+                klog!(
+                    "smart-commit: cli claude={} codex={}",
+                    app.smart_commit.claude_available,
+                    app.smart_commit.codex_available
+                );
+                if offline {
+                    klog!("smart-commit: offline (ollama detection skipped)");
+                    cx.notify();
                     return;
                 }
                 app.smart_commit.ollama_available = available;
@@ -608,7 +676,7 @@ impl KagiApp {
         }
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
-                v.state.reload_status(&repo_path);
+                v.reload_status(&repo_path);
                 eprintln!(
                     "[kagi] commit-panel: unstaged={} staged={}",
                     v.state.unstaged.len(),
@@ -685,7 +753,7 @@ impl KagiApp {
         }
         if let Some(entity) = self.ui().commit_panel.clone() {
             entity.update(cx, |v, _| {
-                v.state.reload_status(&repo_path);
+                v.reload_status(&repo_path);
                 eprintln!(
                     "[kagi] commit-panel: unstaged={} staged={}",
                     v.state.unstaged.len(),
@@ -760,7 +828,7 @@ impl KagiApp {
             }
         }
         if let Some(entity) = self.ui().commit_panel.clone() {
-            entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+            entity.update(cx, |v, _| v.reload_status(&repo_path));
         }
         if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
@@ -825,7 +893,7 @@ impl KagiApp {
             }
         }
         if let Some(entity) = self.ui().commit_panel.clone() {
-            entity.update(cx, |v, _| v.state.reload_status(&repo_path));
+            entity.update(cx, |v, _| v.reload_status(&repo_path));
         }
         if let Some(ev) = self.ui().editor_workspace.clone() {
             ev.update(cx, |v, cx| v.start_load(cx));
@@ -1194,6 +1262,14 @@ impl KagiApp {
     /// picks its mode from that worktree's index and plans against it.
     pub fn commit_panel_amend(&mut self, owner: crate::app::SessionId, cx: &mut Context<Self>) {
         if !self.pane_mutation_admitted(owner) {
+            return;
+        }
+        if self
+            .ui()
+            .commit_panel
+            .as_ref()
+            .is_some_and(|panel| panel.read(cx).status_request.is_loading())
+        {
             return;
         }
         let staged = self

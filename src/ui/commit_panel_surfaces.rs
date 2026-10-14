@@ -148,16 +148,21 @@ impl CommitPanelView {
             .when(self.foreign.is_some(), |el| {
                 el.child(self.render_panel_header())
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .w_full()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(self.render_changes_column(false, cx))
-                    .child(self.render_changes_column(true, cx)),
-            )
+            .when(self.status_request.is_loading(), |el| {
+                el.child(Self::render_status_loading())
+            })
+            .when(!self.status_request.is_loading(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .child(self.render_changes_column(false, cx))
+                        .child(self.render_changes_column(true, cx)),
+                )
+            })
     }
 
     fn render_changes_column(&self, staged: bool, cx: &mut Context<Self>) -> gpui::Div {

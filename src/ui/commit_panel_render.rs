@@ -348,19 +348,30 @@ impl CommitPanelView {
                     .flex_col()
                     .relative()
                     .child(super::e2e::measure_inside("cp-files"))
-                    // Unstaged ヘッダ (固定)
-                    .child(unstaged_header)
-                    // Unstaged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(self.render_unstaged_list(cx))
-                    // Staged ヘッダ (固定)
-                    .child(staged_header)
-                    // Staged スクロールボックス — PERF: virtualized uniform_list.
-                    .child(self.render_staged_list(cx)),
+                    .when(self.status_request.is_loading(), |el| {
+                        el.child(Self::render_status_loading())
+                    })
+                    .when(!self.status_request.is_loading(), |el| {
+                        el.child(unstaged_header)
+                            .child(self.render_unstaged_list(cx))
+                            .child(staged_header)
+                            .child(self.render_staged_list(cx))
+                    }),
             )
             // Commit footer: subject + body, icon actions, commit button.
             // #476 slices 2–3: shown on a worktree panel too — every control in
             // it writes into that worktree.
             .child(self.render_composer(false, window, cx))
+    }
+
+    pub(super) fn render_status_loading() -> gpui::Div {
+        div()
+            .relative()
+            .flex_1()
+            .p_2()
+            .text_color(rgb(theme().text_muted))
+            .child(super::e2e::measure_inside("cp-status-loading"))
+            .child(Msg::HomeWorkLoading.t())
     }
 
     pub(super) fn render_panel_header(&self) -> gpui::Div {

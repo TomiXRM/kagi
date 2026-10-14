@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Conflict Editor Reset all confirmation is bound to the edited file and disarms on navigation, selection changes and blur. Result Preview/Edit uses explicit shared TabList selection, so pressing an already-selected segment preserves mode and manual edits; writer-busy controls remain inert. (#1511, #1512)
+  - Review: keyboard arming keeps focus and its ring on the Reset Button, so a second Return or Space confirms without re-tabbing; pointer arming still enters the same blur-disarming focus scope.
 - Command palette result rows expose a standard accessibility Click action for commands, themes and languages, sharing the pointer/keyboard enabled gate without double pointer activation. Unavailable results remain selectable but do not execute. (#1513)
 - Update installation disables Skip this version, and replaces Later with “Hide — update continues” (EN/JA). Hiding retains the update offer and window-owned installer; reopening cannot start another installer, and failures restore the pre-install choices. (#1514)
 - Compact ⌘F opens the existing navigator Popover and focuses its shared filter; short-window rails scroll and reveal keyboard-focused controls. Rail triggers expose expanded state and Enter/Space toggle the same Popover as pointer activation. PR/Issue section headings support keyboard disclosure in both layouts, and compact PR lists use the existing system-policy scrollbar with a session-owned scroll handle. (#1491–#1494, #1502)

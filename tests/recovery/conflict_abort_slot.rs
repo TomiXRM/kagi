@@ -166,7 +166,7 @@ pub fn scenario_conflict_abort_escape_focus(cx: &mut VisualTestAppContext) {
     // the real `InputState`; nothing here is a test double.
     conflict.update(cx, |view, cx| {
         view.conflict_open_editor(Path::new("file.txt"));
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(true);
         cx.notify();
     });
     draw(cx, window);
@@ -201,7 +201,7 @@ pub fn scenario_conflict_abort_escape_focus(cx: &mut VisualTestAppContext) {
     // focus: the reachable dangling-focus path diagnosed in #755. (Which focus
     // #711's Esc was delivered into was never observed.)
     conflict.update(cx, |view, cx| {
-        view.conflict_editor_toggle_result_mode();
+        view.conflict_editor_set_result_mode(false);
         cx.notify();
     });
     draw(cx, window);

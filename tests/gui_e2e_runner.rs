@@ -383,6 +383,9 @@ mod conflict_abort_slot;
 mod conflict_continue_cache;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/conflict_controls.rs"]
+mod conflict_controls;
+#[cfg(target_os = "macos")]
 #[path = "recovery/conflict_file_selection.rs"]
 mod conflict_file_selection;
 #[cfg(target_os = "macos")]
@@ -2541,6 +2544,14 @@ mod macos {
             (
                 "conflict_continue_cache",
                 Box::new(crate::conflict_continue_cache::scenario_conflict_continue_cache),
+            ),
+            (
+                "conflict_reset_disarm",
+                Box::new(crate::conflict_controls::scenario_conflict_reset_disarm),
+            ),
+            (
+                "conflict_result_segment",
+                Box::new(crate::conflict_controls::scenario_conflict_result_segment),
             ),
             (
                 "conflict_file_selection",

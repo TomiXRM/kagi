@@ -54,6 +54,10 @@ mod open_picker;
 mod ref_validation;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/squash_safe_default.rs"]
+mod squash_safe_default;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/pr_dashboard_contrast.rs"]
 mod pr_dashboard_contrast;
 #[cfg(target_os = "macos")]
@@ -103,6 +107,10 @@ mod menus_ja;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_labels.rs"]
 mod plan_labels;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/plan_card_reachability.rs"]
+mod plan_card_reachability;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
@@ -313,6 +321,10 @@ mod app_stash;
 mod stash_entry_identity;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/stash_apply_manifest.rs"]
+mod stash_apply_manifest;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
 mod busy_label;
 
@@ -356,6 +368,9 @@ mod commit_paging;
 #[cfg(target_os = "macos")]
 #[path = "recovery/context_menu_keys.rs"]
 mod context_menu_keys;
+#[cfg(target_os = "macos")]
+#[path = "recovery/graph_tab_stop.rs"]
+mod graph_tab_stop;
 #[cfg(target_os = "macos")]
 #[path = "recovery/home_empty_section_wording.rs"]
 mod home_empty_section_wording;
@@ -610,6 +625,10 @@ mod compact_layout;
 mod compact_rail;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/compact_select_changes.rs"]
+mod compact_select_changes;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_i18n.rs"]
 mod recovery_commit_panel_i18n;
 
@@ -620,6 +639,10 @@ mod recovery_commit_panel_polish;
 #[cfg(target_os = "macos")]
 #[path = "recovery/commit_panel_keyboard.rs"]
 mod recovery_commit_panel_keyboard;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/commit_panel_file.rs"]
+mod recovery_commit_panel_file;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/toolbar_count.rs"]
@@ -636,6 +659,10 @@ mod recovery_plan_card_994;
 #[cfg(target_os = "macos")]
 #[path = "recovery/plan_preview_files.rs"]
 mod recovery_plan_preview_files;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/revert_en_summary.rs"]
+mod recovery_revert_en_summary;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/oplog_keyboard.rs"]
@@ -1524,6 +1551,10 @@ mod macos {
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files),
             ),
             (
+                "revert_card_en_summary",
+                Box::new(crate::recovery_revert_en_summary::scenario_revert_card_en_summary),
+            ),
+            (
                 "plan_preview_files_empty",
                 Box::new(crate::recovery_plan_preview_files::scenario_plan_preview_files_empty),
             ),
@@ -1831,6 +1862,7 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_sync_to_remote_armed),
             ),
             ("rebase_plan_labels", Box::new(crate::plan_labels::scenario_rebase_plan_labels)),
+            ("neighbor_plan_labels", Box::new(crate::plan_card_reachability::scenario_neighbor_plan_labels)),
             ("plan_footer_long_branch", Box::new(crate::plan_labels::scenario_plan_footer_long_branch)),
             ("push_plan_subjects", Box::new(crate::plan_labels::scenario_push_plan_subjects)),
             (
@@ -1896,6 +1928,10 @@ mod macos {
             (
                 "keyboard_nav",
                 Box::new(crate::keyboard_nav::scenario_keyboard_nav),
+            ),
+            (
+                "graph_tab_stop",
+                Box::new(crate::graph_tab_stop::scenario_graph_tab_stop),
             ),
             (
                 "home_rows",
@@ -2536,6 +2572,14 @@ mod macos {
                 Box::new(crate::busy_label::scenario_oplog_append_failure_is_visible),
             ),
             (
+                "pr_merge_delete_branch_return_cancel",
+                Box::new(crate::squash_safe_default::pr_merge_delete_branch_return_cancel),
+            ),
+            (
+                "pr_merge_card_scope",
+                Box::new(crate::squash_safe_default::pr_merge_card_scope),
+            ),
+            (
                 "pr_merge_write_lease",
                 Box::new(crate::busy_label::scenario_pr_merge_holds_the_write_lease),
             ),
@@ -3112,6 +3156,10 @@ mod macos {
                 Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
             ),
             (
+                "stash_apply_manifest",
+                Box::new(crate::stash_apply_manifest::scenario_stash_apply_manifest),
+            ),
+            (
                 "stash_push_plan_accuracy",
                 Box::new(crate::app_stash::scenario_stash_push_plan_accuracy),
             ),
@@ -3285,6 +3333,10 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "diff_header_ax_unique",
+                Box::new(crate::recovery_header_fit::scenario_diff_header_ax_unique),
+            ),
+            (
                 "diff_mode_segment",
                 Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
             ),
@@ -3306,6 +3358,10 @@ mod macos {
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),
             ("compact_pr_popover_scroll", Box::new(crate::compact_rail::scroll::scenario_compact_pr_popover_scroll)),
             (
+                "compact_select_changes",
+                Box::new(crate::compact_select_changes::scenario_compact_select_changes),
+            ),
+            (
                 "compact_layout_rail",
                 Box::new(crate::compact_layout::rail::scenario_compact_layout_rail),
             ),
@@ -3324,6 +3380,10 @@ mod macos {
             (
                 "commit_panel_bulk_hover",
                 Box::new(crate::recovery_commit_panel_keyboard::scenario_commit_panel_bulk_hover),
+            ),
+            (
+                "commit_panel_file_middle_ellipsis",
+                Box::new(crate::recovery_commit_panel_file::scenario),
             ),
             (
                 "compact_bottom_third",
@@ -3356,6 +3416,10 @@ mod macos {
             (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
+            ),
+            (
+                "compact_layout_state_tall",
+                Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
             ),
             (
                 "compact_layout_lifecycle",

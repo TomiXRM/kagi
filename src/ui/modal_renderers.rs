@@ -325,6 +325,9 @@ fn plan_state(
 }
 
 pub(crate) fn render_current_predicted(plan: &OperationPlan) -> gpui::AnyElement {
+    if let Some(identity) = &plan.tag_push_identity {
+        return super::modal_renderers_plan::render_tag_push_scope(identity);
+    }
     let (current_head, predicted_head) = super::modal_copy::plan_display_heads(plan);
     let predicted_detail =
         kagi_ui_core::i18n::plan::after_state_detail(&plan.title, &plan.predicted.dirty);

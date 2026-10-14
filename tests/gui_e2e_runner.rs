@@ -117,6 +117,10 @@ mod plan_card_reachability;
 mod rebase_card_scope;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/push_tag_card_scope.rs"]
+mod push_tag_card_scope;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/toast_dismiss.rs"]
 mod toast_dismiss;
 
@@ -1876,6 +1880,10 @@ mod macos {
             (
                 "rebase_card_scope",
                 Box::new(crate::rebase_card_scope::scenario_rebase_card_scope),
+            ),
+            (
+                "push_tag_card_scope",
+                Box::new(crate::push_tag_card_scope::scenario_push_tag_card_scope),
             ),
             (
                 "neighbor_plan_labels",

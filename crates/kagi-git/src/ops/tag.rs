@@ -301,12 +301,19 @@ fn resolve_push_tag_identity(
         .target()
         .ok_or_else(|| GitError::Other("tag has no object OID".into()))?;
     let peeled_oid = reference.peel(git2::ObjectType::Any).map_err(error)?.id();
+    // Peeling changes the object only when the ref points at a tag object.
+    let kind = if object_oid != peeled_oid {
+        kagi_domain::plan::TagKind::Annotated
+    } else {
+        kagi_domain::plan::TagKind::Lightweight
+    };
     Ok(kagi_domain::plan::TagPushIdentity {
         name: name.into(),
         remote: remote.into(),
         push_urls,
         object_oid: object_oid.to_string(),
         peeled_oid: peeled_oid.to_string(),
+        kind,
     })
 }
 

@@ -414,6 +414,13 @@ pub struct PullIdentity {
     pub upstream_ref: String,
 }
 
+/// Whether the published ref points at a tag object or directly at its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagKind {
+    Lightweight,
+    Annotated,
+}
+
 /// Frozen transport and object identity approved for publishing one tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagPushIdentity {
@@ -422,6 +429,7 @@ pub struct TagPushIdentity {
     pub push_urls: Vec<String>,
     pub object_oid: String,
     pub peeled_oid: String,
+    pub kind: TagKind,
 }
 
 /// Frozen ordinary Rebase operands and complete candidate count.

@@ -778,6 +778,9 @@ fn render_plan_modal_card_styled(
             &plan.title,
             kagi_domain::plan_note::PlanTitle::Merge(_)
                 | kagi_domain::plan_note::PlanTitle::CherryRevert(_)
+                | kagi_domain::plan_note::PlanTitle::Stash(
+                    kagi_domain::plan_note::StashTitle::Pop { .. }
+                )
                 | kagi_domain::plan_note::PlanTitle::Github(
                     kagi_domain::plan_note::GithubTitle::MergePr { .. }
                 )

@@ -95,6 +95,34 @@ pub(crate) fn plan_clipboard_text(
     if !plan.warnings.is_empty() || !plan.blockers.is_empty() {
         out.push('\n');
     }
+    if matches!(
+        &plan.title,
+        kagi_domain::plan_note::PlanTitle::Stash(
+            kagi_domain::plan_note::StashTitle::Apply { .. }
+                | kagi_domain::plan_note::StashTitle::Pop { .. }
+        )
+    ) && !plan.warnings.iter().any(|note| {
+        matches!(
+            note,
+            kagi_domain::plan_note::PlanNote::Stash(
+                kagi_domain::plan_note::StashNote::ManifestUnavailable { .. }
+            )
+        )
+    }) {
+        out.push('\n');
+        out.push_str(
+            &Msg::ModalFilesToChange
+                .t()
+                .replace("{}", &plan.preview_files.len().to_string()),
+        );
+        out.push('\n');
+        for file in &plan.preview_files {
+            out.push_str(file.change.label());
+            out.push(' ');
+            out.push_str(&file.path.to_string_lossy());
+            out.push('\n');
+        }
+    }
     if !rows.is_empty() {
         out.push('\n');
         for r in rows {

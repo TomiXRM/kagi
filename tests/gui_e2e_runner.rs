@@ -321,6 +321,10 @@ mod app_stash;
 mod stash_entry_identity;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/stash_apply_manifest.rs"]
+mod stash_apply_manifest;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/busy_label.rs"]
 mod busy_label;
 
@@ -3142,6 +3146,10 @@ mod macos {
             (
                 "stash_entry_identity",
                 Box::new(crate::stash_entry_identity::scenario_stash_entry_identity),
+            ),
+            (
+                "stash_apply_manifest",
+                Box::new(crate::stash_apply_manifest::scenario_stash_apply_manifest),
             ),
             (
                 "stash_push_plan_accuracy",

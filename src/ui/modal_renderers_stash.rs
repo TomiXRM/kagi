@@ -419,15 +419,7 @@ pub(crate) fn render_stash_apply_modal(
         .child(modal_copy_button(
             "stash-apply-card-copy",
             Msg::ModalCopyAll.t(),
-            plan_clipboard_text(
-                &plan,
-                &plan
-                    .preview_files
-                    .iter()
-                    .map(|f| f.path.display().to_string())
-                    .collect::<Vec<_>>(),
-                ShellKind::current(),
-            ),
+            plan_clipboard_text(&plan, &[], ShellKind::current()),
             cx,
         ));
     let cancel: DialogHandler = Rc::new(move |w, a| cancel_handler(&(), w, a));
@@ -453,6 +445,9 @@ pub(crate) fn render_stash_apply_modal(
 
     if let Some(entry) = stash_entry_label(&plan) {
         body = body.child(entry);
+    }
+    if !plan.preview_files.is_empty() {
+        body = body.child(super::modal_preview_files::render(&plan));
     }
     if !plan.warnings.is_empty() {
         let mut warnings = div().flex().flex_col().gap_1().flex_shrink_0();

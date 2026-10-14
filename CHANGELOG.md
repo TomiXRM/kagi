@@ -7,6 +7,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Help → Keyboard Shortcuts formats effective bindings with the same platform-aware shortcut glyphs as the command palette and menus, including remapped modifiers and named keys; EN/JA labels and unassigned-command omission stay unchanged. (#1563)
+  - Review: Linux/Windows text notation formats each stroke of a custom chord independently (for example, `Ctrl+K Ctrl+S`), with the pure text formatter covered on macOS too.
 - Main repository windows enforce a native 940×660 logical-point minimum, shared by saved-frame restore and runtime resizing, preserving supported compact chrome instead of allowing an unusable 200×150 window. (#1550)
   - Restore persistence coverage waits for each requested native resize before advancing its debounce clock, rather than comparing unchanged saved geometry with the initial clamped frame.
 - Inspector changed-file options now fill the available row width, so filename, diffstat and trailing-space clicks open the same diff. Selection, hover and the existing keyboard focus ring share that full-width frame in Path and Tree views; indentation and arrow navigation are unchanged. (#1559)

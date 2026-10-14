@@ -87,3 +87,16 @@ localized names, session-owned reads and staging approval/execution are unchange
 1392×883, 100%/167%, EN/JA, and checks native pixels of the remembered row's
 inline action's lower focus edge after Tab, with the adjacent row also painted.
 Native attribute bounds are not VoiceOver evidence.
+
+## Amendment — 2026-10-14: layout-only header measurement (#1523)
+
+HeaderFit still measures the actual labelled pinned Buttons at the current
+language and zoom. Its private measurement Element delegates request_layout
+to that copy but never delegates prepaint or paint: natural bounds update
+the existing fitting state without registering accessibility nodes, focus,
+hitboxes or drawing. Offscreen placement and disabled Tab stops alone did not
+exclude the copies from the native accessibility tree. Real header actions,
+title priority, geometry and icon-only fallback are unchanged.
+`diff_header_ax_unique` inspects the activated native AccessKit tree in EN/JA,
+narrow icon-only and wide labelled layouts; every header action appears once
+and no measurement-copy node is present.

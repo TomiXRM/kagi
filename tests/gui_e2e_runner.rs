@@ -3270,6 +3270,10 @@ mod macos {
                 Box::new(crate::recovery_header_fit::scenario_header_fit),
             ),
             (
+                "diff_header_ax_unique",
+                Box::new(crate::recovery_header_fit::scenario_diff_header_ax_unique),
+            ),
+            (
                 "diff_mode_segment",
                 Box::new(crate::recovery_diff_presentation::scenario_diff_mode_segment),
             ),

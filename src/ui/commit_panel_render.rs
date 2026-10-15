@@ -268,6 +268,7 @@ impl CommitPanelView {
 
     /// Reconcile only from the surface that actually draws these lazy lists.
     pub(super) fn reconcile_file_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_file_motion(window);
         self.refresh_tree_layout();
         self.unstaged_navigation.reconcile(
             &self.state,

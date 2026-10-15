@@ -11,9 +11,10 @@ use gpui::{
 use kagi_ui_core::{
     file_tree::{status_badge, TreeRow},
     i18n::{self, Msg},
+    motion::{self, Easing, KeyedTransition, RowSplice},
     theme::{self, theme},
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
 
 const LIST: &str = "inspector-files-scroll";
 const FOLD: &str = "\0generated";
@@ -27,6 +28,14 @@ impl KagiApp {
     pub fn inspector_scroll_for_e2e(&self) -> UniformListScrollHandle {
         self.ui().inspector_model.keyboard.0.borrow().scroll.clone()
     }
+    pub fn inspector_file_index_for_e2e(&self, path: &str) -> Option<usize> {
+        self.ui()
+            .inspector_model
+            .files()?
+            .files
+            .iter()
+            .position(|file| file.path.as_ref() == path)
+    }
 }
 actions!(kagi_inspector_files, [ExpandGenerated, CollapseGenerated]);
 pub(super) fn bind_keys(cx: &mut App) {
@@ -35,6 +44,7 @@ pub(super) fn bind_keys(cx: &mut App) {
         KeyBinding::new("left", CollapseGenerated, Some("KagiInspectorGenerated")),
     ]);
 }
+#[derive(Clone)]
 struct FileRow {
     index: usize,
     source: Rc<InspectorFiles>,
@@ -57,6 +67,50 @@ struct Presentation {
     selected: Option<usize>,
     active: bool,
 }
+#[derive(Default)]
+struct Motion {
+    splice: RowSplice<SharedString>,
+    // Only selected and still-fading paths are retained.
+    washes: HashMap<SharedString, KeyedTransition<bool>>,
+    selected: Option<SharedString>,
+    initialized: bool,
+    order: HashMap<SharedString, usize>,
+    ghosts: Vec<FileRow>,
+}
+impl Motion {
+    fn sync_selection(
+        &mut self,
+        selected: Option<SharedString>,
+        now: Instant,
+        instant: bool,
+    ) -> bool {
+        let first = !self.initialized;
+        self.initialized = true;
+        if let Some(path) = selected.as_ref() {
+            self.washes
+                .entry(path.clone())
+                .or_insert_with(|| KeyedTransition::new(false, 0.));
+        }
+        self.selected = selected;
+        let selected = &self.selected;
+        let mut moving = false;
+        self.washes.retain(|path, wash| {
+            let target = selected.as_ref() == Some(path);
+            wash.retarget(
+                target,
+                if target { 1. } else { 0. },
+                now,
+                motion::TRANSITION,
+                Easing::OutCubic,
+                instant || first,
+            );
+            let sample = wash.sample(now);
+            moving |= !sample.done;
+            target || !sample.done
+        });
+        moving
+    }
+}
 struct State {
     layout: Option<(bool, bool, i18n::Lang)>,
     entries: Rc<[Entry]>,
@@ -64,6 +118,7 @@ struct State {
     focus: RowFocus,
     scroll: UniformListScrollHandle,
     drawn: Rc<RefCell<std::ops::Range<usize>>>,
+    motion: Rc<RefCell<Motion>>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -74,12 +129,15 @@ impl Default for State {
             focus: RowFocus::default(),
             scroll: UniformListScrollHandle::new(),
             drawn: Rc::new(RefCell::new(0..0)),
+            motion: Rc::new(RefCell::new(Motion::default())),
         }
     }
 }
 
 impl State {
     fn rebuild(&mut self, files: Option<&Rc<InspectorFiles>>, tree: bool, expanded: bool) {
+        let now = motion::now();
+        let instant = motion::instant();
         let (entries, keys) = entries(files, tree, expanded);
         let splice_start = self
             .layout
@@ -90,6 +148,58 @@ impl State {
                     .position(|entry| matches!(entry, Entry::Generated { .. }))
             })
             .map(|at| at + 1);
+        {
+            let mut motion = self.motion.borrow_mut();
+            if splice_start.is_some() && self.layout.is_some_and(|(_, old, _)| old != expanded) {
+                if expanded {
+                    motion.ghosts.clear();
+                } else {
+                    motion.ghosts = self
+                        .entries
+                        .iter()
+                        .filter_map(|entry| match entry {
+                            Entry::File(row) if row.source.files[row.index].generated => {
+                                Some(row.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
+                let changed = files
+                    .into_iter()
+                    .flat_map(|files| files.files.iter())
+                    .filter(|file| file.generated)
+                    .map(|file| file.path.clone());
+                let (inserted, removed) = if expanded {
+                    (Some(changed), None)
+                } else {
+                    (None, Some(changed))
+                };
+                if motion.splice.splice(
+                    inserted.into_iter().flatten(),
+                    removed.into_iter().flatten(),
+                    now,
+                    instant,
+                ) {
+                    motion.ghosts.clear();
+                }
+            } else {
+                *motion = Motion::default();
+            }
+            // Generated children keep their source ordering across fold reversals.
+            motion.order.clear();
+            if let Some(files) = files {
+                for (rank, file) in files
+                    .files
+                    .iter()
+                    .filter(|file| !file.generated)
+                    .chain(files.files.iter().filter(|file| file.generated))
+                    .enumerate()
+                {
+                    motion.order.insert(file.path.clone(), rank);
+                }
+            }
+        }
         if splice_start.is_none() {
             self.scroll
                 .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
@@ -105,6 +215,16 @@ pub(super) struct InspectorKeyboard(RefCell<State>);
 impl InspectorKeyboard {
     pub(super) fn invalidate(&self) {
         self.0.borrow_mut().layout = None;
+    }
+    /// Activation changes presentation owner, not the retained list or scroll.
+    pub(super) fn settle_motion(&self) {
+        let state = self.0.borrow();
+        let mut motion = state.motion.borrow_mut();
+        motion.splice = RowSplice::default();
+        motion.washes.clear();
+        motion.selected = None;
+        motion.initialized = false;
+        motion.ghosts.clear();
     }
     pub(super) fn yield_focus(
         &self,
@@ -134,6 +254,22 @@ impl InspectorKeyboard {
         if state.layout != Some((tree, expanded, i18n::lang())) {
             state.rebuild(files.as_ref(), tree, expanded);
         }
+        let now = motion::now();
+        let instant = motion::instant();
+        let motion = state.motion.clone();
+        {
+            let mut motion = motion.borrow_mut();
+            let selected = selected
+                .and_then(|index| files.as_ref()?.files.get(index))
+                .map(|file| file.path.clone());
+            let mut moving = motion.sync_selection(selected, now, instant);
+            let splicing = motion.splice.advance(now, instant);
+            moving |= splicing;
+            if !splicing {
+                motion.ghosts.clear();
+            }
+            motion::request_frame(window, moving);
+        }
         let scroll = state.scroll.clone();
         let keys = state.keys.clone();
         let drawn = state.drawn.clone();
@@ -162,7 +298,82 @@ impl InspectorKeyboard {
                 *drawn.borrow_mut() = range.clone();
                 let rows = Rc::new(rows.as_drawn(&range));
                 range
-                    .map(|ix| render_entry(ix, &entries[ix], &rows, presentation, cx))
+                    .map(|ix| {
+                        let motion = motion.borrow();
+                        let sample = match &entries[ix] {
+                            Entry::File(row) => {
+                                let path = &row.source.files[row.index].path;
+                                let rank = motion.order[path];
+                                motion
+                                    .splice
+                                    .row(path, theme::scaled_px(ROW_HEIGHT), now, |key| {
+                                        motion.order[key] < rank
+                                    })
+                            }
+                            Entry::More(_) => motion.splice.row(
+                                &SharedString::from("\0tail"),
+                                theme::scaled_px(ROW_HEIGHT),
+                                now,
+                                |_| true,
+                            ),
+                            _ => motion::RowSample {
+                                offset: px(0.),
+                                opacity: 1.,
+                            },
+                        };
+                        let wash = match &entries[ix] {
+                            Entry::File(row) => motion
+                                .washes
+                                .get(&row.source.files[row.index].path)
+                                .map_or(0., |wash| wash.sample(now).value),
+                            _ => 0.,
+                        };
+                        let content = render_entry(ix, &entries[ix], &rows, presentation, wash, cx);
+                        let mut slot = div()
+                            .relative()
+                            .h(theme::scaled_px(ROW_HEIGHT))
+                            .w_full()
+                            .child(
+                                div()
+                                    .relative()
+                                    .top(sample.offset)
+                                    .opacity(sample.opacity)
+                                    .child(content),
+                            );
+                        if matches!(&entries[ix], Entry::Generated { .. }) {
+                            let fold: SharedString = FOLD.into();
+                            for (at, ghost) in motion.ghosts.iter().enumerate() {
+                                let path = &ghost.source.files[ghost.index].path;
+                                if let Some(sample) = motion.splice.ghost(
+                                    path,
+                                    Some(&fold),
+                                    motion.ghosts[..at]
+                                        .iter()
+                                        .map(|row| &row.source.files[row.index].path),
+                                    theme::scaled_px(ROW_HEIGHT),
+                                    now,
+                                ) {
+                                    let wash = motion
+                                        .washes
+                                        .get(path)
+                                        .map_or(0., |wash| wash.sample(now).value);
+                                    slot = slot.child(
+                                        div()
+                                            .absolute()
+                                            .top(sample.offset)
+                                            .left_0()
+                                            .w_full()
+                                            .h(theme::scaled_px(ROW_HEIGHT))
+                                            .border_2()
+                                            .border_color(gpui::transparent_black())
+                                            .opacity(sample.opacity)
+                                            .child(file_content(ghost, presentation, wash, false)),
+                                    );
+                                }
+                            }
+                        }
+                        slot.into_any_element()
+                    })
                     .collect::<Vec<_>>()
             },
         );
@@ -289,6 +500,7 @@ fn render_entry(
     entry: &Entry,
     rows: &Rc<RowList>,
     presentation: Presentation,
+    wash: f32,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     match entry {
@@ -329,7 +541,7 @@ fn render_entry(
             .child(Msg::DiffUnavailable.t())
             .into_any_element(),
         Entry::Generated { slot, count } => generated_row(*slot, *count, rows, presentation, cx),
-        Entry::File(file) => file_row(file, rows, presentation, cx),
+        Entry::File(file) => file_row(file, rows, presentation, wash, cx),
     }
 }
 fn generated_row(
@@ -379,24 +591,15 @@ fn file_row(
     row: &FileRow,
     rows: &Rc<RowList>,
     presentation: Presentation,
+    wash: f32,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let FileRow {
         index, slot, depth, ..
     } = row;
     let (index, slot) = (*index, *slot);
-    let file = &row.source.files[index];
-    let (badge, color, _) = status_badge(Some(&file.change), false);
     let focus = rows.clone();
     let selected = presentation.selected == Some(index);
-    let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
-    let stat = super::diffstat_bar::diffstat_unit(
-        index,
-        file.stat.as_ref(),
-        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active)),
-    );
-    #[cfg(feature = "gui-e2e")]
-    let stat = super::e2e::measure_leaf(format!("inspector-file-stat-{index}"), stat);
     let row = super::list_a11y::list_option(
         LIST,
         rows.row(slot, div().id(("inspector-file", index))),
@@ -408,17 +611,11 @@ fn file_row(
     .when(presentation.tree, |el| {
         el.role(gpui::Role::TreeItem).aria_level(depth + 1)
     })
-    .flex()
+    .relative()
     .w_full()
-    .items_center()
-    .gap_1()
-    .pl(theme::scaled_px(*depth as f32 * 12.))
     .h(theme::scaled_px(ROW_HEIGHT))
-    .line_height(relative(1.2))
-    .when(!selected, |el| el.hover(|s| s.bg(rgb(theme().surface))))
-    .when(selected, |el| {
-        el.bg(theme().selected_for_window(presentation.active))
-            .rounded_sm()
+    .when(!selected, |el| {
+        el.hover(|style| style.bg(rgb(theme().surface)))
     })
     .on_click(cx.listener(move |this, _, window, cx| {
         focus.focus_row(slot, window, cx);
@@ -433,41 +630,94 @@ fn file_row(
             cx.notify();
         }),
     )
-    .child(
-        div()
-            .w(theme::scaled_px(16.))
-            .flex_shrink_0()
-            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-            .text_color(if selection_on_accent {
-                theme().selection_foreground(presentation.active)
-            } else {
-                rgb(color).into()
-            })
-            .child(SharedString::from(badge))
-            .when(cfg!(feature = "gui-e2e"), |badge| {
-                badge.relative().child(super::e2e::measure_inside(format!(
-                    "inspector-file-badge-{index}"
-                )))
-            }),
-    )
-    .child(
-        div()
-            .flex_1()
-            .min_w(px(0.))
-            .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-            .text_color(if selection_on_accent {
-                theme().selection_foreground(presentation.active)
-            } else {
-                rgb(theme().text_main).into()
-            })
-            .truncate()
-            .child(row.name.clone())
-            .when(cfg!(feature = "gui-e2e"), |name| {
-                name.relative().child(super::e2e::measure_inside(format!(
-                    "inspector-file-name-{index}"
-                )))
-            }),
-    )
-    .child(stat);
+    .child(file_content(row, presentation, wash, true));
     super::e2e::measure_leaf(format!("inspector-file-{index}"), row)
+}
+
+// Shared painted content; ghosts deliberately do not receive RowList, AX roles,
+// focus handles, pointer handlers, tooltips, or semantic-list recorder calls.
+fn file_content(
+    row: &FileRow,
+    presentation: Presentation,
+    wash: f32,
+    probes: bool,
+) -> gpui::AnyElement {
+    let index = row.index;
+    let file = &row.source.files[index];
+    let (badge, color, _) = status_badge(Some(&file.change), false);
+    let selected = presentation.selected == Some(index);
+    let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
+    let foreground =
+        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active));
+    let stat = if probes {
+        super::diffstat_bar::diffstat_unit(index, file.stat.as_ref(), foreground)
+    } else {
+        super::diffstat_bar::diffstat_unit_inert(file.stat.as_ref(), foreground)
+    };
+    #[cfg(feature = "gui-e2e")]
+    let stat = if probes {
+        super::e2e::measure_leaf(format!("inspector-file-stat-{index}"), stat)
+    } else {
+        stat.into_any_element()
+    };
+    let mut fill = theme().selected_for_window(presentation.active);
+    fill.a *= wash;
+    div()
+        .relative()
+        .flex()
+        .w_full()
+        .items_center()
+        .gap_1()
+        .pl(theme::scaled_px(row.depth as f32 * 12.))
+        .h_full()
+        .line_height(relative(1.2))
+        .rounded_sm()
+        .bg(fill)
+        .child(
+            div()
+                .w(theme::scaled_px(16.))
+                .flex_shrink_0()
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(presentation.active)
+                } else {
+                    rgb(color).into()
+                })
+                .child(SharedString::from(badge))
+                .when(cfg!(feature = "gui-e2e") && probes, |badge| {
+                    badge.relative().child(super::e2e::measure_inside(format!(
+                        "inspector-file-badge-{index}"
+                    )))
+                }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(0.))
+                .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
+                .text_color(if selection_on_accent {
+                    theme().selection_foreground(presentation.active)
+                } else {
+                    rgb(theme().text_main).into()
+                })
+                .truncate()
+                .child(row.name.clone())
+                .when(cfg!(feature = "gui-e2e") && probes, |name| {
+                    name.relative().child(super::e2e::measure_inside(format!(
+                        "inspector-file-name-{index}"
+                    )))
+                }),
+        )
+        .child(stat)
+        .when(cfg!(feature = "gui-e2e"), |content| {
+            content.child(super::e2e::measure_inside(format!(
+                "inspector-file-paint-{index}"
+            )))
+        })
+        .when(cfg!(feature = "gui-e2e") && !probes, |content| {
+            content.child(super::e2e::measure_inside(format!(
+                "inspector-file-ghost-{index}"
+            )))
+        })
+        .into_any_element()
 }

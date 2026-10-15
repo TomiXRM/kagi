@@ -136,3 +136,32 @@ for five settled-width checks: unchanged dev reproduced the exact comparison
 of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
 behavior gate. A locked screen prevents Tier B visual comparison; math tests
 and hidden native windows must not be described as that evidence.
+
+## Changes, Inspector and operation-disclosure amendment (#1617)
+
+Changes keeps presentation on `CommitPanelView`, scoped separately to each staged
+side. Stable file paths identify selection and splice transitions; cached logical
+ordering is rebuilt with status/tree/fold changes, never on animation frames.
+`uniform_list` publishes its final row count immediately. Only visible live row
+content and a bounded set of retained, noninteractive removal ghosts are sampled.
+Initial loads, display-mode changes and status changes larger than the viewport
+settle immediately. Generated and Agent-artifacts child rows use the same splice
+path, so closing retains presentation without retaining selectable children.
+
+Inspector extends its existing session-owned file-row presentation rather than
+creating another selection model. Its single historical/compare file list uses
+stable path identity; Generated fold children use fixed-height splice motion.
+Selection intent, focus reconciliation, AX selection and chevrons remain
+authoritative immediately, independently of the painted selection wash.
+
+Supporting modal sections and equivalent/recovery commands share measured
+`Reveal` clipping and retain their closing content. Their presentation lifetime
+is reset with each modal generation, preventing content/state leaking into a new
+confirmation. `modal_list_panel` is unchanged: destructive-operation targets are
+never hidden behind disclosure.
+
+All surfaces use the shared clock, cubic timing, Reduce Motion policy and
+view-owned frame demand. Frozen-clock native regressions distinguish intermediate
+presentation, continuous reversal and settled/instant endpoints. Native Tier A
+does not substitute for isolated, PID-targeted Tier B visual review.
+

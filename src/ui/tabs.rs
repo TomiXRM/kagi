@@ -290,6 +290,13 @@ impl KagiApp {
         self.panel_motion.reset_right();
         self.depart_active_tab();
         self.active_tab = index;
+        // Re-enter the retained final list without replaying another visit's
+        // presentation; neither row membership nor scroll position changes.
+        self.ui().inspector_model.keyboard.settle_motion();
+        let panel = self.ui().commit_panel.clone();
+        if let Some(panel) = panel {
+            panel.update(cx, |panel, _| panel.settle_file_motion());
+        }
         self.error = None;
 
         // ── Remote tab (ADR-0089 Phase 2b): re-enter the read-only view from

@@ -1386,8 +1386,8 @@ pub struct KagiApp {
     pub cleanup_cols: branch_cleanup::CleanupCols,
     /// Per-confirm disclosure choices. Missing entries use the renderer's
     /// responsive default; explicit choices survive a compact-layout change.
-    /// Reset when opening another confirmation, never persisted (#454, #462).
-    pub modal_section_overrides: std::collections::HashMap<&'static str, bool>,
+    /// Reset choices, measurements and motion together for each confirmation.
+    pub modal_section_overrides: modal_shell::ModalSections,
     /// #454 Phase 2: scroll position of the modal file list. The list is a
     /// `uniform_list` so a plan touching thousands of files stays scrollable
     /// (and cheap) instead of being silently cut to the first 10 rows.
@@ -1621,7 +1621,7 @@ impl KagiApp {
             update_status: None,
             update_pending_relaunch: None,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
-            modal_section_overrides: std::collections::HashMap::new(),
+            modal_section_overrides: modal_shell::ModalSections::default(),
             modal_list_scroll: UniformListScrollHandle::new(),
             squash_gen: 0,
             scans_stale: true,

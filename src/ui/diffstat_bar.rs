@@ -49,7 +49,24 @@ pub fn diffstat_unit(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
     selected_foreground: Option<gpui::Hsla>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
+    render_diffstat(id_seed, stat, selected_foreground, true)
+}
+
+/// The same retained paint, without tooltip identities or input handlers.
+pub fn diffstat_unit_inert(
+    stat: Option<&FileDiffStat>,
+    selected_foreground: Option<gpui::Hsla>,
+) -> gpui::AnyElement {
+    render_diffstat(0, stat, selected_foreground, false)
+}
+
+fn render_diffstat(
+    id_seed: usize,
+    stat: Option<&FileDiffStat>,
+    selected_foreground: Option<gpui::Hsla>,
+    interactive: bool,
+) -> gpui::AnyElement {
     let t = theme();
     let base = gpui::div()
         .flex()
@@ -163,6 +180,10 @@ pub fn diffstat_unit(
             );
         }
     }
+    let content = base.child(numbers).child(bar);
+    if !interactive {
+        return content.into_any_element();
+    }
 
     // ── Tooltip text ──────────────────────────────────────────────────────
     let tip = if total == 0 {
@@ -171,9 +192,8 @@ pub fn diffstat_unit(
         SharedString::from(format!("{additions} additions, {deletions} deletions"))
     };
 
-    base.id(("diffstat-unit", id_seed))
-        .child(numbers)
-        .child(bar)
+    content
+        .id(("diffstat-unit", id_seed))
         .hover_tooltip_builder(("diffstat-unit-help", id_seed), move |window, cx| {
             Tooltip::new(tip.clone()).build(window, cx)
         })

@@ -15,6 +15,57 @@ use super::theme::{self, theme as current_theme};
 use super::{KagiApp, MONO_FONT};
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::status::ChangeKind;
+use kagi_ui_core::motion::{self, Reveal};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::rc::Rc;
+
+/// One confirmation owns both explicit choices and transient presentation.
+/// Clearing choices also drops measurements and closing content generations.
+#[derive(Default)]
+pub struct ModalSections {
+    choices: HashMap<&'static str, bool>,
+    presentation: RefCell<HashMap<&'static str, SectionPresentation>>,
+}
+
+#[derive(Default)]
+struct SectionPresentation {
+    reveal: Reveal,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+}
+
+impl std::ops::Deref for ModalSections {
+    type Target = HashMap<&'static str, bool>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.choices
+    }
+}
+
+impl std::ops::DerefMut for ModalSections {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.choices
+    }
+}
+
+impl ModalSections {
+    pub fn clear(&mut self) {
+        self.choices.clear();
+        self.presentation.get_mut().clear();
+    }
+
+    /// Called from the owning app render, independently of scrolling layout.
+    pub(crate) fn request_frame(&self, window: &gpui::Window) {
+        let now = motion::now();
+        motion::request_frame(
+            window,
+            self.presentation
+                .borrow()
+                .values()
+                .any(|state| state.reveal.animating(now)),
+        );
+    }
+}
 
 /// Modal list geometry, shared by every scrollable list in a card (#454). The
 /// row height must match the `uniform_list` item height exactly
@@ -233,11 +284,21 @@ pub(crate) fn modal_scroll_body() -> gpui::Stateful<gpui::Div> {
 /// Missing entries use the responsive default; a user's explicit choice is
 /// stable across height changes and is cleared for the next confirmation.
 pub(crate) fn section_open(
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &ModalSections,
     id: &'static str,
     default_open: bool,
 ) -> SectionOpen {
-    SectionOpen(overrides.get(id).copied().unwrap_or(default_open))
+    let open = overrides.get(id).copied().unwrap_or(default_open);
+    let mut presentations = overrides.presentation.borrow_mut();
+    let presentation = presentations.entry(id).or_default();
+    presentation
+        .reveal
+        .sync(open, motion::now(), motion::instant());
+    SectionOpen {
+        open,
+        reveal: presentation.reveal.clone(),
+        natural_size: presentation.natural_size.clone(),
+    }
 }
 
 /// Whether a section is expanded — constructible only by [`section_open`].
@@ -248,12 +309,184 @@ pub(crate) fn section_open(
 /// once. A CI rule can only pattern-match the mistake (and a review found both
 /// false positives and false negatives in the pattern); a type makes it
 /// unrepresentable, so the rule can go away.
-#[derive(Clone, Copy)]
-pub(crate) struct SectionOpen(bool);
+#[derive(Clone)]
+pub(crate) struct SectionOpen {
+    open: bool,
+    reveal: Reveal,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+}
 
 impl SectionOpen {
-    pub(crate) fn is_open(self) -> bool {
-        self.0
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub(crate) fn retain_content(&self) -> bool {
+        self.reveal
+            .sample(self.natural_size.get().height, motion::now())
+            .retain_content
+    }
+
+    /// Remember the fitted width even while the body is unmounted, so opening
+    /// (including Reduce Motion) can measure before constructing its clip.
+    pub(crate) fn measure_width(&self) -> impl IntoElement {
+        let natural_size = self.natural_size.clone();
+        gpui::canvas(
+            move |bounds, _, _| {
+                let mut natural = natural_size.get();
+                natural.width = bounds.size.width;
+                natural_size.set(natural);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
+/// Shared measured body for supporting detail and command disclosures.
+#[derive(IntoElement)]
+pub(crate) struct ModalReveal {
+    id: &'static str,
+    state: SectionOpen,
+    body: gpui::AnyElement,
+}
+
+pub(crate) fn modal_reveal(
+    id: &'static str,
+    state: SectionOpen,
+    body: gpui::AnyElement,
+) -> ModalReveal {
+    ModalReveal { id, state, body }
+}
+
+impl gpui::RenderOnce for ModalReveal {
+    fn render(self, window: &mut gpui::Window, cx: &mut gpui::App) -> impl IntoElement {
+        let now = motion::now();
+        let body = div().w_full().flex().flex_col().child(self.body);
+        #[cfg(feature = "gui-e2e")]
+        let body = body
+            .relative()
+            .child(modal_probe(format!("{}-reveal-content", self.id)));
+        let mut body = body.into_any_element();
+        let width = self.state.natural_size.get().width;
+        if width > gpui::px(0.) {
+            // Measurement and presentation must share the clip's identity
+            // namespace: GPUI retains descendant IDs between layout/prepaint.
+            let natural = window.with_element_namespace((self.id, 0usize), |window| {
+                body.layout_as_root(
+                    gpui::size(
+                        gpui::AvailableSpace::Definite(width),
+                        gpui::AvailableSpace::MaxContent,
+                    ),
+                    window,
+                    cx,
+                )
+            });
+            self.state.natural_size.set(natural);
+        }
+        let sample = self
+            .state
+            .reveal
+            .sample(self.state.natural_size.get().height, now);
+        motion::request_frame(window, !sample.done);
+        let clip = motion::clip(
+            (self.id, 0usize),
+            motion::Axis::Vertical,
+            motion::Anchor::Start,
+            self.state.natural_size.get().height,
+            sample.fraction,
+            NaturalModalBody {
+                body,
+                natural_size: self.state.natural_size,
+                laid_out_width: (width > gpui::px(0.)).then_some(width),
+            },
+        );
+        #[cfg(feature = "gui-e2e")]
+        let clip = clip.child(modal_probe(format!("{}-reveal-clip", self.id)));
+        clip
+    }
+}
+
+/// Reconcile first-mount/resize geometry at the actual parent width using public
+/// GPUI APIs. Later toggles already know this width and measure before layout.
+/// Never recurse into Taffy from its callback or measure the clipped height.
+struct NaturalModalBody {
+    body: gpui::AnyElement,
+    natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+    laid_out_width: Option<gpui::Pixels>,
+}
+
+impl IntoElement for NaturalModalBody {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for NaturalModalBody {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        let mut style = gpui::Style::default();
+        style.size.width = gpui::relative(1.).into();
+        style.size.height = gpui::relative(1.).into();
+        (window.request_layout(style, [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        let natural = if self.laid_out_width == Some(bounds.size.width) {
+            self.natural_size.get()
+        } else {
+            self.body.layout_as_root(
+                gpui::size(
+                    gpui::AvailableSpace::Definite(bounds.size.width),
+                    gpui::AvailableSpace::MaxContent,
+                ),
+                window,
+                cx,
+            )
+        };
+        if self.natural_size.replace(natural) != natural {
+            // Geometry convergence is required even when motion itself is instant.
+            window.request_animation_frame();
+        }
+        self.body.prepaint_at(bounds.origin, window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.body.paint(window, cx);
     }
 }
 
@@ -282,10 +515,10 @@ pub(crate) fn modal_chip(text: impl Into<SharedString>, color: u32) -> gpui::Div
 /// chip) and, while open, its body.
 ///
 /// Clicking the header flips the section via `KagiApp::toggle_modal_section`.
-/// `body` is built by the caller and only attached while open, so a closed
-/// section costs nothing to render. The count chip stays visible when closed —
-/// the audit's finding was modals that printed a total and then cut the rows,
-/// so the size of what is hidden is never lost.
+/// `body` is built by the caller while open or closing; presentation retains it
+/// until the measured reveal settles. The count chip stays visible when closed,
+/// so the size of what is hidden is never lost. Choices, measurements and motion
+/// are reset together for the next confirmation.
 ///
 /// `count == 0` renders no chip (the recovery section has instructions, not a
 /// count); pass a chip label through `chip` instead when the section wants a
@@ -310,17 +543,25 @@ pub(crate) fn modal_section_chipped(
     body: Option<gpui::AnyElement>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::Div {
+    let retain_content = open.retain_content();
+    let presentation = open.clone();
     let open = open.is_open();
+    let title = title.into();
     let (panel_bg, panel_border) = theme::panel_style();
     let caret = if open { "\u{25be}" } else { "\u{25b8}" };
     let mut header = div()
         .id(id)
+        .relative()
+        .child(presentation.measure_width())
         .flex_shrink_0()
         .flex()
         .flex_row()
         .items_center()
         .gap_2()
         .cursor_pointer()
+        .role(gpui::Role::Button)
+        .aria_label(title.clone())
+        .aria_expanded(open)
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _ev, _window, cx| {
@@ -338,7 +579,7 @@ pub(crate) fn modal_section_chipped(
             div()
                 .text_sm()
                 .text_color(rgb(current_theme().text_label))
-                .child(title.into()),
+                .child(title),
         );
     if let Some(chip) = chip {
         header = header.child(
@@ -362,7 +603,6 @@ pub(crate) fn modal_section_chipped(
     let mut section = div()
         .flex()
         .flex_col()
-        .gap_2()
         .min_h(theme::scaled_px(2. * MODAL_LIST_ROW_H))
         .overflow_hidden()
         .p_2()
@@ -370,12 +610,16 @@ pub(crate) fn modal_section_chipped(
         .bg(gpui::rgba(panel_bg))
         .border_1()
         .border_color(gpui::rgba(panel_border))
-        .when(modal_compact(), |section| section.p_1p5().gap_1())
-        .when(!open, |section| section.flex_shrink_0())
+        .when(modal_compact(), |section| section.p_1p5())
+        .when(!retain_content, |section| section.flex_shrink_0())
         .child(header);
-    if open {
+    if retain_content {
         if let Some(body) = body {
-            section = section.child(body);
+            let body = div()
+                .pt_2()
+                .when(modal_compact(), |body| body.pt_1())
+                .child(body);
+            section = section.child(modal_reveal(id, presentation, body.into_any_element()));
             #[cfg(feature = "gui-e2e")]
             {
                 section = section.relative().child(modal_probe(format!("{id}-body")));

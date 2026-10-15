@@ -42,7 +42,7 @@ use std::rc::Rc;
 ///   - `[Cancel]` always; `[Cherry-pick]` disabled with a reason when unavailable
 pub(crate) fn render_cherry_pick_modal(
     modal: CherryPickModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     let plan = modal.plan.clone();

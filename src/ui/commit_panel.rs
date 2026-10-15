@@ -426,6 +426,7 @@ pub struct CommitPanelView {
     pub(crate) controls_focus: super::keyboard_nav::FocusSlots,
     pub(crate) unstaged_navigation: super::commit_panel_navigation::ChangesNavigation,
     pub(crate) staged_navigation: super::commit_panel_navigation::ChangesNavigation,
+    pub(super) file_motion: [super::commit_panel_files::FileListMotion; 2],
     pub(crate) window_active: bool,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
     #[cfg(feature = "gui-e2e")]
@@ -534,6 +535,7 @@ impl CommitPanelView {
             controls_focus: super::keyboard_nav::FocusSlots::default(),
             unstaged_navigation: Default::default(),
             staged_navigation: Default::default(),
+            file_motion: Default::default(),
             pointer_root_focus: None,
             window_active: true,
             window_activation_subscription: None,
@@ -570,11 +572,11 @@ impl CommitPanelView {
         }
     }
 
-    /// A freshly read state restarts `tree_revision` at 1. Invalidate the
-    /// view-owned layout key before replacing it, or equal revision/fold flags
-    /// would reuse positions from the previous file set.
-    pub(crate) fn replace_state(&mut self, state: CommitPanelState) {
+    /// Keep the visible owner's derived-row generation monotonic even when a
+    /// background read constructed its state with a fresh revision counter.
+    pub(crate) fn replace_state(&mut self, mut state: CommitPanelState) {
         self.invalidate_status_read();
+        state.tree_revision = self.state.tree_revision.wrapping_add(1);
         self.state = state;
     }
 

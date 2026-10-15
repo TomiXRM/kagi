@@ -56,7 +56,7 @@ pub(crate) fn render_amend_modal(
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). The folded-file list is NOT collapsible;
     // the warnings and recovery panels are.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     // #454: scroll handle for the folded-file `uniform_list` (owned by
     // `KagiApp` so the position survives re-renders while the modal is open).
     list_scroll: gpui::UniformListScrollHandle,
@@ -273,7 +273,7 @@ pub(crate) fn render_amend_modal(
                 Msg::ModalWarningsSection.t(),
                 plan.warnings.len(),
                 open,
-                open.is_open().then(|| warn_col.into_any_element()),
+                Some(warn_col.into_any_element()),
                 cx,
             )
             .flex_shrink_0(),
@@ -399,7 +399,7 @@ pub(crate) fn render_discard_modal(
     modal: DiscardModal,
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). Only the skipped list is collapsible here.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
     // the biggest list in the app, so it is virtualized like amend's).
     list_scroll: gpui::UniformListScrollHandle,
@@ -612,7 +612,7 @@ pub(crate) fn render_discard_modal(
     // hidden — only the paths are, and the section lists all of them.
     if !modal.skipped.is_empty() {
         let open = section_open(overrides, SECTION_SKIPPED, false);
-        let section_body = open.is_open().then(|| {
+        let section_body = open.retain_content().then(|| {
             // Cap the opened section too: the body does not scroll, so without
             // its own box hundreds of skipped paths would push the blockers
             // and the recovery note out of the card — the two things a user
@@ -690,7 +690,7 @@ pub(crate) fn render_discard_modal(
                 Msg::ModalWarningsSection.t(),
                 plan.warnings.len(),
                 open,
-                open.is_open().then(|| warn_col.into_any_element()),
+                Some(warn_col.into_any_element()),
                 cx,
             )
             .flex_shrink_0(),

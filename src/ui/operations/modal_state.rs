@@ -234,7 +234,8 @@ impl KagiApp {
     /// Forget every explicit disclosure choice. Called when a modal opens.
     ///
     /// Per-confirm, not a preference: closing a safety warning must not hide it
-    /// on later confirmations (#454).
+    /// on later confirmations. Clear also retires reveal measurements and motion,
+    /// including a body retained by a closing disclosure in the previous modal.
     pub fn reset_modal_sections(&mut self) {
         self.modal_section_overrides.clear();
     }

@@ -370,7 +370,7 @@ pub(crate) fn render_stash_planning(
 ///   - `[Cancel]` and an always-visible, disabled-when-blocked `[Apply]`
 pub(crate) fn render_stash_apply_modal(
     modal: StashApplyModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let Some(plan) = modal.plan.clone() else {

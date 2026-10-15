@@ -179,7 +179,7 @@ pub(crate) fn render_input_plan_modal(
     accent: PlanCardAccent,
     cancel_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
     confirm_handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     focus: Option<&FocusHandle>,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {

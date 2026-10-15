@@ -152,13 +152,19 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let selected = (is_sel || wip_hit) && !is_conflicted;
-    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
-    let row_bg = if is_conflicted {
-        rgb(theme().diff_removed_bg).into()
-    } else if is_sel || wip_hit {
-        theme().selected_for_window(window_active)
+    let selection_wash = if is_conflicted {
+        0.
     } else {
-        rgb(theme().panel).into()
+        view.file_motion[staged as usize].selection(&file.path)
+    };
+    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
+    let row_bg: gpui::Hsla = if is_conflicted {
+        rgb(theme().diff_removed_bg).into()
+    } else {
+        let base: gpui::Hsla = rgb(theme().panel).into();
+        let mut wash = theme().selected_for_window(window_active);
+        wash.a *= selection_wash;
+        base.blend(wash)
     };
     let mut file_row = div()
         .id((row_id, fi))
@@ -200,9 +206,10 @@ fn render_cp_file_row(
                 if staged { "st" } else { "us" }
             )))
         })
-        .when(!is_sel && !wip_hit && !is_conflicted, |el| {
-            el.hover(|s| s.bg(rgb(theme().surface)))
-        })
+        .when(
+            !is_sel && !wip_hit && !is_conflicted && selection_wash == 0.,
+            |el| el.hover(|s| s.bg(rgb(theme().surface))),
+        )
         .on_click(file_click)
         .child(
             div()

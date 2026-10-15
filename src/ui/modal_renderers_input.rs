@@ -23,6 +23,7 @@ use gpui_component::tooltip::Tooltip;
 use kagi_domain::plan_note::{CommonNote, PlanNote, PushNote};
 use kagi_git::{BranchRenameValidation, OperationPlan};
 use kagi_ui_core::i18n::{plan::plan_heading_text, plan_note_text};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// The input-confirm cards share form density, but keep their own plan and
 /// confirmation handlers. A field error is one line here; the full reason
@@ -109,11 +110,10 @@ fn input_modal_field(
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))
                 .truncate()
-                .tooltip({
-                    let reason = reason.clone();
-                    move |window, cx| Tooltip::new(reason.clone()).build(window, cx)
-                })
-                .child(reason),
+                .child(reason.clone())
+                .hover_tooltip_builder((label, 0usize), move |window, cx| {
+                    Tooltip::new(reason.clone()).build(window, cx)
+                }),
         )),
         None => field,
     }
@@ -141,11 +141,10 @@ pub(crate) fn render_input_modal_heading(
                     .text_color(rgb(current_theme().text_sub))
                     .truncate()
                     .aria_label(target.clone())
-                    .tooltip({
-                        let target = target.clone();
-                        move |window, cx| Tooltip::new(target.clone()).build(window, cx)
-                    })
-                    .child(target),
+                    .child(target.clone())
+                    .hover_tooltip_builder("input-modal-target-help", move |window, cx| {
+                        Tooltip::new(target.clone()).build(window, cx)
+                    }),
             )
         }
         None => heading,

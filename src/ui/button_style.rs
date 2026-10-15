@@ -4,6 +4,7 @@ use gpui::{div, prelude::*, rgb, ElementId, Hsla, Role, SharedString, Window};
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariant, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, Sizable as _};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
 
@@ -160,7 +161,7 @@ pub(crate) fn named_button(
     label: impl Into<SharedString>,
     toggled: Option<bool>,
 ) -> Button {
-    named_button_with_description(button, label.into(), toggled, None, false)
+    button_accessibility(button, label.into(), toggled, None, false)
 }
 
 /// The pinned kit disables interaction/paint but does not publish AX disabled.
@@ -169,10 +170,30 @@ pub(crate) fn named_disabled_button(
     label: impl Into<SharedString>,
     disabled: bool,
 ) -> Button {
-    named_button_with_description(button, label.into(), None, None, disabled)
+    button_accessibility(button, label.into(), None, None, disabled)
 }
 
 pub(crate) fn named_button_with_description(
+    id: impl Into<ElementId>,
+    button: Button,
+    label: SharedString,
+    toggled: Option<bool>,
+    description: Option<SharedString>,
+    disabled: bool,
+) -> gpui::AnyElement {
+    let button = button_accessibility(button, label, toggled, description.clone(), disabled);
+    if let Some(description) = description {
+        button
+            .hover_tooltip_builder(id, move |window, cx| {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            })
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
+}
+
+fn button_accessibility(
     button: Button,
     label: SharedString,
     toggled: Option<bool>,
@@ -193,11 +214,7 @@ pub(crate) fn named_button_with_description(
         });
     }
     if let Some(description) = description {
-        button = button
-            .aria_description(description.clone())
-            .tooltip(move |window, cx| {
-                super::render_helpers::subject_tooltip(description.clone(), window, cx)
-            });
+        button = button.aria_description(description);
     }
     if let Some(toggled) = toggled {
         button = button.aria_toggled(if toggled {
@@ -377,8 +394,8 @@ fn render_modal_button(
         ModalButtonKind::Primary => ButtonRole::Primary,
         ModalButtonKind::Destructive => ButtonRole::Destructive,
     };
-    let button = if let Some(description) = description {
-        named_button_with_description(
+    let button = if let Some(description) = &description {
+        button_accessibility(
             apply_role(
                 Button::new(id).child(modal_caption(label.clone(), true)),
                 role,
@@ -386,13 +403,13 @@ fn render_modal_button(
             ),
             label,
             None,
-            Some(description),
+            Some(description.clone()),
             false,
         )
     } else {
         KagiButton::styled(id, label, role, cx)
     };
-    button
+    let button = button
         .small()
         .tab_stop(tab_stop)
         .on_key_down(move |event, window, cx| {
@@ -400,8 +417,16 @@ fn render_modal_button(
             MODAL_FOCUS.with(|focus| focus.set(Some(id)));
             super::keyboard_nav::stop_activation_keys(event, window, cx);
         })
-        .on_click(on_click)
-        .into_any_element()
+        .on_click(on_click);
+    if let Some(description) = description {
+        button
+            .hover_tooltip_builder((id, 0usize), move |window, cx| {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            })
+            .into_any_element()
+    } else {
+        button.into_any_element()
+    }
 }
 
 fn unavailable_modal_button(
@@ -427,13 +452,6 @@ fn unavailable_modal_button(
         .a11y_synthetic_children(|builder: &mut gpui::A11ySubtreeBuilder| {
             builder.parent_node().set_disabled();
         })
-        .tooltip(move |window, cx| {
-            if bounded {
-                super::render_helpers::subject_tooltip(description.clone(), window, cx)
-            } else {
-                Tooltip::new(description.clone()).build(window, cx)
-            }
-        })
         .flex()
         .flex_shrink_0()
         .items_center()
@@ -445,6 +463,13 @@ fn unavailable_modal_button(
         .bg(Hsla::from(rgb(accent)).opacity(0.15))
         .text_color(cx.theme().muted_foreground.opacity(0.5))
         .child(modal_caption(label, bounded))
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            if bounded {
+                super::render_helpers::subject_tooltip(description.clone(), window, cx)
+            } else {
+                Tooltip::new(description.clone()).build(window, cx)
+            }
+        })
         .into_any_element()
 }
 
@@ -510,7 +535,6 @@ impl RenderOnce for ModalIconButton {
             .role(Role::Button)
             .aria_label(label.clone())
             .track_focus(&focus)
-            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
             .flex()
             .flex_shrink_0()
             .items_center()
@@ -527,5 +551,8 @@ impl RenderOnce for ModalIconButton {
             .hover(|style| style.bg(cx.theme().secondary_hover))
             .on_click(move |event, window, cx| on_click(event, window, cx))
             .child(gpui_component::Icon::new(self.icon).small())
+            .hover_tooltip_builder((self.id, 0usize), move |window, cx| {
+                Tooltip::new(label.clone()).build(window, cx)
+            })
     }
 }

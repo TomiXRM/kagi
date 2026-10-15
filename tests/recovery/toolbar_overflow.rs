@@ -347,6 +347,7 @@ pub fn scenario_toolbar_overflow(cx: &mut VisualTestAppContext) {
                     bounds.is_some()
                 });
                 if let Some(bounds) = overflow {
+                    let _active = kagi_ui_core::tooltip::e2e::active_window(win.window_id());
                     contained(viewport, bounds, "overflow within window");
                     e2e::clear_control_bounds(win.window_id(), "tb-overflow-tooltip");
                     hover_overflow(cx, win, bounds.center());

@@ -13,6 +13,7 @@ use gpui_component::input::{
 };
 use gpui_component::{button::Button, Disableable, Icon, Sizable};
 use kagi_domain::issue_composer::{fenced_code_paste, title_paste_split, IssueDraft};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::collections::HashMap;
 
 gpui::actions!(issues_composer, [FocusIssueEditor]);
@@ -583,16 +584,19 @@ pub(super) fn render_composer(
                             .map(|button| {
                                 super::button_style::named_button(button, focus_label, None)
                             })
-                            .tooltip_with_action(
-                                focus_label,
-                                &FocusIssueEditor,
-                                Some("IssueComposer"),
-                            )
                             .on_click(cx.listener(move |app, _, window, cx| {
                                 #[cfg(feature = "gui-e2e")]
                                 super::e2e::pr_detail::record_activation(&format!("{id}-focus"));
                                 app.toggle_issue_focus(number, window, cx)
-                            })),
+                            }))
+                            .hover_tooltip_builder(
+                                SharedString::from(format!("{id}-focus-hover-help")),
+                                move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(focus_label)
+                                        .action(&FocusIssueEditor, Some("IssueComposer"))
+                                        .build(window, cx)
+                                },
+                            ),
                     ))
                     .child(super::e2e::measure_control(format!("{id}-submit"), submit)),
             ),

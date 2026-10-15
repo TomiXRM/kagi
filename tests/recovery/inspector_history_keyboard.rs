@@ -329,6 +329,7 @@ fn sparse_inspector(cx: &mut VisualTestAppContext, count: usize, generated: bool
     );
     let before = repo_fingerprint(fixture.path());
     let (app, window) = mount(cx, fixture.path());
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
     app.update(cx, |app, cx| {
         app.inspector_tree_view = false;
         app.inspector_generated_expanded = false;
@@ -370,6 +371,45 @@ fn sparse_inspector(cx: &mut VisualTestAppContext, count: usize, generated: bool
                 Some(format!("file-{:03}.txt", count.min(100) - 1).as_str())
             );
             if count > 100 {
+                assert_overflow_revealed(window);
+                use gpui_component::scroll::ScrollbarHandle;
+                let scroll = cx.read(|cx| app.read(cx).inspector_scroll_for_e2e());
+                let viewport = control_bounds(window, "inspector-files-scroll");
+                let expected = control_bounds(window, "inspector-file-99").size.height * 101.;
+                assert!(
+                    (scroll.content_size().height - expected).abs() < gpui::px(1.),
+                    "all 100 files and More have one fixed-height slot"
+                );
+                let before = scroll.offset();
+                cx.simulate_event(
+                    window,
+                    gpui::ScrollWheelEvent {
+                        position: viewport.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(
+                            gpui::px(-120.),
+                            gpui::px(0.),
+                        )),
+                        touch_phase: gpui::TouchPhase::Moved,
+                        ..Default::default()
+                    },
+                );
+                assert_eq!(
+                    scroll.offset(),
+                    before,
+                    "horizontal wheel cannot become vertical"
+                );
+                keys(cx, window, "home");
+                draw(cx, window);
+                assert_eq!(focused(cx, &app, window).as_deref(), Some("file-000.txt"));
+                assert!(scroll.offset().y.abs() < gpui::px(1.));
+                keys(cx, window, "pagedown");
+                draw(cx, window);
+                assert_ne!(focused(cx, &app, window).as_deref(), Some("file-000.txt"));
+                keys(cx, window, "pageup home");
+                draw(cx, window);
+                assert_eq!(focused(cx, &app, window).as_deref(), Some("file-000.txt"));
+                keys(cx, window, "end");
+                draw(cx, window);
                 assert_overflow_revealed(window);
             }
         }

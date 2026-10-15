@@ -15,6 +15,7 @@ use kagi_domain::plan::OperationPlan;
 use kagi_ui_core::i18n::op::user_text::state_text;
 use kagi_ui_core::i18n::plan;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// A hover-quiet copy button for a popup surface.
 ///
@@ -58,7 +59,6 @@ pub(crate) fn modal_copy_button_lazy(
             .aria_label(SharedString::from(tooltip))
             .opacity(0.55)
             .hover(|st| st.bg(rgb(current_theme().selected)).opacity(1.0))
-            .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx))
             .on_mouse_down(gpui::MouseButton::Left, |_e, _w, cx| {
                 cx.stop_propagation();
             })
@@ -74,6 +74,9 @@ pub(crate) fn modal_copy_button_lazy(
     // Measured, so a scenario can press the real button (#883 review).
     .relative()
     .child(super::e2e::measure_inside(id))
+    .hover_tooltip_builder((id, 0usize), move |w, cx| {
+        gpui_component::tooltip::Tooltip::new(tooltip).build(w, cx)
+    })
     .into_any_element()
 }
 

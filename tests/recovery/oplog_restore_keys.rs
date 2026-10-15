@@ -20,7 +20,7 @@ pub fn scenario_oplog_restore_keyboard(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let before = git_output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
-    for dimensions in [(940., 660.), (1392., 883.)] {
+    for dimensions in [(940., 660.), (1000., 720.), (1392., 883.)] {
         crate::pr_detail_adaptive::resize(cx, window, dimensions);
         for preset in ["apple-light", "apple-dark"] {
             theme::set_active(preset);
@@ -191,11 +191,29 @@ fn inspect_restore_keyboard(
         assert!(focused, "Tab reaches {list}");
         for key in ["down", "up", "pagedown", "pageup", "end"] {
             cx.simulate_keystrokes(window, key);
+            assert!(
+                cx.update_window(window, |_, window, cx| {
+                    app.read(cx)
+                        .list_row_focused_for_e2e(list, window)
+                        .is_some()
+                })
+                .unwrap(),
+                "{list}: {key} retains its row focus through deferred reveal"
+            );
         }
         paint(cx, window);
         paint(cx, window);
         let viewport = e2e::control_bounds(id, list).unwrap();
-        let row = e2e::control_bounds(id, &last).expect("last inspection row drawn");
+        let row = e2e::control_bounds(id, &last).unwrap_or_else(|| {
+            let handle = cx
+                .read(|cx| app.read(cx).oplog_restore_scroll_for_e2e(list))
+                .unwrap();
+            panic!(
+                "{list}: last inspection row {last} drawn, offset={:?}, state={:?}",
+                handle.offset(),
+                handle.0.borrow()
+            );
+        });
         assert!(
             row.top() >= viewport.top() && row.bottom() <= viewport.bottom() + px(1.),
             "{list}: End reveals {row:?} in {viewport:?}"
@@ -229,10 +247,7 @@ fn restore_scrollbar_drag(
         focus.focus(window, cx);
     })
     .unwrap();
-    handle.scroll_to(gpui::ListOffset {
-        item_ix: 0,
-        offset_in_item: px(0.),
-    });
+    handle.scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
     paint(cx, window);
     let id = if list == "restore-refs" {
         "restore-refs-scrollbar"
@@ -322,30 +337,32 @@ fn review_card(
     let (fixture, point) = keyboard_fixture(targets);
     let repo = fixture.path().canonicalize().unwrap();
     let refs = git_output(&repo, &["show-ref"]);
-    let (app, window) = mount(cx, &repo);
-    crate::pr_detail_adaptive::resize(cx, window, (940., 660.));
-    theme::set_zoom(1.67);
-    app.update(cx, |app, cx| {
-        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point }, cx);
-    });
-    wait_idle(cx, &app);
-    let card = restore_card(cx, &app);
-    let mut plan = (*card.plan).clone();
-    plan.warnings.extend((0..31).map(|n| {
-        PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty {
-            branch: format!("target-{n}"),
-            path: format!("/worktrees/target-{n}"),
-        })
-    }));
-    app.update(cx, |app, cx| {
-        app.admit_oplog_restore_plan_for_test(card.op.clone(), plan, cx)
-    });
-    paint(cx, window);
-    check(cx, &app, window);
-    assert!(!restore_card(cx, &app).confirm_armed);
-    assert_eq!(git_output(&repo, &["show-ref"]), refs);
-    press_key(cx, &app, window, "escape");
-    unmount(cx, app, window);
+    for dimensions in [(940., 660.), (1000., 720.)] {
+        let (app, window) = mount(cx, &repo);
+        crate::pr_detail_adaptive::resize(cx, window, dimensions);
+        theme::set_zoom(1.67);
+        app.update(cx, |app, cx| {
+            app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point }, cx);
+        });
+        wait_idle(cx, &app);
+        let card = restore_card(cx, &app);
+        let mut plan = (*card.plan).clone();
+        plan.warnings.extend((0..31).map(|n| {
+            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty {
+                branch: format!("target-{n}"),
+                path: format!("/worktrees/target-{n}"),
+            })
+        }));
+        app.update(cx, |app, cx| {
+            app.admit_oplog_restore_plan_for_test(card.op.clone(), plan, cx)
+        });
+        paint(cx, window);
+        check(cx, &app, window);
+        assert!(!restore_card(cx, &app).confirm_armed);
+        assert_eq!(git_output(&repo, &["show-ref"]), refs);
+        press_key(cx, &app, window, "escape");
+        unmount(cx, app, window);
+    }
 }
 
 fn tab_to(
@@ -487,6 +504,26 @@ fn pane_wheel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyW
         let before = body.offset();
         let viewport = e2e::control_bounds(window.window_id(), target).unwrap();
         let y = viewport.top().max(body.bounds().top()) + px(10.);
+        let inner_before = list.offset();
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: gpui::point(viewport.left() + px(50.), y),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(-120.), px(0.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            list.offset(),
+            inner_before,
+            "horizontal wheel cannot scroll {target} vertically"
+        );
+        assert_eq!(
+            body.offset(),
+            before,
+            "horizontal wheel cannot scroll the body vertically"
+        );
         wheel(cx, window, gpui::point(viewport.left() + px(50.), y), -120.);
         assert!(list.offset().y < -px(20.), "pane wheel moves {target}");
         assert!(
@@ -509,7 +546,7 @@ fn short_pane_wheel(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         .read(|cx| app.read(cx).oplog_restore_scroll_for_e2e("restore-refs"))
         .unwrap();
     assert!(
-        list.content_size().height <= list.viewport_bounds().size.height + px(1.),
+        list.content_size().height <= list.0.borrow().base_handle.bounds().size.height + px(1.),
         "three refs fit within their pane"
     );
     assert!(
@@ -550,7 +587,7 @@ fn pane_edge_wheel(
     let list = cx
         .read(|cx| app.read(cx).oplog_restore_scroll_for_e2e(target))
         .unwrap();
-    let max = list.max_offset_for_scrollbar().y;
+    let max = list.0.borrow().base_handle.max_offset().y;
     list.set_offset(gpui::point(px(0.), -max + px(40.)));
     paint(cx, window);
     let position = || {
@@ -574,10 +611,7 @@ fn pane_edge_wheel(
         "outward wheel at {target}'s bottom chains to body"
     );
     paint(cx, window);
-    list.scroll_to(gpui::ListOffset {
-        item_ix: 0,
-        offset_in_item: px(0.),
-    });
+    list.scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
     paint(cx, window);
     let before = body.offset();
     assert!(

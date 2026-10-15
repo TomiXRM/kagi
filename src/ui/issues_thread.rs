@@ -2,6 +2,7 @@
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, SharedString};
 use gpui_component::text::{TextSelectionGroupElement as _, TextView};
 use kagi_domain::github::IssueState;
+use kagi_ui_core::variable_list::variable_list;
 
 use super::render_helpers::safe_text;
 use super::theme::{self, theme};
@@ -85,6 +86,8 @@ pub(super) fn render_thread(
     );
     let owner = conversation.read(cx);
     let state = owner.list.clone();
+    state.set_estimate(theme::scaled_px(120.));
+    state.invalidate_rows(owner.posts.len() + 1..owner.posts.len() + 2);
     let group = owner.group.clone();
     let generation = owner.generation();
     let weak_owner = conversation.downgrade();
@@ -124,7 +127,7 @@ pub(super) fn render_thread(
         .child(super::render_helpers::with_vertical_scrollbar(
             "issue-thread-scroll",
             &scrollbar,
-            gpui::list(state, move |index, window, cx| render(index, window, cx))
+            variable_list(state, move |index, window, cx| render(index, window, cx))
                 .flex_1()
                 .min_h(px(0.)),
             true,
@@ -164,7 +167,8 @@ pub(super) fn render_thread(
 
 fn pending_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     let state = app.ui().issue_thread_pending_list.clone();
-    state.remeasure_items(0..2);
+    state.set_estimate(theme::scaled_px(120.));
+    state.remeasure();
     let session = app.active_session();
     let number = app.ui().selected_github_issue;
     let generation = app.ui().issue_conversation_gen;
@@ -201,7 +205,7 @@ fn pending_thread(app: &KagiApp, cx: &mut Context<KagiApp>) -> AnyElement {
     super::render_helpers::with_vertical_scrollbar(
         "issue-thread-pending-scroll",
         &scrollbar,
-        gpui::list(state, move |index, window, cx| render(index, window, cx))
+        variable_list(state, move |index, window, cx| render(index, window, cx))
             .flex_1()
             .min_h(px(0.)),
         true,

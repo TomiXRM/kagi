@@ -220,7 +220,11 @@ fn repository_tab(
     );
     #[cfg(feature = "gui-e2e")]
     super::super::e2e::tab_strip::record_description(format!("tab-close-{slot}"), &path);
-    let close = close_button(("tab-close", slot), close_name, Some(path.clone())).on_click(
+    let close = close_button(
+        ("tab-close", slot),
+        ("tab-close-hover-help", slot),
+        close_name,
+        Some(path.clone()),
         cx.listener(move |app, _, _, cx| {
             if let Some(slot) = app.tabs.iter().position(|tab| tab.session == key) {
                 app.close_tab(slot, cx);
@@ -243,13 +247,15 @@ fn repository_tab(
         .child(super::super::e2e::measure_inside(format!(
             "repo-tab-{slot}"
         )))
-        .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
         .child(tab_label(
             format!("repo-tab-label-{slot}"),
             label,
             width.is_some(),
         ))
         .child(close)
+        .hover_tooltip_builder(("repo-tab-hover-help", slot), move |window, cx| {
+            Tooltip::new(path.clone()).build(window, cx)
+        })
         .into_any_element()
 }
 
@@ -279,8 +285,13 @@ fn home_tab(
             let close_name = i18n::tab_close_name(Msg::HomeTabTitle.t());
             #[cfg(feature = "gui-e2e")]
             super::super::e2e::tab_strip::record("home-tab-close", gpui::Role::Button, &close_name);
-            let close = close_button("home-tab-close", close_name, None)
-                .on_click(cx.listener(|app, _, _, cx| app.close_home_tab(cx)));
+            let close = close_button(
+                "home-tab-close",
+                "home-tab-close-hover-help",
+                close_name,
+                None,
+                cx.listener(|app, _, _, cx| app.close_home_tab(cx)),
+            );
             let close = div()
                 .id("home-tab-close-reveal")
                 .opacity(if selected || focused { 1. } else { 0. })
@@ -293,12 +304,15 @@ fn home_tab(
 
 fn close_button(
     id: impl Into<gpui::ElementId>,
+    tooltip_id: impl Into<gpui::ElementId>,
     name: String,
     path: Option<SharedString>,
-) -> Button {
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
     // A visible child, not Button.label: the kit's label would overwrite the
     // independent name with × during RenderOnce.
     super::super::button_style::named_button_with_description(
+        tooltip_id,
         Button::new(id)
             .child("×")
             .ghost()
@@ -306,7 +320,8 @@ fn close_button(
             .min_w(px(20.))
             .min_h(px(20.))
             .ml(theme::scaled_px(4.))
-            .tab_stop(false),
+            .tab_stop(false)
+            .on_click(on_click),
         name.into(),
         None,
         path,

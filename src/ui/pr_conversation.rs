@@ -9,6 +9,7 @@ use gpui::{div, prelude::*, px, rgb, Context, SharedString, Window};
 use gpui_component::text::TextViewStyle;
 use gpui_component::Sizable as _;
 use kagi_domain::github::{Comment, PullRequest, Review, ReviewComment};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::Msg;
 use super::pr_attention::ci_glyph;
@@ -284,18 +285,18 @@ fn render_entry(
             div()
                 .id(("pr-convo-anchor", number as usize * 1000 + i))
                 .aria_description(SharedString::from(a.clone()))
-                .tooltip({
-                    let anchor = a.clone();
-                    move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(anchor.clone()).build(window, cx)
-                    }
-                })
                 .min_w(px(0.))
                 .truncate()
                 .font_family(super::MONO_FONT)
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
                 .child(SharedString::from(a.clone()))
+                .hover_tooltip_builder(("pr-convo-anchor-help", number as usize * 1000 + i), {
+                    let anchor = a.clone();
+                    move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(anchor.clone()).build(window, cx)
+                    }
+                })
         }));
     let content = super::timeline_row::content_column()
         .gap_2()

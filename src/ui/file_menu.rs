@@ -112,6 +112,21 @@ impl KagiApp {
             cx,
         );
     }
+
+    pub(crate) fn sync_pr_menu_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let covered =
+            self.has_modal_or_visible_plan(cx) || self.visible_platform_menu_section().is_some();
+        if covered {
+            self.with_ui(|ui| ui.pr_menu = None);
+        }
+        self.ui().pr_menu_keys.sync(
+            self.pr_menu_visible() && !covered,
+            covered,
+            self.root_focus.as_ref(),
+            window,
+            cx,
+        );
+    }
 }
 
 /// Compact file actions share menu keyboard behavior while preserving their
@@ -359,104 +374,102 @@ where
         .child(primary)
 }
 
+#[derive(Clone, Copy)]
+enum PrMenuAction {
+    Peek,
+    Jump,
+    Open,
+    Copy,
+}
+
 /// PR context menu — Peek / Jump to branch / Open on GitHub / Copy URL.
 pub(crate) fn render_pr_menu_overlay(
     pr: kagi_domain::github::PullRequest,
     pos: gpui::Point<gpui::Pixels>,
-    viewport: gpui::Size<gpui::Pixels>,
+    keys: super::menu_keys::MenuKeys,
+    owner: Option<crate::app::SessionId>,
     window_active: bool,
+    window: &mut Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
-    // Keep the shared anchor margin, then fit the actual laid-out card below:
-    // text line height, all four rows, scaled padding and fixed borders count.
-    let pos = kagi_ui_core::theme::clamp_menu_pos(pos, 0.0, 0.0, viewport);
-    let dismiss = cx.listener(|this, _e: &gpui::MouseDownEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        cx.notify();
-    });
-    let pr_open = pr.clone();
-    let open_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.open_pr_in_browser(&pr_open);
-        cx.notify();
-    });
-    let pr_copy = pr.clone();
-    let copy_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.copy_pr_url(&pr_copy, cx);
-        cx.notify();
-    });
-    let pr_peek = pr.clone();
-    let peek_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.open_pr_peek(&pr_peek, cx);
-        cx.notify();
-    });
-    let pr_jump = pr.clone();
-    let jump_click = cx.listener(move |this, _e: &gpui::ClickEvent, _window, cx| {
-        this.with_ui(|ui| ui.pr_menu = None);
-        this.jump_to_pr_head(&pr_jump, cx);
-        cx.notify();
-    });
-    let n = pr.number as usize;
+    let opened = keys.drawn(0..4);
+    let dismiss = move |this: &mut KagiApp, _: &mut Window, cx: &mut Context<KagiApp>| {
+        if this.active_session() == owner {
+            this.with_ui(|ui| ui.pr_menu = None);
+            cx.notify();
+        }
+    };
+    let mut card = div()
+        .id("pr-context-menu")
+        .role(gpui::Role::Menu)
+        .aria_label(Msg::WorkspacePrs.t())
+        .key_context(super::menu_keys::MENU_CONTEXT)
+        .w(theme::scaled_px(190.))
+        .occlude()
+        .bg(rgb(theme().elevated_surface(theme().panel)))
+        .border_1()
+        .border_color(rgb(theme().elevated_border(theme().surface)))
+        .rounded_md()
+        .shadow_lg()
+        .py(theme::scaled_px(2.));
+    for (slot, (id, label, action)) in [
+        ("pr-menu-peek", Msg::PrPeek, PrMenuAction::Peek),
+        ("pr-menu-jump", Msg::PrJumpToBranch, PrMenuAction::Jump),
+        ("pr-menu-open", Msg::PrOpenOnGitHub, PrMenuAction::Open),
+        ("pr-menu-copy", Msg::PrCopyUrl, PrMenuAction::Copy),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        keys.place(slot, slot);
+        let pr = pr.clone();
+        let row = item(
+            (id, pr.number as usize),
+            SharedString::from(label.t()),
+            window_active,
+            cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                if this.active_session() != owner {
+                    return;
+                }
+                this.with_ui(|ui| ui.pr_menu = None);
+                match action {
+                    PrMenuAction::Peek => this.open_pr_peek(&pr, cx),
+                    PrMenuAction::Jump => this.jump_to_pr_head(&pr, cx),
+                    PrMenuAction::Open => this.open_pr_in_browser(&pr),
+                    PrMenuAction::Copy => this.copy_pr_url(&pr, cx),
+                }
+                cx.notify();
+            }),
+        )
+        .role(gpui::Role::MenuItem)
+        .aria_label(label.t());
+        let row = super::menu_overlay::focus_row(row, &keys, slot, true, window_active, cx);
+        let row = if matches!(action, PrMenuAction::Copy) {
+            super::e2e::probe_pr_menu_copy(row)
+        } else {
+            row
+        };
+        card = card.child(super::e2e::measure_control(id, row));
+    }
+    let card = super::menu_overlay::with_menu_keys(card, &keys, None, dismiss, opened, window, cx);
+    let pos = kagi_ui_core::theme::clamp_menu_pos(pos, 0., 0., window.viewport_size());
     div()
         .absolute()
         .top_0()
         .left_0()
         .size_full()
         .occlude()
-        .on_mouse_down(MouseButton::Left, dismiss)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                dismiss(this, window, cx);
+            }),
+        )
         .child(
             gpui::anchored()
                 .position(pos)
                 .snap_to_window_with_margin(px(8.))
-                .child(
-                    div()
-                        .w(theme::scaled_px(190.))
-                        .occlude()
-                        .bg(rgb(theme().elevated_surface(theme().panel)))
-                        .border_1()
-                        .border_color(rgb(theme().elevated_border(theme().surface)))
-                        .rounded_md()
-                        .shadow_lg()
-                        .py(theme::scaled_px(2.))
-                        .child(super::e2e::measure_control(
-                            "pr-menu-peek",
-                            item(
-                                ("pr-menu-peek", n),
-                                SharedString::from(Msg::PrPeek.t()),
-                                window_active,
-                                peek_click,
-                            ),
-                        ))
-                        .child(super::e2e::measure_control(
-                            "pr-menu-jump",
-                            item(
-                                ("pr-menu-jump", n),
-                                SharedString::from(Msg::PrJumpToBranch.t()),
-                                window_active,
-                                jump_click,
-                            ),
-                        ))
-                        .child(super::e2e::measure_control(
-                            "pr-menu-open",
-                            item(
-                                ("pr-menu-open", n),
-                                SharedString::from(Msg::PrOpenOnGitHub.t()),
-                                window_active,
-                                open_click,
-                            ),
-                        ))
-                        .child(super::e2e::measure_control(
-                            "pr-menu-copy",
-                            super::e2e::probe_pr_menu_copy(item(
-                                ("pr-menu-copy", n),
-                                SharedString::from(Msg::PrCopyUrl.t()),
-                                window_active,
-                                copy_click,
-                            )),
-                        )),
-                ),
+                .child(card),
         )
         .into_any_element()
 }

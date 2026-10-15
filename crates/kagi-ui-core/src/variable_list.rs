@@ -213,6 +213,70 @@ impl VariableListState {
         self.0.borrow_mut().invalidate();
     }
 
+    /// Invalidate changed presentation without retiring surviving row identities
+    /// or recapturing the reading fraction from an estimated height.
+    pub fn invalidate_rows(&self, range: Range<usize>) {
+        let mut state = self.0.borrow_mut();
+        let end = range.end.min(state.rows.len());
+        let estimate = state.estimate;
+        for ix in range.start..end {
+            if state.rows[ix].measured.is_some() {
+                state.measure(ix, estimate);
+                state.rows[ix].measured = None;
+            }
+        }
+        state.painted.retain(|(ix, _)| !range.contains(ix));
+    }
+
+    /// Reconcile semantic identities supplied by the source owner: each new
+    /// slot names its unique previous slot, or None for a newly accepted row.
+    /// This runs on source publication, never on an unchanged frame.
+    pub fn reconcile_rows(&self, previous_indices: &[Option<usize>]) {
+        let mut state = self.0.borrow_mut();
+        let mut relocated = vec![None; state.rows.len()];
+        for (new, old) in previous_indices.iter().enumerate() {
+            if let Some(old) = old {
+                assert!(*old < relocated.len() && relocated[*old].is_none());
+                relocated[*old] = Some(new);
+            }
+        }
+        let relocate = |old: usize| {
+            relocated
+                .iter()
+                .skip(old)
+                .chain(relocated.iter().take(old).rev())
+                .find_map(|new| *new)
+                .unwrap_or(0)
+        };
+        state.anchor.index = relocate(state.anchor.index);
+        if let Some(Intent::Reveal(old)) = state.pending {
+            state.pending = Some(Intent::Reveal(relocate(old)));
+        }
+        let mut previous: Vec<_> = std::mem::take(&mut state.rows)
+            .into_iter()
+            .map(Some)
+            .collect();
+        state.rows = previous_indices
+            .iter()
+            .map(|old| {
+                old.and_then(|old| previous[old].take()).unwrap_or_else(|| {
+                    let key = state.next_key;
+                    state.next_key += 1;
+                    Row {
+                        key,
+                        measured: None,
+                    }
+                })
+            })
+            .collect();
+        if state.rows.is_empty() {
+            state.anchor = Anchor::default();
+            state.pending = None;
+        }
+        state.painted.clear();
+        state.rebuild();
+    }
+
     /// Replaced slots receive fresh source-local keys and nonzero estimates.
     /// Survivors retain keys/measurements; a deleted anchor chooses the next
     /// survivor (or the preceding final survivor), retaining its intra-row fraction.

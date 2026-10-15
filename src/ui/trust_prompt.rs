@@ -11,6 +11,7 @@
 //! `confirm_active_modal` / `cancel_active_modal` plumbing.
 
 use gpui::{div, prelude::*, rgb, Context, SharedString};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::button_style::{modal_button, ModalButtonKind};
 use super::i18n::Msg;
@@ -130,11 +131,9 @@ pub(crate) fn render_trust_repo_modal(
                 .text_color(rgb(current_theme().text_sub))
                 .child(SharedString::from(Msg::TrustRepoBody.t())),
         )
-        .child(
-            trust_path(SharedString::from(modal.repo_path.display().to_string()))
-                .text_xs()
-                .text_color(rgb(current_theme().text_label)),
-        )
+        .child(trust_path(SharedString::from(
+            modal.repo_path.display().to_string(),
+        )))
         .when_some(modal.error.clone(), |card, error| {
             let error = super::i18n::op::user_text::diagnostic(&error).into_owned();
             card.child(
@@ -204,20 +203,22 @@ pub(crate) fn render_trust_repo_modal(
     modal_overlay(card).into_any_element()
 }
 
-fn trust_path(full: SharedString) -> gpui::Stateful<gpui::Div> {
+fn trust_path(full: SharedString) -> impl IntoElement {
     let tooltip = full.clone();
     div()
         .id("trust-repo-path")
         .role(gpui::Role::Label)
         .aria_label(full.clone())
         .aria_description(full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis_middle()
         .relative()
         .child(super::e2e::measure_inside("trust-repo-path"))
         .child(full)
+        .text_xs()
+        .text_color(rgb(current_theme().text_label))
+        .hover_tooltip_builder("trust-repo-path-help", move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
 }

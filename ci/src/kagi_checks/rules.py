@@ -728,6 +728,32 @@ RULES: tuple[Rule, ...] = (
         samples_ok=("// headless by construction: no gpui in this crate\n",),
     ),
     Rule(
+        name="hover-tooltip",
+        summary="Kagi explanatory tooltips use the live-trigger boundary (#1591)",
+        pattern=r"\.\s*tooltip(?:_with_action|_builder)?\s*\(",
+        globs=("src/**/*.rs", "crates/kagi-ui-*/src/**/*.rs"),
+        excludes=("crates/kagi-ui-core/src/tooltip.rs",),
+        message=(
+            "use HoverTooltip::hover_tooltip / hover_tooltip_builder after configuring the control"
+        ),
+        samples=(
+            'button.tooltip("Help")',
+            "button.tooltip_builder(build)",
+            "button.tooltip_with_action(build, action)",
+            "button.\n    tooltip_builder\n    (build)",
+        ),
+        samples_ok=(
+            "button.hover_tooltip(id, text)",
+            "button.hover_tooltip_builder(id, build)",
+            "button.hoverable_tooltip(build)",
+        ),
+        path_samples=(
+            ("crates/kagi-ui-core/src/tooltip.rs", True),
+            ("src/ui/render_header.rs", False),
+            ("crates/kagi-ui-editor/src/tabs.rs", False),
+        ),
+    ),
+    Rule(
         name="static-spinner",
         summary="no rotating-arrow glyph standing in for a spinner (user report)",
         # U+27F3 is a *character*: it cannot turn, so an in-flight indicator

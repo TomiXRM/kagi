@@ -27,6 +27,7 @@ use gpui::{
     IntoElement, MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _,
     Styled as _, Window,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
@@ -459,7 +460,7 @@ fn setting_row_with_help(
         .id(id)
         .role(gpui::Role::Group)
         .aria_label(title.t())
-        .tooltip(move |window, cx| {
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
             #[cfg(feature = "gui-e2e")]
             record_settings_help(id, detail.t());
             gpui_component::tooltip::Tooltip::new(detail.t()).build(window, cx)
@@ -1202,7 +1203,10 @@ pub(super) fn analyze_ignore_section(
                         div()
                             .text_sm()
                             .id("settings-analyze-help")
-                            .tooltip(|window, cx| {
+                            .text_color(rgb(theme().text_sub))
+                            .child(super::e2e::measure_inside("settings-analyze-description"))
+                            .child(SharedString::from(Msg::SettingsAnalyzeIgnoreSummary.t()))
+                            .hover_tooltip_builder("settings-analyze-hover-help", |window, cx| {
                                 #[cfg(feature = "gui-e2e")]
                                 record_settings_help(
                                     "settings-analyze-help",
@@ -1212,10 +1216,7 @@ pub(super) fn analyze_ignore_section(
                                     Msg::SettingsAnalyzeIgnoreDesc.t(),
                                 )
                                 .build(window, cx)
-                            })
-                            .text_color(rgb(theme().text_sub))
-                            .child(super::e2e::measure_inside("settings-analyze-description"))
-                            .child(SharedString::from(Msg::SettingsAnalyzeIgnoreSummary.t())),
+                            }),
                     )
                     .child(super::e2e::measure_control(
                         "settings-analyze-editor",

@@ -374,6 +374,7 @@ pub struct TabUiState {
     pub pr_mode: Option<super::pr_mode::PrModeState>,
     /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
+    pub(super) pr_menu_keys: super::menu_keys::MenuKeys,
     pub(super) filter_controls: super::list_filter_strip::FilterControls,
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
@@ -436,7 +437,7 @@ pub struct TabUiState {
     pub github_issues_cursor: Option<String>,
     pub github_issues_loading_more: bool,
     pub github_issues_page: usize,
-    pub github_issues_list: gpui::ListState,
+    pub github_issues_list: kagi_ui_core::variable_list::VariableListState,
     pub(super) issue_rows: super::list_keyboard::ListKeyboard,
     pub github_issue_mentions: Vec<u64>,
     pub github_issue_tab: kagi_domain::github::IssueListTab,
@@ -460,7 +461,7 @@ pub struct TabUiState {
         HashMap<String, HashMap<u64, Entity<super::issue_conversation::IssueConversation>>>,
     pub(super) issue_conversation_gen: u64,
     pub(super) issue_conversation_scope: Option<super::issue_conversation::ConversationActivation>,
-    pub(super) issue_thread_pending_list: gpui::ListState,
+    pub(super) issue_thread_pending_list: kagi_ui_core::variable_list::VariableListState,
     pub(super) issue_composer: super::issues_composer::IssuesComposerState,
     /// Scan revisions reject superseded completions without consulting the active tab.
     pub cleanup_gen: u64,
@@ -545,6 +546,7 @@ impl Default for TabUiState {
             branch_cleanup_open: false,
             pr_mode: None,
             pr_menu: None,
+            pr_menu_keys: Default::default(),
             filter_controls: Default::default(),
             view_publish_gen: 0,
             cache_epoch: 0,
@@ -579,7 +581,10 @@ impl Default for TabUiState {
             github_issues_cursor: None,
             github_issues_loading_more: false,
             github_issues_page: 0,
-            github_issues_list: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
+            github_issues_list: kagi_ui_core::variable_list::VariableListState::new(
+                0,
+                gpui::px(400.),
+            ),
             issue_rows: Default::default(),
             github_issue_mentions: Vec::new(),
             github_issue_tab: Default::default(),
@@ -593,12 +598,10 @@ impl Default for TabUiState {
             issue_conversations: HashMap::new(),
             issue_conversation_gen: 0,
             issue_conversation_scope: None,
-            issue_thread_pending_list: gpui::ListState::new(
+            issue_thread_pending_list: kagi_ui_core::variable_list::VariableListState::new(
                 2,
-                gpui::ListAlignment::Top,
                 gpui::px(400.),
-            )
-            .with_uniform_item_height(gpui::px(120.)),
+            ),
             issue_composer: Default::default(),
             cleanup_gen: 0,
             cleanup_scanning: false,

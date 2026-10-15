@@ -54,6 +54,7 @@
 //! let renderer = TerminalRenderer::new(
 //!     "JetBrains Mono".to_string(),
 //!     px(14.0),
+//!     None, // optional explicit fallback families
 //!     1.2,  // line height multiplier
 //!     ColorPalette::default(),
 //! );
@@ -174,6 +175,9 @@ pub struct TerminalRenderer {
     /// Font size in pixels
     pub font_size: Pixels,
 
+    /// Shared fallback families used for both cell measurement and glyph shaping.
+    pub font_fallbacks: Option<gpui::FontFallbacks>,
+
     /// Width of a single character cell
     pub cell_width: Pixels,
 
@@ -194,6 +198,7 @@ impl TerminalRenderer {
     ///
     /// * `font_family` - The name of the font family to use
     /// * `font_size` - The font size in pixels
+    /// * `font_fallbacks` - Optional explicit fallback families; `None` uses platform defaults
     /// * `line_height_multiplier` - Multiplier for line height (e.g., 1.2 for 20% extra)
     /// * `palette` - The color palette to use for terminal colors
     ///
@@ -208,11 +213,12 @@ impl TerminalRenderer {
     /// use gpui_terminal::render::TerminalRenderer;
     /// use gpui_terminal::ColorPalette;
     ///
-    /// let renderer = TerminalRenderer::new("Fira Code".to_string(), px(14.0), 1.2, ColorPalette::default());
+    /// let renderer = TerminalRenderer::new("Fira Code".to_string(), px(14.0), None, 1.2, ColorPalette::default());
     /// ```
     pub fn new(
         font_family: String,
         font_size: Pixels,
+        font_fallbacks: Option<gpui::FontFallbacks>,
         line_height_multiplier: f32,
         palette: ColorPalette,
     ) -> Self {
@@ -224,10 +230,31 @@ impl TerminalRenderer {
         Self {
             font_family,
             font_size,
+            font_fallbacks,
             cell_width,
             cell_height,
             line_height_multiplier,
             palette,
+        }
+    }
+
+    /// Font used by cell measurement (normal) and glyph painting (ANSI styling).
+    /// Cloning the fallback list shares its storage rather than allocating per glyph.
+    pub fn font(&self, bold: bool, italic: bool) -> Font {
+        Font {
+            family: self.font_family.clone().into(),
+            features: FontFeatures::default(),
+            fallbacks: self.font_fallbacks.clone(),
+            weight: if bold {
+                FontWeight::BOLD
+            } else {
+                FontWeight::NORMAL
+            },
+            style: if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            },
         }
     }
 
@@ -241,13 +268,7 @@ impl TerminalRenderer {
     /// * `window` - The GPUI window for text system access
     pub fn measure_cell(&mut self, window: &mut Window) {
         // Measure using a reference character (M is typically the widest)
-        let font = Font {
-            family: self.font_family.clone().into(),
-            features: FontFeatures::default(),
-            fallbacks: None,
-            weight: FontWeight::NORMAL,
-            style: FontStyle::Normal,
-        };
+        let font = self.font(false, false);
 
         let text_run = TextRun {
             len: 1,
@@ -627,21 +648,7 @@ impl TerminalRenderer {
                 let underline = flags.contains(alacritty_terminal::term::cell::Flags::UNDERLINE);
 
                 // Create font with styling
-                let font = Font {
-                    family: self.font_family.clone().into(),
-                    features: FontFeatures::default(),
-                    fallbacks: None,
-                    weight: if bold {
-                        FontWeight::BOLD
-                    } else {
-                        FontWeight::NORMAL
-                    },
-                    style: if italic {
-                        FontStyle::Italic
-                    } else {
-                        FontStyle::Normal
-                    },
-                };
+                let font = self.font(bold, italic);
 
                 // Create text run for this single character
                 let char_str = ch.to_string();
@@ -725,12 +732,57 @@ mod tests {
         let renderer = TerminalRenderer::new(
             "Fira Code".to_string(),
             px(14.0),
+            None,
             1.2,
             ColorPalette::default(),
         );
         assert_eq!(renderer.font_family, "Fira Code");
         assert_eq!(renderer.font_size, px(14.0));
         assert_eq!(renderer.line_height_multiplier, 1.2);
+        assert!(renderer.font_fallbacks.is_none());
+        assert!(renderer.font(false, false).fallbacks.is_none());
+    }
+
+    #[test]
+    fn renderer_clone_preserves_fallbacks_for_metrics_and_styled_glyphs() {
+        let fallbacks = gpui::FontFallbacks::from_fonts(vec!["Noto Sans JP".into()]);
+        let renderer = TerminalRenderer::new(
+            "JetBrains Mono".into(),
+            px(14.0),
+            Some(fallbacks.clone()),
+            1.2,
+            ColorPalette::default(),
+        );
+        let cloned = renderer.clone();
+        for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+            let font = cloned.font(bold, italic);
+            assert_eq!(font.family.as_ref(), "JetBrains Mono");
+            let actual = font.fallbacks.as_ref().expect("explicit fallback survives");
+            assert_eq!(actual.fallback_list(), fallbacks.fallback_list());
+            assert!(std::ptr::eq(
+                actual.fallback_list().as_ptr(),
+                fallbacks.fallback_list().as_ptr(),
+            ));
+            assert_eq!(
+                font.weight,
+                if bold {
+                    FontWeight::BOLD
+                } else {
+                    FontWeight::NORMAL
+                }
+            );
+            assert_eq!(
+                font.style,
+                if italic {
+                    FontStyle::Italic
+                } else {
+                    FontStyle::Normal
+                }
+            );
+        }
+        assert_eq!(cloned.font_size, renderer.font_size);
+        assert_eq!(cloned.cell_width, renderer.cell_width);
+        assert_eq!(cloned.cell_height, renderer.cell_height);
     }
 
     #[test]
@@ -768,6 +820,7 @@ mod tests {
         let renderer = TerminalRenderer::new(
             "monospace".to_string(),
             px(14.0),
+            None,
             1.2,
             ColorPalette::default(),
         );

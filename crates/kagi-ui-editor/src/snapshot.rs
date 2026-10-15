@@ -7,6 +7,7 @@ use gpui_component::{
     text::TextView,
     Sizable,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use kagi_ui_core::{
     i18n::Msg,
     theme::{self, theme},
@@ -101,13 +102,6 @@ fn indicator(identity: &SharedString, cx: &mut Context<EditorWorkspaceView>) -> 
         .id("ews-snapshot-readonly")
         .role(role)
         .aria_label(name.clone())
-        .tooltip(move |window, cx| {
-            #[cfg(feature = "gui-e2e")]
-            let _ = tooltip_owner.update(cx, |view, _| {
-                view.snapshot_tooltip_shown = Some(tooltip.clone());
-            });
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .min_w(px(0.))
         .truncate()
         .text_xs()
@@ -138,7 +132,15 @@ fn indicator(identity: &SharedString, cx: &mut Context<EditorWorkspaceView>) -> 
     };
     #[cfg(not(feature = "gui-e2e"))]
     let _ = cx;
-    label.into_any_element()
+    label
+        .hover_tooltip_builder("ews-snapshot-readonly-help", move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            let _ = tooltip_owner.update(cx, |view, _| {
+                view.snapshot_tooltip_shown = Some(tooltip.clone());
+            });
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .into_any_element()
 }
 
 fn open_current(cx: &mut Context<EditorWorkspaceView>) -> AnyElement {

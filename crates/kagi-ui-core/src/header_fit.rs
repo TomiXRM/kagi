@@ -21,6 +21,8 @@ use gpui::{canvas, div, px, rems, AnyElement, Bounds, Pixels, SharedString};
 use gpui_component::button::Button;
 use gpui_component::{Icon, Sizable as _};
 
+use crate::tooltip::HoverTooltip as _;
+
 /// The title keeps at least this much room before the buttons give up their
 /// labels, so the file name never disappears entirely.
 const MIN_TITLE_REM: f32 = 8.;
@@ -227,7 +229,8 @@ pub fn header_button(
     label: impl Into<SharedString>,
     icon: &'static str,
     compact: bool,
-) -> Button {
+    configure: impl FnOnce(Button) -> Button,
+) -> AnyElement {
     let label = label.into();
     // `outline`, not `ghost`: a ghost button paints no background of its own,
     // so it took the header bar's colour exactly and read as plain text.
@@ -236,9 +239,11 @@ pub fn header_button(
         .aria_label(label.clone())
         .0;
     if compact {
-        button.icon(Icon::empty().path(icon)).tooltip(label)
+        configure(button.icon(Icon::empty().path(icon)))
+            .hover_tooltip((id, 0usize), label)
+            .into_any_element()
     } else {
-        button.label(label)
+        configure(button.label(label)).into_any_element()
     }
 }
 

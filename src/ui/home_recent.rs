@@ -6,6 +6,7 @@ use super::{
     KagiApp,
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, Window};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::{path::PathBuf, rc::Rc};
 
 pub(super) struct RecentList {
@@ -214,9 +215,6 @@ fn recent_heading() -> impl IntoElement {
         .overflow_x_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
-        .tooltip(|window, cx| {
-            gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t()).build(window, cx)
-        })
         .child(
             div()
                 .relative()
@@ -224,6 +222,9 @@ fn recent_heading() -> impl IntoElement {
                 .child(super::e2e::measure_inside("home-recent-heading-line"))
                 .child(Msg::HomeRecent.t()),
         )
+        .hover_tooltip_builder("home-recent-heading-help", |window, cx| {
+            gpui_component::tooltip::Tooltip::new(Msg::HomeRecent.t()).build(window, cx)
+        })
 }
 
 /// One recently opened repository: its name over its path. Opening it turns
@@ -259,9 +260,6 @@ fn recent_row(
         .aria_description(full.clone())
         .relative()
         .child(anchor.probe())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .flex()
         .flex_col()
         .px(super::keyboard_nav::inset(8.))
@@ -297,10 +295,14 @@ fn recent_row(
                 .truncate()
                 .child(safe_text(&full)),
         );
-    let row = rows.row(
-        i,
-        super::list_a11y::list_item("home-recent-list", row, i, count, label),
-    );
+    let row = rows
+        .row(
+            i,
+            super::list_a11y::list_item("home-recent-list", row, i, count, label),
+        )
+        .hover_tooltip_builder(("home-recent-help", i), move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        });
     super::e2e::measure_control(format!("home-recent-{i}"), row).into_any_element()
 }
 

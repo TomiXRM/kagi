@@ -10,7 +10,10 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
-use kagi_ui_core::variable_list::{variable_list, VariableListState};
+use kagi_ui_core::{
+    tooltip::HoverTooltip as _,
+    variable_list::{variable_list, VariableListState},
+};
 use std::rc::Rc;
 
 // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
@@ -276,12 +279,6 @@ pub(crate) fn render_rows(
             .text_color(foreground)
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
-            // Row-wide Tooltip preserves complete subjects; child ref/author
-            // tooltips retain priority.
-            .tooltip({
-                let subject = row.summary.clone();
-                move |window, cx| metadata::subject_tooltip(subject.clone(), window, cx)
-            })
             .when(is_dimmed, |el| el.opacity(0.32))
             // ── Badges column: user-resizable width (T030) ──
             // T-DNDMERGE-001: thread `cx` so each `BadgeKind::Branch` chip
@@ -487,6 +484,12 @@ pub(crate) fn render_rows(
             })
             .child(metadata::author(row, ix, secondary_foreground))
             .child(metadata::age(row, ix, now, muted_foreground))
+            // Row-wide help preserves complete subjects; child ref/author
+            // tooltips retain priority.
+            .hover_tooltip_builder(("graph-row-hover-help", ix), {
+                let subject = row.summary.clone();
+                move |window, cx| metadata::subject_tooltip(subject.clone(), window, cx)
+            })
         })
         .collect()
 }

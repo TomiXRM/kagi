@@ -92,6 +92,7 @@ impl gpui::Render for toast_stack::ToastStack {
             .flex()
             .flex_col()
             .gap_2()
+            .min_h_0()
             .max_h(budget)
             .child(e2e::measure_inside("toast-stack"));
         #[cfg(feature = "gui-e2e")]
@@ -288,6 +289,7 @@ fn toast_close_control(
 ) -> gpui::AnyElement {
     use gpui_component::button::{Button, ButtonVariants as _};
     use gpui_component::Sizable as _;
+    use kagi_ui_core::tooltip::HoverTooltip as _;
     let id = toast.id;
     let owner = cx.entity().downgrade();
     let control = toast_stack::ToastButton(
@@ -295,7 +297,6 @@ fn toast_close_control(
             .ghost()
             .small()
             .icon(gpui_component::Icon::empty().path("icons/window-close.svg"))
-            .tooltip(Msg::ToastDismiss.t())
             .on_click(
                 cx.listener(move |this, _: &gpui::ClickEvent, _, cx| this.begin_exit(id, cx)),
             ),
@@ -309,9 +310,19 @@ fn toast_close_control(
     })
     .on_key_down(super::keyboard_nav::stop_activation_keys);
     #[cfg(feature = "gui-e2e")]
-    return e2e::measure_control(format!("toast-dismiss-{id}"), control);
+    return e2e::measure_control(
+        format!("toast-dismiss-{id}"),
+        control.hover_tooltip_builder(("toast-dismiss-help", id), |window, cx| {
+            gpui_component::tooltip::Tooltip::element(|_, _| {
+                e2e::measure_control("toast-dismiss-tooltip", Msg::ToastDismiss.t())
+            })
+            .build(window, cx)
+        }),
+    );
     #[cfg(not(feature = "gui-e2e"))]
-    control.into_any_element()
+    control
+        .hover_tooltip(("toast-dismiss-help", id), Msg::ToastDismiss.t())
+        .into_any_element()
 }
 
 // The Operation Log panel's `impl Render for OpLogPanel` moved to
@@ -807,8 +818,10 @@ impl KagiApp {
                             el.child(render_pr_menu_overlay(
                                 pr,
                                 pos,
-                                window.viewport_size(),
+                                self.ui().pr_menu_keys.clone(),
+                                self.active_session(),
                                 self.window_active,
+                                window,
                                 cx,
                             ))
                         },

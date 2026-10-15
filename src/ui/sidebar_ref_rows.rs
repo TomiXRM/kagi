@@ -2,6 +2,7 @@
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use gpui_component::tooltip::Tooltip;
 use kagi_git::CommitId;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::sidebar::{
     name_tooltip, SECTION_LOCAL, SECTION_REMOTE, SECTION_STASHES, SECTION_TAGS, SECTION_WORKTREES,
@@ -232,12 +233,6 @@ pub(super) fn build_group_header(
         .flex()
         .items_center()
         .on_click(toggle)
-        .tooltip(move |window, cx| {
-            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
-            Tooltip::new(full.clone())
-                .max_w(theme::scaled_px(340.))
-                .build(window, cx)
-        })
         .child(
             div()
                 .h(theme::scaled_px(18.))
@@ -265,6 +260,12 @@ pub(super) fn build_group_header(
                 )
                 .child(group_count(&id, count)),
         )
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
+            Tooltip::new(full.clone())
+                .max_w(theme::scaled_px(340.))
+                .build(window, cx)
+        })
         .into_any_element()
 }
 
@@ -347,12 +348,6 @@ pub(super) fn build_tag_row(
             theme().color_tag
         }))
         .overflow_hidden()
-        .tooltip(move |window, cx| {
-            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
-            Tooltip::new(full.clone())
-                .max_w(theme::scaled_px(340.))
-                .build(window, cx)
-        })
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .on_click(click)
         .hover(|s| s.bg(rgb(theme().surface)))
@@ -369,6 +364,12 @@ pub(super) fn build_tag_row(
                     )))
                 }),
         )
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
+            Tooltip::new(full.clone())
+                .max_w(theme::scaled_px(340.))
+                .build(window, cx)
+        })
         .into_any_element()
 }
 
@@ -407,7 +408,6 @@ pub(super) fn build_stash_row(
         .on_click(click)
         .on_mouse_down(gpui::MouseButton::Right, menu)
         .hover(|s| s.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(full))
         .child(
             div()
                 .relative()
@@ -421,6 +421,7 @@ pub(super) fn build_stash_row(
                     )))
                 }),
         )
+        .hover_tooltip_builder(("sidebar-stash-hover-help", index), name_tooltip(full))
         .into_any_element()
 }
 
@@ -483,19 +484,20 @@ pub(super) fn with_keyboard_group_reveal(
         .when(cfg!(feature = "gui-e2e"), |el| {
             el.child(super::e2e::measure_inside(format!("{id}-reveal")))
         });
-    el.on_action(cx.listener(|app, _: &super::CloseMainDiff, _w, cx| {
-        app.sidebar.focus.group_reveal = None;
-        cx.notify();
-    }))
-    .child(gpui::deferred(
-        gpui::anchored()
-            .position_mode(gpui::AnchoredPositionMode::Local)
-            .position(gpui::point(
-                // RowList's transparent focus border is always in the layout.
-                theme::scaled_px(app.pane_fit.sidebar) - gpui::px(super::keyboard_nav::RING),
-                gpui::px(0.),
-            ))
-            .snap_to_window_with_margin(gpui::px(8.))
-            .child(card),
-    ))
+    el.key_context("KagiRowList KagiSidebarPaneRows SidebarGroupReveal")
+        .on_action(cx.listener(|app, _: &super::CloseMainDiff, _w, cx| {
+            app.sidebar.focus.group_reveal = None;
+            cx.notify();
+        }))
+        .child(gpui::deferred(
+            gpui::anchored()
+                .position_mode(gpui::AnchoredPositionMode::Local)
+                .position(gpui::point(
+                    // RowList's transparent focus border is always in the layout.
+                    theme::scaled_px(app.pane_fit.sidebar) - gpui::px(super::keyboard_nav::RING),
+                    gpui::px(0.),
+                ))
+                .snap_to_window_with_margin(gpui::px(8.))
+                .child(card),
+        ))
 }

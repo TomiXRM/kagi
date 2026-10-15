@@ -123,15 +123,8 @@ impl KagiApp {
                 super::oplog_restore_preview::build(self.view(), &restores, &plan.head_at_plan)
             })
             .flatten();
-        let preview_count = preview.as_ref().map_or(0, |preview| match &preview.graph {
-            kagi_domain::restore_preview::RestorePreview::Graph { rows, .. } => rows.len(),
-            _ => 0,
-        });
-        let inspection = std::rc::Rc::new(super::oplog_restore_inspection::RestoreInspection::new(
-            restores.len(),
-            preview_count,
-            cx,
-        ));
+        let inspection =
+            std::rc::Rc::new(super::oplog_restore_inspection::RestoreInspection::new(cx));
         self.set_oplog_restore_modal(OplogRestoreModal {
             op,
             plan: std::sync::Arc::new(plan),

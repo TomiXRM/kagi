@@ -11,6 +11,7 @@ use gpui::{relative, AnyElement};
 use gpui_component::tooltip::Tooltip;
 use kagi_domain::hotspot::Ecosystem;
 use kagi_domain::hotspot_layout::{treemap, Rect};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Cap on tiles drawn — keeps the element count bounded; the power-law means
 /// the largest/riskiest files carry the signal anyway.
@@ -82,8 +83,7 @@ fn tile(file: &kagi_domain::hotspot::FileMetric, r: &Rect) -> AnyElement {
         .bg(rgb(heat(file.risk)))
         .border_1()
         .border_color(rgb(theme().bg_base))
-        .overflow_hidden()
-        .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx));
+        .overflow_hidden();
 
     // Only label tiles with room for it (avoid a wall of clipped text); the
     // tooltip covers the rest.
@@ -97,7 +97,11 @@ fn tile(file: &kagi_domain::hotspot::FileMetric, r: &Rect) -> AnyElement {
                 .child(format!("{name} · {:.2}", file.risk)),
         );
     }
-    el.into_any_element()
+    el.hover_tooltip_builder(
+        (SharedString::from(format!("eco-tile-help-{path}")), 0usize),
+        move |window, cx| Tooltip::new(full.clone()).build(window, cx),
+    )
+    .into_any_element()
 }
 
 /// Near-black label colour that reads on the green/amber/red heat range.

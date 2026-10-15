@@ -83,6 +83,7 @@ pub(super) struct IssueViewCache {
     pub(super) order: Rc<Vec<usize>>,
     row_keys: super::keyboard_nav::RowKeys,
     pub(super) tab_counts: [usize; 4],
+    language: super::i18n::Lang,
 }
 
 #[cfg(any(test, feature = "gui-e2e"))]
@@ -98,7 +99,6 @@ pub(super) fn issue_view_recomputations() -> usize {
 impl TabUiState {
     pub(super) fn invalidate_issue_view(&mut self) {
         self.github_issues_epoch = self.github_issues_epoch.wrapping_add(1);
-        *self.issue_view.get_mut() = None;
     }
 
     pub(super) fn issue_view(&self, login: Option<&str>) -> Ref<'_, IssueViewCache> {
@@ -113,6 +113,7 @@ impl TabUiState {
                 || view.tab != self.github_issue_tab
                 || view.login.as_deref() != login
                 || view.mentions != self.github_issue_mentions
+                || view.language != super::i18n::lang()
         });
         if stale {
             let mut order = apply_issues(&self.github_issues, &self.github_issue_filter);
@@ -139,19 +140,36 @@ impl TabUiState {
                 self.github_issues.len(),
                 order.len()
             );
+            let row_keys: super::keyboard_nav::RowKeys = order
+                .iter()
+                .enumerate()
+                .map(|(at, &index)| (self.github_issues[index].number.to_string(), at + 3))
+                .collect();
+            {
+                let previous = self.issue_view.borrow();
+                // Accepted pages only add new Issue numbers within a request
+                // generation. Other publications can change offscreen metadata.
+                let invalidate = previous.as_ref().is_some_and(|old| {
+                    (old.revision != revision
+                        && !(old.revision.1 == revision.1 && old.revision.2 < revision.2))
+                        || old.language != super::i18n::lang()
+                });
+                feed::reconcile_feed(&self.github_issues_list, previous.as_ref(), &row_keys);
+                if invalidate {
+                    self.github_issues_list
+                        .invalidate_rows(3..row_keys.len() + 3);
+                }
+            }
             *self.issue_view.borrow_mut() = Some(IssueViewCache {
                 revision,
                 filter: self.github_issue_filter.clone(),
                 tab: self.github_issue_tab,
                 login: login.map(str::to_owned),
                 mentions: self.github_issue_mentions.clone(),
-                row_keys: order
-                    .iter()
-                    .enumerate()
-                    .map(|(at, &index)| (self.github_issues[index].number.to_string(), at + 3))
-                    .collect(),
+                row_keys,
                 order: Rc::new(order),
                 tab_counts,
+                language: super::i18n::lang(),
             });
         }
         Ref::map(self.issue_view.borrow(), |view| {

@@ -3,11 +3,14 @@
 use std::ops::Range;
 
 use gpui::{
-    canvas, div, prelude::*, px, rgb, uniform_list, App, Bounds, Context, Pixels, SharedString,
-    Window,
+    canvas, div, prelude::*, px, rgb, uniform_list, App, Bounds, Context, EntityInputHandler,
+    Pixels, SharedString, Window,
 };
-use gpui_component::input::Input;
-use gpui_component::Sizable as _;
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    input::Input,
+    ActiveTheme as _, Icon, IconName, Sizable as _,
+};
 
 use super::sidebar::{
     build_sidebar_row, SidebarRow, SidebarState, SECTION_WORKTREES, SIDEBAR_ROW_H,
@@ -497,7 +500,7 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
 }
 
 /// The same filter chrome in wide panes and compact popovers.
-pub(super) fn render_filter(app: &KagiApp, _cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(super) fn render_filter(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
     let input_role = gpui::Role::TextInput;
     div()
         .id("sidebar-filter")
@@ -513,8 +516,28 @@ pub(super) fn render_filter(app: &KagiApp, _cx: &mut Context<KagiApp>) -> gpui::
                     .role(input_role)
                     .xsmall()
                     .appearance(true)
-                    .cleanable(true)
-                    .clear_button_aria_label(Msg::A11ySidebarClearSearch.t()),
+                    .cleanable(false)
+                    .when(input.read(cx).text().len() != 0, |field| {
+                        let input = input.clone();
+                        field.suffix(
+                            Button::new("sidebar-filter-clear")
+                                .icon(Icon::new(IconName::CircleX))
+                                .ghost()
+                                .xsmall()
+                                .tab_stop(false)
+                                .text_color(cx.theme().muted_foreground)
+                                .aria_label(Msg::A11ySidebarClearSearch.t())
+                                .on_click(move |_, window, cx| {
+                                    input.update(cx, |state, cx| {
+                                        // clean is private on the current pin. Preserve its
+                                        // Change event and ordinary typing-history grouping.
+                                        let len = state.text().chars().map(char::len_utf16).sum();
+                                        state.replace_text_in_range(Some(0..len), "", window, cx);
+                                        state.focus(window, cx);
+                                    });
+                                }),
+                        )
+                    }),
             )
         })
         .into_any_element()

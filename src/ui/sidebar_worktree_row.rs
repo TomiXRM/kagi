@@ -14,6 +14,7 @@ use std::{
 
 use gpui::{div, prelude::*, px, rgb, svg, Context, SharedString};
 use kagi_git::worktree_inspection::WorktreeInspection;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::sidebar::{name_tooltip, SIDEBAR_AUX_TEXT, SIDEBAR_WORKTREE_ROW_H};
 use super::theme::{self, theme};
@@ -449,7 +450,12 @@ pub(super) fn build_worktree_row(
     // happens to share that absolute path would be opened instead of erroring,
     // so a remote view gets no worktree menu at all.
     if let Some(tooltip) = remote_tooltip {
-        return row.tooltip(name_tooltip(tooltip)).into_any();
+        return row
+            .hover_tooltip_builder(
+                SharedString::from(format!("sidebar-worktree-{name}-hover-help")),
+                name_tooltip(tooltip),
+            )
+            .into_any_element();
     }
     // Hovering the row is what selects its inspection, and the card is its
     // only presentation: moving to another row retires this row's request

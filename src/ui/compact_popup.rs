@@ -4,6 +4,7 @@ use gpui::{
     Pixels, RenderOnce, Window,
 };
 use gpui_component::{popover::Popover, Selectable};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::{e2e, i18n::Msg, keyboard_nav, theme, KagiApp};
 
@@ -152,9 +153,6 @@ fn composer_header(app: gpui::WeakEntity<KagiApp>) -> impl IntoElement {
         .cursor_pointer()
         .text_color(rgb(theme::theme().text_muted))
         .hover(|style| style.bg(rgb(theme::theme().surface)))
-        .tooltip(|window, cx| {
-            gpui_component::tooltip::Tooltip::new(Msg::CompactCommitClose.t()).build(window, cx)
-        })
         .on_click(move |_, window, cx| {
             let _ = app.update(cx, |app, cx| {
                 app.close_compact_composer(window, cx);
@@ -163,7 +161,10 @@ fn composer_header(app: gpui::WeakEntity<KagiApp>) -> impl IntoElement {
         })
         .child("×")
         .relative()
-        .child(e2e::measure_inside("compact-popup-close"));
+        .child(e2e::measure_inside("compact-popup-close"))
+        .hover_tooltip_builder("compact-popup-close-help", |window, cx| {
+            gpui_component::tooltip::Tooltip::new(Msg::CompactCommitClose.t()).build(window, cx)
+        });
     div()
         .flex()
         .items_center()

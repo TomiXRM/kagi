@@ -1032,6 +1032,8 @@ pub struct KagiApp {
     /// default — without a focused element gpui never dispatches key events,
     /// so window-wide actions like cmd-j would silently do nothing.
     pub root_focus: Option<gpui::FocusHandle>,
+    /// Composition observed at the start of the current Input Escape action.
+    input_escape_started_marked: bool,
     /// Retained keyboard entry for the Graph commit list.
     pub graph_focus: Option<gpui::FocusHandle>,
     pub(crate) window_activation_subscription: Option<gpui::Subscription>,
@@ -1499,6 +1501,7 @@ impl KagiApp {
             ui: HashMap::new(),
             ui_default: TabUiState::default(),
             root_focus: None,
+            input_escape_started_marked: false,
             graph_focus: None,
             window_activation_subscription: None,
             window_active: true,

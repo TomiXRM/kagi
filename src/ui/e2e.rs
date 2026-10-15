@@ -766,9 +766,14 @@ pub fn build_kagi_entity(
         app_state
     });
     let close_owner = kagi.downgrade();
-    window.on_window_should_close(cx, move |_, cx| {
+    window.on_window_should_close(cx, move |window, cx| {
         close_owner
-            .update(cx, |app, cx| !app.hold_host_close(cx))
+            .update(cx, |app, cx| {
+                !app.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                )
+            })
             .unwrap_or(true)
     });
     super::theme_select::install(&kagi, window, cx);

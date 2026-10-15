@@ -796,7 +796,13 @@ impl KagiApp {
                     })
                     // ── Editor Workspace unsaved-changes modal (T-WS-EDITOR-002) ──
                     .when(editor_dirty_guard_open, |el| {
-                        el.child(render_editor_dirty_guard_modal(cx))
+                        el.child(render_editor_dirty_guard_modal(
+                            self.host_dirty_guard_open(),
+                            self.host_dirty_buffer_count(cx),
+                            self.editor_dirty_guard_modal()
+                                .is_some_and(|modal| modal.saving.is_some()),
+                            cx,
+                        ))
                     })
                     // ── Editor Workspace tree fs-prompt (Rename/New File/New Folder) ──
                     .when_some(editor_fs_prompt_modal.take(), |el, modal| {

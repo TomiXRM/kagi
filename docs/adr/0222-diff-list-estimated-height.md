@@ -136,3 +136,19 @@ native は推定値ではなく実 paint bounds を読み、修復用 wheel を�
 ≤ 1px と、その後の小さい upward wheel の連続移動を確認する。
 Review 後の workspace は **3,428 PASS / 44 ignored**。locked/plain build、
 clippy（新規警告なし）、fmt、CI check-all も再実行して PASS。
+
+### Re-review: 明示的 row jump は推定 maximum で End に変換しない
+
+`scroll_to` は有効な item index と行内 offset を fractional anchor に直接設定する。
+未計測 successor の estimate だけで maximum に clamp したり、End intent に変換
+したりしない。指定行から実測した後、実際に viewport が埋まらない場合だけ上記の
+layout 終端処理で下端を合わせる。pixel wheel / scrollbar と明示的 row target の
+意味を分け、折返した successor が十分な高さを持つ場合は target header を上端に残す。
+
+推定の 2 倍の実測高を持つ model fixture は修正前に target 96 が 97 へずれて FAIL。
+実 Git conflict fixture も、近い末尾の conflict 後に長い折返し context を置くと、
+Next の指定 header が paint 範囲外になって FAIL した。元の短い successor に対する
+末尾揃え oracle は残し、同じ native scenario 内で両方を検証する。
+修正後は model **16/16 PASS**、native gate **18/18 PASS**、workspace
+**3,429 PASS / 44 ignored**。locked/plain build、clippy（新規警告なし）、
+fmt、CI check-all も再実行して PASS。

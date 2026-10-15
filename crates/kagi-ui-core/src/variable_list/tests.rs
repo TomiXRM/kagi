@@ -312,3 +312,21 @@ fn same_count_card_reload_keeps_reading_fraction_and_pending_reveal() {
         "replacement still invalidates element identity"
     );
 }
+
+#[test]
+fn near_tail_jump_keeps_target_when_actual_successors_exceed_estimates() {
+    let list = list(100);
+    list.scroll_to(ListOffset {
+        item_ix: 96,
+        offset_in_item: px(0.),
+    });
+    let rows = layout(&list, |_| 40.);
+    assert_eq!(
+        list.logical_scroll_top().item_ix,
+        96,
+        "an explicit target must not become End from estimated remaining height"
+    );
+    assert_eq!(list.logical_scroll_top().offset_in_item, px(0.));
+    assert_eq!(rows.first().unwrap().ix, 96);
+    assert!(list.0.borrow().offset() < list.0.borrow().maximum());
+}

@@ -99,6 +99,11 @@ fn assert_smooth_up(
 }
 
 pub fn scenario_pr_diff_extent_conflict_end_fill(cx: &mut VisualTestAppContext) {
+    conflict_jump(cx, false);
+    conflict_jump(cx, true);
+}
+
+fn conflict_jump(cx: &mut VisualTestAppContext, wrapped_successors: bool) {
     let _restore = Restore::capture();
     theme::set_diff_split(false);
     theme::set_zoom(1.0);
@@ -107,7 +112,14 @@ pub fn scenario_pr_diff_extent_conflict_end_fill(cx: &mut VisualTestAppContext) 
     let repo = &fixture.repo;
     let remote = fixture._remote.path().join("repo.git");
     let base: String = (1..=LINES)
-        .map(|line| format!("context_{line:04}\n"))
+        .map(|line| {
+            let suffix = if wrapped_successors && line > 598 {
+                " trailing wrapped context".repeat(120)
+            } else {
+                String::new()
+            };
+            format!("context_{line:04}{suffix}\n")
+        })
         .collect();
     std::fs::write(repo.join("conflicts.txt"), &base).unwrap();
     git(repo, &["add", "conflicts.txt"]);
@@ -180,8 +192,35 @@ pub fn scenario_pr_diff_extent_conflict_end_fill(cx: &mut VisualTestAppContext) 
             );
             assert!(tab.conflict_scroll.logical_scroll_top().item_ix > LINES / 2);
         });
-        let tail = assert_tail(cx, &app, true, "near-last native conflict jump");
-        assert_smooth_up(cx, &app, window, true, tail);
+        if wrapped_successors {
+            cx.read(|cx| {
+                let mode = app.read(cx).pr_mode().unwrap();
+                let scroll = &mode.tabs[mode.active.unwrap()].conflict_scroll;
+                // Each one-line conflict adds a header and a second side.
+                // The preceding conflict therefore shifts source line 598 by 2.
+                let target = 597 + 2;
+                let header = scroll.bounds_for_item(target).expect(
+                    "#1479-S5C wrapped successors must not turn a conflict jump into End",
+                );
+                let viewport = scroll.viewport_bounds();
+                assert!(
+                    (header.top() - viewport.top()).abs() <= gpui::px(1.)
+                        && header.bottom() <= viewport.bottom(),
+                    "requested conflict header must remain at the viewport top: {header:?}, {viewport:?}"
+                );
+                assert_eq!(scroll.logical_scroll_top().item_ix, target);
+                for ix in target + 3..scroll.item_count() {
+                    assert!(
+                        scroll.measured_height(ix).expect("wrapped successor measured")
+                            > scroll.estimated_height() * 2.,
+                        "native successor must exceed its estimate, not just add ordinary rows"
+                    );
+                }
+            });
+        } else {
+            let tail = assert_tail(cx, &app, true, "near-last native conflict jump");
+            assert_smooth_up(cx, &app, window, true, tail);
+        }
     }));
     cx.update_window(window, |_, window, cx| {
         window.replace_root(cx, |window, cx| {

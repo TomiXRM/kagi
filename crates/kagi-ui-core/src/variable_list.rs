@@ -312,9 +312,13 @@ impl VariableListState {
             state.pending = Some(Intent::End);
             return;
         }
-        let offset = state.prefix(position.item_ix) + f64::from(position.offset_in_item);
-        state.pending = (offset > state.maximum()).then_some(Intent::End);
-        state.set_pixel(offset);
+        // An explicit row target must survive underestimated successors. Only
+        // actual layout may decide there is too little content below it.
+        state.anchor = Anchor {
+            index: position.item_ix,
+            fraction: f64::from(position.offset_in_item) / state.height(position.item_ix),
+        };
+        state.pending = None;
     }
 
     pub fn scroll_to_reveal_item(&self, ix: usize) {

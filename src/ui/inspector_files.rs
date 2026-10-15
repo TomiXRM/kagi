@@ -23,9 +23,16 @@ const FOLD: &str = "\0generated";
 const ROW_HEIGHT: f32 = super::sidebar::SIDEBAR_ROW_H;
 
 impl KagiApp {
-    pub(super) fn settle_file_list_motion(&mut self, cx: &mut Context<Self>) {
-        self.ui().inspector_model.keyboard.settle_motion();
-        if let Some(panel) = self.ui().commit_panel.clone() {
+    pub(super) fn settle_file_list_motion(
+        &mut self,
+        owner: crate::app::SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ui) = self.ui.get(&owner) else {
+            return;
+        };
+        ui.inspector_model.keyboard.settle_motion();
+        if let Some(panel) = ui.commit_panel.clone() {
             panel.update(cx, |panel, _| panel.settle_file_motion());
         }
     }

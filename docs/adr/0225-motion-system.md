@@ -220,10 +220,15 @@ ancestor folder-drop/hover handling, wheel input and child accessibility roles
 remain unchanged; broad hitbox occlusion would break those existing routes.
 Presentation-only removal ghosts never acquire actions or accessibility rows.
 
-Leaving the resolved Graph/Diff surface retires retained Changes and Inspector
-presentation without changing logical rows, selection or scroll. Returning
-inside the old transition duration must present settled endpoints, just as
-switching tab owners does; hidden frames do not notify or rebuild file models.
+The root's existing actual-center visibility edge retires retained Changes and
+Inspector presentation for the departing session when Graph/Diff leaves view,
+without changing logical rows, selection or scroll. Graph ↔ Diff inside the same
+owner preserves ordinary file-target fades. The checked departing-owner lookup
+also permits last-tab → Home after that owner has been removed. Returning inside
+the old transition duration presents settled endpoints; unchanged hidden frames
+neither notify nor rebuild file models. Frozen-clock native regressions leave
+at a genuine 37ms displacement/wash/closing ghost and return at the same instant;
+the existing startup and last-tab Home scenarios remain unchanged.
 
 ## Sidebar and editor tree amendment (#1617)
 

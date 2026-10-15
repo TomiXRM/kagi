@@ -356,3 +356,302 @@ pub fn scenario_host_dirty_guard_save(cx: &mut VisualTestAppContext) {
     });
     eprintln!("[gui-e2e] PASS host_dirty_guard_save");
 }
+
+fn assert_failure_visible(cx: &VisualTestAppContext, app: &Entity<KagiApp>, expected: &str) {
+    cx.read(|cx| {
+        let app = app.read(cx);
+        assert!(
+            matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text)
+            if text.as_ref() == expected),
+            "Save All must explain recovery in the footer"
+        );
+        assert!(
+            app.toast_stack
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| toast.kind == kagi::ui::ToastKind::Error
+                    && toast.message.as_ref() == expected),
+            "Save All failure must also surface a bounded toast"
+        );
+        assert!(app.editor_dirty_guard_modal().unwrap().saving.is_none());
+    });
+}
+
+pub fn scenario_host_dirty_guard_save_waiting(cx: &mut VisualTestAppContext) {
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "waiting");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = edit(cx, &app, window, "f.txt", "retry after writer\n");
+        request(cx, &app, window, Entry::Quit);
+        let lease = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorHostSaveWaiting.t());
+        assert!(alive(cx, window));
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert!(cx.read(|cx| editor.read(cx).any_dirty()));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "original\n"
+        );
+        lease.complete();
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert!(cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert!(!cx.read(|cx| editor.read(cx).any_dirty()));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "retry after writer\n"
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_save_waiting");
+}
+
+pub fn scenario_host_dirty_guard_save_unwind(cx: &mut VisualTestAppContext) {
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "unwind");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = edit(cx, &app, window, "f.txt", "retry after unwind\n");
+        request(cx, &app, window, Entry::Quit);
+        KagiApp::panic_next_editor_save_for_e2e();
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorWorkspaceSaveInterrupted.t());
+        assert!(alive(cx, window));
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert!(
+            cx.read(|cx| app.read(cx).app_sessions.has_leases()),
+            "an interrupted writer retains its recovery hold"
+        );
+        assert!(cx.read(|cx| editor.read(cx).any_dirty()));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "original\n"
+        );
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorHostSaveWaiting.t());
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        // Busy presentation must not trap Cancel. Resolve the existing
+        // recovery requirement before retrying; an unwind is not permission
+        // to release writer admission or assume that no write occurred.
+        press(cx, window, Msg::EditorWorkspaceCancel.t());
+        app.update(cx, |app, cx| {
+            e2e::present_app_notice(app);
+            let ids = app.app_sessions.reconcile_ids();
+            assert_eq!(ids.len(), 1);
+            let read = kagi::app::read_reconcile(&app.app_sessions, ids[0]).unwrap();
+            assert!(read.stop_proven() && read.resolved());
+            kagi::app::acknowledge(&mut app.app_sessions, read).unwrap();
+            app.clear_app_notice();
+            cx.notify();
+        });
+        request(cx, &app, window, Entry::Quit);
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert!(cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "retry after unwind\n"
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_save_unwind");
+}
+
+pub fn scenario_host_dirty_guard_close_then_quit(cx: &mut VisualTestAppContext) {
+    cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+    for save in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "upgrade");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = edit(cx, &app, window, "f.txt", "upgraded quit\n");
+        request(cx, &app, window, Entry::Close);
+        draw(cx, window);
+        cx.simulate_keystrokes(window, "cmd-q");
+        cx.run_until_parked();
+        assert!(alive(cx, window));
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        press(
+            cx,
+            window,
+            if save {
+                Msg::EditorHostSaveAll.t()
+            } else {
+                Msg::EditorWorkspaceDiscard.t()
+            },
+        );
+        assert!(
+            cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested),
+            "Cmd-Q upgrades the existing CloseWindow guard to application Quit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            if save {
+                "upgraded quit\n"
+            } else {
+                "original\n"
+            }
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+        cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_close_then_quit");
+}
+
+pub fn scenario_host_dirty_guard_relaunch(cx: &mut VisualTestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(e2e::RelaunchForE2e::default());
+        cx.set_global(e2e::QuitForE2e::default());
+    });
+    // Clean completion, Save All, Discard and Cancel all enter the production
+    // update-relaunch boundary; only process spawning is captured by the harness.
+    for choice in ["clean", "save", "discard", "cancel"] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), choice);
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = (choice != "clean")
+            .then(|| edit(cx, &app, window, "f.txt", "updated application buffer\n"));
+        cx.update(|cx| cx.global_mut::<e2e::RelaunchForE2e>().requested = false);
+        app.update(cx, |app, cx| {
+            app.request_update_relaunch_for_e2e(
+                kagi::update::Relaunch {
+                    program: "kagi".into(),
+                    args: Vec::new(),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        if choice == "clean" {
+            assert!(cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+            assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
+        } else {
+            assert!(
+                !cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested),
+                "dirty relaunch must wait for explicit approval"
+            );
+            assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+            assert!(alive(cx, window));
+            press(
+                cx,
+                window,
+                match choice {
+                    "save" => Msg::EditorHostSaveAll.t(),
+                    "discard" => Msg::EditorWorkspaceDiscard.t(),
+                    _ => Msg::EditorWorkspaceCancel.t(),
+                },
+            );
+            assert_eq!(
+                cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested),
+                choice != "cancel"
+            );
+            if choice == "cancel" {
+                assert!(alive(cx, window));
+                assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_none()));
+                let editor = editor.as_ref().unwrap();
+                cx.read(|cx| {
+                    assert!(editor.read(cx).any_dirty());
+                    assert_eq!(
+                        editor
+                            .read(cx)
+                            .editor
+                            .as_ref()
+                            .unwrap()
+                            .read(cx)
+                            .value()
+                            .as_str(),
+                        "updated application buffer\n"
+                    );
+                });
+            }
+        }
+        assert!(
+            !cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested),
+            "update relaunch must preserve its continuation, not become ordinary Quit"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            if choice == "save" {
+                "updated application buffer\n"
+            } else {
+                "original\n"
+            }
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+    }
+    // A live writer retains even a clean relaunch continuation. A dirty one
+    // additionally keeps its exact text until Save All can obtain admission.
+    for dirty in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "busy-relaunch");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = dirty.then(|| edit(cx, &app, window, "f.txt", "busy relaunch buffer\n"));
+        let lease = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
+        cx.update(|cx| cx.global_mut::<e2e::RelaunchForE2e>().requested = false);
+        app.update(cx, |app, cx| {
+            app.request_update_relaunch_for_e2e(
+                kagi::update::Relaunch {
+                    program: "kagi".into(),
+                    args: Vec::new(),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert!(alive(cx, window));
+        assert!(!cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorHostSaveWaiting.t());
+        assert!(!cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "original\n"
+        );
+        lease.complete();
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert!(cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            if dirty {
+                "busy relaunch buffer\n"
+            } else {
+                "original\n"
+            }
+        );
+        if let Some(editor) = editor.as_ref() {
+            assert!(!cx.read(|cx| editor.read(cx).any_dirty()));
+        }
+        drop(editor);
+        cleanup(cx, app, window);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::RelaunchForE2e>();
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_relaunch");
+}

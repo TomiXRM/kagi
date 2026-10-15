@@ -2044,7 +2044,10 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| match result {
                 Ok(relaunch) => {
                     klog!("update: installed — relaunching");
-                    relaunch.spawn_and_exit();
+                    app.update_installing = false;
+                    app.clear_update_modal();
+                    app.request_update_relaunch(relaunch, cx);
+                    cx.notify();
                 }
                 Err(e) => {
                     klog!("update: failed: {e}");

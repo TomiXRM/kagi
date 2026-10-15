@@ -282,3 +282,25 @@ discarding any remaining buffers. An already admitted write may finish after
 Cancel but cannot close the host. Discard writes nothing and resumes the original
 exit only if the lease/clone hold still permits it. Existing repository-tab
 close and editor-close confirmations retain their current behavior.
+
+### Host-close follow-up (#1614)
+
+An installed update's relaunch is a host-destruction intent, not permission to
+exit immediately. It uses the same retained-buffer confirmation and write/clone
+hold as Quit. Save All and Discard resume that frozen relaunch only after the
+hold permits it; Cancel retires it without replacing unsaved text. Settings are
+flushed before spawning the replacement process and exiting.
+
+While the confirmation is open, Quit upgrades Close Window to Quit without
+replacing the modal or interrupting its admitted save. Save All blocked by a
+running operation reports a localized explanation and leaves its controls usable
+for retry. An abandoned save clears the confirmation's busy marker at the
+host-owned terminal callback, including when its editor has disappeared, and
+reports a localized failure while retaining the existing Unknown receipt and
+recovery requirement. Discard blocked by a new operation retains the intent
+rather than silently dismissing it.
+
+Dock Quit, logout and shutdown require a public GPUI termination-veto/deferral
+hook; the API audit and upstream migration/removal condition are recorded in
+`docs/rearch/upstream-migration-1479.md` and `docs/decisions.md`. No dependency
+fork or private macOS delegate interception is permitted for this gap.

@@ -558,7 +558,7 @@ pub struct DiscardModal {
 /// Rule (round 3): the guard fires ONLY on paths that destroy the editor's
 /// owner — replacing an edit with disk text (Reload), closing a dirty tab
 /// (CloseTab), dropping the whole workspace (Close), closing its repository tab
-/// (CloseRepoTab), or destroying the host (Quit / CloseWindow).
+/// (CloseRepoTab), or destroying the host (Quit / CloseWindow / Relaunch).
 /// Navigation that keeps the owner alive — switching
 /// tree source or FILE, switching repo, Connect Remote, or opening a worktree
 /// — never prompts: the session retains its buffer (ADR-0197).
@@ -578,6 +578,8 @@ pub enum EditorPendingIntent {
     /// Close the host only after resolving every retained editor buffer.
     Quit,
     CloseWindow(gpui::AnyWindowHandle),
+    /// Restart the installed update only after the same host-close approval.
+    Relaunch(crate::update::Relaunch),
     /// Finish the frozen read-only PR Compare after discarding its original
     /// editor. No re-read or navigation occurs until this guard is approved.
     PrPeek {

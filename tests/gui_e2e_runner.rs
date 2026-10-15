@@ -3753,6 +3753,22 @@ mod macos {
                 Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save),
             ),
             (
+                "host_dirty_guard_relaunch",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_relaunch),
+            ),
+            (
+                "host_dirty_guard_save_waiting",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save_waiting),
+            ),
+            (
+                "host_dirty_guard_save_unwind",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save_unwind),
+            ),
+            (
+                "host_dirty_guard_close_then_quit",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_close_then_quit),
+            ),
+            (
                 "welcome_startup_renders",
                 Box::new(crate::pane_resources::scenario_welcome_startup_renders),
             ),

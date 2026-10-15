@@ -1663,6 +1663,8 @@ pub enum Msg {
     EditorHostUnsavedTitle,
     EditorHostUnsavedCount,
     EditorHostSaveAll,
+    EditorHostSaveWaiting,
+    EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
@@ -4305,6 +4307,18 @@ impl Msg {
             (Ja, EditorHostUnsavedCount) => "未保存の変更があるファイル: {count}",
             (En, EditorHostSaveAll) => "Save All",
             (Ja, EditorHostSaveAll) => "すべて保存",
+            (En, EditorHostSaveWaiting) => {
+                "Another operation is still running. Wait for it to finish, then try Save All again."
+            }
+            (Ja, EditorHostSaveWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから、もう一度「すべて保存」を選んでください。"
+            }
+            (En, EditorWorkspaceSaveInterrupted) => {
+                "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
+            }
+            (Ja, EditorWorkspaceSaveInterrupted) => {
+                "保存が中断されました。未保存の変更は開いたままです。再試行する前に操作ログを確認してください。"
+            }
             (En, EditorWorkspaceDiscard) => "Discard",
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",

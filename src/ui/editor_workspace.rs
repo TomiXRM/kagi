@@ -263,6 +263,7 @@ impl KagiApp {
                                 _ => None,
                             };
                             let _ = host.update(acx, |app, cx| {
+                                app.stop_editor_guard_save();
                                 let entry =
                                     super::oplog_panel::OpLogPanel::entry_for_recording(&recording);
                                 if let Some(panel) = app.op_log.clone() {
@@ -282,12 +283,7 @@ impl KagiApp {
                                         .push_back(i18n::oplog_write_failed(error).into());
                                 }
                                 app.present_app_notice();
-                                let detail = if recording_error.is_some() {
-                                    "save task unwound; recording failed — inspect the operation notice"
-                                } else {
-                                    "save task unwound; outcome unknown — inspect the operation notice"
-                                };
-                                let msg = i18n::op_failed(i18n::Op::Save, detail);
+                                let msg = Msg::EditorWorkspaceSaveInterrupted.t().to_string();
                                 app.push_toast(ToastKind::Error, msg.clone(), cx);
                                 app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                                 cx.notify();
@@ -774,11 +770,17 @@ impl KagiApp {
         {
             return;
         }
+        if self.host_dirty_guard_open() && !self.may_close_host() {
+            self.explain_host_save_wait(cx);
+            return;
+        }
         let Some(modal) = self.take_editor_dirty_guard_modal() else {
             return;
         };
         match modal.intent {
-            intent @ (EditorPendingIntent::Quit | EditorPendingIntent::CloseWindow(_)) => {
+            intent @ (EditorPendingIntent::Quit
+            | EditorPendingIntent::CloseWindow(_)
+            | EditorPendingIntent::Relaunch(_)) => {
                 self.finish_host_close(intent, cx);
             }
             EditorPendingIntent::Reload => {

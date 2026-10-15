@@ -1,8 +1,33 @@
 //! Host destruction protects every retained editor, not just the visible pane.
-use super::{EditorPendingIntent, KagiApp};
+use super::{EditorPendingIntent, FooterStatus, KagiApp, Msg, ToastKind};
 use gpui::{App, Context};
 
 impl KagiApp {
+    #[cfg(feature = "gui-e2e")]
+    pub fn request_update_relaunch_for_e2e(
+        &mut self,
+        relaunch: crate::update::Relaunch,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_update_relaunch(relaunch, cx);
+    }
+
+    pub(crate) fn request_update_relaunch(
+        &mut self,
+        relaunch: crate::update::Relaunch,
+        cx: &mut Context<Self>,
+    ) {
+        let intent = EditorPendingIntent::Relaunch(relaunch);
+        if !self.host_dirty_guard_open()
+            && self.may_close_host()
+            && self.host_dirty_buffer_count(cx) == 0
+        {
+            self.finish_host_close(intent, cx);
+        } else {
+            self.hold_host_close(intent, cx);
+        }
+    }
+
     pub(crate) fn host_dirty_buffer_count(&self, cx: &App) -> usize {
         self.ui
             .values()
@@ -15,12 +40,14 @@ impl KagiApp {
         self.editor_dirty_guard_modal().is_some_and(|modal| {
             matches!(
                 modal.intent,
-                EditorPendingIntent::Quit | EditorPendingIntent::CloseWindow(_)
+                EditorPendingIntent::Quit
+                    | EditorPendingIntent::CloseWindow(_)
+                    | EditorPendingIntent::Relaunch(_)
             )
         })
     }
 
-    /// Shared by Quit (including Settings), Close Window and the native close callback.
+    /// Shared by Quit, update relaunch, Close Window and the native close callback.
     /// Existing write/clone holds remain authoritative before and after approval.
     pub(crate) fn hold_host_close(
         &mut self,
@@ -28,6 +55,22 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) -> bool {
         if self.host_dirty_guard_open() {
+            if let Some(modal) = self.editor_dirty_guard_modal_mut() {
+                if (matches!(intent, EditorPendingIntent::Quit)
+                    && matches!(modal.intent, EditorPendingIntent::CloseWindow(_)))
+                    || matches!(intent, EditorPendingIntent::Relaunch(_))
+                {
+                    modal.intent = intent;
+                    cx.notify();
+                }
+            }
+            return true;
+        }
+        // An installed update must retain its continuation even when there is
+        // no dirty file yet and an operation still prevents process exit.
+        if matches!(intent, EditorPendingIntent::Relaunch(_)) && !self.may_close_host() {
+            self.open_editor_dirty_guard(intent, cx);
+            self.explain_host_save_wait(cx);
             return true;
         }
         if self.hold_host_operation(cx) {
@@ -50,6 +93,14 @@ impl KagiApp {
         }
         match intent {
             EditorPendingIntent::Quit => crate::ui::commands::quit_app(cx),
+            EditorPendingIntent::Relaunch(relaunch) => {
+                #[cfg(feature = "gui-e2e")]
+                if super::super::e2e::capture_update_relaunch(cx) {
+                    return;
+                }
+                super::super::settings::flush();
+                relaunch.spawn_and_exit();
+            }
             EditorPendingIntent::CloseWindow(window) => {
                 let owner = cx.entity().downgrade();
                 // Modal callbacks already borrow this window; update it after dispatch.
@@ -74,6 +125,13 @@ impl KagiApp {
         }
     }
 
+    pub(super) fn explain_host_save_wait(&mut self, cx: &mut Context<Self>) {
+        let message = Msg::EditorHostSaveWaiting.t();
+        self.push_toast(ToastKind::Error, message, cx);
+        self.status_footer = FooterStatus::Failed(message.into());
+        cx.notify();
+    }
+
     /// Save All serializes through the existing editor write-admission path. A failed
     /// or externally changed file leaves the guard and its original intent intact.
     /// Cancel retires the intent; an already admitted save may finish but cannot exit.
@@ -86,6 +144,7 @@ impl KagiApp {
             return;
         }
         if !self.may_close_host() {
+            self.explain_host_save_wait(cx);
             return;
         }
         let editor = self

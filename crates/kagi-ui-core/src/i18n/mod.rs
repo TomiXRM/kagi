@@ -1664,6 +1664,7 @@ pub enum Msg {
     EditorHostUnsavedCount,
     EditorHostSaveAll,
     EditorHostSaveWaiting,
+    EditorHostRecoveryRequired,
     EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
@@ -1862,6 +1863,9 @@ pub enum Msg {
     UpdateHideContinuing,
     UpdateInstalling,
     UpdateInstallingReason,
+    UpdateRestartReady,
+    UpdateRestart,
+    UpdateRestartWaiting,
     UpdateFailed,
     UpdateNow,
     PrFieldsNoChanges,
@@ -4313,6 +4317,12 @@ impl Msg {
             (Ja, EditorHostSaveWaiting) => {
                 "別の操作がまだ実行中です。完了を待ってから、もう一度「すべて保存」を選んでください。"
             }
+            (En, EditorHostRecoveryRequired) => {
+                "The result of an operation is unknown. Choose Cancel and review recovery in the Operation Log before trying again."
+            }
+            (Ja, EditorHostRecoveryRequired) => {
+                "操作の結果が不明です。「キャンセル」を選び、操作ログで復旧方法を確認してから再試行してください。"
+            }
             (En, EditorWorkspaceSaveInterrupted) => {
                 "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
             }
@@ -4574,6 +4584,16 @@ impl Msg {
             (Ja, UpdateInstalling) => "更新中…",
             (En, UpdateInstallingReason) => "An update is currently being installed.",
             (Ja, UpdateInstallingReason) => "更新をインストール中です。",
+            (En, UpdateRestartReady) => "Update installed. Restart to finish updating.",
+            (Ja, UpdateRestartReady) => "更新をインストールしました。再起動すると更新が完了します。",
+            (En, UpdateRestart) => "Restart Kagi",
+            (Ja, UpdateRestart) => "Kagi を再起動",
+            (En, UpdateRestartWaiting) => {
+                "Another operation is still running. Wait for it to finish, then choose Restart Kagi."
+            }
+            (Ja, UpdateRestartWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから「Kagi を再起動」を選んでください。"
+            }
             (En, UpdateFailed) => "Update failed",
             (Ja, UpdateFailed) => "更新に失敗しました",
             (En, UpdateNow) => "Update now",

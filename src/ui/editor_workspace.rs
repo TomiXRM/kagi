@@ -780,7 +780,7 @@ impl KagiApp {
         match modal.intent {
             intent @ (EditorPendingIntent::Quit
             | EditorPendingIntent::CloseWindow(_)
-            | EditorPendingIntent::Relaunch(_)) => {
+            | EditorPendingIntent::Relaunch) => {
                 self.finish_host_close(intent, cx);
             }
             EditorPendingIntent::Reload => {

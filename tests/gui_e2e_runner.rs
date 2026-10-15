@@ -3757,6 +3757,18 @@ mod macos {
                 Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_relaunch),
             ),
             (
+                "host_dirty_guard_unknown_recovery",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_unknown_recovery),
+            ),
+            (
+                "host_dirty_guard_clean_restart",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_clean_restart),
+            ),
+            (
+                "host_dirty_guard_installed_restart",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_installed_restart),
+            ),
+            (
                 "host_dirty_guard_save_waiting",
                 Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save_waiting),
             ),

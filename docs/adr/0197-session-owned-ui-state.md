@@ -288,8 +288,11 @@ close and editor-close confirmations retain their current behavior.
 An installed update's relaunch is a host-destruction intent, not permission to
 exit immediately. It uses the same retained-buffer confirmation and write/clone
 hold as Quit. Save All and Discard resume that frozen relaunch only after the
-hold permits it; Cancel retires it without replacing unsaved text. Settings are
-flushed before spawning the replacement process and exiting.
+hold permits it; Cancel retires the current relaunch intent without replacing
+unsaved text, but retains the installed replacement and restart-pending state.
+Reopening Update shows the installed status and Restart action, with Skip
+unavailable; it never installs that update again. Settings are flushed before
+spawning the replacement process and exiting.
 
 While the confirmation is open, Quit upgrades Close Window to Quit without
 replacing the modal or interrupting its admitted save. Save All blocked by a
@@ -299,6 +302,17 @@ host-owned terminal callback, including when its editor has disappeared, and
 reports a localized failure while retaining the existing Unknown receipt and
 recovery requirement. Discard blocked by a new operation retains the intent
 rather than silently dismissing it.
+
+A clean editor waiting for restart has a dedicated Restart / Cancel confirmation:
+no zero-unsaved-file count, Save All or Discard. Running work asks the user to
+wait for completion and then explicitly choose Restart again. An Unknown retained
+lease instead asks the user to Cancel and review recovery in Operation Log;
+waiting cannot resolve that recovery requirement.
+
+**Manual Restart retry is intentional.** Operation completion and recovery never
+automatically restart the app. Cancel keeps the installed update pending, and the
+user decides when to retry Restart after completing work or recovery, so returning
+to editing cannot trigger a surprise restart.
 
 Dock Quit, logout and shutdown require a public GPUI termination-veto/deferral
 hook; the API audit and upstream migration/removal condition are recorded in

@@ -1377,6 +1377,8 @@ pub struct KagiApp {
     /// Latest installer progress/failure, retained while the modal is closed so
     /// reopening Update presents the completion result.
     pub update_status: Option<SharedString>,
+    /// Installed replacement retained until an explicitly approved restart.
+    pub update_pending_relaunch: Option<crate::update::Relaunch>,
     /// T-CONFLICT-FLOW-032 (ADR-0068): sequencer `<op> --continue` confirmation
     /// modal, shown when Continue routes a rebase / cherry-pick / revert.
     /// (Stored in `active_modal` — see the `conflict_continue_modal()` accessor.)
@@ -1617,6 +1619,7 @@ impl KagiApp {
             update_checked: false,
             update_installing: false,
             update_status: None,
+            update_pending_relaunch: None,
             cleanup_cols: branch_cleanup::CleanupCols::load(),
             modal_section_overrides: std::collections::HashMap::new(),
             modal_list_scroll: UniformListScrollHandle::new(),
@@ -2003,7 +2006,7 @@ impl KagiApp {
     /// does not depend on modal presentation: closing and reopening Update
     /// while the task runs must not start a second installer (#718).
     fn begin_update_install(&mut self) -> bool {
-        if self.update_installing {
+        if self.update_installing || self.update_pending_relaunch.is_some() {
             return false;
         }
         self.update_installing = true;
@@ -2022,10 +2025,18 @@ impl KagiApp {
     /// Download + verify + install the offered update, then relaunch. A failure
     /// is retained on the window-owned operation state even if the modal closed.
     fn start_update_install(&mut self, cx: &mut Context<Self>) {
+        if self.update_modal().is_none() {
+            return;
+        }
+        if self.update_pending_relaunch.is_some() {
+            self.retry_update_relaunch(cx);
+            cx.notify();
+            return;
+        }
         let Some((plan, release)) = self.update_available.clone() else {
             return;
         };
-        if self.update_modal().is_none() || !self.begin_update_install() {
+        if !self.begin_update_install() {
             return;
         }
         cx.notify();
@@ -2044,8 +2055,6 @@ impl KagiApp {
             let _ = this.update(acx, |app, cx| match result {
                 Ok(relaunch) => {
                     klog!("update: installed — relaunching");
-                    app.update_installing = false;
-                    app.clear_update_modal();
                     app.request_update_relaunch(relaunch, cx);
                     cx.notify();
                 }
@@ -2061,7 +2070,7 @@ impl KagiApp {
 
     /// "Skip this version" — persist the tag so the banner stays hidden for it.
     fn skip_this_update(&mut self, cx: &mut Context<Self>) {
-        if self.update_installing {
+        if self.update_installing || self.update_pending_relaunch.is_some() {
             return;
         }
         if let Some((plan, _)) = &self.update_available {

@@ -563,6 +563,10 @@ pub struct DiscardModal {
 /// tree source or FILE, switching repo, Connect Remote, or opening a worktree
 /// — never prompts: the session retains its buffer (ADR-0197).
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep the frozen PR comparison inline rather than allocate for a short-lived approval intent"
+)]
 pub enum EditorPendingIntent {
     /// Discard the buffer and re-read the open file from disk (the
     /// external-change banner's Reload button).
@@ -579,7 +583,7 @@ pub enum EditorPendingIntent {
     Quit,
     CloseWindow(gpui::AnyWindowHandle),
     /// Restart the installed update only after the same host-close approval.
-    Relaunch(crate::update::Relaunch),
+    Relaunch,
     /// Finish the frozen read-only PR Compare after discarding its original
     /// editor. No re-read or navigation occurs until this guard is approved.
     PrPeek {

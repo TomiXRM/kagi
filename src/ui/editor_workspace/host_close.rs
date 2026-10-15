@@ -17,7 +17,18 @@ impl KagiApp {
         relaunch: crate::update::Relaunch,
         cx: &mut Context<Self>,
     ) {
-        let intent = EditorPendingIntent::Relaunch(relaunch);
+        self.update_installing = false;
+        self.update_status = Some(Msg::UpdateRestartReady.t().into());
+        self.update_pending_relaunch = Some(relaunch);
+        self.retry_update_relaunch(cx);
+    }
+
+    pub(crate) fn retry_update_relaunch(&mut self, cx: &mut Context<Self>) {
+        if self.update_pending_relaunch.is_none() {
+            return;
+        }
+        self.clear_update_modal();
+        let intent = EditorPendingIntent::Relaunch;
         if !self.host_dirty_guard_open()
             && self.may_close_host()
             && self.host_dirty_buffer_count(cx) == 0
@@ -42,7 +53,7 @@ impl KagiApp {
                 modal.intent,
                 EditorPendingIntent::Quit
                     | EditorPendingIntent::CloseWindow(_)
-                    | EditorPendingIntent::Relaunch(_)
+                    | EditorPendingIntent::Relaunch
             )
         })
     }
@@ -58,7 +69,7 @@ impl KagiApp {
             if let Some(modal) = self.editor_dirty_guard_modal_mut() {
                 if (matches!(intent, EditorPendingIntent::Quit)
                     && matches!(modal.intent, EditorPendingIntent::CloseWindow(_)))
-                    || matches!(intent, EditorPendingIntent::Relaunch(_))
+                    || matches!(intent, EditorPendingIntent::Relaunch)
                 {
                     modal.intent = intent;
                     cx.notify();
@@ -68,7 +79,7 @@ impl KagiApp {
         }
         // An installed update must retain its continuation even when there is
         // no dirty file yet and an operation still prevents process exit.
-        if matches!(intent, EditorPendingIntent::Relaunch(_)) && !self.may_close_host() {
+        if matches!(intent, EditorPendingIntent::Relaunch) && !self.may_close_host() {
             self.open_editor_dirty_guard(intent, cx);
             self.explain_host_save_wait(cx);
             return true;
@@ -93,7 +104,10 @@ impl KagiApp {
         }
         match intent {
             EditorPendingIntent::Quit => crate::ui::commands::quit_app(cx),
-            EditorPendingIntent::Relaunch(relaunch) => {
+            EditorPendingIntent::Relaunch => {
+                let Some(relaunch) = self.update_pending_relaunch.take() else {
+                    return;
+                };
                 #[cfg(feature = "gui-e2e")]
                 if super::super::e2e::capture_update_relaunch(cx) {
                     return;
@@ -125,8 +139,22 @@ impl KagiApp {
         }
     }
 
+    pub(crate) fn host_close_hold_message(&self, restart: bool) -> Msg {
+        if self.app_sessions.blocking_reconcile().is_some() {
+            Msg::EditorHostRecoveryRequired
+        } else if restart {
+            Msg::UpdateRestartWaiting
+        } else {
+            Msg::EditorHostSaveWaiting
+        }
+    }
+
     pub(super) fn explain_host_save_wait(&mut self, cx: &mut Context<Self>) {
-        let message = Msg::EditorHostSaveWaiting.t();
+        let restart = self
+            .editor_dirty_guard_modal()
+            .is_some_and(|modal| matches!(modal.intent, EditorPendingIntent::Relaunch))
+            && self.host_dirty_buffer_count(cx) == 0;
+        let message = self.host_close_hold_message(restart).t();
         self.push_toast(ToastKind::Error, message, cx);
         self.status_footer = FooterStatus::Failed(message.into());
         cx.notify();

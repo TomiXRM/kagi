@@ -444,7 +444,7 @@ pub fn scenario_host_dirty_guard_save_unwind(cx: &mut VisualTestAppContext) {
             "original\n"
         );
         press(cx, window, Msg::EditorHostSaveAll.t());
-        assert_failure_visible(cx, &app, Msg::EditorHostSaveWaiting.t());
+        assert_failure_visible(cx, &app, Msg::EditorHostRecoveryRequired.t());
         assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
         // Busy presentation must not trap Cancel. Resolve the existing
         // recovery requirement before retrying; an unwind is not permission
@@ -624,15 +624,28 @@ pub fn scenario_host_dirty_guard_relaunch(cx: &mut VisualTestAppContext) {
         assert!(alive(cx, window));
         assert!(!cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
         assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
-        press(cx, window, Msg::EditorHostSaveAll.t());
-        assert_failure_visible(cx, &app, Msg::EditorHostSaveWaiting.t());
+        let retry = if dirty {
+            Msg::EditorHostSaveAll.t()
+        } else {
+            Msg::UpdateRestart.t()
+        };
+        press(cx, window, retry);
+        assert_failure_visible(
+            cx,
+            &app,
+            if dirty {
+                Msg::EditorHostSaveWaiting.t()
+            } else {
+                Msg::UpdateRestartWaiting.t()
+            },
+        );
         assert!(!cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
         assert_eq!(
             std::fs::read_to_string(repo.join("f.txt")).unwrap(),
             "original\n"
         );
         lease.complete();
-        press(cx, window, Msg::EditorHostSaveAll.t());
+        press(cx, window, retry);
         assert!(cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
         assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
         assert_eq!(
@@ -654,4 +667,203 @@ pub fn scenario_host_dirty_guard_relaunch(cx: &mut VisualTestAppContext) {
         cx.remove_global::<e2e::QuitForE2e>();
     });
     eprintln!("[gui-e2e] PASS host_dirty_guard_relaunch");
+}
+
+/// #1614: an abandoned writer requires recovery, not waiting for a live task.
+pub fn scenario_host_dirty_guard_unknown_recovery(cx: &mut VisualTestAppContext) {
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    cx.update(|cx| cx.set_global(e2e::QuitForE2e::default()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "unknown");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = edit(cx, &app, window, "f.txt", "recover before retry\n");
+        request(cx, &app, window, Entry::Quit);
+        KagiApp::panic_next_editor_save_for_e2e();
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorWorkspaceSaveInterrupted.t());
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert_failure_visible(cx, &app, Msg::EditorHostRecoveryRequired.t());
+        assert!(cx.read(|cx| app.read(cx).app_sessions.has_leases()));
+        assert!(!cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        press(cx, window, Msg::EditorWorkspaceCancel.t());
+        assert!(alive(cx, window));
+        assert!(cx.read(|cx| editor.read(cx).any_dirty()));
+        app.update(cx, |app, cx| {
+            e2e::present_app_notice(app);
+            let ids = app.app_sessions.reconcile_ids();
+            assert_eq!(ids.len(), 1);
+            let read = kagi::app::read_reconcile(&app.app_sessions, ids[0]).unwrap();
+            assert!(read.stop_proven() && read.resolved());
+            kagi::app::acknowledge(&mut app.app_sessions, read).unwrap();
+            app.clear_app_notice();
+            cx.notify();
+        });
+        request(cx, &app, window, Entry::Quit);
+        press(cx, window, Msg::EditorHostSaveAll.t());
+        assert!(cx.read(|cx| cx.global::<e2e::QuitForE2e>().requested));
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "recover before retry\n"
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+        cx.update(|cx| cx.global_mut::<e2e::QuitForE2e>().requested = false);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::QuitForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_unknown_recovery");
+}
+
+/// #1614: a clean held restart has no unsaved-document actions.
+pub fn scenario_host_dirty_guard_clean_restart(cx: &mut VisualTestAppContext) {
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    cx.update(|cx| cx.set_global(e2e::RelaunchForE2e::default()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "clean-restart");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let lease = app.update(cx, |app, _| app.app_sessions.write_lease(&repo).unwrap());
+        app.update(cx, |app, cx| {
+            app.request_update_relaunch_for_e2e(
+                kagi::update::Relaunch {
+                    program: "kagi".into(),
+                    args: Vec::new(),
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        crate::native_ax::activate(cx);
+        draw(cx, window);
+        let tree = crate::native_ax::tree(cx, window);
+        let labels: Vec<&str> = tree["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter_map(|node| node["aria"]["label"].as_str())
+            .collect();
+        assert!(
+            labels.contains(&Msg::UpdateRestart.t()),
+            "clean restart needs Restart: {tree}"
+        );
+        assert!(
+            !labels.contains(&Msg::EditorHostSaveAll.t()),
+            "no Save All for zero dirty buffers"
+        );
+        assert!(
+            !labels.contains(&Msg::EditorWorkspaceDiscard.t()),
+            "no Discard for zero dirty buffers"
+        );
+        assert!(
+            !labels.contains(&Msg::EditorHostUnsavedTitle.t()),
+            "no unsaved title for zero dirty buffers"
+        );
+        press(cx, window, Msg::UpdateRestart.t());
+        assert_failure_visible(cx, &app, Msg::UpdateRestartWaiting.t());
+        lease.complete();
+        cx.run_until_parked();
+        assert!(
+            !cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested),
+            "completion must not restart automatically"
+        );
+        press(cx, window, Msg::UpdateRestart.t());
+        assert!(cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        cleanup(cx, app, window);
+        cx.update(|cx| cx.global_mut::<e2e::RelaunchForE2e>().requested = false);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::RelaunchForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_clean_restart");
+}
+
+/// #1614: cancelling the post-install guard must not offer a second install.
+pub fn scenario_host_dirty_guard_installed_restart(cx: &mut VisualTestAppContext) {
+    let _globals = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["update_skipped"]);
+    cx.update(|cx| cx.set_global(e2e::RelaunchForE2e::default()));
+    for lang in [Lang::En, Lang::Ja] {
+        i18n::set_lang(lang);
+        let dir = tempfile::tempdir().unwrap();
+        let repo = fixture(dir.path(), "installed-restart");
+        let (app, window) = mount(cx, &repo, 1000.);
+        let editor = edit(cx, &app, window, "f.txt", "keep installed buffer\n");
+        app.update(cx, |app, cx| {
+            app.update_available = Some(crate::recovery_operations::fake_update_offer());
+            app.open_update_modal();
+            cx.notify();
+        });
+        let (task, reply) = crate::evidence_support::deferred(cx);
+        e2e::queue_update_install(task);
+        press(cx, window, Msg::UpdateNow.t());
+        assert!(!e2e::update_install_queued());
+        reply.send(Ok(kagi::update::Relaunch {
+            program: "kagi".into(),
+            args: Vec::new(),
+        }));
+        cx.run_until_parked();
+        assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+        press(cx, window, Msg::EditorWorkspaceCancel.t());
+        assert!(!cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        assert!(cx.read(|cx| editor.read(cx).any_dirty()));
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert!(
+                app.update_pending_relaunch.is_some(),
+                "Cancel must retain installed relaunch"
+            );
+            assert!(!app.update_installing);
+            assert_eq!(
+                app.update_status.as_deref(),
+                Some(Msg::UpdateRestartReady.t())
+            );
+        });
+        app.update(cx, |app, cx| {
+            app.open_update_modal();
+            cx.notify();
+        });
+        draw(cx, window);
+        let restart = kagi::ui::button_style::recorded_modal_button("update-now").unwrap();
+        assert_eq!(
+            restart.label,
+            Msg::UpdateRestart.t(),
+            "installed update must offer Restart, never Update now"
+        );
+        assert!(!restart.disabled);
+        assert!(
+            kagi::ui::button_style::recorded_modal_button("update-skip")
+                .unwrap()
+                .disabled,
+            "an installed update cannot be skipped"
+        );
+        let (duplicate, duplicate_reply) = crate::evidence_support::deferred(cx);
+        e2e::queue_update_install(duplicate);
+        press(cx, window, Msg::UpdateRestart.t());
+        let reinstalled = !e2e::update_install_queued();
+        e2e::discard_queued_update_install();
+        duplicate_reply.send(Err("unused duplicate installer".into()));
+        assert!(!reinstalled, "Restart must not consume a second installer");
+        assert!(cx.read(|cx| app.read(cx).editor_dirty_guard_modal().is_some()));
+        press(cx, window, Msg::EditorWorkspaceDiscard.t());
+        assert!(cx.read(|cx| cx.global::<e2e::RelaunchForE2e>().requested));
+        assert!(
+            cx.read(|cx| app.read(cx).update_pending_relaunch.is_none()),
+            "successful relaunch consumes pending installation"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "original\n"
+        );
+        drop(editor);
+        cleanup(cx, app, window);
+        cx.update(|cx| cx.global_mut::<e2e::RelaunchForE2e>().requested = false);
+    }
+    cx.update(|cx| {
+        cx.remove_global::<e2e::RelaunchForE2e>();
+    });
+    eprintln!("[gui-e2e] PASS host_dirty_guard_installed_restart");
 }

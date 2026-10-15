@@ -95,6 +95,10 @@ a remote or local head branch sets the shared destructive bit: the named Merge
 button becomes danger, root Return cancels, and the existing alert focus trap
 applies. Explicit focus/Space or pointer approval remains the only write entry;
 retaining branches leaves the ordinary merge role.
+The `pr_detail_a11y_1256` keyboard regression asserts that deleting-merge plans
+retain this destructive role and transfer focus into the modal alert's focus
+scope, rather than requiring the workspace root to stay focused. Escape still
+cancels without reactivating Merge or authorizing any repository/transport write.
 
 The card keeps local CURRENT separate from the GitHub AFTER target repository
 and base ref. Typed EN/JA notes show the approved source branch/full SHA and

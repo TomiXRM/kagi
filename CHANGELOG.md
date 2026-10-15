@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Repair dev-red PR accessibility and branch-drag oracles after the approved safety/layout cutovers: deleting PR merges assert alert-owned focus, desktop drag coverage mounts 1000×720 and 1392×883, and a 940×660 compact leg drags real Local rail Popover rows. Self/alias no-ops, detached-HEAD refusal, native feedback and unchanged-repository assertions remain; production behavior is unchanged.
 - Update the toolbar count scaling GUI regression to expect the reachable 170% preset after seven public zoom steps, rather than the former 167% cap. Direct legacy 1667-permille rendering coverage remains unchanged.
 - Diff geometry is now Kagi-owned across Main Diff, File History, PR diff/conflicts and Editor WIP/history, without depending on the patched GPUI list APIs. The shared virtual list retains actual distant measurements across unchanged reloads/recolor, reflows reading anchors, and resolves giant wheel and scrollbar-end requests against the true tail without eager `measure_all`. Native extent contracts retain all seven scenarios and add physical thumb and offscreen review-card update coverage. (#1479-S5C; ADR-0222)
   - Review: near-tail conflict jumps, shrinking reflow and review-card collapse refill the viewport from the real tail; same-count review-card reloads retain the reading slot and fractional position.

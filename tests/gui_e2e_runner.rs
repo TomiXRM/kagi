@@ -204,6 +204,10 @@ mod selection_on_accent;
 mod graph_selection_wash;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/graph_motion_edges.rs"]
+mod graph_motion_edges;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/tab_strip.rs"]
 mod tab_strip;
 
@@ -1933,6 +1937,30 @@ mod macos {
             (
                 "graph_selection_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
+            ),
+            (
+                "graph_selection_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_selection_crossfade),
+            ),
+            (
+                "graph_commit_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_commit_insert_motion),
+            ),
+            (
+                "graph_wip_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_wip_insert_motion),
+            ),
+            (
+                "graph_target_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_target_crossfade),
+            ),
+            (
+                "graph_unborn_wip_motion",
+                Box::new(crate::graph_motion_edges::scenario_graph_unborn_wip_motion),
+            ),
+            (
+                "graph_activation_motion_reset",
+                Box::new(crate::graph_motion_edges::scenario_graph_activation_motion_reset),
             ),
             (
                 "graph_wip_hover_wash",

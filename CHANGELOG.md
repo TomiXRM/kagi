@@ -13,6 +13,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- PR swimlane geometry uses GPUI's public uniform-list API for its fixed-height commit and elision rows. Shared list keyboard navigation accepts the existing row-scroll adapter directly; Branch Picker, Home Recent, Issue feed and restore inspection retain their current list geometry. This prepares the official-upstream migration without changing dependency pins. (#1479-S5A)
+  - Review: horizontal wheel gestures retain the lane rail's horizontal scrolling without moving the vertical row list.
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)
   - Review: invalidated opening reads retry even when no reload follows; Smart provider discovery starts independently of status publication; Amend waits for authoritative staged status, with English/Japanese unavailable help.
 - Home Recent items offer a localized “Remove from Recently Opened” context-menu action through right-click and Shift+F10/Menu. Removal persists only the history entry; repository/worktree files, Git state and open tabs remain unchanged. Empty history retains Open Folder. (#1567)

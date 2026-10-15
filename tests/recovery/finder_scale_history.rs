@@ -77,6 +77,7 @@ fn inspect_text(
         cx.update_window(window, |_, window, _| {
             let mut style = window.text_style();
             style.font_family = theme::UI_FONT.into();
+            style.font_fallbacks = kagi_ui_core::fonts::ui_font().fallbacks;
             style.font_weight = column.font_weight;
             let text_system = window.text_system();
             let line = text_system.shape_line(

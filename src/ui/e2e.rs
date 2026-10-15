@@ -53,6 +53,16 @@ pub mod diff_content;
 pub mod pr_detail;
 
 #[cfg(feature = "gui-e2e")]
+pub fn issue_thread_list(
+    app: &super::KagiApp,
+    cx: &gpui::App,
+) -> kagi_ui_core::variable_list::VariableListState {
+    app.selected_issue_conversation()
+        .map(|owner| owner.read(cx).list.clone())
+        .unwrap_or_else(|| app.ui().issue_thread_pending_list.clone())
+}
+
+#[cfg(feature = "gui-e2e")]
 pub fn recorded_plan_command_disclosure(id: &str) -> Option<(String, String, bool)> {
     super::modal_command::recorded_disclosure(id)
 }

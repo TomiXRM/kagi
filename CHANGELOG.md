@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Issue lists and conversations share Kagi's variable-height scrolling, preserving the reading position as posts change or text reflows and keeping the complete Reply preview reachable. Appended pages do not pull the reader to the bottom, and filtered lists retain explicit pagination. Existing text selection and Copy behavior remain unchanged. (#1479-S5D)
 - Notifications stay fixed at the bottom-left above the status bar in repository and Settings windows, expanding upward instead of appearing below the toolbar on the right. The newest-preview/count disclosure, 30% window-height budget and 45% window-width cap from #1551 remain unchanged. (#1590)
   - Compact repository windows with an open bottom panel further fit notifications to its body minus the toast inset, preserving the 30% upper bound and fixed anchor while leaving the panel tab strip's primary controls exposed. Settings shares the busy-snackbar/toast renderer.
   - Review: compact Editor uses its actual capped panel height; Settings does not expose the clone-progress action targeting its repository window.

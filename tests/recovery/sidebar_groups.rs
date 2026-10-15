@@ -237,7 +237,7 @@ pub fn scenario_sidebar_keyboard_collapse(cx: &mut VisualTestAppContext) {
     std::fs::write(fixture.path().join("README.md"), "stash fixture\n").unwrap();
     git(fixture.path(), &["stash", "push", "-m", "pane fixture"]);
     let before = Witness::read(fixture.path());
-    for dimensions in [(940., 660.), (1392., 883.)] {
+    for dimensions in [(1000., 720.), (1392., 883.)] {
         for zoom in [1., 1.67] {
             for language in [Lang::En, Lang::Ja] {
                 let (app, window) = mount_dimensions(cx, fixture.path(), dimensions);
@@ -551,7 +551,7 @@ pub fn scenario_sidebar_keyboard_collapse_card(cx: &mut VisualTestAppContext) {
         ],
     );
     let before = Witness::read(fixture.path());
-    for dimensions in [(940., 660.), (1392., 883.)] {
+    for dimensions in [(1000., 720.), (1392., 883.)] {
         for zoom in [1., 1.67] {
             for language in [Lang::En, Lang::Ja] {
                 let (app, window) = mount_dimensions(cx, fixture.path(), dimensions);

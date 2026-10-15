@@ -38,6 +38,39 @@ pub fn node(cx: &mut VisualTestAppContext, win: AnyWindowHandle, element: Elemen
         .unwrap_or_else(|| panic!("missing actual AX node {identity}: {tree}"))
 }
 
+/// The focused semantic node, never an enclosing named Group.
+pub fn focused(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Value {
+    let tree = tree(cx, win);
+    let id = tree["gpui_focus"]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing native focus: {tree}"));
+    tree["nodes"][id].clone()
+}
+
+/// Traverse the real focus tree to a rendered control (including editor fields).
+pub fn focus_named(cx: &mut VisualTestAppContext, win: AnyWindowHandle, role: &str, label: &str) {
+    for _ in 0..200 {
+        cx.update_window(win, |_, window, cx| {
+            window.focus_next(cx);
+            window.refresh();
+            window.draw(cx).clear();
+        })
+        .unwrap();
+        let tree = tree(cx, win);
+        let Some(id) = tree["gpui_focus"].as_str() else {
+            continue; // The window root and nonsemantic focus stops have no AX node.
+        };
+        let node = &tree["nodes"][id];
+        if node["aria"]["role"] == role && node["aria"]["label"] == label {
+            return;
+        }
+    }
+    panic!(
+        "focus traversal did not reach {role} {label}: {}",
+        tree(cx, win)
+    );
+}
+
 /// Deliver the standard native Press action, not a renderer callback or key.
 pub fn press(cx: &mut VisualTestAppContext, win: AnyWindowHandle, label: &str) -> bool {
     // NSApplication can retain native windows after GPUI unmounts their roots.

@@ -89,6 +89,8 @@ impl TabUiState {
             branch_cleanup_open,
             pr_mode,
             pr_menu,
+            // Focus/cache state follows pr_menu, like filter_controls.menu_keys.
+            pr_menu_keys: _,
             filter_controls,
             smart_commit_generating,
             smart_commit_generation,

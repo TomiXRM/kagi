@@ -2616,8 +2616,10 @@ The locked GPUI revision does not expose the complete, last-rendered hitbox
 collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
 bound (for example, a measured button or footer) as a generic hitbox dump. A
 complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
-API or a deliberately maintained dependency fork; until then, use Tier A's
-state assertions and Tier B's live-window inspection together.
+API. Propose missing APIs upstream and record the proposal in `docs/decisions.md`;
+do not introduce a dependency fork for inspection (AGENTS.md / #1479).
+Until an official API exists, use Tier A's state assertions and Tier B's
+live-window inspection together.
 
 ### What reaches a real `InputState` and what goes around it (#516)
 

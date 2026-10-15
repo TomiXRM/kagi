@@ -42,3 +42,21 @@ gpui-component が提供するもの(関連分): **Tree**(階層表示)/ **Dock�
 - gpui-component の theme 系と自前の Catppuccin 配色の整合を取る必要(Input 等の見た目調整)
 - gpui-component が将来 git main 版 gpui に全面移行した場合、0.5.x 系に留まる判断が必要になりうる
   (その時は gpui 本体のバージョン戦略ごと再検討 = ADR 改訂)
+
+## Amendment — 2026-10-15: official main への移行決定（#1479 / #436）
+
+0.5.1互換表・docs.rs参照・0.5.x留保は当時の判断として保持するが、
+今後の依存戦略は official GPUI Kit main（旧gpui-component URLはredirect）
+への移行で supersede する。無固定main追従ではなく、component/base/assetsを
+同一official revisionへ固定し、official Kitが採用する `gpui-pre` familyを使う
+（[ADR-0001 amendment](0001-gpui.md)）。
+調査基準は `1188c11003b5cb5b83bc07d3fb9112e7674fbfa7`。最終[#1479-S6](../rearch/upstream-migration-1479.md)は
+必要なcached Textarea row accessorのupstream採用revisionを使用する。
+
+typed Input / Textarea / Editor、公開search engine、base Radio等へ全consumerを
+同時移行する。公式済みのAX/Undo/test APIをfork固有APIとして維持しない。
+不足はKagiの公開API compositionで解決し、なお不足するAPIはupstreamへ
+PR/Discussionを提出して `docs/decisions.md` に記録する。fork pin更新で回避しない。
+投稿選択は [ADR-0198 amendment](0198-read-only-issues-workspace.md)
+のowner決定に従う。[#1479-S0](../rearch/upstream-migration-1479.md)は文書のみで、依存・実行時挙動は未変更。
+

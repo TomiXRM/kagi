@@ -134,5 +134,38 @@ native motion scenarios migrate their frozen-clock calls without changing their
 behavior coverage. A separate oracle repair allows the existing 1px tolerance
 for five settled-width checks: unchanged dev reproduced the exact comparison
 of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
-behavior gate. A locked screen prevents Tier B visual comparison; math tests
-and hidden native windows must not be described as that evidence.
+behavior gate. Math tests and hidden native windows do not establish Tier B
+visual comparison; completed real-window evidence is recorded per surface.
+
+## Sidebar and editor tree amendment (#1617)
+
+The dense Repository Navigator and Editor file tree retain their existing row
+heights, virtual lists, focus owners and accessibility models. `SidebarState`
+owns sidebar presentation; `EditorWorkspaceView` owns Editor presentation.
+There is no second tree model or Git read in the animation path.
+
+- Editor selection intent changes immediately. The Navigator has no independent
+  selection: its existing keyboard/pointer `RowFocus` active wash crossfades.
+  Stable ref names, worktree paths, stash commit identities and Editor paths key
+  presentation only; no graph-target-driven Navigator wash or new AX selection
+  state is introduced.
+- Local/remote subgroups and Editor directories use `RowSplice`: final logical
+  membership is immediate, children fade/slide, and content below them settles
+  into its final slot. Removed content is retained only as noninteractive,
+  accessibility-hidden presentation until the closing splice settles.
+- Top-level Navigator headers remain mounted while their bodies reveal/close.
+  Pane weights and persisted collapse intent retain their existing ownership.
+- Chevrons remain immediate rather than crossfading or rotating: they report
+  current disclosure intent even during reversal; motion is on the content.
+- Sidebar refresh arrivals animate only within the same owner/filter/list
+  context. Initial loading, repository changes and large replacements settle
+  immediately. Ordinary GUI E2E remains instant; frozen-clock scenarios opt
+  into real intermediate presentation.
+- Reduce Motion is sampled during rendering so enabling it during a transition
+  settles presentation immediately. Animation changes neither selection nor
+  the keyboard and accessibility models.
+
+Native Tier A is the behavior gate for mid-flight geometry/opacity, endpoints,
+reversal and instant policy. Tier B uses an isolated PID-targeted background
+window without foreground activation or user-pointer control; hidden native
+test-window assertions are not screenshot evidence.

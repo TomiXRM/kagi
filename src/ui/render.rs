@@ -506,6 +506,9 @@ impl Render for KagiApp {
                 &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,
             );
+            let owner = self.active_session();
+            self.sidebar
+                .prepare_rows_motion(&rows, owner, &sidebar_filter_text);
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
             self.sidebar
                 .focus
@@ -513,6 +516,7 @@ impl Render for KagiApp {
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
+        self.sidebar.advance_motion(window, cx);
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);

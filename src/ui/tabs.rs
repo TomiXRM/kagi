@@ -291,6 +291,9 @@ impl KagiApp {
         self.depart_active_tab();
         self.active_tab = index;
         self.error = None;
+        if let Some(editor) = self.ui().editor_workspace.clone() {
+            editor.update(cx, |editor, _| editor.settle_tree_motion());
+        }
 
         // ── Remote tab (ADR-0089 Phase 2b): re-enter the read-only view from
         //    the cached snapshot. No local path, no Backend, no watcher. ──

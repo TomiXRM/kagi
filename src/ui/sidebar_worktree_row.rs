@@ -324,6 +324,7 @@ pub(super) struct WorktreeRowFacts<'a> {
 pub(super) fn build_worktree_row(
     facts: WorktreeRowFacts<'_>,
     app: &KagiApp,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let WorktreeRowFacts {
@@ -431,7 +432,7 @@ pub(super) fn build_worktree_row(
                 )
                 .children(
                     port.filter(|_| !is_remote)
-                        .map(|port| port_link(name, port, cx)),
+                        .map(|port| port_link(name, port, interactive, cx)),
                 ),
         );
     if locked {
@@ -443,6 +444,17 @@ pub(super) fn build_worktree_row(
                 .h(theme::scaled_px(14.))
                 .text_color(rgb(theme().color_warning)),
         );
+    }
+    if !interactive {
+        return row
+            .when(!is_remote, |row| {
+                row.gap_1().child(inspection_badge(app, path, name))
+            })
+            .relative()
+            .child(super::e2e::measure_inside(format!(
+                "sidebar-worktree-{name}"
+            )))
+            .into_any_element();
     }
     // An SSH tab's worktree is fabricated by `remote::` with the path as it
     // exists **on the remote host** (ADR-0089), while every menu action —
@@ -515,7 +527,12 @@ pub(super) fn build_worktree_row(
 /// `localhost:<port>` for a worktree's stored port block (#855): the first port
 /// of the block its terminal receives as `KAGI_PORT`. A click opens it in the
 /// browser.
-fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+fn port_link(
+    name: &str,
+    port: u16,
+    interactive: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     let url = format!("http://localhost:{port}");
     let open = cx.listener(move |_app: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
@@ -525,8 +542,10 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
     // to a clipped second line rather than cutting the text.
     div()
         .id(SharedString::from(format!("sidebar-worktree-port-{name}")))
-        .role(gpui::Role::Button)
-        .aria_label(SharedString::from(format!("localhost:{port}")))
+        .when(interactive, |el| {
+            el.role(gpui::Role::Button)
+                .aria_label(SharedString::from(format!("localhost:{port}")))
+        })
         .relative()
         .flex_shrink_0()
         .h(theme::scaled_px(SIDEBAR_WORKTREE_ROW_H))
@@ -538,9 +557,11 @@ fn port_link(name: &str, port: u16, cx: &mut Context<KagiApp>) -> gpui::AnyEleme
         .rounded_sm()
         .text_size(theme::scaled_px(SIDEBAR_AUX_TEXT))
         .text_color(rgb(theme().color_branch))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(theme().selected)))
-        .on_click(open)
+        .when(interactive, |el| {
+            el.cursor_pointer()
+                .hover(|s| s.bg(rgb(theme().selected)))
+                .on_click(open)
+        })
         .child(
             svg()
                 .path("icons/square-terminal.svg")

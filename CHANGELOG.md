@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Adopt an official-upstream/public-API-first dependency policy and a staged zero-`[patch]` migration (#1479/#436). Existing pins remain unchanged in this policy-only slice; new fork commits/pins and reintroduced cosmetic patches are prohibited. Record the owner-approved move to official GPUI Kit's `gpui-pre` family and unmodified TextView/default selection scope: cross-post/offscreen conversation selection will no longer be a Kagi guarantee, while naturally supported mounted cross-view behavior is not prohibited. The runtime/oracle cutover remains S6.
+
 ### Fixed
 
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

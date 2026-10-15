@@ -3353,12 +3353,81 @@ pub(super) fn repository_window(window: &Window, cx: &App) -> Option<Entity<Kagi
         .and_then(|root| root.read(cx).view().clone().downcast::<KagiApp>().ok())
 }
 
-fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
-    let has_repository = cx.windows().into_iter().any(|handle| {
+fn repository_host(cx: &mut App) -> Option<(gpui::AnyWindowHandle, Entity<KagiApp>)> {
+    cx.windows().into_iter().find_map(|handle| {
         handle
-            .update(cx, |_, window, cx| repository_window(window, cx).is_some())
-            .unwrap_or(false)
+            .update(cx, |_, window, cx| repository_window(window, cx))
+            .ok()
+            .flatten()
+            .map(|entity| (handle, entity))
+    })
+}
+
+/// CLI and Finder requests share one application-lifetime dispatcher (ADR-0102).
+/// In particular, Settings must never receive a repository-open request.
+fn dispatch_open_request(path: Option<std::path::PathBuf>, external: bool, cx: &mut App) {
+    let host = repository_host(cx).or_else(|| {
+        let fresh = dock_reopen_state(cx)?;
+        open_main_window(fresh, cx);
+        repository_host(cx)
     });
+    cx.activate(true);
+    if let Some((window, host)) = host {
+        // The key window may be Settings; raising the app alone is insufficient.
+        // Native regression windows must remain hidden and never steal focus.
+        if !(cfg!(feature = "gui-e2e") && std::env::var("KAGI_GUI_E2E").as_deref() == Ok("1")) {
+            let _ = window.update(cx, |_, window, _| window.activate_window());
+        }
+        host.update(cx, |app, cx| {
+            if let Some(path) = path {
+                klog!("single-instance: open tab {}", path.display());
+                if external {
+                    app.open_external_paths(std::slice::from_ref(&path), cx);
+                } else {
+                    app.open_repository(path, cx);
+                }
+            } else {
+                klog!("single-instance: focus");
+            }
+            cx.notify();
+        });
+    }
+}
+
+fn arm_open_requests(open_urls: std::sync::mpsc::Receiver<std::path::PathBuf>, cx: &mut App) {
+    let forwarded = crate::single_instance::take_receiver();
+    cx.spawn(async move |cx| loop {
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(200))
+            .await;
+        cx.update(|cx| {
+            if let Some(forwarded) = &forwarded {
+                while let Ok(path) = forwarded.try_recv() {
+                    dispatch_open_request(path, false, cx);
+                }
+            }
+            drain_open_urls(&open_urls, cx);
+        });
+    })
+    .detach();
+}
+
+fn drain_open_urls(open_urls: &std::sync::mpsc::Receiver<std::path::PathBuf>, cx: &mut App) {
+    while let Ok(path) = open_urls.try_recv() {
+        dispatch_open_request(Some(path), true, cx);
+    }
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn dispatch_open_urls_for_e2e(urls: Vec<String>, cx: &mut App) -> Option<Entity<KagiApp>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    crate::single_instance::enqueue_open_urls(urls, &tx);
+    drain_open_urls(&rx, cx);
+    repository_host(cx).map(|(_, host)| host)
+}
+
+fn dock_reopen_state(cx: &mut App) -> Option<KagiApp> {
+    let has_repository = repository_host(cx).is_some();
     if has_repository {
         return None;
     }
@@ -3375,6 +3444,14 @@ pub fn run_app(app_state: KagiApp) {
     // used to live here.  No pre-window watcher is created.
 
     let application = gpui_platform::application().with_assets(assets::KagiAssets);
+    // Register before `run`: AppKit can deliver Finder/Dock URLs during launch.
+    // The channel retains them until component initialization and the first
+    // repository window are ready. Its receiver belongs to the application,
+    // not a repository entity that disappears when the last window closes.
+    let (open_urls_tx, open_urls_rx) = std::sync::mpsc::channel();
+    application.on_open_urls(move |urls| {
+        crate::single_instance::enqueue_open_urls(urls, &open_urls_tx);
+    });
 
     // macOS Dock-reopen: clicking the Dock icon after the last window was
     // closed (✕) must bring a window back — the process stays alive, so
@@ -3421,6 +3498,7 @@ pub fn run_app(app_state: KagiApp) {
         commands::setup_app(cx);
 
         open_main_window(app_state, cx);
+        arm_open_requests(open_urls_rx, cx);
         if std::env::var_os("KAGI_NO_ACTIVATE").as_deref() != Some(std::ffi::OsStr::new("1")) {
             cx.activate(true);
         }
@@ -3433,7 +3511,15 @@ pub fn run_app(app_state: KagiApp) {
 /// window after the user closed it (the one-time init — gpui_component,
 /// keybindings, menus — stays in `run_app`).
 fn open_main_window(app_state: KagiApp, cx: &mut App) {
-    cx.open_window(window_restore::options(cx), |window, cx| {
+    let options = window_restore::options(cx);
+    #[cfg(feature = "gui-e2e")]
+    let options = gpui::WindowOptions {
+        show: std::env::var("KAGI_GUI_E2E").as_deref() != Ok("1")
+            || std::env::var("KAGI_GUI_E2E_VISIBLE").as_deref() == Ok("1"),
+        focus: std::env::var("KAGI_GUI_E2E").as_deref() != Ok("1"),
+        ..options
+    };
+    cx.open_window(options, |window, cx| {
         // gpui-component widgets (Input etc.) require the window's
         // first layer to be a `gpui_component::Root`; rendering
         // KagiApp directly panics inside Root::read (user-reported
@@ -3513,11 +3599,6 @@ fn open_main_window(app_state: KagiApp, cx: &mut App) {
                 app.ensure_worktree_inspections(cx);
             }
         });
-
-        // ADR-0102: drain the single-instance accept channel on the UI
-        // thread (opens forwarded repos as tabs + raises the window). No-op
-        // when no listener was bound (bind failed, or headless test mode).
-        kagi.update(cx, |app, cx| app.arm_single_instance_listener(cx));
 
         cx.new(|cx| gpui_component::Root::new(kagi, window, cx).font(theme::ui_font()))
     })
@@ -3634,17 +3715,12 @@ impl KagiApp {
         None
     }
 
-    // `cx` is only used by the Linux/FreeBSD branch (titlebar + menu dropdown);
-    // the other-target branch just returns `content`.
-    #[cfg_attr(
-        not(any(target_os = "linux", target_os = "freebsd")),
-        allow(unused_variables)
-    )]
     fn platform_window_shell(
         &mut self,
         content: gpui::AnyElement,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
+        let content = self.repository_drop_target(content, cx);
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             div()

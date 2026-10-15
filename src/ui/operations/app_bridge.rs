@@ -696,7 +696,7 @@ impl KagiApp {
     pub fn may_close_host(&self) -> bool {
         self.app_sessions.may_close_host() && self.home_github.cloning.is_none()
     }
-    pub(crate) fn hold_host_close(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn hold_host_operation(&mut self, cx: &mut Context<Self>) -> bool {
         if self.may_close_host() {
             return false;
         }

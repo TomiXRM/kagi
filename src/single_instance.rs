@@ -7,9 +7,9 @@
 //! instance is running just focuses the existing window.
 //!
 //! This lives at the **shell** level (`src/main.rs` + this module), outside the
-//! `src/ui/` git2 invariant.  The only UI-side code is the small drain loop
-//! (`KagiApp::arm_single_instance_listener`), which calls `open_repository`
-//! (Backend-backed, no git2 in UI) and `cx.activate(true)`.
+//! `src/ui/` git2 invariant. The application-owned drain in `src/ui/mod.rs`
+//! handles CLI requests and Finder/Dock file URLs via `open_repository`, even
+//! after the last repository window has been closed.
 //!
 //! Unix (macOS/Linux) only.  On other platforms the functions are no-ops so the
 //! crate still compiles; Kagi simply launches a second window there as before.
@@ -22,10 +22,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::{Mutex, OnceLock};
 
-/// Stash for the accept-thread receiver, handed off from `main()` (shell) to the
-/// UI-side drain loop (`KagiApp::arm_single_instance_listener`).  The drain loop
-/// `take()`s it exactly once; threading it through every `KagiApp` constructor
-/// would touch dozens of call sites for no benefit (ADR-0102).
+/// Stash for the accept-thread receiver, handed off from `main()` (shell) to
+/// the application-owned UI drain. The receiver is taken once at application
+/// startup, never by a repository entity whose window may be closed.
 static PENDING_RX: OnceLock<Mutex<Option<Receiver<Option<PathBuf>>>>> = OnceLock::new();
 
 /// Store the accept-thread receiver for the UI drain loop to pick up.
@@ -42,6 +41,60 @@ pub fn take_receiver() -> Option<Receiver<Option<PathBuf>>> {
         .get()
         .and_then(|m| m.lock().ok())
         .and_then(|mut slot| slot.take())
+}
+
+/// Queue native requests without requiring a window or an initialized UI.
+pub fn enqueue_open_urls(urls: Vec<String>, tx: &std::sync::mpsc::Sender<PathBuf>) {
+    for url in urls {
+        if let Some(path) = file_url_path(&url) {
+            let _ = tx.send(path);
+        }
+    }
+}
+
+/// Decode a local file URL delivered by GPUI's public `on_open_urls` API.
+/// Non-file schemes and remote authorities are not repository-open requests.
+/// Directory validation and failure presentation remain with the existing UI
+/// external-path opener, rather than discovering a repository from a file.
+pub fn file_url_path(url: &str) -> Option<PathBuf> {
+    let (scheme, rest) = url.split_once(':')?;
+    if !scheme.eq_ignore_ascii_case("file") {
+        return None;
+    }
+    let path = if let Some(rest) = rest.strip_prefix("//") {
+        let slash = rest.find('/')?;
+        let (host, path) = rest.split_at(slash);
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        path
+    } else {
+        rest
+    };
+    if !path.starts_with('/') || path.contains(['?', '#']) {
+        return None;
+    }
+    // Reject malformed escapes instead of opening a different literal path.
+    let mut bytes = path.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte == b'%' && !(bytes.next()?.is_ascii_hexdigit() && bytes.next()?.is_ascii_hexdigit())
+        {
+            return None;
+        }
+    }
+    let decoded = percent_encoding::percent_decode_str(path).collect::<Vec<_>>();
+    if decoded.contains(&0) {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Some(std::ffi::OsString::from_vec(decoded).into())
+    }
+    #[cfg(not(unix))]
+    {
+        Some(String::from_utf8(decoded).ok()?.into())
+    }
 }
 
 #[cfg(unix)]
@@ -153,3 +206,81 @@ pub use imp::{bind_listener, spawn_accept_thread, try_forward};
 #[cfg(not(unix))]
 #[allow(unused_imports)]
 pub use imp::{bind_listener, try_forward};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_urls_decode_local_paths_without_form_semantics() {
+        assert_eq!(
+            file_url_path("file:///tmp/Repo%20%23%25%3F+%E6%97%A5%E6%9C%AC"),
+            Some(PathBuf::from("/tmp/Repo #%?+日本"))
+        );
+        assert_eq!(
+            file_url_path("FILE://LOCALHOST/tmp/repo/"),
+            Some(PathBuf::from("/tmp/repo/"))
+        );
+        assert_eq!(file_url_path("file:/tmp/repo"), Some("/tmp/repo".into()));
+    }
+
+    #[test]
+    fn file_urls_reject_nonlocal_or_ambiguous_inputs() {
+        for url in [
+            "https://example.com/repo",
+            "file://example.com/tmp/repo",
+            "file://user@localhost/tmp/repo",
+            "file:relative",
+            "file:///tmp/repo?query",
+            "file:///tmp/repo#fragment",
+            "file:///tmp/%",
+            "file:///tmp/%2",
+            "file:///tmp/%GG",
+            "file:///tmp/%00",
+        ] {
+            assert_eq!(file_url_path(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn native_urls_wait_for_startup_and_survive_receiver_handoff() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        enqueue_open_urls(
+            vec![
+                "file:///tmp/first%20repo".into(),
+                "https://example.com/ignored".into(),
+                "file://localhost/tmp/second".into(),
+            ],
+            &tx,
+        );
+        // Native delivery may precede application.run / window construction.
+        let application_receiver = rx;
+        assert_eq!(
+            application_receiver.try_recv().unwrap(),
+            PathBuf::from("/tmp/first repo")
+        );
+        assert_eq!(
+            application_receiver.try_recv().unwrap(),
+            PathBuf::from("/tmp/second")
+        );
+        enqueue_open_urls(vec!["file:///tmp/after-close".into()], &tx);
+        assert_eq!(
+            application_receiver.try_recv().unwrap(),
+            PathBuf::from("/tmp/after-close")
+        );
+        assert!(application_receiver.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_urls_preserve_non_utf8_unix_filenames() {
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            file_url_path("file:///tmp/%FF")
+                .unwrap()
+                .as_os_str()
+                .as_bytes(),
+            b"/tmp/\xff"
+        );
+    }
+}

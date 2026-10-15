@@ -553,13 +553,13 @@ pub struct DiscardModal {
 // Modal renderer functions (render_plan_modal, render_pull_modal, etc.)
 // have been extracted to modal_renderers.rs (ADR-0114).
 
-/// Pending action to run once the user confirms discarding a dirty Editor
-/// Workspace buffer (T-WS-EDITOR-002 §5, unsaved-changes guard).
+/// Pending destructive action after the Editor's unsaved changes are resolved.
 ///
 /// Rule (round 3): the guard fires ONLY on paths that destroy the editor's
 /// owner — replacing an edit with disk text (Reload), closing a dirty tab
-/// (CloseTab), dropping the whole workspace (Close), and closing the tab that
-/// owns it (CloseRepoTab). Navigation that keeps the owner alive — switching
+/// (CloseTab), dropping the whole workspace (Close), closing its repository tab
+/// (CloseRepoTab), or destroying the host (Quit / CloseWindow).
+/// Navigation that keeps the owner alive — switching
 /// tree source or FILE, switching repo, Connect Remote, or opening a worktree
 /// — never prompts: the session retains its buffer (ADR-0197).
 #[derive(Clone, Debug)]
@@ -575,6 +575,9 @@ pub enum EditorPendingIntent {
     /// #482 stage 1: the tab to close is named by its session, so a guard the
     /// user resolves later can never close a tab reopened on the same path.
     CloseRepoTab(crate::app::SessionId),
+    /// Close the host only after resolving every retained editor buffer.
+    Quit,
+    CloseWindow(gpui::AnyWindowHandle),
     /// Finish the frozen read-only PR Compare after discarding its original
     /// editor. No re-read or navigation occurs until this guard is approved.
     PrPeek {
@@ -586,13 +589,13 @@ pub enum EditorPendingIntent {
     },
 }
 
-/// State for the Editor Workspace "unsaved changes" confirmation
-/// (T-WS-EDITOR-002 §5). Not a Git write — no `OperationPlan` here, just a
-/// discard-the-buffer-or-cancel gate before switching file/source or closing
-/// the workspace while its buffer is dirty.
+/// State for the Editor's unsaved-changes confirmation. Host close adds Save All
+/// through ordinary editor writes; Cancel retires the pending destructive intent.
 #[derive(Clone, Debug)]
 pub struct EditorDirtyGuardModal {
     pub intent: EditorPendingIntent,
+    /// The single save currently admitted by Save All; Cancel stops continuation.
+    pub saving: Option<gpui::EntityId>,
 }
 
 // ──────────────────────────────────────────────────────────────

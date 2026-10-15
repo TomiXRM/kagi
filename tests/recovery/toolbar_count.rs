@@ -282,18 +282,18 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
             frame(cx, window);
             let baseline = [inspect(window, "tb-pull"), inspect(window, "tb-push")];
             assert!((theme::zoom() - 1.).abs() < 0.001);
-            // The public zoom action caps at 1670 permille (displayed 167%),
-            // approximately the migrated 1667-permille maximum used by the issue.
+            // Seven public 10% steps reach 170%; legacy 1667-permille
+            // settings remain covered by the direct zoom matrix above.
             for _ in 0..7 {
                 cx.dispatch_action(window, ZoomIn);
                 frame(cx, window);
             }
-            assert!((theme::zoom() - 1.667).abs() < 0.004);
+            assert!((theme::zoom() - 1.7).abs() < 0.001);
             for (index, button) in ["tb-pull", "tb-push"].into_iter().enumerate() {
                 let measured = inspect(window, button);
-                ratio(measured.0, baseline[index].0, 1.667, "badge height");
-                ratio(measured.1, baseline[index].1, 1.667, "badge font");
-                shaped_width_scale(measured.2, baseline[index].2, 1.667);
+                ratio(measured.0, baseline[index].0, 1.7, "badge height");
+                ratio(measured.1, baseline[index].1, 1.7, "badge font");
+                shaped_width_scale(measured.2, baseline[index].2, 1.7);
                 assert!(
                     baseline[index].1 >= 11.,
                     "100% count font must be at least 11 logical points; got {}",
@@ -349,5 +349,5 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
         "zoom must not write the repository"
     );
     unmount(cx, app, window);
-    eprintln!("[gui-e2e] PASS toolbar_count_scale: Pull/Push 1/99/99+ at 100%/167%/70%, actual font and shaped digit bounds, pill/row/mask containment");
+    eprintln!("[gui-e2e] PASS toolbar_count_scale: Pull/Push 1/99/99+ at 100%/167%/170%/70%, actual font and shaped digit bounds, pill/row/mask containment");
 }

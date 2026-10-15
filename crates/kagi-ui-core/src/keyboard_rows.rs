@@ -45,6 +45,7 @@ pub enum RowScroll {
     /// A native list with an unfocusable note after its last focusable entry.
     ListWithTail(ListState, usize),
     Uniform(UniformListScrollHandle, std::ops::Range<usize>),
+    Owned(crate::variable_list::VariableListState),
 }
 
 /// Reveal a lazy-list row, anchoring an unmeasured destination before layout.
@@ -66,6 +67,7 @@ impl RowScroll {
             // The first item it drew is the one at the top (the handle's own
             // `logical_scroll_top_index` is test-only in gpui).
             Self::Uniform(_, drawn) => drawn.start,
+            Self::Owned(state) => state.logical_scroll_top().item_ix,
         }
     }
 
@@ -74,6 +76,7 @@ impl RowScroll {
         match self {
             Self::List(state) | Self::ListWithTail(state, _) => state.bounds_for_item(ix).is_some(),
             Self::Uniform(_, drawn) => drawn.contains(&ix),
+            Self::Owned(state) => state.bounds_for_item(ix).is_some(),
         }
     }
 
@@ -87,6 +90,7 @@ impl RowScroll {
             Self::ListWithTail(state, _) => reveal_list_row(state, ix),
             // Not strict: it scrolls only when the item is out of view.
             Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
+            Self::Owned(state) => state.scroll_to_reveal_item(ix),
         }
     }
 
@@ -106,6 +110,17 @@ impl RowScroll {
                 )
             }
             Self::Uniform(_, drawn) => uniform_page(keys, first, drawn),
+            Self::Owned(state) => {
+                let viewport = state.viewport_bounds();
+                page(
+                    keys.iter()
+                        .skip(first)
+                        .filter_map(|(_, ix)| state.bounds_for_item(*ix))
+                        .take_while(|bounds| bounds.top() < viewport.bottom())
+                        .filter(|bounds| bounds.bottom() > viewport.top())
+                        .count(),
+                )
+            }
         }
     }
 }

@@ -20,11 +20,11 @@ actions!(kagi_coauthor_menu, [CoauthorDismiss]);
 
 const MENU_CONTEXT: &str = "KagiCoauthorMenu";
 
-/// Like context menus, Tab closes this popup instead of visiting controls
-/// behind it. A scoped action outranks Root's Tab binding, which runs before
-/// capture_key_down; Escape remains owned by the existing FrontLayer chain.
+/// Dismiss this child before a containing Popover or Root handles its keys.
+/// The same owner cleanup and trigger-focus restoration serve Escape and Tab.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("escape", CoauthorDismiss, Some(MENU_CONTEXT)),
         KeyBinding::new("tab", CoauthorDismiss, Some(MENU_CONTEXT)),
         KeyBinding::new("shift-tab", CoauthorDismiss, Some(MENU_CONTEXT)),
     ]);
@@ -75,8 +75,8 @@ impl CoauthorNavigation {
 }
 
 impl CommitPanelView {
-    /// FrontLayer still clears coauthor_menu. Reconcile after that existing
-    /// close path, when a Window is available, rather than intercepting Escape.
+    /// Reconcile both the scoped dismissal and the FrontLayer close path,
+    /// restoring the trigger only when focus still belongs to this menu.
     pub(crate) fn reconcile_coauthor_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(candidates) = self.coauthor_menu.as_deref() else {
             if self.coauthor_navigation.take().is_some_and(|navigation| {

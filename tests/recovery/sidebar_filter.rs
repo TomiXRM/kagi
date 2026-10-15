@@ -10,6 +10,7 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "filter-target"]);
     let (app, window) = mount(cx, fixture.path());
+    crate::native_ax::activate(cx);
     paint(cx, window);
     let input = cx
         .read(|cx| app.read(cx).sidebar.filter.clone())
@@ -29,10 +30,11 @@ pub fn scenario_sidebar_filter_tab_entry(cx: &mut VisualTestAppContext) {
     }
     assert!(reached, "Tab reaches the initial sidebar filter");
     paint(cx, window);
+    let focused = crate::native_ax::focused(cx, window);
+    assert_eq!(focused["aria"]["role"], "TextInput");
     assert_eq!(
-        cx.read(|cx| input.read(cx).rendered_aria_label()),
-        Some(kagi::ui::i18n::Msg::A11ySidebarFilter.t().into()),
-        "the focused TextInput itself has a name, not merely its Group ancestor"
+        focused["aria"]["label"],
+        kagi::ui::i18n::Msg::A11ySidebarFilter.t()
     );
     keys(cx, window, "f i l t e r - t a r g e t");
     paint(cx, window);
@@ -120,13 +122,11 @@ fn assert_live_language(
                 input.read(cx).focus_handle(cx).is_focused(window),
                 "language changes preserve focus on the named TextInput"
             );
-            assert_eq!(
-                input.read(cx).rendered_aria_label(),
-                Some(Msg::A11ySidebarFilter.t().into()),
-                "the focused Input's own name follows EN/JA on every render"
-            );
         })
         .unwrap();
+        let focused = crate::native_ax::focused(cx, window);
+        assert_eq!(focused["aria"]["role"], "TextInput");
+        assert_eq!(focused["aria"]["label"], Msg::A11ySidebarFilter.t());
         assert_eq!(
             kagi::ui::sidebar::filter_placeholder_for_e2e(),
             Some(Msg::HomeGithubFilter.t()),

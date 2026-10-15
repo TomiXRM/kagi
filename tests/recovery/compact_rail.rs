@@ -1,4 +1,6 @@
 //! #1491–#1494/#1502: native keys, AccessKit nodes and real scroll owners.
+#[path = "compact_rail/escape.rs"]
+pub mod escape;
 #[path = "compact_rail/scroll.rs"]
 pub mod scroll;
 

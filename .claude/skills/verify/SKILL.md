@@ -56,6 +56,30 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1479-S4 use
+`KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
+with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter
+with `native_ax::activate`, then refresh and draw before inspecting its tree.
+Naming assertions inspect `nodes[gpui_focus].aria.role/label`, not wrapper Groups
+or the fork's rendered-Input recorder. The sidebar Clear tests cover localized
+AppKit Press and pointer activation, empty absence and retained field focus.
+IME coverage calls the public marked-text handler in Sidebar, Commit body,
+Issue body and independent Settings, then dispatches Escape. This is native
+action-routing evidence, not physical macOS input-method or VoiceOver evidence.
+The old pin's Input action consumes IME Escape, but Kagi's negation-only global
+binding intercepted Commit/Issue body keys first. Preserve the regression's
+physical simulated Escape, rather than replacing it with direct action dispatch.
+The same scenario opens the real toolbar PopupMenu and checks one Escape closes
+only that menu (#1554), plus button-focused editing-action isolation. Both
+TextInput and MultilineTextInput are real AX input roles; unrelated root focus
+stops need not have a semantic AX node.
+The `compact_` gate includes `compact_layout_state` and
+`compact_layout_state_tall`: Escape in the co-author ListBox must retire its
+owner and restore `cp-coauthor`, not dismiss the containing composer.
+`compact_rail_nested_escape`, `compact_pr_menu_escape` and
+`compact_group_reveal_escape` check child-menu/reveal dismissal before the
+navigator, preserving opener focus. The complete Popover ancestry audit is in
+ADR-0014's #1479-S4 amendment.
 For #1479-S1 use `KAGI_GUI_E2E_ONLY='terminal_,status_bar_,relative_time_ja,cleanup_local_date,oplog_row_typography,issues_row_secondary_text,finder_scale_rest,home_heading,inspector_scale'`
 with KEEP_GOING. `terminal_font_fallback` checks real terminal configuration,
 font/zoom updates, session changes and restart, with Regular/Bold Japanese face

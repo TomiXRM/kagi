@@ -1684,6 +1684,10 @@ mod macos {
                 Box::new(crate::input_names::scenario_input_names_inventory),
             ),
             (
+                "input_ime_escape_boundaries",
+                Box::new(crate::input_names::scenario_input_ime_escape_boundaries),
+            ),
+            (
                 "branch_rename_neutral_state",
                 Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),
@@ -3485,6 +3489,9 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             ("compact_rail_cmd_f", Box::new(crate::compact_rail::scenario_compact_rail_cmd_f)),
+            ("compact_rail_nested_escape", Box::new(crate::compact_rail::escape::scenario_compact_rail_nested_escape)),
+            ("compact_pr_menu_escape", Box::new(crate::compact_rail::escape::scenario_compact_pr_menu_escape)),
+            ("compact_group_reveal_escape", Box::new(crate::compact_rail::escape::scenario_compact_group_reveal_escape)),
             ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),

@@ -374,6 +374,7 @@ pub struct TabUiState {
     pub pr_mode: Option<super::pr_mode::PrModeState>,
     /// Right-click menu on one of this tab's PR rows: `Some((pr, cursor))`.
     pub pr_menu: Option<(kagi_domain::github::PullRequest, gpui::Point<gpui::Pixels>)>,
+    pub(super) pr_menu_keys: super::menu_keys::MenuKeys,
     pub(super) filter_controls: super::list_filter_strip::FilterControls,
     /// Smart Commit generation status belongs to the session whose panel
     /// initiated it; background completion never writes through the active tab.
@@ -545,6 +546,7 @@ impl Default for TabUiState {
             branch_cleanup_open: false,
             pr_mode: None,
             pr_menu: None,
+            pr_menu_keys: Default::default(),
             filter_controls: Default::default(),
             view_publish_gen: 0,
             cache_epoch: 0,

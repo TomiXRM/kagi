@@ -115,7 +115,7 @@ impl KagiApp {
             |_| None,
             move |done| match done {
                 Ok(_) => RunPresentation::status(FooterStatus::Success(
-                    i18n::op::user_text::operations::reset(&target.short()).into(),
+                    i18n::op::user_text::operations::reset(target.short()).into(),
                 )),
                 Err(_) => RunPresentation::none(),
             },

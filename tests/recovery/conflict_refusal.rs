@@ -172,7 +172,7 @@ fn assert_refusal(cx: &VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiAp
         let kagi::ui::FooterStatus::Failed(message) = &state.status_footer else {
             panic!("refusal must have a failed footer");
         };
-        for shown in [notice.as_str(), toast.message.as_ref(), message.as_ref()] {
+        for shown in [notice, toast.message.as_ref(), message.as_ref()] {
             assert!(!shown.is_empty());
             for internal in [
                 "conflict-save:",

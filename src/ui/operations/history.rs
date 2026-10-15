@@ -316,8 +316,8 @@ impl KagiApp {
                 self.status_footer = FooterStatus::Success(
                     i18n::op::user_text::operations::moved(
                         &op_name,
-                        &outcome.from.short(),
-                        &outcome.to.short(),
+                        outcome.from.short(),
+                        outcome.to.short(),
                     )
                     .into(),
                 );
@@ -511,8 +511,8 @@ impl KagiApp {
                     let presentation = RunPresentation::status(FooterStatus::Success(
                         i18n::op::user_text::operations::moved(
                             "amend",
-                            &outcome.old.short(),
-                            &outcome.new.short(),
+                            outcome.old.short(),
+                            outcome.new.short(),
                         )
                         .into(),
                     ))

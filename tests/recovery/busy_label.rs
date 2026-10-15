@@ -258,7 +258,7 @@ pub fn scenario_pr_merge_holds_the_write_lease(cx: &mut VisualTestAppContext) {
         app.write_busy_op = Some("pr-merge");
     });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while cx.read(|cx| {
+    while cx.read(|_| {
         !kagi_git::oplog::read_oplog_tail_for_repo(&repo, 100)
             .iter()
             .any(|entry| entry.op == "pr-merge")

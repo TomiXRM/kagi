@@ -218,6 +218,20 @@ without restoring any row action or accessibility node. Frozen-clock native
 coverage right-clicks an unobscured closing ghost in both tree sources and
 retains ordinary file, directory and genuine blank-space menu targets.
 
+Retained Editor motion is retired at the actual resolved workspace visibility
+edge, before root rendering can return early for Home or the conflict body.
+The root shares its existing center resolution with this lifetime hook; it does
+not duplicate route policy or infer visibility from the presence of an entity.
+One cached `(SessionId, CenterPane)` is presentation-only: unchanged frames do
+no owner scan, entity clone/update or allocation. A newly hidden Editor is
+settled once through its existing API, using an optional owner lookup so closing
+the last tab is safe. PRs, Issues, File History, Analyze, branch cleanup, loading,
+Home and conflict replacement all reach that boundary. Tab-entry retirement
+remains, and the still-mounted Editor's tree-only hide already samples motion
+instantly through `show_tree`. Frozen native coverage returns from PRs/Issues
+at the same clock tick during selection and collapse, checks first-frame settled
+presentation in both sources, and verifies ordinary new motion after return.
+
 ## Graph surface amendment (#1617)
 
 The dense Graph retains its existing stripes, lane tints, fixed row height and

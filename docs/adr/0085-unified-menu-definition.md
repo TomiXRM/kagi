@@ -231,9 +231,11 @@ repository actions only, with no separators; their global dispatch remains
 available without an active window and creates a repository host when needed.
 The target is the active repository window or the last main host, preserved
 independently of Settings' menu ownership, with native ordering as a fallback.
-After a successful open, activate the repository window and application,
-including newly created hosts. Hidden native tests check repository routing and
-the activation request; actual OS foreground behavior remains Tier B coverage.
+Activate the repository window and application before attempting the open,
+including newly created hosts, so missing repositories' existing error feedback
+is also brought forward. Hidden native tests check repository routing, rendered
+failure notices and activation requests; actual OS foreground behavior remains
+Tier B coverage.
 
 
 Edit > Find exposes a Kagi action only when the focused target can find: its

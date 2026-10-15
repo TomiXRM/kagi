@@ -476,44 +476,56 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         second.path().canonicalize().unwrap().to_string_lossy()
     );
     unmount(cx, app, win);
-    // Unlike VisualTestAppContext::update, AsyncApp::update flushes deferred
-    // effects even when no window exists, matching a native menu event.
-    cx.read(|cx| cx.to_async()).update(|cx| {
-        assert!(cx.windows().is_empty(), "last repository window is closed");
-        assert!(
-            cx.is_action_available(action.as_ref()),
-            "Dock recent remains available without windows"
-        );
-        cx.dispatch_action(action.as_ref());
-    });
-    cx.run_until_parked();
-    let reopened = cx.read(|cx| {
-        let windows = cx.windows();
+    for deleted in [false, true] {
+        let action = if deleted {
+            deleted_recent_action()
+        } else {
+            action.boxed_clone()
+        };
+        // Unlike VisualTestAppContext::update, AsyncApp::update flushes deferred
+        // effects even when no window exists, matching a native menu event.
+        cx.read(|cx| cx.to_async()).update(|cx| {
+            assert!(cx.windows().is_empty(), "last repository window is closed");
+            assert!(
+                cx.is_action_available(action.as_ref()),
+                "Dock recent remains available without windows"
+            );
+            cx.dispatch_action(action.as_ref());
+        });
+        cx.run_until_parked();
+        let reopened = cx.read(|cx| {
+            let windows = cx.windows();
+            assert_eq!(
+                windows.len(),
+                1,
+                "Dock recent creates one repository window"
+            );
+            windows[0]
+        });
+        let host = cx
+            .update_window(reopened, |_, window, cx| {
+                let root = window.root::<gpui_component::Root>().flatten().unwrap();
+                root.read(cx).view().clone().downcast::<KagiApp>().unwrap()
+            })
+            .unwrap();
+        draw(cx, reopened);
+        if deleted {
+            assert_recent_open_error(cx, &host, reopened);
+            assert!(cx.read(|cx| host.read(cx).tabs.is_empty()));
+        } else {
+            assert_eq!(
+                cx.read(|cx| host.read(cx).repo_path.clone()),
+                Some(second.path().canonicalize().unwrap())
+            );
+            assert_eq!(cx.read(|cx| host.read(cx).tabs.len()), 1);
+        }
         assert_eq!(
-            windows.len(),
-            1,
-            "Dock recent creates one repository window"
+            cx.read(window_menu::recent_activation_target),
+            Some(reopened),
+            "Dock recent requests activation of its new repository host"
         );
-        windows[0]
-    });
-    let host = cx
-        .update_window(reopened, |_, window, cx| {
-            let root = window.root::<gpui_component::Root>().flatten().unwrap();
-            root.read(cx).view().clone().downcast::<KagiApp>().unwrap()
-        })
-        .unwrap();
-    draw(cx, reopened);
-    assert_eq!(
-        cx.read(|cx| host.read(cx).repo_path.clone()),
-        Some(second.path().canonicalize().unwrap())
-    );
-    assert_eq!(cx.read(|cx| host.read(cx).tabs.len()), 1);
-    assert_eq!(
-        cx.read(window_menu::recent_activation_target),
-        Some(reopened),
-        "Dock recent requests activation of its new repository host"
-    );
-    unmount(cx, host, reopened);
+        unmount(cx, host, reopened);
+    }
 }
 
 fn check_recent_settings_activation(
@@ -541,6 +553,19 @@ fn check_recent_settings_activation(
     let MenuItem::Action { action, .. } = &dock[0] else {
         panic!("recent action")
     };
+    let deleted = deleted_recent_action();
+    cx.update_window(settings, |_, window, cx| {
+        window.dispatch_action(deleted, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, other_win);
+    assert_recent_open_error(cx, &other_app, other_win);
+    assert_eq!(
+        cx.read(|cx| other_app.read(cx).tabs.len()),
+        1,
+        "failed open creates no tab"
+    );
     cx.update_window(settings, |_, window, cx| {
         window.dispatch_action(action.boxed_clone(), cx)
     })
@@ -563,6 +588,42 @@ fn check_recent_settings_activation(
     unmount(cx, other_app, other_win);
     app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
     draw(cx, win);
+}
+
+fn deleted_recent_action() -> Box<dyn gpui::Action> {
+    let fixture = build_fixture();
+    kagi::ui::tabs::record_recent_repo(&fixture.path().canonicalize().unwrap());
+    let items = commands::dock_menu_items();
+    let MenuItem::Action { action, .. } = &items[0] else {
+        panic!("recent repository")
+    };
+    let action = action.boxed_clone();
+    fixture.close().unwrap();
+    action
+}
+
+fn assert_recent_open_error(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+) {
+    let message = cx.read(|cx| {
+        let app = app.read(cx);
+        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().expect("open error toast");
+        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+        assert!(matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text) if text == &toast.message));
+        toast.message.clone()
+    });
+    let status = kagi::ui::toast_stack::status_for_e2e().expect("rendered failure notice");
+    assert!(status
+        .label
+        .as_ref()
+        .is_some_and(|label| label.contains(message.as_ref())));
+    assert_eq!(
+        cx.read(window_menu::recent_activation_target),
+        Some(win),
+        "failed Open Recent raises the host containing its error"
+    );
 }
 
 fn check_window_owners(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {

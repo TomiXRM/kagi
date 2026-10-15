@@ -1088,28 +1088,25 @@ pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
                 .map(|host| (handle, host))
         });
     if let Some((handle, host)) = host {
-        if host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx)) {
-            let _ = handle.update(cx, |_, window, cx| {
-                super::window_menu::activate_recent_repository(window, cx);
-            });
-        }
+        let _ = handle.update(cx, |_, window, cx| {
+            super::window_menu::activate_recent_repository(window, cx);
+        });
+        host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
         return;
     }
     super::open_main_window(KagiApp::with_error(""), cx);
     for handle in cx.windows() {
-        let opened = handle
+        let handled = handle
             .update(cx, |_, window, cx| {
                 let Some(host) = super::repository_window(window, cx) else {
                     return false;
                 };
-                let opened = host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
-                if opened {
-                    super::window_menu::activate_recent_repository(window, cx);
-                }
-                opened
+                super::window_menu::activate_recent_repository(window, cx);
+                host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
+                true
             })
             .unwrap_or(false);
-        if opened {
+        if handled {
             break;
         }
     }

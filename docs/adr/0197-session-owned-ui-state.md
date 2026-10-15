@@ -282,3 +282,49 @@ discarding any remaining buffers. An already admitted write may finish after
 Cancel but cannot close the host. Discard writes nothing and resumes the original
 exit only if the lease/clone hold still permits it. Existing repository-tab
 close and editor-close confirmations retain their current behavior.
+
+### Host-close follow-up (#1614)
+
+An installed update's relaunch is a host-destruction intent, not permission to
+exit immediately. It uses the same retained-buffer confirmation and write/clone
+hold as Quit. Save All and Discard resume that frozen relaunch only after the
+hold permits it; Cancel retires the current relaunch intent without replacing
+unsaved text, but retains the installed replacement and restart-pending state.
+Reopening Update shows the installed status and Restart action, with Skip
+unavailable; it never installs that update again. Settings are flushed before
+spawning the replacement process and exiting.
+
+While the confirmation is open, Quit upgrades Close Window to Quit without
+replacing the modal or interrupting its admitted save. Save All blocked by a
+running operation reports a localized explanation and leaves its controls usable
+for retry. An abandoned save clears the confirmation's busy marker at the
+host-owned terminal callback, including when its editor has disappeared, and
+reports a localized failure while retaining the existing Unknown receipt and
+recovery requirement. Discard blocked by a new operation retains the intent
+rather than silently dismissing it.
+
+A clean editor waiting for restart has a dedicated Restart / Cancel confirmation:
+no zero-unsaved-file count, Save All or Discard. Running work asks the user to
+wait for completion and then explicitly choose Restart again. An Unknown retained
+lease instead asks the user to Cancel and review recovery in Operation Log;
+waiting cannot resolve that recovery requirement.
+The distinction follows the lease that actually blocks the host: a non-running
+retained lease requires recovery; an unrelated lease-free recovery reminder does
+not turn a running write or clone into a recovery wait.
+
+**Manual Restart retry is intentional.** Operation completion and recovery never
+automatically restart the app. Cancel keeps the installed update pending, and the
+user decides when to retry Restart after completing work or recovery, so returning
+to editing cannot trigger a surprise restart.
+
+Installer completion is an asynchronous producer under #718 modal arbitration.
+It clears only its own Update presentation, then offers a restart guard only to
+an empty modal slot. An existing plan, editor form or dirty-buffer confirmation
+keeps its data and intent; the installed update remains pending for the user's
+later explicit Restart action. Even a clean host must not exit behind an
+unrelated active modal.
+
+Dock Quit, logout and shutdown require a public GPUI termination-veto/deferral
+hook; the API audit and upstream migration/removal condition are recorded in
+`docs/rearch/upstream-migration-1479.md` and `docs/decisions.md`. No dependency
+fork or private macOS delegate interception is permitted for this gap.

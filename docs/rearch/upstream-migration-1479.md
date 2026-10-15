@@ -55,6 +55,26 @@ KAGI_LOG_DIR="$(mktemp -d)" cargo test -j 8 --workspace
 
 - Upstream candidate (#1607, unpublished): expose public `SearchNext` / `SearchPrevious` actions (and selection-to-query support) in official gpui-kit. The pinned `7a116a2` exports only `input::Search`; its `SearchPanel`, navigation methods and owning field are private. Until public actions exist, Kagi offers working Find… only, not disabled placeholders for Next/Previous/Use Selection, and does not change dependency pins.
 
+<a id="native-termination-u2"></a>
+
+### U2 candidate — macOS native application termination admission（#1614）
+
+2026-10-15 の **read-only source audit**。build / test / native OS termination は実行していない。現在の Kagi pin と crates.io の公開最新版（docs.rs `latest` の表示は `gpui 0.2.2` / `gpui-pre 0.3.9`）には、アプリ利用者が macOS `applicationShouldTerminate:` を拒否・非同期保留する公開 API は見つからない。window の `on_should_close` は application termination の契約ではない。
+
+| 調査対象 / version | 一次資料と判定 |
+|---|---|
+| 現行 lock: `gpui 0.2.2` / `TomiXRM/zed@caf5007618c309a8ea66002d44a9c9ab629a2d35` | [`crates/gpui/src/app.rs:2177–2184`](https://github.com/TomiXRM/zed/blob/caf5007618c309a8ea66002d44a9c9ab629a2d35/crates/gpui/src/app.rs#L2177-L2184) は `on_app_quit` で cancel 不可を明記。`SHUTDOWN_TIMEOUT` は 200ms。[`crates/gpui_macos/src/platform.rs`](https://github.com/TomiXRM/zed/blob/caf5007618c309a8ea66002d44a9c9ab629a2d35/crates/gpui_macos/src/platform.rs#L95-L98) は `applicationWillTerminate:` を登録し、`will_terminate` が `on_quit` を通知する。should-terminate / deferred reply hook はない。 |
+| Zed 公式 crates.io `gpui 0.2.2` | [`src/app.rs:1769–1777`](https://docs.rs/crate/gpui/0.2.2/source/src/app.rs#1771) の同 API も cancel 不可、cleanup timeout は 100ms。[`src/platform/mac/platform.rs`](https://docs.rs/crate/gpui/0.2.2/source/src/platform/mac/platform.rs) の delegate は `applicationWillTerminate:` / `will_terminate`、`on_quit: FnMut()`。`applicationShouldTerminate:` / later reply はない。 |
+| official Kit 採用 snapshot: crates.io `gpui-pre 0.3.9` + `gpui-pre-macos 0.3.9`（Zed 自身の公開 package ではない） | [`src/app.rs:2714–2721`](https://docs.rs/crate/gpui-pre/0.3.9/source/src/app.rs#2716) も cancel 不可、native timeout は 200ms。[`src/platform.rs:457`](https://docs.rs/crate/gpui-pre/0.3.9/source/src/platform.rs#457) の `on_quit: FnMut() -> bool` は利用者向け veto ではない。`App::new_app` 内の callback は AppCell borrow 成否を返すだけ（`src/app.rs:1087–1105`）。[`gpui-pre-macos/src/platform.rs:103–106,1381–1388`](https://docs.rs/crate/gpui-pre-macos/0.3.9/source/src/platform.rs#1381) は引き続き `applicationWillTerminate:` で通知し bool を使わない。 |
+
+| Upstream candidate | 要件 / owner / removal condition |
+|---|---|
+| **U2: application termination veto/deferral（#1614 の唯一の残項目）** | **Gap:** Dock Quit / logout / shutdown の通常の AppKit termination request を Kagi の共有 host-close admission / Save All・Discard・Cancel に接続できない。終了後 cleanup future を確認ダイアログの代替にせず、window-close veto で防げるとも主張しない。**Owner:** repository owner が下記 English proposal を Zed GPUI upstream の PR/Discussion として公開し、その URL と採用 revision/API をここ・`docs/decisions.md` に記録する（現時点は未公開、リンク未取得）。**Removal:** official public API が native request を終了前に veto/defer でき、deferred reply を返せる版へ明示移行し、Kagi の既存共有 guard に接続して Dock Quit / logout / shutdown の Cancel・Save failure・busy hold・successful exit を隔離 native 環境で受け入れたときに gap と #1614 を閉じる。fork / dependency pin 変更 / Objective-C delegate 差替え shim は追加しない。U2 は #1479-S6 の既存 zero-patch cutover の新 prerequisite にはしない。 |
+
+**Unpublished owner proposal (English):** “Expose application termination admission before shutdown. On macOS, route `applicationShouldTerminate:` through a public application callback that can allow, cancel, or defer termination, and expose completion of a deferred request through `replyToApplicationShouldTerminate:`. Keep this distinct from non-cancellable `on_app_quit` cleanup. Kagi needs to run its existing aggregate unsaved-buffer guard, respect active write/clone admission, and cancel when saving fails or the user chooses Cancel, including Dock Quit and normal logout/shutdown requests. Please document repeated-request/reply lifetime and platform behavior; forced process termination is outside this guarantee.”
+
+Kagi が所有する menu/shortcut/Settings Quit・host/window close の共有 guard 修正とは分離する。**その実装の受入後も #1614 は U2 のみで open のまま**とし、上記 source audit を native runtime の再現・受入成功とは呼ばない。
+
 
 ## #1479-S0 — 方針と出自を固定する（最初に merge）
 

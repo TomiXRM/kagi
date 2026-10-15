@@ -563,7 +563,8 @@ pub fn scenario_editor_save_panic(cx: &mut VisualTestAppContext) {
                 .read(cx)
                 .toasts()
                 .iter()
-                .filter(|toast| toast.message.as_ref().contains("save task unwound"))
+                .filter(|toast| toast.message.as_ref()
+                    == kagi::ui::i18n::Msg::EditorWorkspaceSaveInterrupted.t())
                 .count(),
             1,
             "live editor panic must show one toast"
@@ -667,7 +668,8 @@ pub fn scenario_editor_save_panic_after_close(cx: &mut VisualTestAppContext) {
                 .read(cx)
                 .toasts()
                 .iter()
-                .filter(|toast| toast.message.as_ref().contains("save task unwound"))
+                .filter(|toast| toast.message.as_ref()
+                    == kagi::ui::i18n::Msg::EditorWorkspaceSaveInterrupted.t())
                 .count(),
             1,
             "closed editor panic must show exactly one toast"

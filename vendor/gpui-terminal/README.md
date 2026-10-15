@@ -59,6 +59,7 @@ let colors = ColorPalette::builder()
 let config = TerminalConfig {
     font_family: "Mononoki Nerd Font".into(),
     font_size: px(14.0),
+    font_fallbacks: None, // platform defaults, or Some(gpui::FontFallbacks)
     cols: 80,
     rows: 24,
     scrollback: 10000,
@@ -74,6 +75,12 @@ let config = TerminalConfig {
 - Generic paste handling uses the emulator's bracketed-paste mode and refuses
   unapproved plain multiline/control-byte payloads before writing PTY bytes.
   Kagi owns localized confirmation and session approval, not the emulator.
+- `TerminalConfig::font_fallbacks` optionally supplies shared explicit fallback
+  families for both cell measurement and normal/bold/italic glyph shaping.
+  The generic default remains `None` (platform fallback). Kagi supplies the
+  bundled UI fallback stack while preserving the selected monospace/Nerd primary.
+  Changing it through the existing `TerminalView::update_config` path takes
+  effect on the next paint, which remeasures cells before resizing the grid.
 - Frontend and transport changes are maintained here; this ownership decision
   does not replace `alacritty_terminal` or introduce a new emulator.
 - Existing `// kagi:` markers identify local modifications. Upstream changes

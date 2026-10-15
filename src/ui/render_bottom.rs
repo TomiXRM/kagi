@@ -29,6 +29,19 @@ pub(super) fn max_body_height(window: &Window, editor: bool) -> f32 {
 }
 
 impl KagiApp {
+    pub(super) fn bottom_panel_body_height(&self, window: &Window, editor: bool) -> f32 {
+        let preferred = if super::compact::for_window(window) {
+            self.compact.bottom_height.unwrap_or_else(|| {
+                f32::from(window.viewport_size().height) / (3. * theme::scaled(1.))
+                    - BOTTOM_PANEL_DIVIDER_H
+                    - BOTTOM_PANEL_TAB_H
+            })
+        } else {
+            self.bottom_panel_height
+        };
+        preferred.clamp(BOTTOM_PANEL_MIN_H, max_body_height(window, editor))
+    }
+
     #[cfg(feature = "gui-e2e")]
     pub fn bottom_tab_focused_for_e2e(&self, window: &Window) -> Option<usize> {
         self.bottom_tab_focus.focused(window)

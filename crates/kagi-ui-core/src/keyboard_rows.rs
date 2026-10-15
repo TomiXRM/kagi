@@ -36,9 +36,10 @@ pub(super) fn bind_keys(cx: &mut App) {
 pub type RowKeys = Rc<[(String, usize)]>;
 
 /// How a row list scrolls and what it drew last frame: a `gpui::list`'s
-/// [`ListState`], or a `uniform_list`'s handle with the range of items its
-/// processor was last asked for (#981) — a `uniform_list` keeps no bounds per
-/// item, but it draws exactly the items it asks for. Cheap to clone.
+/// [`ListState`], a `uniform_list`'s handle with the range of items its
+/// processor was last asked for (#981), or Kagi-owned variable-height geometry.
+/// A `uniform_list` keeps no per-item bounds, but draws exactly the items it
+/// asks for. Cheap to clone.
 #[derive(Clone)]
 pub enum RowScroll {
     List(ListState),
@@ -50,6 +51,7 @@ pub enum RowScroll {
         last_row: usize,
         tail: usize,
     },
+    Owned(crate::variable_list::VariableListState),
 }
 
 /// Reveal a lazy-list row, anchoring an unmeasured destination before layout.
@@ -71,6 +73,7 @@ impl RowScroll {
             // The first item it drew is the one at the top (the handle's own
             // `logical_scroll_top_index` is test-only in gpui).
             Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => drawn.start,
+            Self::Owned(state) => state.logical_scroll_top().item_ix,
         }
     }
 
@@ -79,6 +82,7 @@ impl RowScroll {
         match self {
             Self::List(state) => state.bounds_for_item(ix).is_some(),
             Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => drawn.contains(&ix),
+            Self::Owned(state) => state.bounds_for_item(ix).is_some(),
         }
     }
 
@@ -99,6 +103,7 @@ impl RowScroll {
                     ScrollStrategy::Top,
                 );
             }
+            Self::Owned(state) => state.scroll_to_reveal_item(ix),
         }
     }
 
@@ -119,6 +124,17 @@ impl RowScroll {
             }
             Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => {
                 uniform_page(keys, first, drawn)
+            }
+            Self::Owned(state) => {
+                let viewport = state.viewport_bounds();
+                page(
+                    keys.iter()
+                        .skip(first)
+                        .filter_map(|(_, ix)| state.bounds_for_item(*ix))
+                        .take_while(|bounds| bounds.top() < viewport.bottom())
+                        .filter(|bounds| bounds.bottom() > viewport.top())
+                        .count(),
+                )
             }
         }
     }

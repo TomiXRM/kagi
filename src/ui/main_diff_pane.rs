@@ -5,7 +5,7 @@
 //! - the [`MainDiffView`] itself (was `KagiApp.main_diff: Option<MainDiffView>`;
 //!   the field is now `Option<Entity<MainDiffPane>>`),
 //! - the diff-list scroll state (was `KagiApp.main_diff_scroll_handle` — the
-//!   `ListState` now lives and dies with the pane),
+//!   `VariableListState` now lives and dies with the pane),
 //! - the off-thread highlight swap-in: the pane is a
 //!   [`DiffHighlightHost`], so a result that arrives after the diff was
 //!   closed hits a dead weak handle, and one for rows the pane no longer
@@ -14,7 +14,7 @@
 //!   superseded by `TabUiState::main_diff_req` (#495).
 //!
 //! The File History / Editor Workspace *embedded* diff panes are untouched:
-//! they keep their own `MainDiffView` + `ListState` fields and render via
+//! they keep their own `MainDiffView` + `VariableListState` fields and render via
 //! `render_helpers::render_diff_list` directly, exactly as before.
 
 mod ownership;
@@ -22,7 +22,8 @@ mod preparation;
 
 use super::tab_ui_state_ops::PaneRevalidation;
 use gpui::SharedString;
-use gpui::{prelude::*, Context, Entity, ListState, WeakEntity, Window};
+use gpui::{prelude::*, Context, Entity, WeakEntity, Window};
+use kagi_ui_core::variable_list::VariableListState;
 
 use super::diff_view::highlight::DiffHighlightHost;
 use super::diff_view::{
@@ -38,8 +39,8 @@ use super::KagiApp;
 pub struct MainDiffPane {
     /// Source/projection changes reset; highlighting and ordinary paints do not.
     pub view: MainDiffView,
-    /// Native variable-height measurements for this diff only.
-    scroll: ListState,
+    /// Kagi-owned variable-height measurements for this diff only.
+    scroll: VariableListState,
     list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Parent handle for deferred header actions.
     app: WeakEntity<KagiApp>,
@@ -90,7 +91,7 @@ impl MainDiffPane {
         } else {
             index
         };
-        super::keyboard_nav::reveal_list_row(&self.scroll, item);
+        self.scroll.scroll_to_reveal_item(item);
         cx.notify();
     }
 }
@@ -314,7 +315,7 @@ impl KagiApp {
     /// installed. Closing it on every reload is what threw a reader back to the
     /// graph each time an auto-fetch or the FS watcher fired.
     ///
-    /// The pane **entity** is reused rather than rebuilt, so its `ListState` —
+    /// The pane **entity** is reused rather than rebuilt, so its retained geometry —
     /// the scroll position inside the diff — survives with it. What each source
     /// needs re-reading differs, and a source that can no longer be resolved
     /// (the commit left the graph, the file is no longer changed, the read

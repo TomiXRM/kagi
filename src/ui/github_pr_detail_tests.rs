@@ -1,6 +1,7 @@
 use super::*;
 use gpui::{px, ListState};
 use kagi_git::{ChangeKind, CommitId, FileStatus};
+use kagi_ui_core::variable_list::VariableListState;
 
 fn pr(number: u64, head: &str) -> PullRequest {
     PullRequest {
@@ -32,7 +33,7 @@ fn tab(head: &str) -> PrTab {
         selected_commit: None,
         selected_file: Some(0),
         diff: None,
-        diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+        diff_scroll: VariableListState::new(0, px(200.)),
         diff_layout: Default::default(),
         feed_list: ListState::new(0, gpui::ListAlignment::Top, px(400.)),
         feed_entries: std::rc::Rc::new(Vec::new()),
@@ -43,7 +44,7 @@ fn tab(head: &str) -> PrTab {
         comment_draft: "keep me".into(),
         conflicts: None,
         conflict_selected: None,
-        conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+        conflict_scroll: VariableListState::new(0, px(200.)),
         conflict_layout: Default::default(),
         conflict_at: 0,
         conflict_preview: None,

@@ -342,41 +342,44 @@ impl gpui::RenderOnce for OverflowTrigger {
         #[cfg(feature = "gui-e2e")]
         super::toolbar_a11y::record_label("tb-overflow", Msg::ToolbarOverflow.t());
         let pointer_state = self.state.clone();
-        let trigger = keyboard_nav::focusable(
-            super::overflow_trigger::trigger(
-                "tb-overflow",
-                Msg::ToolbarOverflow.t(),
-                self.selected,
-                &self.focus,
-            )
-            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                let focus = window.focused(cx);
-                let _ = pointer_state.update(cx, |state, _| {
-                    if !state.open {
-                        state.previous_focus = focus;
+        let trigger = super::overflow_trigger::trigger(
+            "tb-overflow",
+            Msg::ToolbarOverflow.t(),
+            self.selected,
+            &self.focus,
+            |trigger| {
+                let trigger = keyboard_nav::focusable(
+                    trigger
+                        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                            let focus = window.focused(cx);
+                            let _ = pointer_state.update(cx, |state, _| {
+                                if !state.open {
+                                    state.previous_focus = focus;
+                                }
+                            });
+                        })
+                        // Popover opens on mouse-down; keyboard clicks open it explicitly.
+                        .on_click(move |event, window, cx| {
+                            if !event.is_keyboard() {
+                                return;
+                            }
+                            let focus = window.focused(cx);
+                            let _ = self.state.update(cx, |state, _| {
+                                state.previous_focus = focus;
+                                state.open = true;
+                            });
+                            let _ = self.app.update(cx, |_, cx| cx.notify());
+                        }),
+                );
+                #[cfg(feature = "gui-e2e")]
+                let trigger = trigger.on_key_down(|event, _, _| {
+                    if event.keystroke.key == "f19" {
+                        super::toolbar_a11y::record_focus_probe("tb-overflow");
                     }
                 });
-            })
-            // Popover opens on mouse-down; a GPUI keyboard click has no
-            // mouse-down. Control its open state for Enter/Space explicitly.
-            .on_click(move |event, window, cx| {
-                if !event.is_keyboard() {
-                    return;
-                }
-                let focus = window.focused(cx);
-                let _ = self.state.update(cx, |state, _| {
-                    state.previous_focus = focus;
-                    state.open = true;
-                });
-                let _ = self.app.update(cx, |_, cx| cx.notify());
-            }),
+                trigger
+            },
         );
-        #[cfg(feature = "gui-e2e")]
-        let trigger = trigger.on_key_down(|event, _, _| {
-            if event.keystroke.key == "f19" {
-                super::toolbar_a11y::record_focus_probe("tb-overflow");
-            }
-        });
         super::super::e2e::measure_control("tb-overflow", trigger)
     }
 }

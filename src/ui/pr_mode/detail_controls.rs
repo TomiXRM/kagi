@@ -7,6 +7,7 @@ use gpui_component::{
     Sizable as _,
 };
 use kagi_domain::github::Mergeable;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::super::keyboard_nav::{self, Activation, TabList};
 use super::super::theme::{self, theme};
@@ -154,7 +155,7 @@ pub(super) fn description(
     title: SharedString,
     selected: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> Button {
+) -> impl IntoElement {
     let label = Msg::PrModeShowDescription.t();
     super::super::button_style::named_button(
         Button::new("pr-mode-title")
@@ -165,7 +166,6 @@ pub(super) fn description(
         label,
         Some(selected),
     )
-    .tooltip(label)
     .on_key_down(keyboard_nav::stop_activation_keys)
     .on_click(on_click)
     .relative()
@@ -198,6 +198,7 @@ pub(super) fn description(
         }
         button
     })
+    .hover_tooltip("pr-mode-title-hover-help", label)
 }
 
 pub(super) fn merge(

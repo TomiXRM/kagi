@@ -5,6 +5,7 @@ use gpui::prelude::*;
 use gpui::{div, rgb, Context, SharedString};
 use gpui_component::Selectable as _;
 use kagi_ui_core::header_fit::{header_button, HeaderFit};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::theme::theme;
 
@@ -97,7 +98,7 @@ impl DiffHeader {
 }
 
 /// Layout shortens paint only; hover and AX retain the same complete identity.
-fn title_identity(title: SharedString) -> gpui::Stateful<gpui::Div> {
+fn title_identity(title: SharedString) -> impl IntoElement {
     // Most paths are clean. Keep their SharedString instead of allocating a
     // second copy on every render; use the shared sanitizer for control bytes.
     let title = if title
@@ -117,11 +118,6 @@ fn title_identity(title: SharedString) -> gpui::Stateful<gpui::Div> {
         .role(role)
         .aria_label(title.clone())
         .aria_description(title.clone())
-        .tooltip(move |window, cx| {
-            #[cfg(feature = "gui-e2e")]
-            super::super::e2e::diff_presentation::record_header_tooltip(&tooltip);
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .flex_1()
         .text_sm()
         .text_color(rgb(theme().text_main))
@@ -129,6 +125,11 @@ fn title_identity(title: SharedString) -> gpui::Stateful<gpui::Div> {
         .relative()
         .child(super::super::e2e::measure_inside("main-diff-title"))
         .child(title)
+        .hover_tooltip_builder("main-diff-title-hover-help", move |window, cx| {
+            #[cfg(feature = "gui-e2e")]
+            super::super::e2e::diff_presentation::record_header_tooltip(&tooltip);
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
 }
 
 fn mode_segments<V: 'static>(
@@ -154,15 +155,17 @@ fn mode_segments<V: 'static>(
         ),
     ] {
         let selected = split == target;
-        let button = header_button(id, label, icon, compact)
-            .selected(selected)
-            .on_click(cx.listener(move |_this, _ev, _window, cx| {
-                if super::theme::diff_split() != target {
-                    super::theme::set_diff_split(target);
-                    klog!("diff-mode: {}", if target { "split" } else { "unified" });
-                    cx.notify();
-                }
-            }));
+        let button = header_button(id, label, icon, compact, |button| {
+            button
+                .selected(selected)
+                .on_click(cx.listener(move |_this, _ev, _window, cx| {
+                    if super::theme::diff_split() != target {
+                        super::theme::set_diff_split(target);
+                        klog!("diff-mode: {}", if target { "split" } else { "unified" });
+                        cx.notify();
+                    }
+                }))
+        });
         #[cfg(feature = "gui-e2e")]
         super::super::e2e::diff_presentation::record_mode(id, gpui::Role::Button, label, selected);
         modes = modes.child(match fit {

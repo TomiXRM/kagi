@@ -6,6 +6,7 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
@@ -276,10 +277,14 @@ fn render_tab(
             let el = el.child(crate::tab_probes::measure(&view.tab_probes, index));
             el
         })
+        .hover_tooltip_builder((identity.full_path.clone(), 0usize), {
+            let tooltip = identity.full_path.clone();
+            move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)
+        })
         .into_any_element()
 }
 
-/// Keep probe evidence at the same boundary that installs actual AX/Tooltip data.
+/// Keep probe evidence alongside the tab's AX identity and full-path help.
 fn apply_identity(
     tab: gpui::Stateful<gpui::Div>,
     _view: &EditorWorkspaceView,
@@ -288,6 +293,7 @@ fn apply_identity(
 ) -> gpui::Stateful<gpui::Div> {
     let role = Role::Tab;
     let name = identity.full_path.clone();
+    #[cfg(feature = "gui-e2e")]
     let tooltip = identity.full_path.clone();
     #[cfg(feature = "gui-e2e")]
     _view.tab_probes.0.borrow_mut().push(crate::EditorTabProbe {
@@ -303,7 +309,6 @@ fn apply_identity(
         .aria_label(name.clone())
         .aria_description(name)
         .aria_selected(active)
-        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
 }
 
 fn render_close(

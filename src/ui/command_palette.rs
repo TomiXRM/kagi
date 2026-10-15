@@ -14,6 +14,7 @@
 
 use gpui::{div, prelude::*, rgb, Context, MouseButton, SharedString, Window};
 use gpui_component::input::{Input, InputState};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::commands::{self, command_state, CommandState, MenuOverlay, COMMANDS};
 use super::i18n::{self, Lang};
@@ -595,9 +596,6 @@ impl KagiApp {
             is_selected,
         )
         .aria_description(super::e2e::palette::description(index, row.description()))
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .flex_shrink_0()
         .flex()
         .items_center()
@@ -643,7 +641,11 @@ impl KagiApp {
                 self.window_active,
             ));
         }
-        let row = r.into_any_element();
+        let row = r
+            .hover_tooltip_builder(("palette-row-help", index), move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .into_any_element();
         match &self.command_palette_scroll {
             Some(scroll) => scroll.measure_row(index, row),
             None => row,

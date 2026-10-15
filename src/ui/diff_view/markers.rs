@@ -2,6 +2,7 @@
 use gpui::{div, prelude::*, rgb, AnyElement, SharedString};
 use gpui_component::tooltip::Tooltip;
 use kagi_domain::diff::LineEnding;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use crate::ui::{theme, Msg};
 
@@ -33,11 +34,6 @@ pub(crate) fn unsafe_unicode(side: &'static str, row: usize) -> AnyElement {
         .border_1()
         .border_color(gpui::rgba(border))
         .text_color(rgb(text))
-        .tooltip(move |window, cx| {
-            #[cfg(feature = "gui-e2e")]
-            crate::ui::e2e::diff_content::tooltip(&help);
-            Tooltip::new(help.clone()).build(window, cx)
-        })
         .child(label)
         .map(|el| {
             #[cfg(feature = "gui-e2e")]
@@ -46,7 +42,22 @@ pub(crate) fn unsafe_unicode(side: &'static str, row: usize) -> AnyElement {
             )));
             el
         })
-        .into_any()
+        .hover_tooltip_builder(
+            (
+                match side {
+                    "old" => "diff-unsafe-old-help",
+                    "new" => "diff-unsafe-new-help",
+                    _ => "diff-unsafe-unified-help",
+                },
+                row,
+            ),
+            move |window, cx| {
+                #[cfg(feature = "gui-e2e")]
+                crate::ui::e2e::diff_content::tooltip(&help);
+                Tooltip::new(help.clone()).build(window, cx)
+            },
+        )
+        .into_any_element()
 }
 
 pub(crate) fn line_ending(side: &'static str, row: usize, ending: LineEnding) -> AnyElement {

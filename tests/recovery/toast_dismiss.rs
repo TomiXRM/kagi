@@ -4,6 +4,209 @@ use gpui::{Modifiers, VisualTestAppContext};
 use kagi::ui::{e2e, i18n::Lang, theme, ToastKind};
 use std::time::{Duration, Instant};
 
+pub fn scenario_toast_tooltip_lifetime(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let old_lang = kagi::ui::i18n::lang();
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    for lang in [Lang::En, Lang::Ja] {
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        // No seam here: the real hidden native window must suppress help.
+        cx.update_window(window, |_, window, _| assert!(!window.is_window_active()))
+            .unwrap();
+        stack.update(cx, |stack, cx| {
+            stack.push_notify(ToastKind::Error, "Inactive tooltip", cx);
+        });
+        paint(cx, window);
+        let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+        let close = e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{id}"))
+            .expect("inactive dismiss control painted");
+        cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_tooltip_hidden(cx, window, "real inactive native window");
+        cx.simulate_mouse_move(
+            window,
+            gpui::point(gpui::px(10.), gpui::px(300.)),
+            None,
+            Modifiers::none(),
+        );
+        stack.update(cx, |stack, cx| {
+            stack.remove(id);
+            cx.notify();
+        });
+        paint(cx, window);
+        // Only substitute the active-state input for positive/lifecycle cases.
+        let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
+        for change in [
+            "leave", "rerender", "move", "remove", "replace", "exit", "pending",
+        ] {
+            stack.update(cx, |stack, cx| {
+                stack.push_notify(ToastKind::Error, "Tooltip lifetime", cx);
+            });
+            paint(cx, window);
+            let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+            let close = e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{id}"))
+                .expect("dismiss control painted");
+            cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+            if change != "pending" {
+                cx.advance_clock(Duration::from_secs(1));
+                cx.run_until_parked();
+                paint(cx, window);
+                assert!(
+                    e2e::control_bounds(window.window_id(), "toast-dismiss-tooltip").is_some(),
+                    "{lang:?}/{change}: hovered tooltip is visible"
+                );
+            }
+            if change == "move" {
+                crate::pr_detail_adaptive::resize(
+                    cx,
+                    window,
+                    (
+                        f32::from(viewport.width) - 200.,
+                        f32::from(viewport.height) - 200.,
+                    ),
+                );
+                let moved = e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{id}"))
+                    .unwrap();
+                assert_ne!(
+                    moved.origin, close.origin,
+                    "same live trigger actually moved"
+                );
+            }
+            stack.update(cx, |stack, cx| {
+                match change {
+                    "remove" | "pending" => stack.remove(id),
+                    "replace" => stack.push_notify(ToastKind::Error, "Replacement preview", cx),
+                    "exit" => stack.begin_exit(id, cx),
+                    _ => {}
+                }
+                cx.notify();
+            });
+            settle_removal(cx, window);
+            if matches!(change, "move" | "remove" | "replace" | "exit" | "pending") {
+                assert_tooltip_hidden(cx, window, &format!("{lang:?}/{change}: retired hover"));
+            }
+            cx.simulate_mouse_move(
+                window,
+                gpui::point(gpui::px(10.), gpui::px(300.)),
+                None,
+                Modifiers::none(),
+            );
+            cx.advance_clock(Duration::from_secs(1));
+            cx.run_until_parked();
+            assert_tooltip_hidden(cx, window, &format!("{lang:?}/{change}: pointer left"));
+            stack.update(cx, |stack, cx| {
+                let ids: Vec<_> = stack.toasts().iter().map(|toast| toast.id).collect();
+                for id in ids {
+                    stack.remove(id);
+                }
+                cx.notify();
+            });
+            if change == "move" {
+                crate::pr_detail_adaptive::resize(
+                    cx,
+                    window,
+                    (f32::from(viewport.width), f32::from(viewport.height)),
+                );
+            }
+        }
+    }
+    kagi::ui::i18n::set_lang(old_lang);
+    drop(stack);
+    unmount(cx, app, window);
+}
+
+fn assert_tooltip_hidden(
+    cx: &mut VisualTestAppContext,
+    window: gpui::AnyWindowHandle,
+    context: &str,
+) {
+    e2e::clear_control_bounds(window.window_id(), "toast-dismiss-tooltip");
+    paint(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "toast-dismiss-tooltip").is_none(),
+        "{context}: tooltip must be hidden"
+    );
+}
+
+pub fn scenario_toast_tooltip_scroll(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom"]);
+    let old_lang = kagi::ui::i18n::lang();
+    let old_zoom = theme::zoom();
+    let fixture = build_fixture();
+    for lang in [Lang::En, Lang::Ja] {
+        let (app, window) = mount(cx, fixture.path());
+        let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
+        crate::surface_scrollbars::resize(cx, window);
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        theme::set_zoom(1.);
+        let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+        stack.update(cx, |stack, cx| {
+            for _ in 0..4 {
+                stack.push_notify(ToastKind::Error, "First line\nSecond line\nThird line", cx);
+            }
+        });
+        crate::native_ax::activate(cx);
+        paint(cx, window);
+        assert!(crate::native_ax::press(
+            cx,
+            window,
+            &kagi::ui::i18n::Msg::ToastMore.t().replace("{count}", "3"),
+        ));
+        cx.run_until_parked();
+        paint(cx, window);
+        let newest = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+        let close =
+            e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{newest}")).unwrap();
+        cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(e2e::control_bounds(window.window_id(), "toast-dismiss-tooltip").is_some());
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: close.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-1000.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                modifiers: Modifiers::none(),
+            },
+        );
+        cx.run_until_parked();
+        assert_tooltip_hidden(cx, window, "scrolled trigger");
+        paint(cx, window);
+        let oldest = cx.read(|cx| stack.read(cx).toasts()[0].id);
+        let close =
+            e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{oldest}")).unwrap();
+        let viewport = e2e::control_bounds(window.window_id(), "toast-stack").unwrap();
+        assert!(
+            viewport.contains(&close.center()),
+            "oldest close scrolled into view"
+        );
+        cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(e2e::control_bounds(window.window_id(), "toast-dismiss-tooltip").is_some());
+        assert!(crate::native_ax::press(
+            cx,
+            window,
+            kagi::ui::i18n::Msg::ToastCollapse.t()
+        ));
+        cx.run_until_parked();
+        assert_tooltip_hidden(cx, window, "collapsed older trigger");
+        drop(stack);
+        unmount(cx, app, window);
+    }
+    theme::set_zoom(old_zoom);
+    kagi::ui::i18n::set_lang(old_lang);
+}
+
 pub fn scenario_toast_dismiss(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom"]);
     let old_zoom = theme::zoom();

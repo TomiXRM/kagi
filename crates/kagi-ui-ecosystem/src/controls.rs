@@ -6,6 +6,7 @@ use gpui_component::{
     Disableable as _, Sizable as _,
 };
 use kagi_ui_core::keyboard_nav::{self, Activation, TabFocus, TabList};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -201,9 +202,9 @@ pub(crate) fn button(
         .small()
         .ghost()
         .label(caption.to_string())
-        .tooltip(name.to_string())
         .disabled(!enabled)
-        .tab_stop(false);
+        .tab_stop(false)
+        .hover_tooltip((id, 0usize), name.to_string());
     probe(
         id,
         keyboard_nav::with_ring(

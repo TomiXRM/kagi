@@ -8,6 +8,7 @@ use gpui::{
     div, prelude::*, px, rgb, AnyElement, Context, FocusHandle, KeyDownEvent, SharedString,
 };
 use kagi_ui_core::i18n::plan_note_text;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::button_style::{modal_button, ModalButtonKind};
 use super::home_github::CloneModal;
@@ -204,14 +205,11 @@ fn header(modal: &CloneModal) -> impl IntoElement {
         .gap_2()
         .text_sm()
         .text_color(rgb(theme().text_muted))
-        .child(
-            destination_path(
-                "clone-source",
-                safe_text(&format!("{} · {}", listing.name_with_owner, listing.host)),
-            )
-            .flex_1()
-            .min_w(px(0.)),
-        );
+        .child(destination_path(
+            "clone-source",
+            safe_text(&format!("{} · {}", listing.name_with_owner, listing.host)),
+            |el| el.flex_1().min_w(px(0.)),
+        ));
     for (on, label) in [
         (listing.is_private, Msg::HomeGithubPrivate.t()),
         (listing.is_fork, Msg::HomeGithubFork.t()),
@@ -236,14 +234,11 @@ fn header(modal: &CloneModal) -> impl IntoElement {
         .flex()
         .flex_col()
         .gap_1()
-        .child(
-            destination_path(
-                "clone-title",
-                safe_text(&Msg::CloneTitle.t().replace("{}", listing.name())),
-            )
-            .text_xl()
-            .text_color(rgb(theme().text_main)),
-        )
+        .child(destination_path(
+            "clone-title",
+            safe_text(&Msg::CloneTitle.t().replace("{}", listing.name())),
+            |el| el.text_xl().text_color(rgb(theme().text_main)),
+        ))
         .child(sub)
 }
 
@@ -268,9 +263,10 @@ fn location(
         .border_color(rgb(theme().surface))
         .text_sm()
         .child(match &chosen {
-            Some(path) => destination_path("clone-destination", safe_text(path))
-                .text_color(rgb(theme().text_main))
-                .into_any_element(),
+            Some(path) => destination_path("clone-destination", safe_text(path), |el| {
+                el.text_color(rgb(theme().text_main))
+            })
+            .into_any_element(),
             None => div()
                 .text_color(rgb(theme().text_muted))
                 .child(SharedString::from(Msg::CloneNoLocation.t()))
@@ -323,13 +319,16 @@ fn destination_summary(path: &str, cx: &gpui::App) -> impl IntoElement {
         .flex_row()
         .items_center()
         .gap_2()
-        .child(
-            destination_path("clone-destination-summary", summary)
-                .flex_1()
-                .min_w(px(0.))
-                .text_xs()
-                .text_color(rgb(theme().text_muted)),
-        )
+        .child(destination_path(
+            "clone-destination-summary",
+            summary,
+            |el| {
+                el.flex_1()
+                    .min_w(px(0.))
+                    .text_xs()
+                    .text_color(rgb(theme().text_muted))
+            },
+        ))
         .child(super::e2e::measure_control(
             "clone-copy-location",
             modal_button(
@@ -349,7 +348,11 @@ fn destination_summary(path: &str, cx: &gpui::App) -> impl IntoElement {
 }
 
 /// Full text reaches tooltip and AX; only the native text paint is shortened.
-fn destination_path(id: &'static str, full: SharedString) -> gpui::Stateful<gpui::Div> {
+fn destination_path(
+    id: &'static str,
+    full: SharedString,
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+) -> impl IntoElement {
     let tooltip = full.clone();
     #[cfg(feature = "gui-e2e")]
     if id == "clone-destination" {
@@ -363,20 +366,22 @@ fn destination_path(id: &'static str, full: SharedString) -> gpui::Stateful<gpui
             }
         });
     }
-    div()
-        .id(id)
-        .role(gpui::Role::Label)
-        .aria_label(full.clone())
-        .aria_description(full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis_middle()
-        .relative()
-        .child(super::e2e::measure_inside(id))
-        .child(full)
+    configure(
+        div()
+            .id(id)
+            .role(gpui::Role::Label)
+            .aria_label(full.clone())
+            .aria_description(full.clone())
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_middle()
+            .relative()
+            .child(super::e2e::measure_inside(id))
+            .child(full),
+    )
+    .hover_tooltip_builder((id, 0usize), move |window, cx| {
+        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+    })
 }
 
 /// The running clone: a spinner with elapsed time. Redrawn every second by

@@ -152,8 +152,8 @@ impl Render for MainDiffPane {
                 back_label.clone(),
                 "icons/arrow-left.svg",
                 compact,
-            )
-            .on_click(back_click),
+                |button| button.on_click(back_click),
+            ),
         );
         let ext_click = cx.listener(|this, _event: &gpui::ClickEvent, _window, cx| {
             // Same lease rule as history_click: read the source off `this`.
@@ -176,30 +176,26 @@ impl Render for MainDiffPane {
             .items_center()
             .gap_1()
             .flex_shrink_0()
-            .child(
-                self.fit.control(
+            .child(self.fit.control(
+                "main-diff-ext-editor",
+                header_button(
                     "main-diff-ext-editor",
-                    header_button(
-                        "main-diff-ext-editor",
-                        ext_label.clone(),
-                        "icons/external-link.svg",
-                        compact,
-                    )
-                    .on_click(ext_click),
+                    ext_label.clone(),
+                    "icons/external-link.svg",
+                    compact,
+                    |button| button.on_click(ext_click),
                 ),
-            )
-            .child(
-                self.fit.control(
+            ))
+            .child(self.fit.control(
+                "main-diff-history",
+                header_button(
                     "main-diff-history",
-                    header_button(
-                        "main-diff-history",
-                        history_label.clone(),
-                        "icons/history.svg",
-                        compact,
-                    )
-                    .on_click(history_click),
+                    history_label.clone(),
+                    "icons/history.svg",
+                    compact,
+                    |button| button.on_click(history_click),
                 ),
-            )
+            ))
             .into_any_element();
 
         render_diff_list::<MainDiffPane>(

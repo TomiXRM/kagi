@@ -211,6 +211,10 @@ def check_shell_hygiene() -> int:
     return status | _run_rule(_rule("uv-invocation"))
 
 
+def check_hover_tooltip() -> int:
+    return _run_rule(_rule("hover-tooltip"))
+
+
 def check_static_spinner() -> int:
     return _run_rule(_rule("static-spinner"))
 

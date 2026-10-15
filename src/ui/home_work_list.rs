@@ -8,6 +8,7 @@ use gpui_component::button::Button;
 use gpui_component::Sizable as _;
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
 use kagi_ui_core::avatar::AvatarImages;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::home_github_list::HomeItem;
 use super::home_work::{HomePane, HomeWork};
@@ -183,11 +184,14 @@ pub(super) fn work_row(
                 Button::new(SharedString::from(format!("{key}-open")))
                     .label(Msg::HomeGithubOpen.t())
                     .small()
-                    .tooltip(Msg::HomeWorkOpenOnGithub.t())
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
                         app.update(cx, |app, cx| app.open_work_item_url(&url, cx));
-                    }),
+                    })
+                    .hover_tooltip(
+                        SharedString::from(format!("{key}-open-hover-help")),
+                        Msg::HomeWorkOpenOnGithub.t(),
+                    ),
             )
         }
     };

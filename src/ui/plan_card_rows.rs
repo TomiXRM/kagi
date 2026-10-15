@@ -3,6 +3,7 @@
 //! and "commits to push" preview rows.
 
 use gpui::{div, prelude::*, rgb, SharedString};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::modal_renderers::PlanCardAccent;
 use super::theme::{self, theme as current_theme};
@@ -101,10 +102,7 @@ pub(crate) fn render_commit_row(
     let row = div()
         .id(("plan-commit-row", index))
         .role(gpui::Role::Label)
-        .aria_label(label.clone())
-        .tooltip(move |window, cx| {
-            super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
-        });
+        .aria_label(label.clone());
     let Some((_, color)) = accent else {
         return row
             .w_full()
@@ -116,6 +114,9 @@ pub(crate) fn render_commit_row(
             .whitespace_nowrap()
             .text_ellipsis()
             .child(label)
+            .hover_tooltip_builder(("plan-commit-help", index), move |window, cx| {
+                super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
+            })
             .into_any_element();
     };
     // Producer format is "<8-char-sha>  <summary>" (ops/push.rs). Fall back to
@@ -161,5 +162,8 @@ pub(crate) fn render_commit_row(
                 .text_ellipsis()
                 .child(SharedString::from(summary.to_string())),
         )
+        .hover_tooltip_builder(("plan-commit-help", index), move |window, cx| {
+            super::render_helpers::subject_tooltip(tooltip.clone(), window, cx)
+        })
         .into_any_element()
 }

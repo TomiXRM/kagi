@@ -1290,3 +1290,135 @@ viewport, an offscreen neighbor otherwise retains retired recorder bounds
 matching the selected row; distinct live bounds now guard the unchanged
 fill/identity assertions.
 
+## Amendment — 2026-10-15: element-owned hover tooltips (#1591)
+
+Kagi controls register hover tooltips through
+`kagi_ui_core::tooltip::HoverTooltip`: terminal
+`hover_tooltip(stable_id, text)` for text and
+`hover_tooltip_builder(stable_id, ...)` for custom views. Configure the control
+before this terminal call, which returns a transparent Element rather than
+the original component. It forwards the actual control's layout and paint
+without inserting children that would change Kit icon-button sizing.
+This boundary delegates delay and unmount ownership to GPUI's element-owned
+`StatefulInteractiveElement::tooltip` registration and adds keyed geometry
+and window-activation invalidation.
+gpui-kit `Tooltip` still renders the text/custom content and theme colors,
+but this does not preserve the managed overlay's complete presentation.
+The roughly fourteen formerly Kit-managed registrations now use GPUI's
+cursor-relative placement and timing instead of Kit overlay animation and
+its grace when moving between adjacent buttons. This behavior is closer to
+standard macOS tooltips; it is not an AppKit tooltip implementation.
+Do not use component-inherent `.tooltip(text)` / `.tooltip_builder(...)`
+to install a Root-owned managed overlay.
+
+The failure mechanism is an ownership mismatch: a managed overlay can outlive
+its trigger when unmounting or moving the trigger removes the
+`on_hover(false)` callback that would dismiss it. Kagi's pinned baseline
+reproduced this natively: scoped `KAGI_GUI_E2E_ONLY=toast_tooltip_lifetime`
+failed at `tests/recovery/toast_dismiss.rs:71:5` with
+`En/remove: removed trigger: tooltip must be hidden`. Ordinary hover/leave
+and the preceding rerender case succeeded; removal without a pointer event
+left the measured real tooltip painted. Baseline artifacts are preserved at
+`/tmp/kagi-hig-audit-20261008/sticky-tooltip-tierb/before-fail`.
+After migration, the native run scoped to
+`KAGI_GUI_E2E_ONLY='toast_,toolbar_overflow,settings_groups'` passed all eight
+scenarios: `toast_dismiss`, `toast_tooltip_lifetime`, `toast_tooltip_scroll`,
+`toast_stack_budget`, `toast_live_status`, `settings_groups`,
+`toolbar_overflow` and `toolbar_overflow_priority`. Lifetime coverage exercises
+EN/JA ordinary leave, rerender, unmount, replacement/movement, exit timer and
+pending-show removal. Scroll coverage uses real wheel input within the 30%
+toast budget, then actual AX Collapse removes the older hovered close trigger.
+These are native Tier A results for the geometry-aware boundary and migrated
+Kagi-owned registrations. Tier B is **pending: screen locked**, deferred
+with owner authorization; no foreground interaction or screenshot is claimed.
+
+Element-owned registration avoids handing dismissal to a longer-lived Root
+overlay. The shared helper also observes window activation: deactivation
+permanently cancels that tooltip content, and a fresh hover rebuilds it.
+It also reads activation when the delayed content is created, so deactivation
+during the show delay cannot create visible help in an already-inactive window.
+The review regression failed before that guard with two content renders
+instead of zero. The pure cancellation predicate runs under ordinary `cfg(test)`
+in workspace CI; TestWindow additionally exercises delayed creation and recovery.
+Hidden native positive/lifecycle cases use a `gui-e2e`-only, window-scoped
+active-input override while running the same production cancellation code.
+The inactive native assertion and all TestWindow activation tests use no override.
+Official-main timer/unmount behavior below remains a source-level inference,
+distinct from the observed failure on Kagi's pinned dependency.
+
+The pinned GPUI element-owned path also retains a `source_bounds` snapshot;
+it is not sufficient for movement without a pointer event. Before adding the
+geometry guard,
+`cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::tests`
+passed the deactivation test but failed
+`moving_a_live_trigger_cancels_help_without_mouse_input`: moving the same
+live trigger from x=0 to x=200 produced render count 4 instead of 2.
+The transparent boundary now records keyed current clipped bounds and cancels
+help once those bounds no longer contain the pointer. Small animation shifts
+that leave the pointer inside retain help. This keeps GPUI's delay/unmount owner and
+the existing activation guard rather than introducing a managed Root overlay.
+After the guard and delayed-activation review, the `tooltip::` filter with
+`-- --nocapture` passes three TestWindow tests plus two ordinary cancellation
+tests, including no resurrection after moving back/reactivating and fresh-hover
+recovery. The eight-scenario run separately validates native rendering;
+hidden-window positive cases substitute only activation input as described above.
+
+The registration rule also covers Kagi-owned direct explanatory
+`.tooltip(builder)` calls, including subjects, sidebar and toolbar help:
+their source-bounds lifetime needs the same terminal boundary. Preserve
+their content builders. Interactive `hoverable_tooltip` worktree cards remain
+a distinct ownership path, not ordinary explanatory tooltips.
+`check-hover-tooltip` bans direct explanatory `.tooltip`, `.tooltip_builder`
+and `.tooltip_with_action` registration in application/UI-crate Rust sources,
+excluding only the shared boundary. Samples preserve `hover_tooltip`,
+`hover_tooltip_builder` and interactive `hoverable_tooltip`; the workflow matrix
+and normal `check-all` run the gate.
+
+Use official public APIs without dependency edits, fork commits or pin changes.
+The owner-facing upstream proposal is recorded in `docs/decisions.md`: managed
+overlays need trigger-lifetime, geometry and window-activation invalidation
+independent of receiving a final hover-exit callback. Retire this Kagi
+lifecycle boundary only after an official managed implementation provides
+those guarantees and equivalent native regression coverage passes at Kagi's
+adopted revision. Tooltip content, localized help, accessibility descriptions
+and keyboard-opened inspection-card ownership remain unchanged.
+
+### Official upstream inspection and unpublished proposal
+
+Source inspection of official [gpui-kit](https://github.com/longbridge/gpui-kit)
+`origin/main` at `50dac1cafb34a4d453c92715219c0458d9a4727b` found
+hovered `GlobalElementId` ownership, pressed-trigger guards and click-removal
+tests. These fixes already exist; this proposal does not claim otherwise.
+In `crates/component/src/tooltip.rs`, `on_prepaint` stores bounds/identity,
+while `on_hover(false)` is the dismissal path. In
+`crates/component/src/root.rs`, `WindowState` has no mounted-trigger
+reconciliation. In `crates/base/src/tooltip.rs`, `TooltipRequest` retains a
+builder and bounds, and rendering retained content has no activation guard.
+**[INFERENCE]** Non-click trigger removal, including removal during the
+show delay, can therefore leave pending or visible managed tooltip state
+alive. This is source-level analysis, not an upstream runtime reproduction.
+
+**Draft upstream reproduction (not published or runtime-tested):**
+
+1. Hover a Button with its managed tooltip until the tooltip is visible.
+2. Remove that Button through a timer, asynchronous completion or conditional
+   parent render, without pressing/clicking the trigger.
+3. Move the pointer away. Expected: the tooltip is hidden when its trigger
+   disappears. Predicted actual result from source inspection: the retained
+   overlay remains because no final hover-exit callback runs.
+4. Repeat with removal during the tooltip's show delay. Expected: cancel the
+   pending show; it must not display after trigger removal.
+
+**Proposal:** retain the existing owner-aware switching and press guards,
+but add a trigger lease/frame-liveness check and reconcile current clipped
+bounds/hit testing. Cancel pending show and clear visible state on unmount
+or window deactivation; invalidate hover when geometry no longer contains
+the pointer. Add lifecycle tests for timer/async removal before and after
+show, movement/scroll/resize, deactivation/reactivation and fresh-hover
+recovery. No upstream issue or PR has been published for this proposal.
+
+The Kagi boundary covers Kagi-owned registrations, not dependency-internal
+controls: gpui-kit's Input Find controls still install managed tooltips and
+provide no public cleanup hook to Kagi. Their resolution belongs to the
+official managed implementation, not a fork or a private-API workaround.
+

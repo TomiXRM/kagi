@@ -107,6 +107,8 @@ jobs:
           # an in-flight indicator is an animated element, never a ⟳ glyph
           # that cannot turn (user report)
           - static-spinner
+          # explanatory help must follow its live trigger (#1591)
+          - hover-tooltip
           # a `\` continuation never glues two words in a string literal —
           # it broke both PR GraphQL queries (#837, #843)
           - string-continuation

@@ -46,5 +46,6 @@ pub mod theme_pinky_boo;
 pub mod theme_tokyo_night;
 pub mod time;
 pub mod time_parse;
+pub mod tooltip;
 pub mod tree_a11y;
 pub mod variable_list;

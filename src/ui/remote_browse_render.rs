@@ -1,5 +1,6 @@
 //! Viewport-bounded SSH connection and directory task presentation.
 use super::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 // ──────────────────────────────────────────────────────────────
 // Renderer
@@ -205,16 +206,14 @@ pub(crate) fn render_remote_browse(
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(
-                                identity("remote-browse-host", host_label.into())
-                                    .text_color(rgb(current_theme().text_main))
-                                    .text_lg(),
-                            )
-                            .child(
-                                identity("remote-browse-path", modal.cwd.clone().into())
-                                    .text_xs()
-                                    .text_color(rgb(current_theme().text_sub)),
-                            )
+                            .child(identity("remote-browse-host", host_label.into(), |el| {
+                                el.text_color(rgb(current_theme().text_main)).text_lg()
+                            }))
+                            .child(identity(
+                                "remote-browse-path",
+                                modal.cwd.clone().into(),
+                                |el| el.text_xs().text_color(rgb(current_theme().text_sub)),
+                            ))
                             .when(busy, |identity| {
                                 identity.child(SharedString::from(Msg::RemoteRequestBusy.t()))
                             }),
@@ -570,22 +569,28 @@ fn render_directory_list(
 }
 
 /// Keep the complete transport identity; ellipsis is native paint only.
-fn identity(id: &'static str, full: SharedString) -> gpui::Stateful<gpui::Div> {
+fn identity(
+    id: &'static str,
+    full: SharedString,
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+) -> impl IntoElement {
     let tooltip = full.clone();
-    div()
-        .id(id)
-        .role(gpui::Role::Label)
-        .aria_label(full.clone())
-        .aria_description(full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis_middle()
-        .relative()
-        .child(super::e2e::measure_inside(id))
-        .child(full)
+    configure(
+        div()
+            .id(id)
+            .role(gpui::Role::Label)
+            .aria_label(full.clone())
+            .aria_description(full.clone())
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis_middle()
+            .relative()
+            .child(super::e2e::measure_inside(id))
+            .child(full),
+    )
+    .hover_tooltip_builder((id, 0usize), move |window, cx| {
+        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+    })
 }
 
 fn diagnostic(error: SharedString) -> gpui::Div {

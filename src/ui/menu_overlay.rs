@@ -4,6 +4,7 @@ use gpui::{
     MouseButton, MouseDownEvent, Pixels, Point, Role, SharedString, Window,
 };
 use gpui_component::tooltip::Tooltip;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::context_menu::{ItemState, MenuGroup, MenuItem, MenuItemKind};
 use super::menu_keys::{
@@ -615,7 +616,7 @@ fn disabled_reason(
         #[cfg(feature = "gui-e2e")]
         let tooltip_control = _control.clone();
         row.aria_description(reason.clone())
-            .tooltip(move |window, cx| {
+            .hover_tooltip_builder((_control.clone(), 0usize), move |window, cx| {
                 #[cfg(feature = "gui-e2e")]
                 TOOLTIPS.with(|map| {
                     map.borrow_mut()

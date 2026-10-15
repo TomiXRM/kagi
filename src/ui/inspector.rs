@@ -23,6 +23,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::Sizable as _;
 
 use kagi_git::{is_url, sanitize_trailer_value, CommitId};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 // Badge sort order is shared with the graph column — one definition only
 // (a second copy silently drifts and the two views disagree).
@@ -436,7 +437,6 @@ pub(super) fn render_inspector(
         .px_1()
         .font_family(super::MONO_FONT)
         .text_color(rgb(theme().text_sub))
-        .tooltip(tooltip_text.clone())
         .on_click(copy_sha_click1)
         .child(
             div()
@@ -444,7 +444,8 @@ pub(super) fn render_inspector(
                 .child(super::e2e::measure_inside("inspector-hash-label")),
         );
     let hash_chip =
-        super::inspector_metadata::named_hash_button(hash_chip, hash_name, tooltip_text);
+        super::inspector_metadata::named_hash_button(hash_chip, hash_name, tooltip_text.clone())
+            .hover_tooltip("inspector-hash-hover-help", tooltip_text);
 
     let meta_row = div()
         .flex()
@@ -466,14 +467,6 @@ pub(super) fn render_inspector(
                         .id("inspector-author")
                         .role(gpui::Role::Label)
                         .aria_label(author_identity.clone())
-                        .tooltip(move |_window, cx| {
-                            #[cfg(feature = "gui-e2e")]
-                            super::e2e::inspector_metadata::record_tooltip(author_identity.clone());
-                            cx.new(|_| HashTooltip {
-                                sha: author_identity.clone(),
-                            })
-                            .into()
-                        })
                         .flex_shrink(1.)
                         .when(compact, |author| author.flex_1())
                         .min_w(px(0.))
@@ -481,7 +474,15 @@ pub(super) fn render_inspector(
                         .text_color(rgb(theme().text_main))
                         .truncate()
                         .child(author_display)
-                        .child(super::e2e::measure_inside("inspector-author")),
+                        .child(super::e2e::measure_inside("inspector-author"))
+                        .hover_tooltip_builder("inspector-author-help", move |_window, cx| {
+                            #[cfg(feature = "gui-e2e")]
+                            super::e2e::inspector_metadata::record_tooltip(author_identity.clone());
+                            cx.new(|_| HashTooltip {
+                                sha: author_identity.clone(),
+                            })
+                            .into()
+                        }),
                 )
                 .child(
                     div()
@@ -541,12 +542,6 @@ pub(super) fn render_inspector(
                 .id(("inspector-coauthor", i))
                 .role(gpui::Role::Label)
                 .aria_label(identity.clone())
-                .tooltip(move |_window, cx| {
-                    cx.new(|_| HashTooltip {
-                        sha: identity.clone(),
-                    })
-                    .into()
-                })
                 .flex()
                 .flex_row()
                 .items_center()
@@ -560,8 +555,14 @@ pub(super) fn render_inspector(
                         .text_color(rgb(theme().text_muted))
                         .truncate()
                         .child(name_full),
-                );
-            row.into_any()
+                )
+                .hover_tooltip_builder(("inspector-coauthor-help", i), move |_window, cx| {
+                    cx.new(|_| HashTooltip {
+                        sha: identity.clone(),
+                    })
+                    .into()
+                });
+            row.into_any_element()
         })
         .collect();
 
@@ -705,9 +706,6 @@ pub(super) fn render_inspector(
                     .text_color(rgb(badge_text))
                     .text_xs()
                     .flex_shrink_0()
-                    .tooltip(move |w, cx| {
-                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
-                    })
                     .flex()
                     .flex_row()
                     .items_center()
@@ -721,7 +719,10 @@ pub(super) fn render_inspector(
                             .h(theme::scaled_px(10.))
                             .text_color(rgb(badge_text))
                     }))
-                    .child(label),
+                    .child(label)
+                    .hover_tooltip_builder(("inspector-ref-help", row_ix), move |w, cx| {
+                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                    }),
             );
             row_ix += 1;
         }
@@ -754,13 +755,16 @@ pub(super) fn render_inspector(
                     .flex_shrink_0()
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.8))
-                    .tooltip(move |w, cx| {
-                        gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
-                    })
                     .on_click(open)
                     .child(SharedString::from(
                         format!("#{} {}", pr.number, glyph).trim().to_string(),
-                    )),
+                    ))
+                    .hover_tooltip_builder(
+                        ("inspector-pr-help", pr.number as usize),
+                        move |w, cx| {
+                            gpui_component::tooltip::Tooltip::new(tip.clone()).build(w, cx)
+                        },
+                    ),
             );
         }
         row
@@ -818,7 +822,6 @@ pub(super) fn render_inspector(
                         .flex_1()
                         .min_w(px(0.))
                         .h(theme::scaled_px(24.))
-                        .tooltip(url.clone())
                         .on_click(move |_, _, cx| KagiApp::open_link_url(&open_url, cx))
                         .child(
                             div()
@@ -869,7 +872,11 @@ pub(super) fn render_inspector(
                                 url.clone(),
                                 false,
                             )
-                            .reveal_on_focus(open_id, message_handle.clone()),
+                            .reveal_on_focus(open_id, message_handle.clone())
+                            .hover_tooltip(
+                                ("inspector-message-link-hover-help", index),
+                                url.clone(),
+                            ),
                         )
                         .child(
                             super::inspector_metadata::named_button(

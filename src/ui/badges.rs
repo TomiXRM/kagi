@@ -4,6 +4,7 @@
 
 use super::render_helpers::*;
 use super::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Render the badge chips for one commit row as a horizontal flex container.
 ///
@@ -210,9 +211,6 @@ pub(crate) fn render_badges_column(
                         .flex_shrink_0()
                         .px_1()
                         .cursor_pointer()
-                        .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                        })
                         .child(SharedString::from(glyph))
                         .on_click(cx.listener(
                             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
@@ -244,6 +242,15 @@ pub(crate) fn render_badges_column(
                     } else {
                         glyph
                     };
+                    let glyph = glyph.hover_tooltip_builder(
+                        SharedString::from(format!(
+                            "graph-worktree-help-{i}-{worktree_ix}-{}",
+                            row_id.0
+                        )),
+                        move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                        },
+                    );
                     super::e2e::measure_control(control, glyph)
                 })
                 .collect(),
@@ -273,10 +280,6 @@ pub(crate) fn render_badges_column(
             // compete.
             .when(is_primary, |c| c.min_w(px(48.)))
             .when(!is_primary, |c| c.min_w(px(20.)))
-            // Hover: the full ref name (user request — must-have).
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
-            })
             .children(prefix_elements)
             .when(is_head, |c| {
                 c.child(div().flex_shrink_0().child(SharedString::from("\u{2713}")))
@@ -415,6 +418,12 @@ pub(crate) fn render_badges_column(
         } else {
             chip
         };
+        let chip = chip.hover_tooltip_builder(
+            SharedString::from(format!("graph-badge-help-{i}-{}", row_id.0)),
+            move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip_label.clone()).build(window, cx)
+            },
+        );
         let chip = if badge.kind == BadgeKind::Remote {
             super::e2e::measure_control(format!("graph-remote-{}", badge.label), chip)
         } else if cfg!(feature = "gui-e2e") && badge.kind == BadgeKind::HeadBranch {
@@ -448,11 +457,11 @@ pub(crate) fn render_badges_column(
                     .text_color(rgb(theme().text_sub))
                     .text_sm()
                     .flex_shrink_0()
-                    .tooltip(move |window, cx| {
+                    .child(SharedString::from(format!("+{extra}")))
+                    .hover_tooltip_builder(("graph-badge-extra-help", i), move |window, cx| {
                         gpui_component::tooltip::Tooltip::new(hidden_labels.clone())
                             .build(window, cx)
-                    })
-                    .child(SharedString::from(format!("+{extra}"))),
+                    }),
             );
         }
     }
@@ -551,10 +560,10 @@ pub(crate) fn render_provenance_badge(
         .text_color(rgb(text))
         .text_sm()
         .flex_shrink_0()
-        .tooltip(move |window, cx| {
+        .child(SharedString::from("🤖"))
+        .hover_tooltip_builder(("prov-badge-help", row_ix), move |window, cx| {
             gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
         })
-        .child(SharedString::from("🤖"))
 }
 
 #[cfg(test)]

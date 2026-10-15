@@ -9,6 +9,7 @@
 //! it out (#935); elsewhere it returns `None` because nothing opens it.
 
 use crate::ui::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 impl KagiApp {
     pub(crate) fn render_platform_menu_dropdown(
@@ -141,9 +142,6 @@ impl KagiApp {
                         .hover(move |s| super::menu_overlay::highlight_style(s, window_active))
                         .on_click(invoke)
                 })
-                .when_some(disabled_reason, |s, reason| {
-                    s.tooltip(move |window, cx| Tooltip::new(reason.to_string()).build(window, cx))
-                })
                 .child(
                     div()
                         .flex_1()
@@ -186,7 +184,15 @@ impl KagiApp {
             let row = row.relative().child(super::e2e::measure_inside(format!(
                 "platform-menu-cmd-{id}"
             )));
-            row.into_any_element()
+            if let Some(reason) = disabled_reason {
+                row.hover_tooltip_builder(
+                    SharedString::from(format!("platform-menu-help-{ix}-{row_ix}")),
+                    move |window, cx| Tooltip::new(reason.to_string()).build(window, cx),
+                )
+                .into_any_element()
+            } else {
+                row.into_any_element()
+            }
         };
 
         // `row_ix` is a running counter (submenus expand to several rows, so it

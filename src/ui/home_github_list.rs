@@ -13,6 +13,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{Icon, IconName, Sizable as _};
 use kagi_git::github_repos::{OwnerRepos, RepoListing};
 use kagi_git::github_repos_cache::{WorkItem, WorkKind};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::home_github::GithubRepos;
 use super::home_work::HomePane;
@@ -577,19 +578,25 @@ fn github_row(
             .text_sm()
             .text_color(rgb(theme().text_muted))
             .truncate()
-            .tooltip(move |window, cx| {
-                #[cfg(feature = "gui-e2e")]
-                super::e2e::record_home_repository_description(
-                    &format!("tooltip:{tooltip_name}"),
-                    &tooltip_description,
-                );
-                Tooltip::new(tooltip_description.clone()).build(window, cx)
-            })
             .child(full_description.clone())
             .child(super::e2e::measure_inside(format!(
                 "home-gh-description-{}",
                 listing.name_with_owner
             )))
+            .hover_tooltip_builder(
+                SharedString::from(format!(
+                    "home-gh-description-help-{}",
+                    listing.name_with_owner
+                )),
+                move |window, cx| {
+                    #[cfg(feature = "gui-e2e")]
+                    super::e2e::record_home_repository_description(
+                        &format!("tooltip:{tooltip_name}"),
+                        &tooltip_description,
+                    );
+                    Tooltip::new(tooltip_description.clone()).build(window, cx)
+                },
+            )
     });
     let id = SharedString::from(format!("home-gh-row-{}", listing.name_with_owner));
     let name = listing.name().to_string();

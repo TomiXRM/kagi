@@ -23,6 +23,7 @@ use kagi_domain::plan_note::{PlanNote, ShellKind, StashNote};
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::rc::Rc;
 
 #[cfg(feature = "gui-e2e")]
@@ -42,7 +43,7 @@ pub fn take_stash_warning_glyph_for_e2e() -> Option<&'static str> {
 }
 
 /// The approved entry, not the current occupant of its volatile index.
-pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<gpui::Stateful<gpui::Div>> {
+pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<impl IntoElement> {
     use kagi_domain::plan_note::{PlanTitle, RecoveryKind, StashRecovery, StashTitle};
     let index = match &plan.title {
         PlanTitle::Stash(
@@ -79,9 +80,6 @@ pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<gpui::Stateful<g
             .role(gpui::Role::Label)
             .aria_label(full.clone())
             .aria_description(full.clone())
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-            })
             .flex_shrink_0()
             .min_w(gpui::px(0.))
             .overflow_hidden()
@@ -89,7 +87,10 @@ pub(crate) fn stash_entry_label(plan: &OperationPlan) -> Option<gpui::Stateful<g
             .text_ellipsis_middle()
             .relative()
             .child(super::e2e::measure_inside("stash-entry-identity"))
-            .child(full),
+            .child(full)
+            .hover_tooltip_builder("stash-entry-identity-help", move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            }),
     )
 }
 
@@ -199,9 +200,6 @@ pub(crate) fn render_stash_push_modal(
                         .id(("stash-push-warning", index))
                         .role(gpui::Role::Alert)
                         .aria_label(full.clone())
-                        .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-                        })
                         .flex()
                         .items_start()
                         .gap_2()
@@ -213,7 +211,14 @@ pub(crate) fn render_stash_push_modal(
                                 .flex_shrink_0()
                                 .mt(theme::scaled_px(3.)),
                         )
-                        .child(short),
+                        .child(short)
+                        .hover_tooltip_builder(
+                            ("stash-push-warning-help", index),
+                            move |window, cx| {
+                                gpui_component::tooltip::Tooltip::new(full.clone())
+                                    .build(window, cx)
+                            },
+                        ),
                 );
             }
             body = body.child(warn_col.flex_shrink_0());

@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Explanatory hover help now disappears when its control is removed, moves away from the pointer, or its window becomes inactive—including during the display delay. Existing tooltip text and themed content remain, but formerly Kit-managed tooltips now use cursor-relative placement and GPUI timing rather than Kit overlay animation and adjacent-button grace, closer to standard macOS tooltip behavior. Control sizing and interactive worktree cards are unchanged. Shared registration and a CI rule prevent the old lifecycle from returning; no dependency fork or pin changes. (#1591)
 - Inspector file lists and Restore inspection panes retain stable keyboard focus while scrolling through fixed-height rows, including generated files and overflow notes. Nested Restore panes keep boundary-wheel chaining and do not pull pointer scrolling back to the focused row; horizontal wheel gestures no longer turn into vertical row movement. (#1479-S5B)
   - Review: retain the minimum 940×660 Restore-card keyboard and nested-wheel regressions at 167% zoom alongside the added 1000×720 desktop coverage.
 - Repair dev-red PR accessibility and branch-drag oracles after the approved safety/layout cutovers: deleting PR merges assert alert-owned focus, desktop drag coverage mounts 1000×720 and 1392×883, and a 940×660 compact leg drags real Local rail Popover rows. Self/alias no-ops, detached-HEAD refusal, native feedback and unchanged-repository assertions remain; production behavior is unchanged.

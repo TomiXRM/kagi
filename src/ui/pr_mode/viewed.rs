@@ -14,6 +14,7 @@ use gpui::{div, Context, SharedString};
 use kagi_domain::github::PullRequest;
 use kagi_domain::pr_viewed::ViewedFiles;
 use kagi_git::FileStatus;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::{KagiApp, PrView};
 use crate::ui::i18n;
@@ -100,11 +101,14 @@ pub(super) fn checkbox(ix: usize, checked: bool, cx: &mut Context<KagiApp>) -> g
     let app = cx.entity();
     let checkbox = gpui_component::checkbox::Checkbox::new(("pr-file-viewed", ix))
         .checked(checked)
-        .tooltip(i18n::pr_viewed::checkbox_tooltip())
         .on_click(move |_checked: &bool, _window, cx| {
             cx.stop_propagation();
             app.update(cx, |app, cx| app.pr_mode_toggle_viewed(ix, cx));
-        });
+        })
+        .hover_tooltip(
+            ("pr-file-viewed-hover-help", ix),
+            i18n::pr_viewed::checkbox_tooltip(),
+        );
     let control = div()
         .flex_shrink_0()
         .w(theme::scaled_px(18.))

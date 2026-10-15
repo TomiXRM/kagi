@@ -88,12 +88,6 @@ pub(super) fn author(row: &CommitRow, ix: usize, foreground: gpui::Hsla) -> impl
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis_middle()
-        .tooltip({
-            let author = row.author.clone();
-            move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(author.clone()).build(window, cx)
-            }
-        })
         .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {
             el.relative()
                 .child(super::super::e2e::measure_inside("graph-commit-author"))
@@ -106,6 +100,12 @@ pub(super) fn author(row: &CommitRow, ix: usize, foreground: gpui::Hsla) -> impl
         })
         .when(ix != 0 || !cfg!(feature = "gui-e2e"), |el| {
             el.child(row.author.clone())
+        })
+        .hover_tooltip_builder(("graph-author-hover-help", ix), {
+            let author = row.author.clone();
+            move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(author.clone()).build(window, cx)
+            }
         })
 }
 

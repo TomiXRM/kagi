@@ -10,6 +10,7 @@ use gpui::{div, px, rgb, Context, SharedString};
 
 use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::theme::{self, theme};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use crate::EditorWorkspaceView;
 #[cfg(feature = "gui-e2e")]
@@ -146,20 +147,6 @@ fn blame_cell(
         .relative()
         .role(gpui::Role::Label)
         .aria_label(label.clone())
-        .tooltip({
-            let full = label.clone();
-            #[cfg(feature = "gui-e2e")]
-            let owner = _cx.entity().downgrade();
-            move |window, cx| {
-                #[cfg(feature = "gui-e2e")]
-                let _ = owner.update(cx, |view, _| {
-                    if let Some(probe) = view.blame_probe.borrow_mut().as_mut() {
-                        probe.tooltip_shown = Some(full.to_string());
-                    }
-                });
-                gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-            }
-        })
         .h(line_height)
         .max_w(theme::scaled_px(560.0))
         .flex()
@@ -177,8 +164,22 @@ fn blame_cell(
                 .min_w(px(0.))
                 .whitespace_nowrap()
                 .text_ellipsis_middle()
-                .child(label),
+                .child(label.clone()),
         )
+        .hover_tooltip_builder("inline-blame-help", {
+            let full = label;
+            #[cfg(feature = "gui-e2e")]
+            let owner = _cx.entity().downgrade();
+            move |window, cx| {
+                #[cfg(feature = "gui-e2e")]
+                let _ = owner.update(cx, |view, _| {
+                    if let Some(probe) = view.blame_probe.borrow_mut().as_mut() {
+                        probe.tooltip_shown = Some(full.to_string());
+                    }
+                });
+                gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
+            }
+        })
 }
 
 #[cfg(feature = "gui-e2e")]

@@ -25,6 +25,7 @@
 //! Terminology (ADR-0058): every side label comes from `side_labels` — the words
 //! "ours"/"theirs" never appear in any user-facing string.
 
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1215,10 +1216,6 @@ fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyE
             .rounded_md()
             .border_1()
             .border_color(rgb(accent))
-            .tooltip(move |window, cx| {
-                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
-                    .build(window, cx)
-            })
             .child(
                 div()
                     .text_size(theme::scaled_px(10.))
@@ -1232,6 +1229,10 @@ fn dash_state(mode: &ConflictMode, cx: &mut Context<ConflictView>) -> gpui::AnyE
                     .truncate()
                     .child(SharedString::from(name.to_string())),
             )
+            .hover_tooltip_builder((id, 0usize), move |window, cx| {
+                Tooltip::new(format!("{} — {}", role, Msg::ConflictGitTermHint.t()))
+                    .build(window, cx)
+            })
     };
 
     div()
@@ -1502,7 +1503,7 @@ fn card_icon<H>(
     tip: &'static str,
     on_down: H,
     selected_active: Option<bool>,
-) -> gpui::Stateful<gpui::Div>
+) -> impl IntoElement
 where
     H: Fn(&gpui::MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
 {
@@ -1513,8 +1514,9 @@ where
     } else {
         rgb(theme().text_sub).into()
     };
+    let id = SharedString::from(id);
     div()
-        .id(SharedString::from(id))
+        .id(id.clone())
         .flex()
         .items_center()
         .justify_center()
@@ -1529,12 +1531,14 @@ where
                     .text_color(rgb(theme().text_main))
             })
         })
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         .on_mouse_down(MouseButton::Left, on_down)
         .child(
             gpui_component::Icon::new(icon)
                 .with_size(gpui_component::Size::Size(theme::scaled_px(14.))),
         )
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            Tooltip::new(tip).build(window, cx)
+        })
 }
 
 /// Actions for the per-file "…" overflow menu.

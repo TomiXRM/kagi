@@ -20,11 +20,9 @@
 //! [`Tooltip`] (which requires the element carry an `.id`) shows
 //! `"N additions, M deletions"`.
 
-use gpui::{
-    rgb, InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled,
-};
+use gpui::{rgb, InteractiveElement, IntoElement, ParentElement, SharedString, Styled};
 use gpui_component::tooltip::Tooltip;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use kagi_git::{bar_segments, FileDiffStat};
 
@@ -176,6 +174,8 @@ pub fn diffstat_unit(
     base.id(("diffstat-unit", id_seed))
         .child(numbers)
         .child(bar)
-        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        .hover_tooltip_builder(("diffstat-unit-help", id_seed), move |window, cx| {
+            Tooltip::new(tip.clone()).build(window, cx)
+        })
         .into_any_element()
 }

@@ -6,14 +6,14 @@ use std::{
 };
 
 use gpui::{
-    px, App, AppContext as _, Context, ElementId, Entity, ListOffset, ListState, SharedString,
-    WeakEntity, Window,
+    px, App, AppContext as _, Context, ElementId, Entity, SharedString, WeakEntity, Window,
 };
 use gpui_component::{
     text::{TextSelectionGroupRetirement, TextViewState, TextViewStyle},
     Root,
 };
 use kagi_domain::github::{Issue, IssueState};
+use kagi_ui_core::variable_list::VariableListState;
 
 use super::{
     i18n::Msg,
@@ -73,12 +73,13 @@ pub(super) struct IssueConversation {
     pub title: String,
     pub state: IssueState,
     pub posts: Vec<Post>,
-    pub list: ListState,
+    pub list: VariableListState,
     pub group: ElementId,
     members: Vec<(ElementId, Entity<TextViewState>)>,
     root: Option<WeakEntity<Root>>,
     pub scope: Rc<ConversationScope>,
     geometry_style: Option<TextViewStyle>,
+    geometry_language: Option<super::i18n::Lang>,
 }
 
 impl IssueConversation {
@@ -101,13 +102,13 @@ impl IssueConversation {
             title: String::new(),
             state: IssueState::Unknown,
             posts: Vec::new(),
-            list: ListState::new(2, gpui::ListAlignment::Top, px(400.))
-                .with_uniform_item_height(px(120.)),
+            list: VariableListState::new(2, px(400.)),
             group: ("issue-conversation", cx.entity_id()).into(),
             members: Vec::new(),
             root: None,
             scope: Rc::new(ConversationScope::default()),
             geometry_style: None,
+            geometry_language: None,
         }
     }
 
@@ -162,8 +163,10 @@ impl IssueConversation {
                 .geometry_style
                 .as_ref()
                 .is_none_or(|old| old != &style || old.is_dark != style.is_dark)
+                || owner.geometry_language != Some(super::i18n::lang())
             {
-                owner.list.remeasure_items(0..owner.list.item_count());
+                owner.list.remeasure();
+                owner.geometry_language = Some(super::i18n::lang());
                 owner.geometry_style = Some(style);
             }
             let root_changed = owner.root.as_ref().is_none_or(|old| old != &weak);
@@ -214,7 +217,6 @@ impl IssueConversation {
     }
 
     pub fn reconcile(&mut self, issue: &Issue, cx: &mut Context<Self>) {
-        let top = self.list.logical_scroll_top();
         let old_keys: Vec<_> = self.posts.iter().map(|post| post.key.clone()).collect();
         let mut previous: HashMap<_, _> = std::mem::take(&mut self.posts)
             .into_iter()
@@ -270,9 +272,9 @@ impl IssueConversation {
         {
             self.scope.generation.set(self.generation().wrapping_add(1));
         }
-        self.reconcile_list(&old_keys, top, &changed);
+        self.reconcile_list(&old_keys, &changed);
         if metadata_changed {
-            self.list.remeasure_items(1..2);
+            self.list.invalidate_rows(1..2);
         }
         self.members.clear();
         self.members.extend(self.posts.iter().map(|post| {
@@ -285,48 +287,41 @@ impl IssueConversation {
         cx.notify();
     }
 
-    fn reconcile_list(&self, old: &[PostKey], top: ListOffset, changed: &[usize]) {
-        let prefix = old
-            .iter()
-            .zip(&self.posts)
-            .take_while(|(key, post)| **key == post.key)
-            .count();
-        let suffix = old[prefix..]
-            .iter()
-            .rev()
-            .zip(self.posts[prefix..].iter().rev())
-            .take_while(|(key, post)| **key == post.key)
-            .count();
-        if prefix + suffix != old.len() || prefix + suffix != self.posts.len() {
-            self.list.splice(
-                1 + prefix..1 + old.len() - suffix,
-                self.posts.len() - prefix - suffix,
-            );
-            // The comments label belongs to the first reply and may move.
-            self.list.remeasure_items(1..self.posts.len() + 1);
-            let item_ix = if top.item_ix == 0 {
-                0
-            } else if top.item_ix > old.len() {
-                self.posts.len() + 1
-            } else {
-                let anchor = top.item_ix - 1;
-                old[anchor..]
+    fn reconcile_list(&self, old: &[PostKey], changed: &[usize]) {
+        if old.len() != self.posts.len()
+            || old
+                .iter()
+                .zip(&self.posts)
+                .any(|(key, post)| *key != post.key)
+        {
+            let previous: HashMap<_, _> = old
+                .iter()
+                .enumerate()
+                .map(|(index, key)| (key, index + 1))
+                .collect();
+            let mut retained = Vec::with_capacity(self.posts.len() + 2);
+            retained.push(Some(0));
+            retained.extend(
+                self.posts
                     .iter()
-                    .chain(old[..anchor].iter().rev())
-                    .find_map(|key| self.posts.iter().position(|post| &post.key == key))
-                    .map_or(0, |index| index + 1)
-            };
-            self.list.scroll_to(ListOffset {
-                item_ix,
-                offset_in_item: top.offset_in_item,
-            });
+                    .map(|post| previous.get(&post.key).copied()),
+            );
+            retained.push(Some(old.len() + 1));
+            self.list.reconcile_rows(&retained);
+            // The comments heading moves with the first accepted comment.
+            if let Some(old_first) = old.get(1) {
+                if let Some(index) = self.posts.iter().position(|post| &post.key == old_first) {
+                    self.list.invalidate_rows(index + 1..index + 2);
+                }
+            }
+            self.list.invalidate_rows(2..3);
         }
         for &row in changed {
-            self.list.remeasure_items(row..row + 1);
+            self.list.invalidate_rows(row..row + 1);
         }
-        self.list.remeasure_items(0..1);
+        self.list.invalidate_rows(0..1);
         self.list
-            .remeasure_items(self.posts.len() + 1..self.posts.len() + 2);
+            .invalidate_rows(self.posts.len() + 1..self.posts.len() + 2);
     }
 
     pub fn sync_placeholder(&mut self, cx: &mut Context<Self>) {
@@ -347,7 +342,7 @@ impl IssueConversation {
         post.source_revision = post.source_revision.wrapping_add(1);
         post.text
             .update(cx, |text, cx| text.set_text(&post.prepared.text, cx));
-        self.list.remeasure_items(1..2);
+        self.list.invalidate_rows(1..2);
     }
 }
 
@@ -499,10 +494,11 @@ impl KagiApp {
     pub(super) fn selected_issue_conversation(&self) -> Option<Entity<IssueConversation>> {
         let ui = self.ui();
         let base = ui.issue_composer.base_repo.as_deref()?;
-        ui.issue_conversations
-            .get(base)?
-            .get(&ui.selected_github_issue?)
-            .cloned()
+        let number = ui.selected_github_issue?;
+        // A retained entity may be allocated while the first detail is still
+        // pending. Only accepted evidence owns the conversation viewport.
+        ui.github_issue_details.get(&number)?;
+        ui.issue_conversations.get(base)?.get(&number).cloned()
     }
 
     pub(super) fn reconcile_issue_conversation_for(

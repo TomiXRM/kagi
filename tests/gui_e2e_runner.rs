@@ -2644,6 +2644,14 @@ mod macos {
                 Box::new(crate::toast_dismiss::scenario_toast_dismiss),
             ),
             (
+                "toast_tooltip_lifetime",
+                Box::new(crate::toast_dismiss::scenario_toast_tooltip_lifetime),
+            ),
+            (
+                "toast_tooltip_scroll",
+                Box::new(crate::toast_dismiss::scenario_toast_tooltip_scroll),
+            ),
+            (
                 "toast_stack_budget",
                 Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),

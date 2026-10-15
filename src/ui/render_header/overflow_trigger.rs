@@ -1,5 +1,6 @@
 use super::*;
 use gpui_component::tooltip::Tooltip;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Shared named, ringed » affordance for toolbar and document overflow.
 pub(crate) fn trigger(
@@ -7,8 +8,9 @@ pub(crate) fn trigger(
     label: &'static str,
     selected: bool,
     focus: &gpui::FocusHandle,
-) -> gpui::Stateful<gpui::Div> {
-    keyboard_nav::focusable(
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+) -> gpui::AnyElement {
+    let trigger = configure(keyboard_nav::focusable(
         div()
             .id(id)
             .role(gpui::Role::Button)
@@ -25,17 +27,18 @@ pub(crate) fn trigger(
             .cursor_pointer()
             .when(selected, |el| el.bg(rgb(theme().surface)))
             .hover(|style| style.bg(rgb(theme().surface)))
-            .when(!selected, |el| {
-                el.tooltip(move |window, cx| {
-                    Tooltip::element(move |_, _| {
-                        super::super::e2e::measure_control(
-                            format!("{id}-tooltip"),
-                            div().child(label),
-                        )
-                    })
-                    .build(window, cx)
-                })
-            })
             .child("»"),
-    )
+    ));
+    if selected {
+        trigger.into_any_element()
+    } else {
+        trigger
+            .hover_tooltip_builder((id, 0usize), move |window, cx| {
+                Tooltip::element(move |_, _| {
+                    super::super::e2e::measure_control(format!("{id}-tooltip"), div().child(label))
+                })
+                .build(window, cx)
+            })
+            .into_any_element()
+    }
 }

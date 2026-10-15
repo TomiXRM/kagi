@@ -4,6 +4,7 @@
 //! method moves with no visibility change. Behaviour is unchanged.
 
 use super::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -34,7 +35,8 @@ fn panel_button(
     tip: &'static str,
     pressed: bool,
     icon: gpui_component::IconName,
-) -> gpui::Stateful<gpui::Div> {
+    configure: impl FnOnce(gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div>,
+) -> impl IntoElement {
     let toggled = if pressed {
         gpui::Toggled::True
     } else {
@@ -62,7 +64,6 @@ fn panel_button(
         .rounded_sm()
         .cursor_pointer()
         .hover(|s| s.bg(rgb(theme().surface)))
-        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         .child(
             gpui_component::Icon::new(icon)
                 .size(theme::scaled_px(16.))
@@ -81,7 +82,9 @@ fn panel_button(
             super::render_header::toolbar_a11y::record_focus_probe(id);
         }
     });
-    keyboard_nav::focusable(el)
+    configure(keyboard_nav::focusable(el)).hover_tooltip_builder((id, 0usize), move |window, cx| {
+        Tooltip::new(tip).build(window, cx)
+    })
 }
 
 fn status_text_width(text: SharedString, window: &Window) -> gpui::Pixels {
@@ -250,9 +253,12 @@ impl KagiApp {
             .t(),
             terminal_active,
             gpui_component::IconName::SquareTerminal,
-        )
-        .ml(theme::scaled_px(4.))
-        .on_click(icon_terminal_click);
+            |button| {
+                button
+                    .ml(theme::scaled_px(4.))
+                    .on_click(icon_terminal_click)
+            },
+        );
         let icon_oplog = panel_button(
             "status-icon-oplog",
             Msg::BottomTabOperationLog.t(),
@@ -264,9 +270,8 @@ impl KagiApp {
             .t(),
             oplog_active,
             gpui_component::IconName::Menu,
-        )
-        .ml(theme::scaled_px(2.))
-        .on_click(icon_oplog_click);
+            |button| button.ml(theme::scaled_px(2.)).on_click(icon_oplog_click),
+        );
 
         // ── Assemble status bar ────────────────────────────────
         let mut bar = div()
@@ -299,10 +304,12 @@ impl KagiApp {
                     .min_w(branch_min_width)
                     .truncate()
                     .text_color(rgb(theme().text_main))
-                    .tooltip(move |window, cx| Tooltip::new(branch_tip.clone()).build(window, cx))
                     .child(branch_text)
                     .when(cfg!(feature = "gui-e2e"), |el| {
                         el.child(super::e2e::measure_inside("status-branch"))
+                    })
+                    .hover_tooltip_builder("status-branch-hover-help", move |window, cx| {
+                        Tooltip::new(branch_tip.clone()).build(window, cx)
                     }),
             );
 
@@ -338,7 +345,6 @@ impl KagiApp {
                     .id(("status-chip", chip.role as usize))
                     .role(gpui::Role::Label)
                     .aria_label(description)
-                    .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                     .relative()
                     .ml(theme::scaled_px(margin))
                     .text_color(rgb(color))
@@ -352,7 +358,11 @@ impl KagiApp {
                             el.child(super::e2e::measure_inside("status-fetch-age"))
                         }
                         _ => el,
-                    }),
+                    })
+                    .hover_tooltip_builder(
+                        ("status-chip-hover-help", chip.role as usize),
+                        move |window, cx| Tooltip::new(tip.clone()).build(window, cx),
+                    ),
             );
         }
         // Refresh time
@@ -379,7 +389,7 @@ impl KagiApp {
                 .max(px(0.))
                 .min(theme::scaled_px(80. + if busy { 14. } else { 0. }))
         };
-        let mut message = div()
+        let message = div()
             .id("status-footer-msg")
             .flex()
             .flex_row()
@@ -405,14 +415,17 @@ impl KagiApp {
                     }),
             );
         #[cfg(feature = "gui-e2e")]
-        {
-            message = message.track_scroll(&FOOTER_MSG_BOUNDS.with(gpui::ScrollHandle::clone));
-        }
-        if let Some(tip) = view_models::footer_excerpt(&footer_text) {
+        let message = message.track_scroll(&FOOTER_MSG_BOUNDS.with(gpui::ScrollHandle::clone));
+        let message = if let Some(tip) = view_models::footer_excerpt(&footer_text) {
             let tip = SharedString::from(tip);
-            message =
-                message.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
-        }
+            message
+                .hover_tooltip_builder("status-message-hover-help", move |window, cx| {
+                    Tooltip::new(tip.clone()).build(window, cx)
+                })
+                .into_any_element()
+        } else {
+            message.into_any_element()
+        };
         bar = bar.child(message);
 
         // Icon buttons at the right end.

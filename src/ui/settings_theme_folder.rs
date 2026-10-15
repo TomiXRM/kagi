@@ -2,11 +2,12 @@
 
 use gpui::{
     div, rgb, AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _,
+    SharedString, Styled as _,
 };
 use gpui_component::button::Button;
 use gpui_component::text::TextView;
 use gpui_component::{Disableable as _, Sizable as _};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::Msg;
 use super::theme::{self, theme};
@@ -40,7 +41,10 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
             div()
                 .text_sm()
                 .id("settings-custom-themes-help")
-                .tooltip(|window, cx| {
+                .child(e2e::measure_inside("settings-custom-description"))
+                .text_color(rgb(theme().text_sub))
+                .child(SharedString::from(Msg::SettingsCustomThemesSummary.t()))
+                .hover_tooltip_builder("settings-custom-themes-hover-help", |window, cx| {
                     #[cfg(feature = "gui-e2e")]
                     super::settings_view::record_settings_help(
                         "settings-custom-themes-help",
@@ -48,10 +52,7 @@ pub(super) fn section(app: &Entity<KagiApp>) -> impl IntoElement {
                     );
                     gpui_component::tooltip::Tooltip::new(Msg::SettingsCustomThemesDesc.t())
                         .build(window, cx)
-                })
-                .child(e2e::measure_inside("settings-custom-description"))
-                .text_color(rgb(theme().text_sub))
-                .child(SharedString::from(Msg::SettingsCustomThemesSummary.t())),
+                }),
         )
         .child(e2e::measure_control(
             "settings-custom-themes-path",

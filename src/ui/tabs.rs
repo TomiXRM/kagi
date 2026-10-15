@@ -23,6 +23,7 @@ use gpui::{div, prelude::*, px, rgb, Context, PathPromptOptions, SharedString, W
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tooltip::Tooltip;
 use gpui_component::Sizable as _;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::{self, Msg};
 use super::theme::{self, theme};
@@ -1017,10 +1018,12 @@ impl KagiApp {
                 .text_color(rgb(theme().text_main))
                 .hover(|style| style.bg(rgb(theme().surface)))
                 .cursor_pointer()
-                .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
                 .child("+")
                 // Cmd+T / File → New Tab is the keyboard path.
-                .on_click(cx.listener(|this, _, window, cx| this.open_home_tab(window, cx))),
+                .on_click(cx.listener(|this, _, window, cx| this.open_home_tab(window, cx)))
+                .hover_tooltip_builder("tab-add-hover-help", move |window, cx| {
+                    Tooltip::new(label).build(window, cx)
+                }),
         )
     }
 }

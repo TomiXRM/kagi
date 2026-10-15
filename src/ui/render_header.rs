@@ -12,6 +12,40 @@ pub(super) mod toolbar_overflow;
 
 use super::*;
 use crate::ui::workspace_mode::WorkspaceMode;
+use kagi_ui_core::tooltip::HoverTooltip as _;
+
+// Keep the trigger configurable until its click handler is installed, then
+// wrap the complete element so tooltip geometry follows the whole control.
+struct ToolbarButton {
+    id: &'static str,
+    element: gpui::Stateful<gpui::Div>,
+    help: Option<SharedString>,
+}
+
+impl ToolbarButton {
+    fn tooltip_summary(mut self, summary: Option<SharedString>) -> Self {
+        if let Some(summary) = summary {
+            self.help = Some(summary);
+        }
+        self
+    }
+
+    fn on_click(
+        self,
+        on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    ) -> gpui::AnyElement {
+        let element = self.element.on_click(on_click);
+        if let Some(help) = self.help {
+            element
+                .hover_tooltip_builder((self.id, 0usize), move |window, cx| {
+                    Tooltip::new(help.clone()).build(window, cx)
+                })
+                .into_any_element()
+        } else {
+            element.into_any_element()
+        }
+    }
+}
 
 /// Shared workspace/Home frame height; both presentation modes fit ≤54px at 100%.
 pub(super) fn chrome_frame_height() -> gpui::Pixels {
@@ -461,7 +495,7 @@ impl KagiApp {
             // Pending hidden commands need natural widths, not interactive
             // descendants; retaining the last fit keeps the open menu stable.
             if hidden & (1 << index) != 0 {
-                return if pending_widths & (1 << index) != 0 {
+                let element = if pending_widths & (1 << index) != 0 {
                     toolbar_overflow::measure_hidden(
                         layout_app.clone(),
                         index,
@@ -471,6 +505,11 @@ impl KagiApp {
                     )
                 } else {
                     div().id(id).hidden()
+                };
+                return ToolbarButton {
+                    id,
+                    element,
+                    help: None,
                 };
             }
             #[cfg(feature = "gui-e2e")]
@@ -599,24 +638,26 @@ impl KagiApp {
                             .text_color(text_color)
                             .child(SharedString::from(accessible_label)),
                     )
-                })
-                .when(
-                    !(id == "tb-undo" && undo_has_summary || id == "tb-redo" && redo_has_summary),
-                    |el| {
-                        #[cfg(feature = "gui-e2e")]
-                        toolbar_a11y::record_tooltip(id, accessible_label);
-                        el.tooltip(move |window, cx| {
-                            Tooltip::new(accessible_label).build(window, cx)
-                        })
-                    },
-                );
+                });
+            let help =
+                if !(id == "tb-undo" && undo_has_summary || id == "tb-redo" && redo_has_summary) {
+                    #[cfg(feature = "gui-e2e")]
+                    toolbar_a11y::record_tooltip(id, accessible_label);
+                    Some(SharedString::from(accessible_label))
+                } else {
+                    None
+                };
             #[cfg(feature = "gui-e2e")]
             let btn = btn.on_key_down(move |event, _, _| {
                 if event.keystroke.key == "f19" {
                     toolbar_a11y::record_focus_probe(id);
                 }
             });
-            keyboard_nav::focusable(btn)
+            ToolbarButton {
+                id,
+                element: keyboard_nav::focusable(btn),
+                help,
+            }
         };
 
         // ── Undo / Redo tooltips: previewed operation summary (ADR-0081) ────
@@ -745,9 +786,7 @@ impl KagiApp {
                             .id("tb-refresh")
                             .role(gpui::Role::Button)
                             .when_some(commands::command("file.refresh"), |el, command| {
-                                el.aria_label(command.label).tooltip(move |window, cx| {
-                                    Tooltip::new(command.label).build(window, cx)
-                                })
+                                el.aria_label(command.label)
                             })
                             .relative()
                             .child(super::e2e::measure_inside("tb-refresh"))
@@ -770,7 +809,17 @@ impl KagiApp {
                                 toolbar_a11y::record_focus_probe("tb-refresh");
                             }
                         });
-                        keyboard_nav::focusable(refresh).on_click(refresh_click)
+                        let refresh = keyboard_nav::focusable(refresh).on_click(refresh_click);
+                        if let Some(command) = commands::command("file.refresh") {
+                            refresh
+                                .hover_tooltip_builder(
+                                    "tb-refresh-hover-help",
+                                    move |window, cx| Tooltip::new(command.label).build(window, cx),
+                                )
+                                .into_any_element()
+                        } else {
+                            refresh.into_any_element()
+                        }
                     })
                     // ── repo name (top) + current branch (smaller, below) ──
                     // Stacked vertically so a long branch label never competes
@@ -921,11 +970,7 @@ impl KagiApp {
                                         undo_reason,
                                         0,
                                     )
-                                    .when_some(undo_tooltip_text, |btn, text| {
-                                        btn.tooltip(move |window, cx| {
-                                            Tooltip::new(text.clone()).build(window, cx)
-                                        })
-                                    })
+                                    .tooltip_summary(undo_tooltip_text)
                                     .on_click(undo_click),
                                 )
                                 // Redo — operation-history redo (T-UNDOREDO-001).
@@ -938,11 +983,7 @@ impl KagiApp {
                                         redo_reason,
                                         0,
                                     )
-                                    .when_some(redo_tooltip_text, |btn, text| {
-                                        btn.tooltip(move |window, cx| {
-                                            Tooltip::new(text.clone()).build(window, cx)
-                                        })
-                                    })
+                                    .tooltip_summary(redo_tooltip_text)
                                     .on_click(redo_click),
                                 )
                                 .when(gap(0x60, 0x80), |el| {

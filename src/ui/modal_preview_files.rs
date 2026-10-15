@@ -6,6 +6,7 @@ use super::{
 };
 use gpui::{div, prelude::*, rgb, SharedString, TextOverflow};
 use kagi_domain::{plan::OperationPlan, plan_note::PlanTitle, status::FileStatus};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(crate) const PREVIEW_FILE_LIMIT: usize = 25;
 
@@ -99,14 +100,17 @@ fn render_row(index: usize, file: &FileStatus) -> gpui::AnyElement {
                 )
                 .flex_1()
                 .min_w(gpui::px(0.))
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                })
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_overflow(TextOverflow::TruncateMiddle("…".into()))
                 .child(e2e::measure_inside(format!("plan-preview-path-{index}")))
-                .child(path),
+                .child(path)
+                .hover_tooltip_builder(
+                    ("plan-preview-path-help", index),
+                    move |window, cx| {
+                        gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                    },
+                ),
             ),
     )
     .into_any_element()

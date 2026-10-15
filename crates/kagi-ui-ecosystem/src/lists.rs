@@ -10,6 +10,7 @@ use super::render::{scroll_path_cell, stat, text_button};
 use super::*;
 use gpui::{relative, AnyElement};
 use kagi_domain::hotspot::{CouplingEdge, CouplingPair, Ecosystem, FileMetric, FileOwnership};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Cap on rendered rows — the power-law means the top slice carries the signal,
 /// and it bounds the element count without virtualization.
@@ -574,13 +575,13 @@ fn ownership_author(rank: usize, owner: &FileOwnership) -> impl IntoElement {
         .id(SharedString::from(id))
         .role(gpui::Role::Label)
         .aria_label(identity.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(identity.clone()).build(window, cx)
-        })
         .flex_shrink_0()
         .text_size(theme::scaled_px(12.0))
         .text_color(rgb(theme().text_sub))
         .child(text)
+        .hover_tooltip_builder(("eco-own-author-help", rank), move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(identity.clone()).build(window, cx)
+        })
 }
 
 // ── small shared element helpers ────────────────────────────────

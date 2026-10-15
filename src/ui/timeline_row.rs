@@ -16,6 +16,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::text::{TextView, TextViewStyle};
 use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _};
 use kagi_ui_core::avatar::{login_key, AvatarImages};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::Msg;
 use super::render_helpers::safe_text;
@@ -267,7 +268,7 @@ pub(super) fn mode_toggle(
     id: impl Into<SharedString>,
     preview: bool,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> Button {
+) -> impl IntoElement {
     let (icon, tooltip) = if preview {
         ("icons/square-pen.svg", Msg::ComposerWrite.t())
     } else {
@@ -288,17 +289,17 @@ pub(super) fn mode_toggle(
     }
     #[cfg(feature = "gui-e2e")]
     let probe_id = id.to_string();
-    Button::new(id)
+    Button::new(id.clone())
         .icon(Icon::empty().path(icon))
         .small()
         .tab_stop(true)
         .map(|button| super::button_style::named_button(button, name, Some(preview)))
-        .tooltip(tooltip)
         .on_click(move |event, window, cx| {
             #[cfg(feature = "gui-e2e")]
             super::e2e::pr_detail::record_activation(&probe_id);
             on_click(event, window, cx);
         })
+        .hover_tooltip((id, 0usize), tooltip)
 }
 
 /// Ordinary submit uses the same Primary variant as `KagiButton`; unavailable

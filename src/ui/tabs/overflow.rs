@@ -254,26 +254,29 @@ impl gpui::RenderOnce for Trigger {
             Msg::TabOverflow.t(),
             self.selected,
             &self.focus,
-        )
-        .h(px(f32::from(theme::scaled_px(28.)).min(24.)))
-        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            let focus = window.focused(cx);
-            let _ = pointer.update(cx, |state, _| {
-                if !state.open {
-                    state.previous = focus;
-                }
-            });
-        })
-        .on_click(move |event, window, cx| {
-            if event.is_keyboard() {
-                let focus = window.focused(cx);
-                let _ = self.state.update(cx, |state, _| {
-                    state.previous = focus;
-                    state.open = true;
-                });
-                let _ = self.app.update(cx, |_, cx| cx.notify());
-            }
-        });
+            |trigger| {
+                trigger
+                    .h(px(f32::from(theme::scaled_px(28.)).min(24.)))
+                    .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                        let focus = window.focused(cx);
+                        let _ = pointer.update(cx, |state, _| {
+                            if !state.open {
+                                state.previous = focus;
+                            }
+                        });
+                    })
+                    .on_click(move |event, window, cx| {
+                        if event.is_keyboard() {
+                            let focus = window.focused(cx);
+                            let _ = self.state.update(cx, |state, _| {
+                                state.previous = focus;
+                                state.open = true;
+                            });
+                            let _ = self.app.update(cx, |_, cx| cx.notify());
+                        }
+                    })
+            },
+        );
         super::super::e2e::measure_control("tab-overflow", trigger)
     }
 }
@@ -499,16 +502,11 @@ fn tab_item(
                 path,
             );
         }
-        div()
+        let item = div()
             .id(("tab-overflow-item", index))
             .role(gpui::Role::MenuItem)
             .aria_label(label.clone())
-            .when_some(path.clone(), |item, path| {
-                item.aria_description(path.clone())
-                    .tooltip(move |window, cx| {
-                        gpui_component::tooltip::Tooltip::new(path.clone()).build(window, cx)
-                    })
-            })
+            .when_some(path.clone(), |item, path| item.aria_description(path))
             .w_full()
             .max_w((width - window.rem_size() * 0.5 - px(16.)).max(px(0.)))
             .child(
@@ -517,6 +515,17 @@ fn tab_item(
                     .text_ellipsis_middle()
                     .whitespace_nowrap()
                     .child(label.clone()),
+            );
+        if let Some(path) = path.clone() {
+            item.hover_tooltip_builder(
+                ("tab-overflow-item-hover-help", index),
+                move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(path.clone()).build(window, cx)
+                },
             )
+            .into_any_element()
+        } else {
+            item.into_any_element()
+        }
     })
 }

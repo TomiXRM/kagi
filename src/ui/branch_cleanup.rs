@@ -12,6 +12,7 @@
 
 use gpui::prelude::*;
 use gpui::ClipboardItem;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use kagi_git::ops::{copy_all_text, BranchCleanupRow, CleanupDeleteTarget, MergedBranchStatus};
 
@@ -778,16 +779,16 @@ fn build_cleanup_row(
         .text_color(rgb(theme().text_main))
         .cursor_pointer()
         .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
-        .tooltip({
-            let full = full_name.clone();
-            move |window, cx| Tooltip::new(full.clone()).build(window, cx)
-        })
         .on_click(
             cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                 super::branch_menu::copy_branch_name(this, name_for_copy.clone(), cx);
             }),
         )
-        .child(div().truncate().child(full_name));
+        .child(div().truncate().child(full_name.clone()))
+        .hover_tooltip_builder(("cleanup-name-help", i), {
+            let full = full_name;
+            move |window, cx| Tooltip::new(full.clone()).build(window, cx)
+        });
 
     // PR: `#248 chore: bump to 0.22.0`. A merged branch nearly always has one,
     // and its title explains the branch better than the branch name does
@@ -807,7 +808,6 @@ fn build_cleanup_row(
                 .text_color(rgb(theme().text_main))
                 .cursor_pointer()
                 .hover(|s| s.text_color(rgb(theme().accent_text_on(theme().surface))))
-                .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .on_click(
                     cx.listener(move |this: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
                         this.open_pr_in_browser(&pr_open);
@@ -815,6 +815,9 @@ fn build_cleanup_row(
                     }),
                 )
                 .child(div().truncate().child(label))
+                .hover_tooltip_builder(("cleanup-pr-help", i), move |window, cx| {
+                    Tooltip::new(tip.clone()).build(window, cx)
+                })
                 .into_any_element()
         }
         None => div()
@@ -916,10 +919,15 @@ fn build_cleanup_row(
                 .child(SharedString::from(Msg::CleanupBadgeStale.t())),
         );
     }
-    if let Some(tip) = grown_tooltip {
-        status_cell =
-            status_cell.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
-    }
+    let status_cell = if let Some(tip) = grown_tooltip {
+        status_cell
+            .hover_tooltip_builder(("cleanup-status-help", i), move |window, cx| {
+                Tooltip::new(tip.clone()).build(window, cx)
+            })
+            .into_any_element()
+    } else {
+        status_cell.into_any_element()
+    };
 
     // Actions: trash only, and only when the row can build a target.
     let trash_btn: Option<gpui::AnyElement> = row.delete_target().map(|target| {

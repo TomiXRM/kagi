@@ -20,6 +20,7 @@ use kagi_ui_core::divider::{DividerDrag, DividerGhost, DividerKind};
 use kagi_ui_core::header_fit::header_button;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::time::now_unix_secs;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use crate::detail::{render_fh_detail_pane, render_fh_row_menu};
 use crate::{fh_row_height, FileHistoryEvent, FileHistoryState, FileHistoryView};
@@ -132,42 +133,76 @@ pub fn render_file_history_view(
         &[fh_branch.clone(), count_text.clone()],
     );
 
-    let back = header_button("fh-back", back_label, "icons/arrow-left.svg", compact).on_click(
-        cx.listener(|_this, _e, _w, cx| {
-            cx.emit(FileHistoryEvent::CloseRequested);
-        }),
+    let back = header_button(
+        "fh-back",
+        back_label,
+        "icons/arrow-left.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(|_this, _e, _w, cx| {
+                cx.emit(FileHistoryEvent::CloseRequested);
+            }))
+        },
     );
 
     let path_for_copy = rel_path.clone();
-    let copy_path = header_button("fh-copy-path", copy_label, "icons/copy.svg", compact).on_click(
-        cx.listener(move |_this, _e, _w, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(
-                path_for_copy.to_string_lossy().into_owned(),
-            ));
-        }),
+    let copy_path = header_button(
+        "fh-copy-path",
+        copy_label,
+        "icons/copy.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(move |_this, _e, _w, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(
+                    path_for_copy.to_string_lossy().into_owned(),
+                ));
+            }))
+        },
     );
 
-    let refresh = header_button("fh-refresh", refresh_label, "icons/refresh-cw.svg", compact)
-        .on_click(cx.listener(|this, _e, _w, cx| {
-            this.reload(true, cx);
-        }));
+    let refresh = header_button(
+        "fh-refresh",
+        refresh_label,
+        "icons/refresh-cw.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(|this, _e, _w, cx| {
+                this.reload(true, cx);
+            }))
+        },
+    );
 
     let path_for_open = state
         .selected_entry()
         .map(|entry| entry.change.path_after.clone())
         .unwrap_or_else(|| rel_path.clone());
-    let open_file = header_button("fh-open-file", open_label, "icons/file-text.svg", compact)
-        .on_click(cx.listener(move |_this, _e, _w, cx| {
-            cx.emit(FileHistoryEvent::OpenFileRequested(path_for_open.clone()));
-        }));
+    let open_file = header_button(
+        "fh-open-file",
+        open_label,
+        "icons/file-text.svg",
+        compact,
+        |button| {
+            button.on_click(cx.listener(move |_this, _e, _w, cx| {
+                cx.emit(FileHistoryEvent::OpenFileRequested(path_for_open.clone()));
+            }))
+        },
+    );
 
     // Icon-only, the On state is the button's selected look.
-    let follow_btn = header_button("fh-follow", follow_label, "icons/route.svg", compact)
-        .selected(compact && follow)
-        .on_click(cx.listener(|this, _e, _w, cx| {
-            this.data.follow_renames = !this.data.follow_renames;
-            this.reload(false, cx);
-        }));
+    let follow_btn = header_button(
+        "fh-follow",
+        follow_label,
+        "icons/route.svg",
+        compact,
+        |button| {
+            button
+                .selected(compact && follow)
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    this.data.follow_renames = !this.data.follow_renames;
+                    this.reload(false, cx);
+                }))
+        },
+    );
 
     let title_tip = if compact {
         SharedString::from(format!("{rel_path_str}\n{fh_branch} · {count_text}"))
@@ -206,7 +241,9 @@ pub fn render_file_history_view(
                     "File History: {}",
                     rel_path_str
                 )))
-                .tooltip(move |window, cx| Tooltip::new(title_tip.clone()).build(window, cx)),
+                .hover_tooltip_builder("fh-title-help", move |window, cx| {
+                    Tooltip::new(title_tip.clone()).build(window, cx)
+                }),
         )
         .when(!compact, |el| {
             el.child(

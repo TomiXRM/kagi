@@ -10,6 +10,7 @@ use gpui_component::{
     Sizable,
 };
 use kagi_domain::diff::{HunkApproval, HunkRange};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::MainDiffSource;
 use crate::ui::{theme, KagiApp, Msg};
@@ -71,7 +72,6 @@ impl HunkAction {
             .border_1()
             .border_color(gpui::rgb(theme::theme().selected))
             .label(SharedString::from(label))
-            .tooltip(SharedString::from(label))
             .on_key_down(crate::ui::keyboard_nav::stop_activation_keys)
             .map(|button| {
                 #[cfg(feature = "gui-e2e")]
@@ -104,7 +104,11 @@ impl HunkAction {
                     app.stage_hunk_from_diff(owner, path, approved, staged, cx)
                 })
                 .ok();
-            });
+            })
+            .hover_tooltip(
+                ("main-diff-hunk-stage-hover-help", row),
+                SharedString::from(label),
+            );
         #[cfg(feature = "gui-e2e")]
         let button = crate::ui::e2e::measure_control(format!("main-diff-hunk-stage-{row}"), button);
         Some(button.into_any_element())

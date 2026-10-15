@@ -26,6 +26,7 @@ pub use images::images_as_links;
 pub use resolve::MarkdownImageBase;
 
 use crate::theme;
+use crate::tooltip::HoverTooltip as _;
 use extract::{has_uri_scheme, single_line, standalone_images};
 
 /// Plugin applied to every Kagi Markdown `TextView`.
@@ -148,15 +149,22 @@ impl MarkdownPlugin for MarkdownImages {
             .flex_col()
             .items_center()
             .gap_2()
-            .children(block.images.iter().cloned().map(render_block_image))
+            .children(
+                block
+                    .images
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(index, image)| render_block_image(index, image)),
+            )
     }
 }
 
-fn render_block_image(image: BlockImage) -> impl IntoElement {
+fn render_block_image(index: usize, image: BlockImage) -> impl IntoElement {
     let alt = image.alt.clone();
     let tooltip = image.title.clone().unwrap_or_else(|| alt.clone());
     let link = image.link.clone();
-    img(image.image_source())
+    let image = img(image.image_source())
         .object_fit(ObjectFit::Contain)
         // Honour `<img width=…>`: the icon a README sizes to 120px should be
         // 120px, not scaled up to fill the box. Scaled with the UI so it keeps
@@ -180,17 +188,21 @@ fn render_block_image(image: BlockImage) -> impl IntoElement {
                 .child(SharedString::from(format!("[{}]", alt)))
                 .into_any_element()
         })
-        .when(!tooltip.is_empty(), |image| {
-            image.tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-            })
-        })
         .when_some(link, |image, link| {
             image.cursor_pointer().on_click(move |_, _, cx| {
                 cx.stop_propagation();
                 cx.open_url(&link);
             })
-        })
+        });
+    if tooltip.is_empty() {
+        image.into_any_element()
+    } else {
+        image
+            .hover_tooltip_builder(("markdown-image-help", index), move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            })
+            .into_any_element()
+    }
 }
 
 /// Rewrite a Markdown document so nothing GPUI shapes as one line contains a

@@ -17,6 +17,7 @@ use kagi_domain::head::Head;
 use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreTitle, PlanNote, PlanTitle};
 use kagi_domain::ref_restore::RefRestore;
 use kagi_ui_core::i18n::{self, oplog_panel::OplogPanelMsg, plan_note_text, Msg};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -103,13 +104,13 @@ fn ref_row(row: &RefRestore, head: Option<&str>, index: usize) -> gpui::Stateful
             .bg(gpui::rgba(bg))
             .text_color(rgb(foreground))
             .text_xs()
-            .tooltip(move |window, cx| {
-                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-            })
             .child(SharedString::from(ref_label))
             .child(crate::ui::e2e::measure_inside(format!(
                 "restore-ref-name-{index}"
-            )));
+            )))
+            .hover_tooltip_builder(("restore-ref-name-help", index), move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+            });
     div()
         .id(SharedString::from(format!("restore-ref-{index}")))
         .relative()
@@ -215,13 +216,13 @@ fn checked_out_warning_row(index: usize, reason: &str, path: &str) -> gpui::AnyE
                 .font_family(MONO_FONT)
                 .text_xs()
                 .text_color(rgb(theme().text_muted))
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                })
                 .child(path_text)
                 .child(crate::ui::e2e::measure_inside(format!(
                     "restore-warning-path-{index}"
-                ))),
+                )))
+                .hover_tooltip_builder(("restore-warning-path-help", index), move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                }),
         )
         .child(crate::ui::e2e::measure_inside(format!(
             "restore-warning-{index}"

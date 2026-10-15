@@ -12,6 +12,7 @@ use gpui_component::{
     scroll::Scrollbar,
     Sizable as _,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::{cell::Cell, rc::Rc};
 
 const PREVIEW_LINES: usize = 12;
@@ -107,10 +108,10 @@ fn copy_button(hunk: &Hunk, id: usize, cx: &mut Context<KagiApp>) -> gpui::AnyEl
         .icon(gpui_component::Icon::empty().path("icons/copy.svg"))
         .size(theme::scaled_px(24.))
         .tab_stop(true)
-        .tooltip(Msg::PrHunkCopy.t())
         .map(|button| crate::ui::button_style::named_button(button, Msg::PrHunkCopy.t(), None))
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(copy);
+        .on_click(copy)
+        .hover_tooltip(("pr-convo-hunk-copy-hover-help", id), Msg::PrHunkCopy.t());
     #[cfg(feature = "gui-e2e")]
     {
         e2e::pr_detail::record_control(

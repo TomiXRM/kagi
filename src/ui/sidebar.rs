@@ -18,6 +18,7 @@ use super::sidebar_rows::{
 };
 use super::theme::{self, theme};
 use super::{BranchDrag, BranchDragGhost, KagiApp, Msg};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Row slot height (unscaled) for every virtualized leaf outside WORKTREES.
 ///
@@ -179,7 +180,7 @@ pub const SECTION_TAGS: &str = "tags";
 pub const SECTION_WORKTREES: &str = "worktrees";
 pub const SECTION_STASHES: &str = "stashes";
 
-/// Build a `.tooltip(...)` closure showing the full (untruncated) name.
+/// Build hover help showing the full (untruncated) name.
 /// Row labels are single-line + ellipsized, so the tooltip is how the user
 /// reads a name that doesn't fit the sidebar width.
 pub(super) fn name_tooltip(
@@ -491,7 +492,6 @@ fn build_local_branch_leaf(
             .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
             .on_drop::<BranchDrag>(drop_handler)
             .hover(|style| style.bg(rgb(theme().surface)))
-            .tooltip(name_tooltip(full_name))
             .child(
                 div()
                     .relative()
@@ -506,7 +506,11 @@ fn build_local_branch_leaf(
                     }),
             )
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
-            .into_any()
+            .hover_tooltip_builder(
+                SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                name_tooltip(full_name),
+            )
+            .into_any_element()
     } else {
         let branch_for_dbl = branch_name.to_string();
         let branch_for_delete = branch_name.to_string();
@@ -574,7 +578,6 @@ fn build_local_branch_leaf(
                 },
             )
             .hover(|style| style.bg(rgb(theme().surface)))
-            .tooltip(name_tooltip(full_name))
             .child(
                 div()
                     .relative()
@@ -604,7 +607,11 @@ fn build_local_branch_leaf(
                     .hover(|s| s.text_color(rgb(theme().color_blocker)))
                     .child(SharedString::from("\u{00d7}")),
             )
-            .into_any()
+            .hover_tooltip_builder(
+                SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                name_tooltip(full_name),
+            )
+            .into_any_element()
     };
     #[cfg(feature = "gui-e2e")]
     {
@@ -684,7 +691,6 @@ fn build_remote_leaf(
             },
         )
         .hover(|style| style.bg(rgb(theme().surface)))
-        .tooltip(name_tooltip(full_name))
         .child(
             div()
                 .relative()
@@ -700,7 +706,7 @@ fn build_remote_leaf(
         )
         .map(|el| branch_row_meta(el, age, None, None));
 
-    if can_jump {
+    let base = if can_jump {
         let target_for_jump = rb_target.clone();
         let click_handler = cx.listener(
             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
@@ -708,10 +714,15 @@ fn build_remote_leaf(
                 cx.notify();
             },
         );
-        base.on_click(click_handler).into_any()
+        base.on_click(click_handler)
     } else {
-        base.into_any()
-    }
+        base
+    };
+    base.hover_tooltip_builder(
+        SharedString::from(format!("sidebar-remote-{display}-hover-help")),
+        name_tooltip(full_name),
+    )
+    .into_any_element()
 }
 
 // ──────────────────────────────────────────────────────────────

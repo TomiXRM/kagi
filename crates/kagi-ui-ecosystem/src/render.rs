@@ -6,6 +6,7 @@
 use super::*;
 use gpui::{relative, AnyElement};
 use gpui_component::tooltip::Tooltip;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Root element of the full-screen ecosystem view.
 pub(super) fn render_ecosystem(
@@ -278,7 +279,7 @@ fn render_body(view: &EcosystemView, cx: &mut Context<EcosystemView>) -> AnyElem
 /// `overflow_hidden`, which lets it shrink below the path's intrinsic width and
 /// keeps every right-hand column on-screen. A nested `overflow_x_scroll` child
 /// preserves the earlier "scroll the long path inside its cell" behaviour.
-pub(super) fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui::Div> {
+pub(super) fn scroll_path_cell(id: String, text: String) -> impl IntoElement {
     // `flex_1` + `min_w(0)` + `overflow_x_scroll` is the proven shrink pattern
     // (cf. the commit-list centre column); it lets the cell shrink below the
     // path's intrinsic width so every right-hand column stays on-screen. The
@@ -298,9 +299,11 @@ pub(super) fn scroll_path_cell(id: String, text: String) -> gpui::Stateful<gpui:
             .whitespace_nowrap()
             .text_size(theme::scaled_px(13.0))
             .text_color(rgb(theme().text_main))
-            .tooltip(move |window, cx| Tooltip::new(full.clone()).build(window, cx))
             .child(text),
     )
+    .hover_tooltip_builder((id, 0usize), move |window, cx| {
+        Tooltip::new(full.clone()).build(window, cx)
+    })
 }
 
 /// Secondary text action used by the Mermaid source panel.

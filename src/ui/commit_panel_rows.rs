@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 use super::commit_panel_navigation::{row_name, ChangesRows};
 use super::*;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 // Uniform slots must not inherit the inline button's natural outer height.
 pub(super) const FILE_ROW_HEIGHT: f32 = 22.;
@@ -222,9 +223,6 @@ fn render_cp_file_row(
                 .min_w(px(0.))
                 .id((if staged { "cp-st-path" } else { "cp-us-path" }, fi))
                 .aria_label(full_path.clone())
-                .tooltip(move |window, cx| {
-                    super::render_helpers::subject_tooltip(full_path.clone(), window, cx)
-                })
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
                 .when(cfg!(feature = "gui-e2e") && selected, |el| {
@@ -248,7 +246,20 @@ fn render_cp_file_row(
                         name.clone(),
                     ))
                 })
-                .when(!cfg!(feature = "gui-e2e"), |el| el.child(name)),
+                .when(!cfg!(feature = "gui-e2e"), |el| el.child(name))
+                .hover_tooltip_builder(
+                    (
+                        if staged {
+                            "cp-st-path-help"
+                        } else {
+                            "cp-us-path-help"
+                        },
+                        fi,
+                    ),
+                    move |window, cx| {
+                        super::render_helpers::subject_tooltip(full_path.clone(), window, cx)
+                    },
+                ),
         )
         .when(convention, |el| {
             // issue #338: emphasis badge on a convention-body file — these steer

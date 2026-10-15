@@ -8,6 +8,7 @@ use super::{
 };
 use gpui::{div, prelude::*, px, rgb, Context, Window};
 use gpui_component::{Selectable as _, Sizable as _};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 pub(super) const CENTER_MIN: f32 = 420.;
 const TOOLBAR_H: f32 = 32.;
@@ -116,14 +117,14 @@ pub(super) fn toolbar(
             KagiButton::icon(id, icon, label, ButtonRole::Neutral, cx)
                 .small()
                 .selected(selected)
-                .tooltip(label)
                 .on_click(cx.listener(
                     move |this: &mut KagiApp, _: &gpui::ClickEvent, window, cx| {
                         if this.active_session() == owner {
                             this.handle_menu_command(command, window, cx);
                         }
                     },
-                )),
+                ))
+                .hover_tooltip((id, 0usize), label),
         )
     };
     div()

@@ -10,6 +10,7 @@ use gpui_component::{
     popover::{Popover, PopoverState},
     Selectable,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::{
     keyboard_nav,
@@ -572,7 +573,6 @@ impl RenderOnce for RailTrigger {
             .cursor_pointer()
             .when(self.selected, |el| el.bg(rgb(theme().surface)))
             .hover(|style| style.bg(rgb(theme().surface)))
-            .tooltip(super::sidebar::name_tooltip(LABELS[index].t().into()))
             .child(
                 svg()
                     .path(ICONS[index])
@@ -617,6 +617,10 @@ impl RenderOnce for RailTrigger {
                     }
                 }
             })
+            .hover_tooltip_builder(
+                ("compact-sidebar-help", index),
+                super::sidebar::name_tooltip(LABELS[index].t().into()),
+            )
     }
 }
 

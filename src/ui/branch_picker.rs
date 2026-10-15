@@ -7,6 +7,7 @@ use super::{
 };
 use gpui::{div, prelude::*, px, rgb, AnyElement, Context, FocusHandle, ListState, Window};
 use gpui_component::FocusTrapElement as _;
+use kagi_ui_core::tooltip::HoverTooltip as _;
 use std::{cell::Cell, rc::Rc};
 
 pub struct PickerRows {
@@ -210,14 +211,15 @@ fn picker_row(
                 .bg(rgb(theme().selected))
                 .text_color(rgb(theme().text_main))
         })
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-        })
         .on_click(click)
         .child(div().min_w_0().truncate().child(name));
-    let row = rows.row(
-        index,
-        super::list_a11y::list_item("branch-picker-list", row, index, count, label),
-    );
+    let row = rows
+        .row(
+            index,
+            super::list_a11y::list_item("branch-picker-list", row, index, count, label),
+        )
+        .hover_tooltip_builder(("branch-pick-help", index), move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        });
     super::e2e::measure_control(format!("branch-pick-{index}"), row).into_any_element()
 }

@@ -32,6 +32,7 @@ use kagi_git::{CommitId, OperationPlan};
 use kagi_ui_core::i18n::{
     plan::plan_heading_text, plan_note_text, plan_recovery_text, plan_title_text,
 };
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 /// Richer plan-card header (ADR pending: "richer popup cards", started with
 /// Pull/Push per user request 2026-07-22, extended to every plan-confirmation
@@ -251,9 +252,6 @@ fn plan_state(
         display_dirty.map_or(dirty, |(_, detail)| detail)
     ));
     apply_group(id, div().id(id), full.clone())
-        .tooltip(move |window, cx| {
-            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
-        })
         .relative()
         .flex_shrink_0()
         .flex()
@@ -320,6 +318,9 @@ fn plan_state(
         )
         .when(cfg!(feature = "gui-e2e"), |row| {
             row.child(super::e2e::measure_inside(id))
+        })
+        .hover_tooltip_builder((id, 0usize), move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(full.clone()).build(window, cx)
         })
         .into_any_element()
 }

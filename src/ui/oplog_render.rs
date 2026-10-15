@@ -35,6 +35,7 @@ use gpui_component::button::Button;
 use gpui_component::{Disableable as _, Sizable as _};
 use kagi_domain::oplog_reflog::Attribution;
 use kagi_git::oplog::{Actor, OpLogEntry, OpOutcome};
+use kagi_ui_core::tooltip::HoverTooltip as _;
 
 use super::i18n::{self, Msg};
 use super::render_helpers::with_vertical_scrollbar;
@@ -354,7 +355,7 @@ fn render_copy(
     // Reuse the quiet-copy focus owner rather than the kit's low-alpha outer
     // ring; a second hover style on the pinned Button also conflicts with its own.
     let button = super::keyboard_nav::focusable(oplog_panel::keyboard::copy_button(
-        div().id(stable_key),
+        div().id(stable_key.clone()),
         i,
         name,
     ))
@@ -369,7 +370,6 @@ fn render_copy(
     .opacity(0.55)
     .hover(|style| style.bg(rgb(theme().selected)).opacity(1.0))
     .focus_visible(|style| style.opacity(1.0).border_color(rgb(theme().ui_accent())))
-    .tooltip(|w, cx| gpui_component::tooltip::Tooltip::new(Msg::OpLogCopyEntry.t()).build(w, cx))
     // Swallow the press as well, so it cannot start detail-text selection.
     .on_mouse_down(MouseButton::Left, |_e, _w, cx| cx.stop_propagation())
     .on_click(move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
@@ -382,7 +382,10 @@ fn render_copy(
             .w(theme_mod::scaled_px(11.))
             .h(theme_mod::scaled_px(11.))
             .text_color(rgb(theme().text_sub)),
-    );
+    )
+    .hover_tooltip_builder((stable_key, 0usize), |w, cx| {
+        gpui_component::tooltip::Tooltip::new(Msg::OpLogCopyEntry.t()).build(w, cx)
+    });
     super::e2e::measure_control(format!("oplog-copy-{i}"), button)
 }
 
@@ -492,7 +495,6 @@ fn worktree_badge(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
     let name = kagi_domain::text_safety::sanitize_control_bytes(&name);
     div()
         .id(("oplog-worktree", i))
-        .tooltip(move |w, cx| gpui_component::tooltip::Tooltip::new(path.clone()).build(w, cx))
         .min_w(px(0.))
         .max_w(theme_mod::scaled_px(140.))
         .flex_shrink(1.)
@@ -502,6 +504,9 @@ fn worktree_badge(i: usize, entry: &OpLogEntry) -> gpui::AnyElement {
             name.into(),
             theme().text_sub,
         ))
+        .hover_tooltip_builder(("oplog-worktree-help", i), move |w, cx| {
+            gpui_component::tooltip::Tooltip::new(path.clone()).build(w, cx)
+        })
         .into_any_element()
 }
 
@@ -682,6 +687,7 @@ fn render_restore_actions(
         div()
             .relative()
             .child(super::button_style::named_button_with_description(
+                SharedString::from(format!("oplog-{kind}-{i}-hover-help")),
                 Button::new(SharedString::from(format!("oplog-{kind}-{i}")))
                     .icon(gpui_component::Icon::empty().path(icon))
                     .label(label)

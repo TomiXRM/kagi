@@ -807,8 +807,10 @@ impl KagiApp {
                             el.child(render_pr_menu_overlay(
                                 pr,
                                 pos,
-                                window.viewport_size(),
+                                self.ui().pr_menu_keys.clone(),
+                                self.active_session(),
                                 self.window_active,
+                                window,
                                 cx,
                             ))
                         },

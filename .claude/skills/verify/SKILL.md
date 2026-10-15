@@ -57,7 +57,7 @@ filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
 For #1479-S4 use
-`KAGI_GUI_E2E_ONLY='sidebar_search_,sidebar_filter_tab_entry,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_,sidebar_rows'`
+`KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
 with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter
 with `native_ax::activate`, then refresh and draw before inspecting its tree.
 Naming assertions inspect `nodes[gpui_focus].aria.role/label`, not wrapper Groups
@@ -76,8 +76,10 @@ stops need not have a semantic AX node.
 The `compact_` gate includes `compact_layout_state` and
 `compact_layout_state_tall`: Escape in the co-author ListBox must retire its
 owner and restore `cp-coauthor`, not dismiss the containing composer.
-`compact_rail_nested_escape` checks the context-menu/navigator layers; the
-complete Popover ancestry audit is in ADR-0014's #1479-S4 amendment.
+`compact_rail_nested_escape`, `compact_pr_menu_escape` and
+`compact_group_reveal_escape` check child-menu/reveal dismissal before the
+navigator, preserving opener focus. The complete Popover ancestry audit is in
+ADR-0014's #1479-S4 amendment.
 
 For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
 `update_notice_in_flight` queues an installer completion with

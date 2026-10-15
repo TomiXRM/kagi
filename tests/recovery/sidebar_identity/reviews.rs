@@ -134,7 +134,7 @@ pub fn scenario_sidebar_group_reveal_lifetime(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "feat/a"]);
     git(fixture.path(), &["branch", "feat/b"]);
-    let (app, window) = mount_dimensions(cx, fixture.path(), (940., 660.));
+    let (app, window) = mount_dimensions(cx, fixture.path(), (1000., 720.));
     appearance(cx, &app, window, Lang::En, "apple-light", 1., 0);
     focus(cx, &app, window, 0, "group:local:feat");
     keys(cx, window, "shift-f10");

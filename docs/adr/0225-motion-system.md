@@ -221,14 +221,16 @@ remain unchanged; broad hitbox occlusion would break those existing routes.
 Presentation-only removal ghosts never acquire actions or accessibility rows.
 
 The root's existing actual-center visibility edge retires retained Changes and
-Inspector presentation for the departing session when Graph/Diff leaves view,
-without changing logical rows, selection or scroll. Graph ↔ Diff inside the same
-owner preserves ordinary file-target fades. The checked departing-owner lookup
-also permits last-tab → Home after that owner has been removed. Returning inside
-the old transition duration presents settled endpoints; unchanged hidden frames
-neither notify nor rebuild file models. Frozen-clock native regressions leave
-at a genuine 37ms displacement/wash/closing ghost and return at the same instant;
-the existing startup and last-tab Home scenarios remain unchanged.
+Inspector presentation for the departing session on center/owner changes,
+without changing logical rows, selection or scroll. The sole continuity exception
+is Graph ↔ Diff inside the same owner: opening a file's central diff must preserve
+its already-visible file-row fade, as the native first-file selection test checks.
+The checked departing-owner lookup also permits last-tab → Home after that owner
+has been removed. Returning inside the old transition duration presents settled
+endpoints; unchanged hidden frames neither notify nor rebuild file models.
+Frozen-clock native regressions leave at a genuine 37ms displacement/wash/closing
+ghost and return at the same instant; the existing startup and last-tab Home
+scenarios remain unchanged.
 
 ## Sidebar and editor tree amendment (#1617)
 

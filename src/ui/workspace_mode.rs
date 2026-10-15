@@ -674,9 +674,11 @@ impl KagiApp {
                 ui.graph_motion.reset = true;
             }
         }
-        if let Some((owner, CommitList | Diff)) = previous {
-            // The file panes survive Graph ↔ Diff, but not a hidden workspace.
-            if !matches!(visible, Some((next_owner, CommitList | Diff)) if next_owner == owner) {
+        if let Some((owner, prior_center)) = previous {
+            // A file click opens Diff without hiding its existing file pane.
+            let continuous = matches!(prior_center, CommitList | Diff)
+                && matches!(visible, Some((next_owner, CommitList | Diff)) if next_owner == owner);
+            if !continuous {
                 self.settle_file_list_motion(owner, cx);
             }
         }

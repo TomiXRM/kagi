@@ -156,6 +156,118 @@ fn assert_children_absent_from_ax() {
     );
 }
 
+fn assert_workspace_returns(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    editor: &Entity<EditorWorkspaceView>,
+    window: AnyWindowHandle,
+    t: &mut Instant,
+) {
+    let (dir, a, b) = cx.read(|cx| {
+        let view = editor.read(cx);
+        (
+            directory(view),
+            view.files
+                .iter()
+                .position(|file| file.path == Path::new("motion/a.txt"))
+                .unwrap(),
+            view.files
+                .iter()
+                .position(|file| file.path == Path::new("motion/b.txt"))
+                .unwrap(),
+        )
+    });
+    let editor_mode = cx.read(|cx| app.read(cx).workspace_mode());
+    for issues in [false, true] {
+        for collapsing in [false, true] {
+            theme::set_reduce_motion(true);
+            editor.update(cx, |view, cx| view.select(a, cx));
+            assert_settled(&frame(cx, editor, window, *t));
+            theme::set_reduce_motion(false);
+            editor.update(cx, |view, cx| {
+                if collapsing {
+                    view.toggle_dir(dir, cx);
+                } else {
+                    view.select(b, cx);
+                }
+            });
+            frame(cx, editor, window, *t);
+            let departed_at = *t + Duration::from_millis(60);
+            let departing = frame(cx, editor, window, departed_at);
+            if collapsing {
+                assert!(departing
+                    .iter()
+                    .any(|row| row.ghost && row.opacity > 0. && row.opacity < 1.));
+            } else {
+                let wash = sample(&departing, "motion/b.txt", false).selection;
+                assert!(wash > 0. && wash < 1.);
+            }
+            app.update(cx, |app, cx| {
+                if issues {
+                    app.show_issues_mode(cx);
+                } else {
+                    app.show_pr_mode(cx);
+                }
+            });
+            frame(cx, editor, window, departed_at);
+            assert_ne!(cx.read(|cx| app.read(cx).workspace_mode()), editor_mode);
+            assert!(
+                recorded_tree("ews-file-tree").is_none(),
+                "takeover really hides the Editor tree"
+            );
+            app.update(cx, |app, cx| app.show_editor_mode(cx));
+            let returned = frame(cx, editor, window, departed_at);
+            assert_eq!(
+                cx.read(|cx| app
+                    .read(cx)
+                    .ui()
+                    .editor_workspace
+                    .as_ref()
+                    .unwrap()
+                    .entity_id()),
+                editor.entity_id(),
+                "mode return retains the same Editor entity"
+            );
+            assert_settled(&returned);
+            if collapsing {
+                assert_children_absent_from_ax();
+            } else {
+                assert_eq!(
+                    sample(&returned, "motion/b.txt", false).selection,
+                    1.,
+                    "first Editor frame after {} must settle the retained selection wash",
+                    if issues { "Issues" } else { "PRs" }
+                );
+                assert_eq!(sample(&returned, "motion/a.txt", false).selection, 0.);
+            }
+
+            // Visibility retirement is not a permanent animation disable:
+            // the next ordinary action still has a real intermediate paint.
+            editor.update(cx, |view, cx| {
+                if collapsing {
+                    view.toggle_dir(dir, cx);
+                } else {
+                    view.select(a, cx);
+                }
+            });
+            frame(cx, editor, window, departed_at);
+            let next = frame(cx, editor, window, departed_at + Duration::from_millis(60));
+            let child = sample(&next, "motion/a.txt", false);
+            let value = if collapsing {
+                child.opacity
+            } else {
+                child.selection
+            };
+            assert!(
+                value > 0. && value < 1.,
+                "ordinary motion resumes after visibility return"
+            );
+            *t = departed_at + Duration::from_millis(300);
+            assert_settled(&frame(cx, editor, window, *t));
+        }
+    }
+}
+
 pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion", "theme", "ui_zoom"]);
     let _restore = MotionRestore(theme::app_reduce_motion());
@@ -469,6 +581,7 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         assert_settled(&frame(cx, &editor, window, t + Duration::from_millis(60)));
         theme::set_reduce_motion(false);
         t += Duration::from_millis(800);
+        assert_workspace_returns(cx, &app, &editor, window, &mut t);
     }
     theme::set_zoom(1.13);
     let dir = cx.read(|cx| directory(editor.read(cx)));
@@ -557,6 +670,17 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         editor.entity_id(),
         "same retained owner"
     );
+    // Removing the last owner reaches Home before the next presentation edge.
+    // The cached previous identity must not require a now-missing UI entry.
+    app.update(cx, |app, cx| {
+        for index in (0..app.tabs.len()).rev() {
+            app.close_tab(index, cx);
+        }
+        assert!(app.tabs.is_empty());
+        assert!(app.active_session().is_none());
+    });
+    frame(cx, &editor, window, switched_at);
+    assert!(recorded_tree("ews-file-tree").is_none());
     drop(editor);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS editor_directory_motion");

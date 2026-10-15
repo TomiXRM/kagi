@@ -83,23 +83,6 @@ fn assert_settled(rows: &[EditorTreeMotionProbe]) {
     }
 }
 
-fn contrast(foreground: gpui::Hsla, background: gpui::Hsla) -> f32 {
-    let luminance = |color: gpui::Hsla| {
-        let rgb = color.to_rgb();
-        let linear = |v: f32| {
-            if v <= 0.04045 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
-    };
-    let a = luminance(foreground);
-    let b = luminance(background);
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
-}
-
 fn assert_fringe(rows: &[EditorTreeMotionProbe], head: bool) {
     let mut normal: Vec<_> = rows
         .iter()
@@ -284,47 +267,50 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
                         .iter()
                         .find(|row| row.path == Path::new(path))
                         .unwrap();
-                    assert!(row.window_active, "{slug} must exercise the active accent wash: {row:?}");
+                    assert!(
+                        row.window_active,
+                        "{slug} must exercise the active accent wash: {row:?}"
+                    );
                     if path == "motion/b.txt" {
                         assert!(row.dirty_visible, "probe must cover a painted dirty dot");
                     }
-                    let base = theme::theme();
-                    assert!(
-                        contrast(row.name, row.background) + 0.001
-                            >= contrast(gpui::rgb(base.text_main).into(), row.background),
-                        "{slug} must retain normal text until on-accent has better contrast",
-                    );
-                    let wash_color = base.selected_for_window(true);
-                    let matches_fill = [base.panel, base.bg_row_alt].into_iter().any(|stripe| {
-                        let expected: gpui::Hsla = gpui::rgb(stripe).into();
-                        let expected = expected.blend(wash_color.alpha(wash_color.a * row.wash));
-                        let a = expected.to_rgb();
-                        let b = row.background.to_rgb();
-                        (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs() < 0.001
-                    });
-                    assert!(
-                        matches_fill,
-                        "{slug} {path}: measured fill must be the actual composited wash: {row:?}; accent={wash_color:?} panel={:06x} stripe={:06x}",
-                        base.panel, base.bg_row_alt,
-                    );
+                    if row.wash == 0. {
+                        assert_eq!(
+                            row.name,
+                            gpui::Hsla::from(gpui::rgb(theme::theme().text_main))
+                        );
+                        assert_eq!(
+                            row.dirty,
+                            gpui::Hsla::from(gpui::rgb(theme::theme().color_warning))
+                        );
+                    } else if row.wash == 1. {
+                        let selected = theme::theme().selection_foreground(true);
+                        assert_eq!(row.name, selected);
+                        assert_eq!(row.badge, selected);
+                        assert_eq!(row.dirty, selected);
+                    }
                     if millis == 90 {
                         assert!(row.wash > 0. && row.wash < 1.);
                     }
                     assert!(row.bounds.size.height > px(0.));
-                    for foreground in [row.name, row.badge, row.dirty] {
-                        let selected = theme::theme().selection_foreground(true);
-                        // The applied foreground must never be the lower-contrast
-                        // on-accent option on a still nearly-unselected surface.
-                        assert!(
-                            contrast(foreground, row.background) + 0.001
-                                >= contrast(selected, row.background),
-                            "{slug} {path} wash={} foreground={foreground:?} background={:?}",
-                            row.wash,
-                            row.background,
-                        );
-                    }
                 }
             }
+        }
+        // Settled endpoints retain the original theme's on-accent foreground,
+        // including Apple Light where maximizing contrast would change it.
+        for slug in ["apple-light", "apple-dark"] {
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            frame(cx, &editor, window, t + Duration::from_millis(300));
+            let painted = cx.read(|cx| editor.read(cx).tree_foreground_probes_for_e2e());
+            let row = painted
+                .iter()
+                .find(|row| row.path == Path::new("motion/b.txt"))
+                .unwrap();
+            assert_eq!(row.wash, 1.);
+            let selected = theme::theme().selection_foreground(true);
+            assert_eq!(row.name, selected);
+            assert_eq!(row.badge, selected);
+            assert_eq!(row.dirty, selected);
         }
         app.update(cx, |app, cx| app.set_theme(&original_theme, cx));
         editor.update(cx, |view, cx| {

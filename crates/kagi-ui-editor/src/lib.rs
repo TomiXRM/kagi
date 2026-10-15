@@ -3281,7 +3281,9 @@ fn tree_selection_foreground(
         (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05)
     };
     let accent = theme().selection_foreground(window_active);
-    if contrast(accent) > contrast(normal) {
+    // Keep both preexisting endpoints unchanged. During the wash, switch all
+    // row roles together once on-accent meets the existing 3:1 UI threshold.
+    if wash >= 1. || contrast(accent) >= 3. {
         accent
     } else {
         normal

@@ -176,8 +176,9 @@ controls the user's pointer; hidden native assertions are not screenshot evidenc
 The Navigator's prior presentation was a keyboard focus ring and pointer hover,
 not a selected-row fill. Its keyed transition therefore scales only the existing
 focus-ring color, retaining the direct-focus and keyboard-visible gates. Editor
-selection foregrounds choose the higher-contrast normal/on-accent color against
-the actual composited wash, independently of immediate logical selection.
+selection foregrounds retain the exact original normal/on-accent endpoints.
+During the transition, on-accent becomes eligible once it meets the existing
+3:1 policy against the actual composited wash; logical selection remains immediate.
 
 Both virtual trees paint a bounded inert fringe when displaced rows outside the
 final virtual range enter the viewport. Motion offsets, ghost anchors and fringe

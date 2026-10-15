@@ -1981,6 +1981,10 @@ mod macos {
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_crossfade),
             ),
             (
+                "graph_mode_motion_reset",
+                Box::new(crate::graph_motion_edges::scenario_graph_mode_motion_reset),
+            ),
+            (
                 "graph_commit_insert_motion",
                 Box::new(crate::graph_selection_wash::scenario_graph_commit_insert_motion),
             ),

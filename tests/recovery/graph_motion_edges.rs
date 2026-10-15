@@ -1,4 +1,4 @@
-//! Empty-list boundary for the Graph's retained WIP presentation.
+//! Graph motion lifetime and native pointer ownership boundaries.
 use crate::macos::{git, mount, unmount};
 use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::e2e;
@@ -392,4 +392,120 @@ pub fn scenario_graph_stash_pointer_focus(cx: &mut VisualTestAppContext) {
     );
     drop(input);
     unmount(cx, app, window);
+}
+
+pub fn scenario_graph_mode_motion_reset(cx: &mut VisualTestAppContext) {
+    use crate::graph_selection_wash::pixel;
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let reduced = theme::reduce_motion();
+    theme::set_reduce_motion(false);
+    for mode in ["pr", "issues", "editor"] {
+        let fixture = crate::macos::build_fixture();
+        let file = fixture.path().join("live-wip");
+        std::fs::write(&file, "visible WIP\n").unwrap();
+        let (app, window) = mount(cx, fixture.path());
+        app.update(cx, |app, cx| {
+            app.select_headless(0);
+            cx.notify();
+        });
+        draw(cx, window);
+        let original = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+        let selected_fill = pixel(cx, window, "graph-row-0");
+        let neutral_fill = pixel(cx, window, "graph-row-1");
+        let t = Instant::now();
+        motion::set_clock_for_e2e(Some(t));
+        app.update(cx, |app, cx| {
+            app.select_headless(1);
+            cx.notify();
+        });
+        std::fs::remove_file(&file).unwrap();
+        app.update(cx, |app, cx| app.refresh_working_tree_external(cx));
+        cx.run_until_parked();
+        draw(cx, window);
+        motion::set_clock_for_e2e(Some(t + Duration::from_millis(37)));
+        draw(cx, window);
+        let mid = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+        assert!(
+            mid.top() < original.top() && mid.top() > original.top() - original.size.height,
+            "start with real partial displacement before {mode}"
+        );
+        assert!(e2e::control_bounds(window.window_id(), "graph-wip-ghost").is_some());
+        let mid_fill = pixel(cx, window, "graph-row-0");
+        assert_ne!(mid_fill, selected_fill);
+        assert_ne!(
+            mid_fill, neutral_fill,
+            "start with a genuine partial selection wash"
+        );
+        app.update(cx, |app, cx| match mode {
+            "pr" => app.show_pr_mode(cx),
+            "issues" => app.show_issues_mode(cx),
+            "editor" => app.show_editor_mode(cx),
+            _ => unreachable!(),
+        });
+        cx.run_until_parked();
+        e2e::clear_control_bounds(window.window_id(), "graph-row-0");
+        draw(cx, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "graph-row-0").is_none(),
+            "{mode} actually hides the retained Graph"
+        );
+        // A full read accepted while hidden must not queue an insertion for the
+        // first visible frame, even though this is not a tab activation read.
+        let count = cx.read(|cx| app.read(cx).view().rows.len());
+        git(
+            fixture.path(),
+            &["commit", "--allow-empty", "-q", "-m", "hidden arrival"],
+        );
+        app.update(cx, |app, cx| app.reload(cx));
+        cx.run_until_parked();
+        draw(cx, window);
+        assert_eq!(cx.read(|cx| app.read(cx).view().rows.len()), count + 1);
+        app.update(cx, |app, cx| app.show_graph_mode(cx));
+        cx.run_until_parked();
+        draw(cx, window);
+        assert!(
+            e2e::control_bounds(window.window_id(), "graph-wip-ghost").is_none(),
+            "rapid {mode} return must retire the WIP ghost before its first visible frame"
+        );
+        let returned = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+        assert!(
+            (f32::from(returned.top() - original.top() + original.size.height)).abs() <= 1.,
+            "{mode} return and hidden commit arrival use settled geometry"
+        );
+        let selected = cx
+            .read(|cx| app.read(cx).ui().selected)
+            .expect("logical selection retained");
+        let selected_probe = format!("graph-row-{selected}");
+        let returned_fill = pixel(cx, window, &selected_probe);
+        let returned_old_fill = pixel(cx, window, "graph-row-0");
+        motion::set_clock_for_e2e(Some(t + Duration::from_millis(400)));
+        draw(cx, window);
+        assert_eq!(
+            pixel(cx, window, &selected_probe),
+            returned_fill,
+            "{mode} first visible wash already equals the settled endpoint"
+        );
+        assert_eq!(pixel(cx, window, "graph-row-0"), returned_old_fill);
+        assert_eq!(
+            e2e::control_bounds(window.window_id(), "graph-row-0").unwrap(),
+            returned
+        );
+        // Returning must not permanently disable subsequent live WIP motion.
+        std::fs::write(&file, "live after return\n").unwrap();
+        app.update(cx, |app, cx| app.refresh_working_tree_external(cx));
+        cx.run_until_parked();
+        draw(cx, window);
+        motion::set_clock_for_e2e(Some(t + Duration::from_millis(437)));
+        draw(cx, window);
+        let live = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+        assert!(
+            live.top() > returned.top() && live.top() < returned.top() + returned.size.height,
+            "subsequent visible WIP insertion still animates after {mode}"
+        );
+        motion::set_clock_for_e2e(None);
+        unmount(cx, app, window);
+    }
+    theme::set_reduce_motion(reduced);
 }

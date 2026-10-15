@@ -187,11 +187,14 @@ the primary family, but retains that explicit fallback.
 The root audit found one text-bearing drag view (`BranchDragGhost`, shared by
 graph badges and both sidebar branch row constructors). Every other production
 drag constructor returns the textless `DividerGhost`. Main and Settings windows
-already style their own Root. Deferred menus/hover cards and anchored descendants
-do not create this gap: the pinned GPUI snapshots `text_style_stack` in
-`defer_draw` and restores it before prepainting deferred elements. Variable-list
-row measurement stays in its caller's text-style scope. Kagi registers no custom
-GPUI prompt root.
+already style their own Root. Deferred menus and anchored descendants retain
+their font scope: the pinned GPUI snapshots `text_style_stack` in `defer_draw`
+and restores it before prepainting deferred elements. **Interactive worktree
+hover cards are not deferred descendants:** `hoverable_tooltip` prepaints
+`WorktreeHoverCard` as another independent root, bypassing `HoverHelp`. Its
+outer inspection-card element must apply `ui_font()` too (shared with the
+keyboard presentation). Variable-list row measurement stays in its caller's
+text-style scope. Kagi registers no custom GPUI prompt root.
 
 The regression probe reads the **inherited font during actual prepaint**, not
 another call to `ui_font()`: native Linux shapes its Han characters against a
@@ -227,3 +230,34 @@ passed **17/17**, including the renderer-fed drag-font assertion across the
 existing locale/theme/zoom/viewport cases. Logs are retained as
 `corrected-macos-gates-initial.log` and `corrected-macos-native.log` beside the
 Linux evidence. Existing unrelated Clippy/future-compatibility warnings remain.
+
+A second root-registration audit explicitly included `hoverable_tooltip`,
+`tooltip`, `tooltip_builder`, `tooltip_with_action`, and `on_drag` across native
+sources. The worktree row is the only interactive `hoverable_tooltip` caller;
+other explanatory tooltips use `HoverHelp`, and drag views remain the one
+text-bearing branch ghost or textless divider ghosts. The `hover-tooltip` CI
+rule intentionally lists `hoverable_tooltip(build)` in `samples_ok`: interactive
+card ownership is distinct from explanatory help, so that rule alone cannot
+prove font inheritance. The worktree-card native regression clears its probe
+before drawing and asserts the actually inherited prepaint font equals
+`ui_font()`.
+
+The targeted interactive-card correction reproduced **FAIL → PASS** on native
+X11 × `ja_JP.UTF-8` × installed system Noto SC+JP, without the cosmic-text patch.
+Hovering a real linked-worktree row built the actual production card: before
+the fix its effective font was `.SystemUIFont`, `fallbacks: None`, and Han
+FontId 12 rather than JP reference FontId 4; afterward it was Inter plus Noto
+Sans JP and every sampled Han glyph matched FontId 4. The visible card's Japanese
+worktree/branch/path text is captured in
+`target/s1b-evidence/worktree-card-x11-ja_JP-system.png`; red/green logs,
+`worktree-card-evidence.json`, and archived fixture source are beside it.
+This card-specific follow-up is one targeted Linux combination, not a new
+eight-leg matrix. The temporary source was removed and `kagi-linux` stopped.
+
+After the interactive-card fix, macOS passed `cargo fmt --all`,
+`cargo test --workspace` (3,484 passed, 44 ignored), `uv run --project ci check-all`,
+and both registered native card scenarios: `worktree_inspection` and
+`worktree_inspection_actions` (2/2, including EN/JA, light/dark, 100%/167% and
+the existing viewport/focus/lifetime cases). Their actual runner prefix is
+`worktree_inspection`, not `sidebar_worktree_`. Full output is retained in
+`target/s1b-evidence/worktree-card-macos-gates.log`.

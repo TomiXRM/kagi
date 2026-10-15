@@ -104,20 +104,25 @@ The separate native acceptance in `docs/rearch/upstream-migration-1479.md`
 requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
 X11/Wayland, terminal/reference images and the production diff/code, Inputs,
 TextView, UI and status surfaces. Include the independently prepainted
-`HoverHelp` tooltip and `BranchDragGhost`: they do not inherit Kit Root's font.
+`HoverHelp` tooltip, interactive `WorktreeHoverCard`, and `BranchDragGhost`:
+they do not inherit Kit Root's font. `hoverable_tooltip` bypasses `HoverHelp`;
+the explanatory-tooltip CI rule intentionally permits this interactive API.
 Read their effective inherited font in a child prepaint probe and compare Han
 FontIds with an explicit native Noto Sans JP reference; checking another freshly
-constructed `ui_font()` would miss this regression. Capture both detached
-overlays separately in every matrix leg (GPUI does not show both together).
-The system-Noto × JA negative control must fail if either root's explicit
+constructed `ui_font()` would miss this regression. Capture detached overlays
+separately (GPUI does not show them together). The system-Noto × JA negative
+control must fail if the tested root's explicit
 `.font(ui_font())` is removed. Never delete a user's fonts or change host
 fontconfig. #1479-S1b removed the patch on registry cosmic-text 0.19.0, with a
 review correction adding these independent-root cases; repeat the expanded
 matrix for the later #1479-S6 GPUI cutover.
 The detached-tooltip TestWindow regression runs with
 `cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::tests`.
-Retain native `toast_tooltip_lifetime` and `branch_drag_` regressions as well;
-the latter reads the actual drag ghost's inherited font during prepaint.
+Retain native `toast_tooltip_lifetime`, `branch_drag_`, and `worktree_inspection`
+regressions as well; drag and interactive-card cases read the actual inherited
+font during prepaint. The worktree-card review correction observed a targeted
+X11 × JA × system-Noto FAIL → PASS; it did not rerun that card across all eight
+Linux combinations. Include it in the full matrix for the later GPUI cutover.
 
 For isolated Xvfb/Weston software rendering, install `mesa-vulkan-drivers`,
 `libgl1-mesa-dri`, `mesa-utils`, `vulkan-tools`, `x11-apps` and ImageMagick

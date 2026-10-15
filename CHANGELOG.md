@@ -23,6 +23,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Keep pointer actions on the visibly moving Editor and Navigator row during insertion and disclosure motion: covered siblings cannot replace the clicked file/ref/stash/worktree or open a subgroup's context menu. Compact leaf selection and nested localhost links retain their existing behavior; disabled targets, presentation-only ghosts and viewport fringes do not acquire row actions. (#1617, #1621)
 - Retire retained Editor tree motion when another workspace hides it, so rapid returns from Pull Requests or Issues show the current selection and collapsed rows immediately instead of replaying an outgoing wash or ghost. Other workspace takeovers and Home share the same presentation boundary; ordinary new motion still runs after returning. (#1617, #1621)
 - Consume context-menu clicks on presentation-only Editor tree ghosts and displaced edge rows, instead of opening the blank-tree New File / New Folder menu behind collapsing content. Real file, directory and blank-space menus retain their existing targets. (#1617, #1621)
 - Measure the Navigator pane viewport when reopening from an entirely collapsed stack, so the body expands into unused flex space instead of remaining header-only and jumping at the animation endpoint. Closed-window resizing and Reduce Motion preserve the measured endpoint. (#1617, #1621)

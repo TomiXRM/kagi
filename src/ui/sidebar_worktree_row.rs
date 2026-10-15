@@ -536,6 +536,9 @@ fn port_link(
     let url = format!("http://localhost:{port}");
     let open = cx.listener(move |_app: &mut KagiApp, _: &gpui::ClickEvent, _w, cx| {
         cx.stop_propagation();
+        #[cfg(feature = "gui-e2e")]
+        super::e2e::record_opened_url(&url);
+        #[cfg(not(feature = "gui-e2e"))]
         cx.open_url(&url);
     });
     // Always whole: when it does not fit, the wrapping box around it moves it

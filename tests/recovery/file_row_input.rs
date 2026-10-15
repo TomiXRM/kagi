@@ -5,6 +5,10 @@ use kagi::ui::{commit_panel::CommitPanelView, e2e, list_a11y, KagiApp};
 use kagi_ui_core::{motion, theme};
 use std::time::{Duration, Instant};
 
+#[path = "file_row_input/inline_focus.rs"]
+mod inline_focus;
+pub(crate) use inline_focus::inline_pointer_focus;
+
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
     motion::set_clock_for_e2e(Some(at));
     cx.run_until_parked();

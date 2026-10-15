@@ -4,8 +4,10 @@ use super::render_helpers::*;
 use super::*;
 use gpui::Pixels;
 use kagi_ui_core::motion::{self, Easing, KeyedTransition, RowSplice};
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -216,6 +218,7 @@ impl FileListMotion {
         row: gpui::AnyElement,
         height: Pixels,
         root: Option<gpui::FocusHandle>,
+        pointer_claim: Rc<Cell<bool>>,
     ) -> gpui::AnyElement {
         let sample = self.sample(&self.rows[i].key, motion::now(), height);
         div()
@@ -228,7 +231,7 @@ impl FileListMotion {
                     .top(sample.offset)
                     .opacity(sample.opacity)
                     .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                        if !window.default_prevented() {
+                        if !pointer_claim.replace(true) && !window.default_prevented() {
                             if let Some(root) = &root {
                                 root.focus(window, cx);
                             }
@@ -290,6 +293,7 @@ impl FileListMotion {
         range: std::ops::Range<usize>,
         height: Pixels,
         root: Option<&gpui::FocusHandle>,
+        pointer_claim: &Rc<Cell<bool>>,
         mut render: impl FnMut(usize) -> Option<gpui::AnyElement>,
     ) -> Vec<gpui::AnyElement> {
         let mut slots = Vec::with_capacity(requested.len());
@@ -297,7 +301,7 @@ impl FileListMotion {
         let mut leading = 0;
         for i in range {
             let Some(row) = render(i) else { continue };
-            let row = self.wrap(i, row, height, root.cloned());
+            let row = self.wrap(i, row, height, root.cloned(), pointer_claim.clone());
             if requested.contains(&i) {
                 slots.push(row);
             } else {
@@ -621,8 +625,14 @@ impl CommitPanelView {
             panel.unstaged_normal_files.len()
         } + panel.generated_extra_rows(false)
             + panel.agent_extra_rows(false);
+        let pointer_claim = self.unstaged_navigation.pointer_claim.clone();
         div()
             .id("cp-unstaged-scroll")
+            .capture_any_mouse_down(move |event, _, _| {
+                if event.button == gpui::MouseButton::Left {
+                    pointer_claim.set(false);
+                }
+            })
             .relative()
             .when_some(self.unstaged_navigation.rows.as_ref(), |el, rows| {
                 rows.list(el)
@@ -665,6 +675,7 @@ impl CommitPanelView {
                                 range,
                                 height,
                                 view.pointer_root_focus.as_ref(),
+                                &view.unstaged_navigation.pointer_claim,
                                 |i| match &layout {
                                     Some(layout) => render_unstaged_tree_row(
                                         view,
@@ -707,8 +718,14 @@ impl CommitPanelView {
             panel.staged_normal_files.len()
         } + panel.generated_extra_rows(true)
             + panel.agent_extra_rows(true);
+        let pointer_claim = self.staged_navigation.pointer_claim.clone();
         div()
             .id("cp-staged-scroll")
+            .capture_any_mouse_down(move |event, _, _| {
+                if event.button == gpui::MouseButton::Left {
+                    pointer_claim.set(false);
+                }
+            })
             .relative()
             .when_some(self.staged_navigation.rows.as_ref(), |el, rows| {
                 rows.list(el)
@@ -750,6 +767,7 @@ impl CommitPanelView {
                                 range,
                                 height,
                                 view.pointer_root_focus.as_ref(),
+                                &view.staged_navigation.pointer_claim,
                                 |i| match &layout {
                                     Some(layout) => render_staged_tree_row(
                                         view,

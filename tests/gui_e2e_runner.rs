@@ -3619,6 +3619,7 @@ mod macos {
             ),
             ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             ("changes_file_motion", Box::new(crate::changes_motion::scenario)),
+            ("changes_inline_pointer_focus", Box::new(crate::file_row_input::inline_pointer_focus)),
             ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
             ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
             ("inspector_more_motion", Box::new(crate::file_row_input::inspector_more)),

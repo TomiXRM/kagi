@@ -214,16 +214,22 @@ Changes uses the same leading-before-first/trailing-after-last placement order.
 Both lists give every real row kind a role-less parent boundary, including fold
 headers, non-collapsible directories and overflow notes. It consumes clicks after
 the row's own child actions, so compressed overlapping rows cannot both activate.
-Left mouse-down retains propagation and uses GPUI's default-focus convention:
-the winning file/control claims focus once; an otherwise nonfocusable winning
-row uses the already-supplied ancestor root target and prevents covered files
-from taking focus. Changes' explicit file focus also respects default prevention.
+Left mouse-down retains propagation. Changes resets a navigation-owner-local
+row claim in list capture, distinct from GPUI default prevention: an inline
+Stage/Unstage Button prevents its own focus, not the existing file-row focus.
+The first real row claims the event; covered rows cannot take keyboard origin.
+An otherwise nonfocusable winning row retains its child's focus policy or uses
+the already-supplied ancestor root target. Inspector retains its existing
+default-focus convention.
 The parent consumes right-button presses only after a child's own context-menu
 handler has had its turn, preventing headers/More from opening a covered file's
 menu while preserving real-file menus. No broad hitbox occlusion masks ancestor
 folder drops, hover, drag, wheel input or the existing child accessibility roles.
 Native overlap controls assert actual focus handles, keyboard and right-menu
 path identity, non-file ancestor focus, unchanged selection and real folder drops.
+Inline Stage/Unstage controls additionally assert actual pointer-down focus,
+the rendered AX row role/name, subsequent keyboard-menu/arrow target identity,
+and real Git index changes using complete pointer gestures.
 Presentation-only removal ghosts never acquire actions or accessibility rows.
 
 Changes removal overlays paint after live rows. Their visible exit-row host

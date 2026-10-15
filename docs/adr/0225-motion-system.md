@@ -134,8 +134,8 @@ native motion scenarios migrate their frozen-clock calls without changing their
 behavior coverage. A separate oracle repair allows the existing 1px tolerance
 for five settled-width checks: unchanged dev reproduced the exact comparison
 of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
-behavior gate. A locked screen prevents Tier B visual comparison; math tests
-and hidden native windows must not be described as that evidence.
+behavior gate. Math tests and hidden native windows do not establish Tier B
+visual comparison; completed real-window evidence is recorded per surface.
 
 ## Changes, Inspector and operation-disclosure amendment (#1617)
 
@@ -199,9 +199,6 @@ row-fill pixels around the half-wash frame; renderer colour metadata and an echo
 of the interpolation formula are not contrast evidence. Both old surfaces
 failed that oracle at 1.943:1 before this correction. The original active-window
 frame38 contact sheet is retained as the visual before-failure.
-
-behavior gate. Math tests and hidden native windows do not establish Tier B
-visual comparison; completed real-window evidence is recorded per surface.
 
 ## Sidebar and editor tree amendment (#1617)
 

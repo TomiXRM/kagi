@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Align the PR dashboard responsive GUI regression with the approved compact navigator below 1000px: Cmd-B still updates the shared Sidebar preference, compact keeps its rail, and desktop toggles its inline Sidebar. The 940/1440px table, EN/JA, 100%/167%, scrollbar-policy and two-axis reachability coverage is unchanged; production behavior is unchanged.
 - Prepare sidebar Clear and repository/Settings IME Escape boundaries for official upstream Input APIs, without changing dependency pins. Clear retains its localized name, focus, query owner and compact appearance; Input naming regressions now inspect native AX nodes rather than fork render recorders. (#1479-S4)
   - Give workspace Escape its own positive key context so Input composition cancellation, toolbar PopupMenu dismissal and Settings theme-picker dismissal run before the unchanged workspace fallback. (#1554)
   - Review: give the co-author ListBox and pinned sidebar group reveal scoped Escape bindings, and route PR context-menu focus/dismissal through the shared MenuKeys helpers so a containing Popover cannot consume dismissal first. Audit all Popover child routes and cover compact context-menu layering.

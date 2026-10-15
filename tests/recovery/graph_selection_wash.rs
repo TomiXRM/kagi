@@ -397,7 +397,10 @@ pub fn scenario_graph_commit_insert_motion(cx: &mut VisualTestAppContext) {
     let tail_after =
         e2e::control_bounds(window.window_id(), &format!("graph-row-{}", tail_index + 1))
             .expect("displaced viewport-tail row remains realized");
-    assert!((f32::from(tail_after.top() - tail_bounds.top())).abs() <= 1.);
+    assert!(
+        (f32::from(tail_after.top() - tail_bounds.top())).abs() <= 1.,
+        "tail {tail_index}: before={tail_bounds:?}, after={tail_after:?}, viewport={viewport:?}"
+    );
     motion::set_clock_for_e2e(Some(t + Duration::from_millis(90)));
     draw(cx, window);
     let mid = e2e::control_bounds(window.window_id(), "graph-row-1").unwrap();
@@ -511,7 +514,13 @@ pub fn scenario_graph_wip_insert_motion(cx: &mut VisualTestAppContext) {
         .expect("removal-displaced row remains realized above the final-index viewport");
     let viewport = e2e::control_bounds(window.window_id(), "commit-list-viewport").unwrap();
     assert!(top_edge.top() < viewport.top() && top_edge.bottom() > viewport.top());
-    crate::compact_select_changes::click(cx, window, "graph-row-0");
+    let visible_center = gpui::point(
+        top_edge.center().x,
+        (top_edge.top().max(viewport.top()) + top_edge.bottom().min(viewport.bottom())) / 2.,
+    );
+    cx.simulate_mouse_move(window, visible_center, None, Modifiers::none());
+    cx.simulate_click(window, visible_center, Modifiers::none());
+    crate::compact_select_changes::settle(cx, window);
     assert_eq!(
         cx.read(|cx| app.read(cx).ui().selected),
         Some(0),
@@ -527,15 +536,29 @@ pub fn scenario_graph_wip_insert_motion(cx: &mut VisualTestAppContext) {
             .commit_scroll_handle
             .scroll_to_item_strict(0, gpui::ScrollStrategy::Top)
     });
-    draw(cx, window);
+    crate::compact_select_changes::settle(cx, window);
     motion::set_clock_for_e2e(Some(t + Duration::from_millis(400)));
     e2e::clear_control_bounds(window.window_id(), "graph-wip-ghost");
+    e2e::clear_control_bounds(window.window_id(), "graph-row-0");
     draw(cx, window);
     assert_eq!(
         e2e::control_bounds(window.window_id(), "graph-row-0").unwrap(),
         original
     );
     assert!(e2e::control_bounds(window.window_id(), "graph-wip-ghost").is_none());
+    assert_eq!(
+        cx.read(|cx| app
+            .read(cx)
+            .ui()
+            .commit_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .offset()
+            .y),
+        gpui::px(0.),
+        "the Reduce Motion leg starts at the top, not at a retained reading anchor"
+    );
     // Reduce Motion also bypasses the insertion path, not just selection.
     theme::set_reduce_motion(true);
     std::fs::write(&file, "instant WIP\n").unwrap();
@@ -543,7 +566,18 @@ pub fn scenario_graph_wip_insert_motion(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     draw(cx, window);
     let instant = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
-    assert!((f32::from(instant.top() - original.top() - original.size.height)).abs() <= 1.);
+    assert!(
+        (f32::from(instant.top() - original.top() - original.size.height)).abs() <= 1.,
+        "instant insertion: {instant:?}, original={original:?}, scroll={:?}",
+        cx.read(|cx| app
+            .read(cx)
+            .ui()
+            .commit_scroll_handle
+            .0
+            .borrow()
+            .base_handle
+            .offset())
+    );
     assert_ne!(
         pixel(cx, window, "graph-wip-row"),
         mid_wip,

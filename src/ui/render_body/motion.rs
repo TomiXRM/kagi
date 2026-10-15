@@ -96,6 +96,16 @@ impl GraphMotion {
         now: Instant,
         instant: bool,
     ) -> bool {
+        // Before publishing a changed length, the handle still describes the
+        // previous list. Use its snapped pitch when preserving its reading anchor.
+        let height = scroll
+            .0
+            .borrow()
+            .last_item_size
+            .filter(|_| !self.order.is_empty())
+            .map_or(height, |size| {
+                size.contents.height / self.order.len() as f32
+            });
         let signature = (
             view.rows.as_ptr() as usize,
             view.rows.len(),
@@ -139,7 +149,9 @@ impl GraphMotion {
             let offset = handle.base_handle.offset();
             let top = (-offset.y / height).floor().max(0.) as usize;
             let mut anchored = false;
-            if offset.y < px(0.) && handle.deferred_scroll_to_item.is_none() {
+            // Pixels uses total_cmp: scroll_to_item(0) produces -0, which must
+            // remain the unanchored top rather than being ordered below +0.
+            if f32::from(offset.y) < 0. && handle.deferred_scroll_to_item.is_none() {
                 if let Some(new_top) = self.order.get(top).and_then(|key| new_positions.get(key)) {
                     if *new_top != top {
                         let mut next = offset;

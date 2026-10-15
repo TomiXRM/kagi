@@ -295,18 +295,15 @@ impl KagiApp {
         graph_scroll_x: f32,
         // #354: absolute position in the commit list and its size.
         (a11y_position, a11y_size): (usize, usize),
-        ghost: bool,
+        ghost_key: Option<&super::render_body::motion::RowKey>,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let color = theme().lane_color(color_idx);
         let is_commit_panel = matches!(click, WipRowClick::CommitPanel);
-        let key = self.ui().graph_motion.key(a11y_position);
+        let ghost = ghost_key.is_some();
+        let key = ghost_key.or_else(|| self.ui().graph_motion.key(a11y_position));
         let is_selected = !ghost && key.is_some_and(|key| self.ui().graph_motion.selected(key));
-        let selection = if ghost {
-            0.
-        } else {
-            key.map_or(0., |key| self.ui().graph_motion.selection(key))
-        };
+        let selection = key.map_or(0., |key| self.ui().graph_motion.selection(key));
         let dark = theme().dark;
         // Tinted chip built from the worktree's lane colour (badge_style only
         // takes a packed u32; lane_color is Hsla, so build the tint directly).
@@ -455,7 +452,7 @@ impl KagiApp {
                 };
                 row.hover(move |s| s.bg(hover))
             })
-            .cursor_pointer();
+            .when(!ghost, |row| row.cursor_pointer());
 
         row
             // Badges column: worktree-coloured chip carrying the glyph + the branch

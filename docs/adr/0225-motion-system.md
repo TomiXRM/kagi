@@ -166,10 +166,17 @@ slots; fixed list length and geometry never change to accommodate animation.
 When a splice occurs above a scrolled viewport, preserve the first visible
 logical key and its within-row pixel offset, and settle that splice instead of
 animating the reading anchor. At the top, new arrivals push visible content.
+Use the measured list pitch (`last_item_size.contents.height / item_count`)
+for offsets and anchor arithmetic, while keeping intrinsic slot heights
+theme-scaled so zoom can remeasure them. Compare scroll offsets numerically:
+GPUI's total pixel ordering distinguishes negative zero from positive zero,
+but a programmatic scroll to negative zero is still the unanchored top.
 Cache identity/order only on changed reads/prefixes; frame sampling visits only
 visible rows and the bounded active/ghost set, never rebuilds the read model.
 
 Native frozen-clock coverage checks midpoint wash/geometry, interruption,
 settlement and Reduce Motion. Existing default-instant scenarios retain their
-oracles. Tier B uses an isolated PID-targeted background application; the owner's
-screen is in use, not locked. Never activate it or control the user's pointer.
+oracles. The empty/unborn-list case retains its final disappearing WIP ghost
+over the empty-state page until settlement. Tier B uses an isolated,
+PID-targeted application; foreground access is owner-authorized but serialized
+with the other motion slices. The owner's screen is not locked.

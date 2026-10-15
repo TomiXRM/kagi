@@ -682,7 +682,7 @@ impl KagiApp {
                             graph_col_w,
                             self.ui().graph_scroll_x,
                             (0, 0),
-                            true,
+                            Some(&ghost.key),
                             cx,
                         );
                         empty = empty.child(
@@ -692,7 +692,8 @@ impl KagiApp {
                                 .w_full()
                                 .h(height)
                                 .opacity(opacity)
-                                .child(content),
+                                .child(content)
+                                .child(e2e::measure_inside("graph-wip-ghost")),
                         );
                     }
                     empty.into_any_element()
@@ -724,7 +725,20 @@ impl KagiApp {
                                         let rows_len = this.view().rows.len();
                                         let compact = this.graph_compact;
                                         let requested = range;
-                                        let height = px(row_height(compact));
+                                        let slot_height = px(row_height(compact));
+                                        // ItemSize.item is the viewport; contents / final
+                                        // item count is uniform_list's measured row pitch.
+                                        let height = this
+                                            .ui()
+                                            .commit_scroll_handle
+                                            .0
+                                            .borrow()
+                                            .last_item_size
+                                            .filter(|_| prefix_count + rows_len > 0)
+                                            .map_or(slot_height, |size| {
+                                                size.contents.height
+                                                    / (prefix_count + rows_len) as f32
+                                            });
                                         let range = this
                                             .ui()
                                             .graph_motion
@@ -765,7 +779,7 @@ impl KagiApp {
                                                         graph_col_w,
                                                         this.ui().graph_scroll_x,
                                                         (i, prefix_count + rows_len),
-                                                        false,
+                                                        None,
                                                         cx,
                                                     ));
                                                 }
@@ -827,12 +841,12 @@ impl KagiApp {
                                                 .key(index)
                                                 .map(|key| motion.sample(key, height));
                                             let mut slot =
-                                                div().relative().w_full().h(height).child(
+                                                div().relative().w_full().h(slot_height).child(
                                                     div()
                                                         .relative()
                                                         .top(sample.map_or(px(0.), |s| s.offset))
                                                         .w_full()
-                                                        .h(height)
+                                                        .h(slot_height)
                                                         .opacity(sample.map_or(1., |s| s.opacity))
                                                         .child(row),
                                                 );
@@ -861,7 +875,7 @@ impl KagiApp {
                                                     graph_col_w,
                                                     this.ui().graph_scroll_x,
                                                     (index, prefix_count + rows_len),
-                                                    true,
+                                                    Some(&ghost.key),
                                                     cx,
                                                 );
                                                 slot = slot.child(
@@ -869,7 +883,7 @@ impl KagiApp {
                                                         .absolute()
                                                         .top(offset)
                                                         .w_full()
-                                                        .h(height)
+                                                        .h(slot_height)
                                                         .opacity(opacity)
                                                         .child(content)
                                                         .child(e2e::measure_inside(

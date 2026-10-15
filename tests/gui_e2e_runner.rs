@@ -1959,6 +1959,10 @@ mod macos {
                 Box::new(crate::graph_motion_edges::scenario_graph_unborn_wip_motion),
             ),
             (
+                "graph_activation_motion_reset",
+                Box::new(crate::graph_motion_edges::scenario_graph_activation_motion_reset),
+            ),
+            (
                 "graph_wip_hover_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
             ),

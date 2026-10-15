@@ -698,6 +698,14 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
+For Graph motion (#1617), scope `graph_selection_crossfade,graph_commit_insert_motion,graph_wip_insert_motion,graph_target_crossfade,graph_unborn_wip_motion,graph_activation_motion_reset`.
+These opt into the frozen motion clock; ordinary GUI scenarios remain instant.
+The existing `KagiApp::hold_next_snapshot_for_e2e` seam holds the next reload
+or tab activation/initial snapshot before backend work, only under `gui-e2e`.
+`graph_activation_motion_reset` draws the cached/empty view while that real
+read is held, then releases it and requires immediate final WIP presentation;
+subsequent cheap live status changes must still animate.
+
 The runner stops at the first failing scenario (exit 101). To collect every failure of a selection in one run, add `KAGI_GUI_E2E_KEEP_GOING=1` (it refuses to start without `KAGI_GUI_E2E_ONLY`): each scenario runs alone in a re-executed runner process with its own process group, one at a time; the whole group is killed after `KAGI_GUI_E2E_TIMEOUT_SECS` (default 600) and whatever it left running is killed when it ends.
 The run ends with `[gui-e2e] KEEP_GOING summary: …` and one `PASS <name>` or `FAIL <name>: <exit status | timeout> — evidence <dir>` line per scenario (the dir also holds `exit.txt`), then exits 1 if any failed.
 `KAGI_GUI_E2E_EXACT=<name>` is the internal seam the parent uses to start each child; do not set it by hand.

@@ -725,7 +725,7 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
-fn pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> u32 {
+pub(crate) fn pixel(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> u32 {
     let row = e2e::control_bounds(window.window_id(), id).unwrap_or_else(|| panic!("missing {id}"));
     cx.update_window(window, |_, window, _| {
         let image = window.render_to_image().expect("native Graph wash capture");

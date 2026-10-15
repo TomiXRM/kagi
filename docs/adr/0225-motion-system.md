@@ -150,6 +150,9 @@ pagination, filter/solo changes and broad rewrites settle immediately. Live WIP
 prefix membership is compared separately so cheap status refreshes do not need
 to rebuild commit rows. Changes larger than the measured viewport settle.
 Removed WIP rows retain their old content as presentation-only ghosts.
+Reset again when an initial/activation read is accepted, not only when it
+starts: a cached pre-read frame can consume the earlier reset. This also
+excludes the first dirty unborn snapshot while preserving later live WIP motion.
 
 The uniform list adopts its final length immediately. Fixed-height slot shells
 offset/fade their complete row content, including graph canvases: `graph_view`

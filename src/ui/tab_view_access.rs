@@ -293,6 +293,7 @@ impl KagiApp {
         }
         if let Some(ui) = self.ui.get_mut(&key.session()) {
             ui.graph_motion.full_read = animate_graph;
+            ui.graph_motion.reset |= !animate_graph;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }

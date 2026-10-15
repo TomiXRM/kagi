@@ -102,6 +102,7 @@ impl KagiApp {
     pub(super) fn render_toasts(
         &self,
         repository_window: Option<&gpui::Window>,
+        show_clone_action: bool,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
@@ -111,7 +112,20 @@ impl KagiApp {
         {
             // Keep compact panel tabs above the stack, without moving its
             // status-bar anchor. The viewport's 30% cap still applies below.
-            let body = self.bottom_panel_body_height(window, false);
+            let ui = self.ui();
+            let layout = super::workspace::resolve_workspace(
+                &self.workspace_inputs(
+                    ui.commit_panel_open,
+                    ui.commit_panel.is_some(),
+                    ui.selected
+                        .and_then(|index| self.view().details.get(index))
+                        .is_some(),
+                ),
+            );
+            let body = self.bottom_panel_body_height(
+                window,
+                matches!(layout.center, super::workspace::CenterPane::Editor),
+            );
             stack = stack.max_h(theme::scaled_px((body - super::TOAST_INSET_PX).max(0.)));
         }
 
@@ -138,7 +152,8 @@ impl KagiApp {
                     .map(SharedString::from)
             });
         if let Some(label) = label {
-            stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
+            stack =
+                stack.child(self.render_busy_snackbar(label, slow, write, show_clone_action, cx));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -158,6 +173,7 @@ impl KagiApp {
         label: SharedString,
         slow: Option<SlowRead>,
         write: Option<(&'static str, u64)>,
+        show_clone_action: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let accent = theme().ui_accent();
@@ -224,7 +240,9 @@ impl KagiApp {
             .child(div().flex_shrink_0().child(icon))
             .child(text)
             .children(skip)
-            .children(self.render_clone_progress_action(cx))
+            .when(show_clone_action, |el| {
+                el.children(self.render_clone_progress_action(cx))
+            })
             .into_any()
     }
 

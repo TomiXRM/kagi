@@ -291,7 +291,7 @@ impl KagiApp {
         // clone) says so here, with its details in Operation Log.
         let content = self
             .attach_modal_layer(home, false, window, cx)
-            .children(self.render_toasts(None, cx))
+            .children(self.render_toasts(None, true, cx))
             .into_any();
         self.attach_active_modal_key_routing(content, false, cx)
     }

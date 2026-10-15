@@ -394,7 +394,7 @@ impl Render for SettingsWindow {
                     .child(body),
                 cx,
             ))
-            .children(owner.update(cx, |app, cx| app.render_toasts(None, cx)))
+            .children(owner.update(cx, |app, cx| app.render_toasts(None, false, cx)))
             .when_some(
                 owner.read(cx).analyze_reset_alert().cloned(),
                 |el, modal| el.child(super::settings_analyze::reset_alert(&owner, modal, cx)),

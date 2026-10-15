@@ -12,6 +12,115 @@ pub fn scenario_toast_stack_budget_large_zoom(cx: &mut VisualTestAppContext) {
     run_budget_matrix(cx, 1.67);
 }
 
+pub fn scenario_toast_stack_budget_compact_editor(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang", "ui_zoom", "theme"]);
+    let _ports = crate::gui_isolation::PortStore::keep();
+    let _shell = crate::gui_isolation::StandInShell::install();
+    let old_zoom = theme::zoom();
+    let old_lang = i18n::lang();
+    let old_theme = theme::theme().slug.to_string();
+    // At 167%, the Editor's reserved 200 logical pixels clip the preferred
+    // compact panel body. The taller 720px matrix does not reliably hit that cap.
+    let dimensions = (940., 600.);
+    for preset in ["apple-light", "apple-dark"] {
+        for lang in [i18n::Lang::En, i18n::Lang::Ja] {
+            let fixture = build_fixture();
+            let repo = fixture.path();
+            git(
+                repo,
+                &[
+                    "remote",
+                    "add",
+                    "origin",
+                    repo.join("missing").to_str().unwrap(),
+                ],
+            );
+            let (app, window) = mount(cx, repo);
+            crate::pr_detail_adaptive::resize(cx, window, dimensions);
+            theme::set_active(preset);
+            theme::set_zoom(1.67);
+            app.update(cx, |app, cx| {
+                app.set_lang(lang, cx);
+                app.bottom_tab = kagi::ui::BottomTab::Activity;
+                cx.notify();
+            });
+            for attempt in 0..4 {
+                git(
+                    repo,
+                    &[
+                        "remote",
+                        "set-url",
+                        "origin",
+                        repo.join(format!("missing-{attempt}")).to_str().unwrap(),
+                    ],
+                );
+                app.update(cx, |app, cx| app.fetch_async(false, cx));
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while cx.read(|cx| app.read(cx).fetch_in_flight.is_some()) {
+                    cx.run_until_parked();
+                    assert!(Instant::now() < deadline, "failed fetch settles");
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            crate::native_ax::activate(cx);
+            draw(cx, window);
+            assert!(cx.read(|cx| app.read(cx).bottom_panel_open));
+            let graph_tabs = e2e::control_bounds(window.window_id(), "tab-oplog")
+                .expect("compact Graph primary tabs painted");
+            app.update(cx, |app, cx| app.open_editor_workspace(cx));
+            cx.run_until_parked();
+            draw(cx, window);
+            assert!(
+                cx.read(|cx| app.read(cx).ui().editor_workspace.is_some()),
+                "real Editor workspace is active"
+            );
+            let editor_tabs = e2e::control_bounds(window.window_id(), "tab-oplog")
+                .expect("compact Editor primary tabs painted");
+            assert!(
+                editor_tabs.bottom() > graph_tabs.bottom() + px(10.),
+                "exercise editor_cap clipping, not only the generic panel limit: \
+                 Graph {graph_tabs:?}, Editor {editor_tabs:?}"
+            );
+            let collapsed = assert_bottom_left(cx, window, "toast-stack", dimensions, true);
+            let more = i18n::Msg::ToastMore.t().replace("{count}", "3");
+            assert!(crate::native_ax::press(cx, window, &more));
+            cx.run_until_parked();
+            let expanded = assert_bottom_left(cx, window, "toast-stack", dimensions, true);
+            assert!(
+                expanded.top() <= collapsed.top(),
+                "disclosure expands upward within its cap"
+            );
+            assert_eq!(
+                crate::native_ax::node(cx, window, ("toast-summary", 0u64).into())["aria"]
+                    ["expanded"],
+                true
+            );
+            assert!(
+                (expanded.bottom() - collapsed.bottom()).abs() <= px(1.),
+                "Editor expansion retains the status-bar anchor"
+            );
+            assert!(
+                expanded.top() >= editor_tabs.bottom(),
+                "expanded toast must not cover compact Editor primary bottom tabs: \
+                 stack {expanded:?}, tabs {editor_tabs:?}, {preset}/{lang:?}/167%"
+            );
+            cx.simulate_mouse_move(window, editor_tabs.center(), None, gpui::Modifiers::none());
+            cx.simulate_click(window, editor_tabs.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+            assert_eq!(
+                cx.read(|cx| app.read(cx).bottom_tab),
+                kagi::ui::BottomTab::OperationLog,
+                "compact Editor primary tabs remain hit-testable with expanded notifications"
+            );
+            unmount(cx, app, window);
+        }
+    }
+    theme::set_zoom(old_zoom);
+    theme::set_active(&old_theme);
+    i18n::set_lang(old_lang);
+    eprintln!("[gui-e2e] PASS toast_stack_budget_compact_editor");
+}
+
 fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
     let _saved = crate::gui_isolation::SavedKeys::keep(&[
         "lang",

@@ -880,7 +880,7 @@ impl Render for KagiApp {
         let root = self.attach_modal_layer(root, true, window, cx);
         let content = root
             // ── W3-NOTIFY: toast stack (above everything) ──────
-            .children(self.render_toasts(Some(window), cx))
+            .children(self.render_toasts(Some(window), true, cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();

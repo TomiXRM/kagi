@@ -171,13 +171,18 @@ height upper bound, with the disclosure outside the scroller so Collapse stays
 reachable. In compact repository windows (under 1000 logical px) with the bottom
 panel open, further cap the notification container to the bottom-panel body
 height minus the toast inset. Reuse the panel's `bottom_panel_body_height`
-calculation so the compact tab strip's primary controls remain exposed, without
+calculation with the same resolved Editor-center flag (including its body cap)
+so the compact tab strip's primary controls remain exposed, without
 moving the exact bottom-left anchor. Retain the 45%-of-viewport width cap,
 bounded previews, persistent
 errors, hover-paused routine timers, explicit dismissal, four-card eviction,
 keyboard/accessibility actions and focus repair. Complete operation details
 remain in the durable Operation Log; this is a placement correction, not a new
 notification owner, setting or lifetime policy.
+
+The shared position does not share host-specific navigation actions. Settings
+shows clone busy feedback but not the action that reveals a clone card in its
+owning repository/Home window; opening that card must not steal Settings focus.
 
 Acceptance geometry uses repository widths of 1000/1400 logical px plus 940px
 compact coverage. The owner accepted Settings' actual native 715px width in

@@ -308,11 +308,21 @@ no zero-unsaved-file count, Save All or Discard. Running work asks the user to
 wait for completion and then explicitly choose Restart again. An Unknown retained
 lease instead asks the user to Cancel and review recovery in Operation Log;
 waiting cannot resolve that recovery requirement.
+The distinction follows the lease that actually blocks the host: a non-running
+retained lease requires recovery; an unrelated lease-free recovery reminder does
+not turn a running write or clone into a recovery wait.
 
 **Manual Restart retry is intentional.** Operation completion and recovery never
 automatically restart the app. Cancel keeps the installed update pending, and the
 user decides when to retry Restart after completing work or recovery, so returning
 to editing cannot trigger a surprise restart.
+
+Installer completion is an asynchronous producer under #718 modal arbitration.
+It clears only its own Update presentation, then offers a restart guard only to
+an empty modal slot. An existing plan, editor form or dirty-buffer confirmation
+keeps its data and intent; the installed update remains pending for the user's
+later explicit Restart action. Even a clean host must not exit behind an
+unrelated active modal.
 
 Dock Quit, logout and shutdown require a public GPUI termination-veto/deferral
 hook; the API audit and upstream migration/removal condition are recorded in

@@ -1,5 +1,5 @@
 //! Host destruction protects every retained editor, not just the visible pane.
-use super::{EditorPendingIntent, FooterStatus, KagiApp, Msg, ToastKind};
+use super::{EditorDirtyGuardModal, EditorPendingIntent, FooterStatus, KagiApp, Msg, ToastKind};
 use gpui::{App, Context};
 
 impl KagiApp {
@@ -20,7 +20,27 @@ impl KagiApp {
         self.update_installing = false;
         self.update_status = Some(Msg::UpdateRestartReady.t().into());
         self.update_pending_relaunch = Some(relaunch);
-        self.retry_update_relaunch(cx);
+        // Installation finishes asynchronously. Only its own presentation may
+        // be cleared; a newer user decision keeps the single modal slot.
+        self.clear_update_modal();
+        if self.has_active_modal() {
+            cx.notify();
+            return;
+        }
+        if self.may_close_host() && self.host_dirty_buffer_count(cx) == 0 {
+            self.finish_host_close(EditorPendingIntent::Relaunch, cx);
+            return;
+        }
+        if self.offer_editor_dirty_guard_from_async(EditorDirtyGuardModal {
+            intent: EditorPendingIntent::Relaunch,
+            saving: None,
+        }) {
+            klog!("editor-ws: dirty-guard");
+            if !self.may_close_host() {
+                self.explain_host_save_wait(cx);
+            }
+        }
+        cx.notify();
     }
 
     pub(crate) fn retry_update_relaunch(&mut self, cx: &mut Context<Self>) {
@@ -140,7 +160,7 @@ impl KagiApp {
     }
 
     pub(crate) fn host_close_hold_message(&self, restart: bool) -> Msg {
-        if self.app_sessions.blocking_reconcile().is_some() {
+        if self.app_sessions.has_leases() && self.app_sessions.running_lease().is_none() {
             Msg::EditorHostRecoveryRequired
         } else if restart {
             Msg::UpdateRestartWaiting

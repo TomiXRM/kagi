@@ -13,7 +13,7 @@ use std::{
     rc::Rc,
 };
 
-fn fixture(root: &Path, name: &str) -> PathBuf {
+pub(super) fn fixture(root: &Path, name: &str) -> PathBuf {
     let repo = root.join(name);
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
@@ -25,7 +25,7 @@ fn fixture(root: &Path, name: &str) -> PathBuf {
     repo.canonicalize().unwrap()
 }
 
-fn mount(
+pub(super) fn mount(
     cx: &mut VisualTestAppContext,
     repo: &Path,
     width: f32,
@@ -43,7 +43,7 @@ fn mount(
     (app, window)
 }
 
-fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
+pub(super) fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.update_window(window, |_, window, cx| {
         window.refresh();
         window.draw(cx).clear();
@@ -52,7 +52,7 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
 }
 
-fn edit(
+pub(super) fn edit(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -98,14 +98,14 @@ fn edit(
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Entry {
+pub(super) enum Entry {
     Quit,
     Close,
     Native,
     Settings,
 }
 
-fn request(
+pub(super) fn request(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
     window: AnyWindowHandle,
@@ -163,7 +163,7 @@ fn request(
     cx.run_until_parked();
 }
 
-fn alive(cx: &VisualTestAppContext, window: AnyWindowHandle) -> bool {
+pub(super) fn alive(cx: &VisualTestAppContext, window: AnyWindowHandle) -> bool {
     cx.read(|cx| {
         cx.windows()
             .iter()
@@ -171,7 +171,7 @@ fn alive(cx: &VisualTestAppContext, window: AnyWindowHandle) -> bool {
     })
 }
 
-fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, label: &str) {
+pub(super) fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, label: &str) {
     crate::native_ax::activate(cx);
     draw(cx, window);
     assert!(
@@ -181,7 +181,11 @@ fn press(cx: &mut VisualTestAppContext, window: AnyWindowHandle, label: &str) {
     cx.run_until_parked();
 }
 
-fn cleanup(cx: &mut VisualTestAppContext, app: Entity<KagiApp>, window: AnyWindowHandle) {
+pub(super) fn cleanup(
+    cx: &mut VisualTestAppContext,
+    app: Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
     for handle in cx.read(|cx| cx.windows()) {
         if handle.window_id() != window.window_id() {
             cx.update_window(handle, |_, window, _| window.remove_window())
@@ -357,7 +361,11 @@ pub fn scenario_host_dirty_guard_save(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS host_dirty_guard_save");
 }
 
-fn assert_failure_visible(cx: &VisualTestAppContext, app: &Entity<KagiApp>, expected: &str) {
+pub(super) fn assert_failure_visible(
+    cx: &VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    expected: &str,
+) {
     cx.read(|cx| {
         let app = app.read(cx);
         assert!(

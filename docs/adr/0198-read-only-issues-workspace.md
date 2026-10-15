@@ -13,19 +13,19 @@ ownerは複数投稿を跨ぐ選択・Copy・会話全体Select All（画面外�
 公式がmounted複数view間で自然に許す選択は禁止せず、独立per-post scopeや
 境界保証のupstream APIは要求しない。独自rich-selection renderer案も採らない。
 
-これは移行先の仕様決定であり、S0で現行group/leaseを削除したという意味ではない。
+これは移行先の仕様決定であり、[#1479-S0](../rearch/upstream-migration-1479.md)で現行group/leaseを削除したという意味ではない。
 以下の#1091追補にある全投稿canonical interval、outer edge autoscroll、
 outer-unmount後の選択保持／SelectAll fallback、no-App DropによるSDK内部状態の
-即時失効保証は、S6の実装・consumer oracle同時cutoverでsupersedeする。
-S3はmounted単一投稿の正条件を補強する準備に留める。
+即時失効保証は、#1479-S6の実装・consumer oracle同時cutoverでsupersedeする。
+#1479-S3はmounted単一投稿の正条件を補強する準備に留める。
 
 目的の投稿を再表示して公式操作する。既存の投稿本文全体Copyボタンは無く、
 新設もしない（PRのCopy this hunkは別機能のまま保持）。
 privacy、accepted-source差替え、repo/session所有、Input/modal優先、draftと
 repository不変条件は縮小しない。既存Kagi active/generation guardを実Copy/
 SelectAll action境界で検証し、actual-unmount cleanupは公式へ委譲する。
-旧画面外保証を黙って落とすのではなく、S6でADR・13既存oracleと単一投稿の
-正条件を同時更新する。S0ではruntime/test oracleは意図的に変更しない。
+旧画面外保証を黙って落とすのではなく、#1479-S6でADR・13既存oracleと単一投稿の
+正条件を同時更新する。#1479-S0ではruntime/test oracleは意図的に変更しない。
 
 
 ## Context

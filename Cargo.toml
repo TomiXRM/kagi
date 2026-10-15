@@ -168,10 +168,11 @@ assets = [
 ]
 
 # ── Dependency patches ─────────────────────────────────────────────────────
+# Slice definitions: docs/rearch/upstream-migration-1479.md (#1479 namespace).
 # Transitional patch: normalize Han-unification locales (ja-JP/ko-KR and locale
 # suffixes) instead of falling back to SC glyph forms on Unix.
 # Upstream: pop-os/cosmic-text#522 remains open; official main is still unfixed
-# at the #1479 review. Remove in S1 after explicit bundled JP fallback reaches
+# at the #1479 review. Remove in #1479-S1 after explicit bundled JP fallback reaches
 # terminal glyphs/metrics, status and test probes, with Linux shape/native evidence;
 # alternatively an upstream release consumed by GPUI must provide the fix.
 [patch.crates-io]
@@ -181,7 +182,7 @@ cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-ha
 # Transitional list fix: retain estimates across layout/reset/splice, preserve
 # measured nodes on equal estimates, and resolve downward wheel/scroll_by End
 # intent. Upstream already has estimated-height APIs, but not these fixes;
-# no TomiXRM Zed PR existed at the #1479 review. Remove in S6 after S5 moves
+# no TomiXRM Zed PR existed at the #1479 review. Remove in #1479-S6 after #1479-S5 moves
 # geometry to official uniform lists / Kagi-owned variable lists and preserves
 # the real geometry oracles. The other 21 siblings below have no independent
 # fixes: keep one GPUI source identity only until the official family cutover.
@@ -211,9 +212,11 @@ ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309
 #
 # Transitional Kit patch: managed/offscreen conversation selection, presentation
 # retention, cached composer rows, Input/Select/Find accessibility, IME, Radio
-# painting and atomic replacement Undo. Official main includes some but not all
-# equivalents; longbridge/gpui-kit#3421 merged presentation retention only.
-# Remove both entries together in S6: official component/assets at one revision,
+# painting and atomic replacement Undo; b50a0796 fixes next-frame retention leaks
+# through weak capture, and f5f68275 includes Find keyboard containment.
+# Official main includes some but not all equivalents; longbridge/gpui-kit#3421
+# merged presentation retention only.
+# Remove both entries together in #1479-S6: official component/assets at one revision,
 # public-API compositions and typed inputs, owner-approved default TextView scope,
 # and the official cached Textarea row accessor (U1) with consumer gates.
 # Assets has no independent fix; it shares the component fork source/revision.

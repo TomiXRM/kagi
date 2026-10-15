@@ -52,8 +52,8 @@ Tier B の実アプリ比較確認は pending。
 Normal scrollbar dragにはfork自体も同等補正が無く、Tailは継続追従という別契約。
 上記の過去PASSはその受入範囲の記録であり、全scroll操作の証明ではない。
 
-S5で固定slotは公式uniform list、可変高はKagi-owned共有geometryへ移し、
-S6でofficial package familyへ切り替えて22 entriesを除去する。
+[#1479-S5](../rearch/upstream-migration-1479.md)で固定slotは公式uniform list、可変高はKagi-owned共有geometryへ移し、
+#1479-S6でofficial package familyへ切り替えて22 entriesを除去する。
 公開Element/Scrollbar APIを使い、forkソースのコピーやgpui-preへのpatch移植はしない。
 production `measure_all` の採用は0とする。小規模なら常に安価とは仮定せず、
 既存7 native geometry oracleとthumb/resize/spliceの実測で受入れる。

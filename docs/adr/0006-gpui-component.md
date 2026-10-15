@@ -50,7 +50,7 @@ gpui-component が提供するもの(関連分): **Tree**(階層表示)/ **Dock�
 への移行で supersede する。無固定main追従ではなく、component/base/assetsを
 同一official revisionへ固定し、official Kitが採用する `gpui-pre` familyを使う
 （[ADR-0001 amendment](0001-gpui.md)）。
-調査基準は `1188c11003b5cb5b83bc07d3fb9112e7674fbfa7`。最終S6は
+調査基準は `1188c11003b5cb5b83bc07d3fb9112e7674fbfa7`。最終[#1479-S6](../rearch/upstream-migration-1479.md)は
 必要なcached Textarea row accessorのupstream採用revisionを使用する。
 
 typed Input / Textarea / Editor、公開search engine、base Radio等へ全consumerを
@@ -58,5 +58,5 @@ typed Input / Textarea / Editor、公開search engine、base Radio等へ全consu
 不足はKagiの公開API compositionで解決し、なお不足するAPIはupstreamへ
 PR/Discussionを提出して `docs/decisions.md` に記録する。fork pin更新で回避しない。
 投稿選択は [ADR-0198 amendment](0198-read-only-issues-workspace.md)
-のowner決定に従う。S0は文書のみで、依存・実行時挙動は未変更。
+のowner決定に従う。[#1479-S0](../rearch/upstream-migration-1479.md)は文書のみで、依存・実行時挙動は未変更。
 

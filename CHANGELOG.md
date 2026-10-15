@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Prepare the upstream dependency migration with native single-post selection coverage: exact giant-post rendered Unicode Copy, freshly painted mounted-post witnesses after reorder/prepend, and mounted partial → Select All → full Copy before the existing offscreen regression. This test-only preparation leaves the current selection implementation and offscreen/cross-post guarantees unchanged; their official-upstream cutover belongs to #1479-S6. (#1479-S3)
+
 ### Fixed
 
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

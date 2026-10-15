@@ -158,6 +158,7 @@ impl KagiApp {
 
 pub(super) fn build_group_row(
     row: &super::sidebar::SidebarRow,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     use super::sidebar::SidebarRow;
@@ -180,6 +181,7 @@ pub(super) fn build_group_row(
             *count,
             *collapsed,
             theme::scaled_px(20.),
+            interactive,
             cx,
         ),
         SidebarRow::RemoteSubGroup {
@@ -195,6 +197,7 @@ pub(super) fn build_group_row(
             *count,
             *collapsed,
             theme::scaled_px(32.),
+            interactive,
             cx,
         ),
         _ => unreachable!("only outline group rows use the group renderer"),
@@ -202,6 +205,7 @@ pub(super) fn build_group_row(
 }
 
 /// A dynamic prefix header keeps disclosure and count outside the shrinking name.
+#[allow(clippy::too_many_arguments)] // Existing header facts plus inert-ghost presentation.
 pub(super) fn build_group_header(
     key: &str,
     label_text: &str,
@@ -209,6 +213,7 @@ pub(super) fn build_group_header(
     count: usize,
     collapsed: bool,
     left_pad: gpui::Pixels,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(label_text));
@@ -232,7 +237,7 @@ pub(super) fn build_group_header(
         .h(theme::scaled_px(SIDEBAR_ROW_H))
         .flex()
         .items_center()
-        .on_click(toggle)
+        .when(interactive, |el| el.on_click(toggle))
         .child(
             div()
                 .h(theme::scaled_px(18.))
@@ -245,7 +250,7 @@ pub(super) fn build_group_header(
                 .pr(theme::scaled_px(12.))
                 .text_xs()
                 .text_color(rgb(theme().text_sub))
-                .hover(|s| s.bg(rgb(theme().surface)))
+                .when(interactive, |el| el.hover(|s| s.bg(rgb(theme().surface))))
                 .child(group_chevron(&id, collapsed))
                 .child(
                     div()
@@ -260,13 +265,19 @@ pub(super) fn build_group_header(
                 )
                 .child(group_count(&id, count)),
         )
-        .hover_tooltip_builder((id, 0usize), move |window, cx| {
-            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
-            Tooltip::new(full.clone())
-                .max_w(theme::scaled_px(340.))
-                .build(window, cx)
+        .map(|el| {
+            if interactive {
+                el.hover_tooltip_builder((id, 0usize), move |window, cx| {
+                    super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
+                    Tooltip::new(full.clone())
+                        .max_w(theme::scaled_px(340.))
+                        .build(window, cx)
+                })
+                .into_any_element()
+            } else {
+                el.into_any_element()
+            }
         })
-        .into_any_element()
 }
 
 fn group_chevron(id: &str, collapsed: bool) -> gpui::Div {
@@ -311,6 +322,7 @@ pub(super) fn build_tag_row(
     app: &KagiApp,
     tag_name: &str,
     tag_target: CommitId,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let label = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(tag_name));
@@ -348,9 +360,11 @@ pub(super) fn build_tag_row(
             theme().color_tag
         }))
         .overflow_hidden()
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .on_click(click)
-        .hover(|s| s.bg(rgb(theme().surface)))
+        .when(interactive, |el| {
+            el.on_mouse_down(gpui::MouseButton::Right, menu)
+                .on_click(click)
+                .hover(|s| s.bg(rgb(theme().surface)))
+        })
         .child(
             div()
                 .relative()
@@ -364,19 +378,26 @@ pub(super) fn build_tag_row(
                     )))
                 }),
         )
-        .hover_tooltip_builder((id, 0usize), move |window, cx| {
-            super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
-            Tooltip::new(full.clone())
-                .max_w(theme::scaled_px(340.))
-                .build(window, cx)
+        .map(|el| {
+            if interactive {
+                el.hover_tooltip_builder((id, 0usize), move |window, cx| {
+                    super::e2e::sidebar_labels::record_tooltip(&tooltip_id, &full);
+                    Tooltip::new(full.clone())
+                        .max_w(theme::scaled_px(340.))
+                        .build(window, cx)
+                })
+                .into_any_element()
+            } else {
+                el.into_any_element()
+            }
         })
-        .into_any_element()
 }
 
 /// Activating a stash peeks without consuming it; writes remain in its menu.
 pub(super) fn build_stash_row(
     index: usize,
     message: &str,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let message = kagi_domain::text_safety::sanitize_control_bytes(message);
@@ -405,9 +426,11 @@ pub(super) fn build_stash_row(
         .line_height(gpui::relative(1.2))
         .text_color(rgb(theme().color_warning))
         .overflow_hidden()
-        .on_click(click)
-        .on_mouse_down(gpui::MouseButton::Right, menu)
-        .hover(|s| s.bg(rgb(theme().surface)))
+        .when(interactive, |el| {
+            el.on_click(click)
+                .on_mouse_down(gpui::MouseButton::Right, menu)
+                .hover(|s| s.bg(rgb(theme().surface)))
+        })
         .child(
             div()
                 .relative()
@@ -421,8 +444,14 @@ pub(super) fn build_stash_row(
                     )))
                 }),
         )
-        .hover_tooltip_builder(("sidebar-stash-hover-help", index), name_tooltip(full))
-        .into_any_element()
+        .map(|el| {
+            if interactive {
+                el.hover_tooltip_builder(("sidebar-stash-hover-help", index), name_tooltip(full))
+                    .into_any_element()
+            } else {
+                el.into_any_element()
+            }
+        })
 }
 
 /// Match the tooltip identity without interpreting the namespaced collapse key.

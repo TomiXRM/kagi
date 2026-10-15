@@ -134,8 +134,139 @@ native motion scenarios migrate their frozen-clock calls without changing their
 behavior coverage. A separate oracle repair allows the existing 1px tolerance
 for five settled-width checks: unchanged dev reproduced the exact comparison
 of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
-behavior gate. A locked screen prevents Tier B visual comparison; math tests
-and hidden native windows must not be described as that evidence.
+behavior gate. Math tests and hidden native windows do not establish Tier B
+visual comparison; completed real-window evidence is recorded per surface.
+
+## Sidebar and editor tree amendment (#1617)
+
+The dense Repository Navigator and Editor file tree retain their existing row
+heights, virtual lists, focus owners and accessibility models. `SidebarState`
+owns sidebar presentation; `EditorWorkspaceView` owns Editor presentation.
+There is no second tree model or Git read in the animation path.
+
+- Editor selection intent changes immediately. The Navigator has no independent
+  selection: its existing keyboard `RowFocus` ring crossfades, without adding a
+  persistent selected-looking row fill. Pointer hover keeps its existing
+  appearance. Stable ref names, worktree paths, stash commit identities and
+  Editor paths key presentation only; no graph-target-driven Navigator wash or
+  new AX selection state is introduced.
+- Local/remote subgroups and Editor directories use `RowSplice`: final logical
+  membership is immediate, children fade/slide, and content below them settles
+  into its final slot. Removed content is retained only as noninteractive,
+  accessibility-hidden presentation until the closing splice settles.
+- Top-level Navigator headers remain mounted while their bodies reveal/close.
+  Pane weights and persisted collapse intent retain their existing ownership.
+- Chevrons remain immediate rather than crossfading or rotating: they report
+  current disclosure intent even during reversal; motion is on the content.
+- Sidebar refresh arrivals animate only within the same owner/filter/list
+  context. Initial loading, repository changes and large replacements settle
+  immediately. Ordinary GUI E2E remains instant; frozen-clock scenarios opt
+  into real intermediate presentation.
+- Reduce Motion is sampled during rendering so enabling it during a transition
+  settles presentation immediately. Animation changes neither selection nor
+  the keyboard and accessibility models.
+
+Native Tier A is the behavior gate for mid-flight geometry/opacity, endpoints,
+reversal and instant policy. Tier B uses an isolated PID-targeted fixture window;
+foreground activation is allowed only with owner authorization. Neither lane
+controls the user's pointer; hidden native assertions are not screenshot evidence.
+
+### Review corrections
+
+The Navigator's prior presentation was a keyboard focus ring and pointer hover,
+not a selected-row fill. Its keyed transition therefore scales only the existing
+focus-ring color, retaining the direct-focus and keyboard-visible gates. Editor
+selection foregrounds retain the exact original normal/on-accent endpoints.
+During the transition, on-accent becomes eligible once it meets the existing
+3:1 policy against the actual composited wash; logical selection remains immediate.
+
+Both virtual trees paint a bounded inert fringe when displaced rows outside the
+final virtual range enter the viewport. Motion offsets, ghost anchors and fringe
+origins use the public list handle's measured content height divided by its
+current item count; the intrinsic slot height remains theme-derived so zoom
+changes are remeasured. This avoids cumulative device-pixel rounding drift.
+Sidebar initial-read readiness is explicit: loading headers do not consume the
+instant initialization boundary before the first accepted asynchronous read.
+
+The whole-Navigator focus boundary also owns its ring lifetime. When the panes
+leave the front workspace (hidden sidebar, PRs, Issues or Editor), clear both the
+retained focused identity and all ring transitions before yielding logical focus.
+Virtual-list processors do not run while away, so deferring that reset until a
+row is painted would replay an obsolete ring on the first returning frame.
+Frozen-clock native coverage checks immediate focus evacuation and unfocused
+Metal ring pixels on return through all four paths (PR #1621 review).
+
+The same lifetime rule applies inside the compact rail: skip-reset every Git
+pane that is not the visible popup, and clear all Git rings when the popup is
+PRs or Issues. The rail itself remaining front does not keep its replaced
+pane's focus presentation alive. Native coverage returns Local → Remote → Local
+and Local → PRs/Issues → Local without replaying the skipped pane's ring.
+
+Pane reveal targets use the measured `sidebar-panes` viewport, minus actual
+inter-pane divider gaps, rather than the sum of currently painted pane heights.
+When all five panes are collapsed, those heights cover only their headers and
+omit the viewport's unused flex space. Measuring that existing flex container
+keeps the next body's natural reveal height nonzero and current after a closed
+window resize. Native frozen-clock coverage reopens from the all-closed state
+at three viewport heights, checks real intermediate body height and endpoint
+continuity, and retains immediate Reduce Motion opening/closing.
+
+Editor ghosts and displaced edge content also consume right-button presses.
+Removing their file/directory handlers alone still lets the blank-tree ancestor
+open its root creation menu. The shared presentation wrapper stops that bubble
+without restoring any row action or accessibility node. Frozen-clock native
+coverage right-clicks an unobscured closing ghost in both tree sources and
+retains ordinary file, directory and genuine blank-space menu targets.
+
+Retained Editor motion is retired at the actual resolved workspace visibility
+edge, before root rendering can return early for Home or the conflict body.
+The root shares its existing center resolution with this lifetime hook; it does
+not duplicate route policy or infer visibility from the presence of an entity.
+One cached `(SessionId, CenterPane)` is presentation-only: unchanged frames do
+no owner scan, entity clone/update or allocation. A newly hidden Editor is
+settled once through its existing API, using an optional owner lookup so closing
+the last tab is safe. PRs, Issues, File History, Analyze, branch cleanup, loading,
+Home and conflict replacement all reach that boundary. Tab-entry retirement
+remains, and the still-mounted Editor's tree-only hide already samples motion
+instantly through `show_tree`. Frozen native coverage returns from PRs/Issues
+at the same clock tick during selection and collapse, checks first-frame settled
+presentation in both sources, and verifies ordinary new motion after return.
+
+### Pointer ownership during row compression (#1621)
+
+Translated real rows can overlap their siblings while fixed list slots already
+have their final positions. Consuming only the visible paint is insufficient:
+GPUI can dispatch the same click to the covered sibling and replace the first
+callback's selection. Editor file and directory callbacks consume their existing
+Click event. The Navigator claims Click and otherwise-unhandled right-button
+presses at its existing translated real-content boundary, after child callbacks.
+This includes Tag/Stash/Worktree and no-action Remote/Tag rows, not just branches.
+It does not stop left MouseDown, introduce generic occlusion, or change the
+existing `under_ring` focus/default-prevention route.
+
+Compact pointer worktree selection and successful-leaf dismissal move with that
+same real boundary; fixed-slot keyboard activation/dismissal remains unchanged.
+Disabled rows keep their existing feedback without dismissing the popup. Child
+localhost links consume first, open exactly their own URL, and neither select a
+repository nor dismiss the pane. The native-test URL recorder follows the
+existing isolated-link convention; ordinary builds still dispatch the browser.
+Motion and focus remain keyed by their existing semantic identities.
+
+A retained top-removal ghost paints after its real anchor inside the slot, so a
+handler-free ghost can still expose the covered row's context menu. Claim only
+Right MouseDown on that ghost with a normal nonoccluding hitbox. Left remains
+transparent, no keyboard/AX row is restored, and ancestor external-path drop
+remains reachable in the normal Navigator. Viewport fringes retain inert
+rendering: native geometry establishes their visible clip-edge pixels do not
+overlap later real rows, rather than adding a speculative event blocker.
+
+Frozen-clock native input at 37ms verifies actual selection/peek/repository and
+context-menu targets, focus, disabled-target feedback, compact dismissal and
+child links in normal and compact panes. Separate top-removal and clipped-fringe
+controls exercise right/left/drop dispatch, not just hit rectangles; Editor
+coverage uses both Changes and All files, including File-over-File and
+Directory-over-File compression. Existing keyboard and external-drop scenarios
+remain controls.
 
 ## Graph surface amendment (#1617)
 

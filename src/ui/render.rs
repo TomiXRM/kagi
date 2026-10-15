@@ -324,12 +324,19 @@ impl Render for KagiApp {
             // The same for the Graph sidebar's rows and headers (#981).
             self.yield_sidebar_focus(window, cx);
         }
+        // Share the actual body route with presentation lifetime retirement.
+        // Preserve the Home/conflict short-circuit when there is no repo owner.
+        let center = if self.home_in_front() || self.conflict_body_visible() {
+            None
+        } else {
+            Some(
+                super::workspace::resolve_workspace(&self.workspace_inputs(false, false, false))
+                    .center,
+            )
+        };
+        self.sync_workspace_motion_visibility(center, cx);
         // A hidden Graph stop must not strand focus after a workspace takeover.
-        let graph_hidden = self.home_in_front()
-            || self.conflict_body_visible()
-            || super::workspace::resolve_workspace(&self.workspace_inputs(false, false, false))
-                .center
-                != super::workspace::CenterPane::CommitList;
+        let graph_hidden = center != Some(super::workspace::CenterPane::CommitList);
         if graph_hidden
             && self
                 .graph_focus
@@ -506,6 +513,10 @@ impl Render for KagiApp {
                 &self.ui().branch_groups_collapsed,
                 &sidebar_filter_text,
             );
+            let owner = self.active_session();
+            let ready = owner.is_some_and(|session| self.reads.has_read(session));
+            self.sidebar
+                .prepare_rows_motion(&rows, owner, &sidebar_filter_text, ready);
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
             self.sidebar
                 .focus
@@ -513,6 +524,7 @@ impl Render for KagiApp {
             self.sidebar.rows = rows;
             self.sidebar.rows_fingerprint = sidebar_fingerprint;
         }
+        self.sidebar.advance_motion(window, cx);
         let status_footer = self.status_footer.clone();
         // ADR-0118 / T-ENTITY-CONFLICT-001: the conflict body is its own
         // `Entity<ConflictView>`. The entity renders itself (`el.child(entity)`);

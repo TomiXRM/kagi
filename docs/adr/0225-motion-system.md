@@ -282,3 +282,22 @@ a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
 Native controls also drop external folders onto occupied commit/WIP/stash rows
 and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
 
+### Graph retained visibility boundary
+
+Graph joins the root's existing actual-center visibility edge, not a second
+workspace-mode routing table. Leaving a visible CommitList marks that session's
+existing presentation reset flag. Only an actually visible Graph CommitList
+consumes selection/splice synchronization: hidden frames neither schedule Graph
+motion nor repeatedly rebuild its identity caches.
+
+The reset survives full reads and cheap WIP updates while hidden, so the first
+returning frame settles old washes, displacement and retained ghosts, including
+newly accepted hidden arrivals. It then clears normally; later visible arrivals
+still animate. The root's cached owner/center edge also covers Home, conflict
+takeovers and repository ownership changes without scanning sessions per frame.
+
+`graph_mode_motion_reset` starts with real partial wash/displacement at 37ms,
+hides Graph behind PRs, Issues or Editor, accepts a real commit read while hidden,
+and returns without advancing the clock. It requires no ghost and exact endpoint
+wash/geometry on the first visible frame, then proves fresh WIP motion still runs.
+

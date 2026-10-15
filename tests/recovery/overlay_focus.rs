@@ -1247,7 +1247,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     };
 
     let t0 = Instant::now();
-    e2e::set_panel_motion_clock(Some(t0));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0));
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_mode_nav_for_e2e(0, window, cx))
     })
@@ -1267,7 +1267,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     );
     // Escape before the 150 ms close animation finishes. The return target
     // still belongs to the drawn workspace at the moment it is restored.
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(50)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(50)));
     draw(cx, window);
     assert!(
         in_workspace(cx, &sidebar_focus),
@@ -1288,7 +1288,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     // tree, so it keeps tracking the restored control; the frame after the
     // unmount must come by itself (requested while tracking), not from a
     // second draw issued here or from the next key press (#976 review).
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(300)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(300)));
     draw(cx, window);
     cx.run_until_parked();
     assert!(
@@ -1313,7 +1313,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         app.select(0);
         cx.notify();
     });
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(600)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(600)));
     draw(cx, window);
     let message = e2e::control_bounds(window.window_id(), "inspector-message-scroll")
         .expect("the inspector's selectable commit message is drawn");
@@ -1341,7 +1341,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
         cx.read(|cx| !app.read(cx).inspector_visible),
         "Cmd+Option+B must hide commit details while Settings remains open"
     );
-    e2e::set_panel_motion_clock(Some(t0 + Duration::from_millis(900)));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(t0 + Duration::from_millis(900)));
     draw(cx, window);
     assert!(
         cx.read(|cx| app.read(cx).menu_overlay.is_some()),
@@ -1353,7 +1353,7 @@ pub fn scenario_settings_hidden_return_target(cx: &mut VisualTestAppContext) {
     );
     finish(cx, "hidden-commit-details-return");
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS settings_hidden_return_target");
 }

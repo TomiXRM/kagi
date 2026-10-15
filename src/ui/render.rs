@@ -636,8 +636,8 @@ impl Render for KagiApp {
         // next frame is requested below, once all three have been synced.
         self.panel_motion.bottom.sync(
             bottom_panel_open,
-            super::panel_motion::now(),
-            super::panel_motion::instant(),
+            kagi_ui_core::motion::now(),
+            kagi_ui_core::motion::instant(),
         );
 
         // T-BP-002: cmd-j toggle action handler.
@@ -947,9 +947,10 @@ impl Render for KagiApp {
             .children(self.render_menu_overlay(window, cx));
 
         // Keep drawing frames while a pane is still sliding (#950, #955).
-        if self.panel_motion.animating(super::panel_motion::now()) {
-            window.request_animation_frame();
-        }
+        kagi_ui_core::motion::request_frame(
+            window,
+            self.panel_motion.animating(kagi_ui_core::motion::now()),
+        );
 
         let root = root
             // ── Operation queue strip (#355) — the front tab's queued

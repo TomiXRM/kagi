@@ -37,7 +37,7 @@ impl KagiApp {
         // #957: sidebar and outer-pane dividers stay put during a slide.
         // Graph column dividers use their painted column origins instead,
         // so they can follow the pointer while the sidebar is moving (#1011).
-        let now = super::panel_motion::now();
+        let now = kagi_ui_core::motion::now();
         let sliding = match drag.kind {
             DividerKind::Sidebar => self.panel_motion.sidebar.animating(now),
             DividerKind::Panel => self.panel_motion.right.animating(now),

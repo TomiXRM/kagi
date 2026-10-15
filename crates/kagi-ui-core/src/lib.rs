@@ -26,6 +26,7 @@ pub mod input;
 pub mod input_actions;
 pub mod keyboard_nav;
 pub mod markdown;
+pub mod motion;
 pub mod pr_viewed;
 pub mod settings;
 pub mod slow_read;

@@ -7,6 +7,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- Establish an internal shared motion foundation for selection, list insertion and accordion transitions, extending existing pane timing and Reduce Motion / deterministic GUI-test policy. User-visible behavior is unchanged; dependency pins are unchanged. (#1617)
+  - Review: unify batched fixed-height row insertion and removal in `RowSplice`, including retained ghost placement and continuous overlapping/reversed splices. No UI surface is added.
+  - Bound active row-splice motion to 64 keys; larger changes settle immediately, including prior active motion, so large fetches and directory collapses cannot cause unbounded per-frame scans.
+  - Apply insertion/removal diffs atomically through one `RowSplice::splice` call, checking the combined key limit before starting either side so oversized replacements cannot partially animate.
 - Remove the temporary cosmic-text locale fork and use crates.io 0.19.0. Explicit bundled Noto Sans JP fallback preserves Japanese regular/bold glyphs across terminal, diff/code, commit Inputs, TextView and UI/status text in the Linux JA/EN × minimal/system-Noto × X11/Wayland acceptance matrix. Also apply the fallback explicitly to detached hover tooltips, interactive worktree hover cards and branch-drag ghosts, which do not inherit the window Root's font; their rendered inherited fonts have independent JP face-identity regressions. (#1479-S1b)
 - Prepare the upstream dependency migration with native single-post selection coverage: exact giant-post rendered Unicode Copy, freshly painted mounted-post witnesses after reorder/prepend, and mounted partial → Select All → full Copy before the existing offscreen regression. This test-only preparation leaves the current selection implementation and offscreen/cross-post guarantees unchanged; their official-upstream cutover belongs to #1479-S6. (#1479-S3)
 - Document the in-tree terminal as Kagi-owned frontend, selection/copy, scrollback and PTY integration rather than a temporary fork. Retain gpui-terminal's upstream origin, MIT/Apache notices and official alacritty_terminal emulator; terminal behavior and dependency pins are unchanged. (#1479-S2)
@@ -14,6 +18,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Correct the existing right-selection motion GUI oracle to allow native pixel snapping when comparing full pane width; the same 327.5px/327.6px mismatch reproduced on unchanged dev. Production motion is unchanged. (#1617)
 - Use native menu checkmarks for Theme, Language, Toolbar and the active workspace, with plain Graph / Pull Requests / Editor names (グラフ / Pull Request / エディター in Japanese). Add File > Open Recent and matching Dock entries from Home history, with history-only Clear Menu and a clearly separated, aligned portable menu group. Expose Find… only for an available target and disable Clear Menu when history is empty using native action availability. Preserve the existing sidebar shortcut priority; further Find navigation awaits public upstream actions. (#1604, #1608; Refs #1607)
   - Keep Clear Menu in File > Open Recent only; the Dock lists repositories that remain actionable after the last window closes.
   - Opening a recent repository from Settings or the Dock returns to the most recently used repository window and brings it forward, creating a window when necessary. Missing repositories also bring the error message forward instead of leaving it behind Settings or another app.

@@ -15,7 +15,7 @@ impl KagiApp {
                 * self
                     .panel_motion
                     .sidebar
-                    .visible(super::panel_motion::now())
+                    .visible(kagi_ui_core::motion::now())
         };
         let available = (f32::from(window.viewport_size().width) - sidebar - 120.) / scale - 4.;
         self.panel_width.min(available.max(0.))

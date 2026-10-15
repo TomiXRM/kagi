@@ -7,6 +7,10 @@ use gpui::{AnyWindowHandle, AppContext, Bounds, Entity, Pixels, VisualTestAppCon
 use kagi::ui::{e2e, KagiApp};
 use kagi_ui_core::theme;
 
+#[path = "pr_diff_extent_end_fill.rs"]
+mod end_fill;
+pub use end_fill::scenario_pr_diff_extent_conflict_end_fill;
+
 const LINES: usize = 600;
 const SHORT: &str = "a-short.rs";
 const WRAPPED: &str = "b-wrapped.rs";
@@ -536,7 +540,137 @@ fn offscreen_thread_update(
         changed_body.size.height > old_body.size.height && changed.size.height > old_height,
         "returning to updated card must measure its taller real content"
     );
+    // #1479-S5C: replace the same-count card while reading inside it, not
+    // merely while its measurement is offscreen. Only native wheel input
+    // establishes the nonzero fractional anchor.
+    let viewport = reading(cx, app).viewport;
+    let into_card = f32::from(changed.top() - viewport.top() + changed.size.height * 0.25);
+    wheel(cx, app, window, -into_card);
+    let inside_card = reading(cx, app);
+    assert_eq!(inside_card.row, 9, "reading anchor must be the opened card");
+    assert!(
+        (0.15..0.35).contains(&inside_card.fraction),
+        "onscreen replacement needs a fractional card anchor: {inside_card:?}"
+    );
+    let marker = "ONSCREEN_REVIEW_CHANGED ";
+    let response = GH.replace(
+        "A current review comment",
+        &format!("{} A current review comment", marker.repeat(180)),
+    );
+    let _onscreen_transport = OfflineGh::with_script(&response);
+    reload_review_body(cx, app, window, marker);
+    let replaced = row(cx, app, 9).expect("replaced reading card must remain painted");
+    assert!(
+        replaced.size.height > changed.size.height,
+        "onscreen reload must actually change the card geometry"
+    );
+    cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().unwrap();
+        assert_eq!(
+            mode.tabs[mode.active.unwrap()].diff_scroll.item_count(),
+            count
+        );
+    });
+    for _ in 0..3 {
+        let after = reading(cx, app);
+        assert_eq!(
+            after.row, inside_card.row,
+            "same-count reload must retain card identity"
+        );
+        assert!(
+            (after.fraction - inside_card.fraction).abs() < 0.01,
+            "same-count reload must retain fractional reading position: {inside_card:?} -> {after:?}"
+        );
+        // #1479-S5C: a consumed opening reveal must not replay after reload
+        // or on the following native frames and reset the card to its start.
+        paint(cx, window);
+    }
     ends(cx, app, window, LINES + 1);
+}
+
+// #1479-S5C: wait for the real gh conversation callback, never replace UI rows.
+fn reload_review_body(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+    marker: &str,
+) {
+    app.update(cx, |app, cx| app.pr_mode_reload_conversation_for_e2e(cx));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        paint(cx, window);
+        if cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().unwrap();
+            mode.tabs[mode.active.unwrap()].line_comments[0]
+                .body
+                .contains(marker)
+        }) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "review reload did not settle"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+// #1479-S5C: collapse a real parsed near-tail card while already at the end.
+// Do not send another wheel after collapse: it would hide an underfilled frame.
+fn near_tail_thread_collapse(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    app.update(cx, |app, cx| app.pr_mode_toggle_thread(8, cx));
+    paint(cx, window);
+    zoom_to(cx, app, window, 0.7);
+    let body_start = GH.find("\"body\":\"").unwrap() + "\"body\":\"".len();
+    let body_end = body_start + GH[body_start..].find("\",\"createdAt\"").unwrap();
+    let response = format!("{}TAIL_REVIEW{}", &GH[..body_start], &GH[body_end..])
+        .replace("\"line\":8,", "\"line\":598,")
+        .replace("\"originalLine\":8,", "\"originalLine\":598,");
+    let _tail_transport = OfflineGh::with_script(&response);
+    reload_review_body(cx, app, window, "TAIL_REVIEW");
+    wheel(cx, app, window, -20_000_000.);
+    click(cx, window, "pr-thread-badge-598");
+    wheel(cx, app, window, -20_000_000.);
+    let viewport = reading(cx, app).viewport;
+    let card = control(cx, window, "pr-thread-598-0").expect("near-tail card painted");
+    assert!(
+        inside(Some(card), viewport),
+        "short near-tail card must fit"
+    );
+    let expanded_tail = row(cx, app, LINES + 1).expect("expanded true tail painted");
+    assert!(
+        (expanded_tail.bottom() - viewport.bottom()).abs() <= gpui::px(1.),
+        "expanded near-tail fixture must begin bottom-aligned"
+    );
+    click(cx, window, "pr-thread-badge-598");
+    for _ in 0..3 {
+        let viewport = reading(cx, app).viewport;
+        let tail = row(cx, app, LINES).expect("collapsed true tail painted");
+        assert!(
+            (tail.bottom() - viewport.bottom()).abs() <= gpui::px(1.),
+            "near-tail collapse must bottom-align true tail without underfill: {tail:?}, {viewport:?}"
+        );
+        assert!(
+            inside(Some(tail), viewport),
+            "collapsed tail must remain fully visible"
+        );
+        assert!(control(cx, window, "pr-thread-598-0").is_none());
+        paint(cx, window);
+    }
+}
+
+// #1479-S5C: keep collapse independent of the same-count card-anchor oracle
+// so FAIL-before can reach both regressions in isolated runner scenarios.
+pub fn scenario_pr_diff_extent_tail_collapse(cx: &mut VisualTestAppContext) {
+    with_pr(cx, |cx, app, window, fixture| {
+        click(cx, window, "pr-thread-badge-8");
+        near_tail_thread_collapse(cx, app, window);
+        assert_owner(cx, app, fixture, 0);
+    });
 }
 
 pub fn scenario_pr_diff_extent_reflow(cx: &mut VisualTestAppContext) {
@@ -571,6 +705,9 @@ pub fn scenario_pr_diff_extent_reflow(cx: &mut VisualTestAppContext) {
             "fixture must render a genuinely multi-line row"
         );
         assert_owner(cx, app, fixture, 1);
+        // #1479-S5C: shrinking at End must fill before any corrective input.
+        end_fill::shrink_at_end(cx, app, window);
+        assert_owner(cx, app, fixture, 0);
     });
 }
 

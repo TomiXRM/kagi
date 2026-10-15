@@ -127,7 +127,7 @@ impl Geometry {
             self.anchor = Anchor::default();
             return;
         }
-        let offset = offset.max(0.).min(self.total());
+        let offset = offset.max(0.).min(self.maximum());
         let index = self.inverse(offset);
         self.anchor = Anchor {
             index,
@@ -216,6 +216,7 @@ impl VariableListState {
     /// Replaced slots receive fresh source-local keys and nonzero estimates.
     /// Survivors retain keys/measurements; a deleted anchor chooses the next
     /// survivor (or the preceding final survivor), retaining its intra-row fraction.
+    /// Replacements keep an anchor/Reveal in the corresponding replacement slot.
     pub fn splice(&self, range: Range<usize>, count: usize) {
         let mut state = self.0.borrow_mut();
         assert!(range.start <= range.end && range.end <= state.rows.len());
@@ -228,6 +229,8 @@ impl VariableListState {
                 ix
             } else if ix >= range.end {
                 ix - range.len() + count
+            } else if count > 0 {
+                range.start + (ix - range.start).min(count - 1)
             } else {
                 (range.start + count).min(new_len.saturating_sub(1))
             }
@@ -310,8 +313,8 @@ impl VariableListState {
             return;
         }
         let offset = state.prefix(position.item_ix) + f64::from(position.offset_in_item);
+        state.pending = (offset > state.maximum()).then_some(Intent::End);
         state.set_pixel(offset);
-        state.pending = None;
     }
 
     pub fn scroll_to_reveal_item(&self, ix: usize) {
@@ -408,11 +411,46 @@ fn measure_row(
     })
 }
 
+fn finish_layout(
+    state: &VariableListState,
+    rows: &mut Vec<LaidOutRow>,
+    measure: &mut impl FnMut(usize) -> LaidOutRow,
+) {
+    let (fill, count, coverage) = {
+        let geometry = state.0.borrow();
+        (
+            matches!(geometry.pending, Some(Intent::End)) || geometry.offset() > geometry.maximum(),
+            geometry.rows.len(),
+            f64::from(geometry.viewport.size.height) + geometry.overdraw,
+        )
+    };
+    if fill {
+        // #1479-S5C: reflow/collapse and near-tail jumps can leave less than a
+        // viewport below the anchor. Resolve against actual tail measurements
+        // now, not as an accidental jump on the next wheel event.
+        // layout_rows constructs a contiguous interval. Reuse its elements;
+        // only newly exposed predecessors need layout in this frame.
+        let existing = rows.iter().fold(count..0, |range, row| {
+            range.start.min(row.ix)..range.end.max(row.ix + 1)
+        });
+        let mut covered = 0.;
+        for ix in (0..count).rev() {
+            if !existing.contains(&ix) {
+                rows.push(measure(ix));
+            }
+            covered += state.0.borrow().height(ix);
+            if covered >= coverage {
+                break;
+            }
+        }
+        state.0.borrow_mut().resolve_end();
+    }
+    rows.sort_unstable_by_key(|row| row.ix);
+}
+
 fn layout_rows(
     state: &VariableListState,
-    render: &mut impl FnMut(usize, &mut Window, &mut App) -> AnyElement,
-    window: &mut Window,
-    cx: &mut App,
+    mut measure: impl FnMut(usize) -> LaidOutRow,
 ) -> Vec<LaidOutRow> {
     let (count, pending, viewport, overdraw) = {
         let state = state.0.borrow();
@@ -428,20 +466,11 @@ fn layout_rows(
         return rows;
     }
     if matches!(pending, Some(Intent::End)) {
-        let mut covered = 0.;
-        for ix in (0..count).rev() {
-            rows.push(measure_row(state, ix, render, window, cx));
-            covered += state.0.borrow().height(ix);
-            if covered >= viewport + overdraw {
-                break;
-            }
-        }
-        rows.reverse();
-        state.0.borrow_mut().resolve_end();
+        finish_layout(state, &mut rows, &mut measure);
         return rows;
     }
     if let Some(Intent::Reveal(ix)) = pending {
-        rows.push(measure_row(state, ix, render, window, cx));
+        rows.push(measure(ix));
         let align_bottom = {
             let geometry = state.0.borrow();
             geometry.height(ix) <= viewport
@@ -456,7 +485,7 @@ fn layout_rows(
                 if covered >= viewport + overdraw {
                     break;
                 }
-                rows.push(measure_row(state, previous, render, window, cx));
+                rows.push(measure(previous));
                 covered += state.0.borrow().height(previous);
             }
             {
@@ -471,9 +500,10 @@ fn layout_rows(
                 if covered >= overdraw {
                     break;
                 }
-                rows.push(measure_row(state, next, render, window, cx));
+                rows.push(measure(next));
                 covered += state.0.borrow().height(next);
             }
+            finish_layout(state, &mut rows, &mut measure);
             return rows;
         }
         let mut geometry = state.0.borrow_mut();
@@ -489,7 +519,7 @@ fn layout_rows(
     };
     let anchor = state.0.borrow().anchor.index;
     if revealed != Some(anchor) {
-        rows.push(measure_row(state, anchor, render, window, cx));
+        rows.push(measure(anchor));
     }
     // Measure backward overdraw and forward coverage from the reading key. The
     // anchor fraction is evaluated against its freshly measured actual height.
@@ -503,7 +533,7 @@ fn layout_rows(
         }
         ix -= 1;
         if revealed != Some(ix) {
-            rows.push(measure_row(state, ix, render, window, cx));
+            rows.push(measure(ix));
         }
     }
     for ix in anchor + 1..count {
@@ -514,10 +544,10 @@ fn layout_rows(
             break;
         }
         if revealed != Some(ix) {
-            rows.push(measure_row(state, ix, render, window, cx));
+            rows.push(measure(ix));
         }
     }
-    rows.sort_unstable_by_key(|row| row.ix);
+    finish_layout(state, &mut rows, &mut measure);
     rows
 }
 
@@ -550,7 +580,9 @@ pub fn variable_list(
                 geometry.owner
             };
             window.with_element_namespace(("variable-list", owner), |window| {
-                let mut rows = layout_rows(&state, &mut render, window, cx);
+                let mut rows = layout_rows(&state, |ix| {
+                    measure_row(&state, ix, &mut render, window, cx)
+                });
                 let hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
                     for row in &mut rows {

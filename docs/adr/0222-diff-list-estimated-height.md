@@ -77,11 +77,11 @@ fork の `ListState` 内部や独自追加 API に diff が依存する経路は
 既存 7 native oracle の 20,005 行、単一巨大 wheel の往復、oversized tail、
 source/recolor/reclick/reload の読み位置と distant measurement の強度を維持し、
 実 pointer による thumb interior/end と画面外 review card 更新を追加する。
-2026-10-15 の native slice gate は **16/16 PASS**（既存 7 extent oracle と
+初回 cutover `2abf696d` の native slice gate は **16/16 PASS**（既存 7 extent oracle と
 keyboard selection / split order / revision / hunk actions / threads / review
 hunk / adaptive layout / lifecycle）。上記の過去 fork PASS や `measure_all`
 の実験値は本実装の latency の証拠ではない。
-新 owner の model contract 11 tests と workspace 3,424 tests は PASS
+同時点の model contract 11 tests と workspace 3,424 tests は PASS
 （workspace の既存 ignored 44 件）。`cargo build --locked` / plain build /
 fmt / clippy / `uv run --project ci check-all` も PASS。clippy は未変更ファイルの
 既存警告のみで、この改訂のファイルに新しい警告はない。
@@ -109,3 +109,30 @@ fmt / clippy / `uv run --project ci check-all` も PASS。clippy は未変更フ
 空 source の End→append 契約も最初は pending End、次に存在しない reading key
 の splice relocation で FAIL した。空 source には End intent も survivor anchor も
 存在しないため、append 後は先頭から読み始める。
+
+### Review: 末尾の不足領域と同数 card 差替え
+
+`caf5007` の `list.rs:1185–1229` が持つ「描画範囲が viewport に足りないとき
+前方の行を実測して scroll top を戻す」契約も新 owner が担う。これは明示的 End
+だけでなく、末尾付近への conflict jump、End 後の zoom 縮小・幅拡大、
+末尾近くの card collapse の全経路で必要である。layout 完了時に現 reading
+offset が maximum を超えていたら、末尾から viewport + overdraw を満たすまで
+逆向きに実測し、その frame で下端を合わせる。後続 wheel を修復操作にしない。
+同じ frame の実測済み element は再構築せず利用する。解決後は End を保持せず、
+append による tail-follow は引き続き行わない。
+
+同数の thread-card 差替えは、古い実測値と element identity を失効させる一方、
+reading anchor と保留 Reveal は同じ replacement slot に残す。削除の場合の
+次 survivor への relocation と、同数 replacement の読み位置保持を混同しない。
+model の 3 underfill 経路と card reload / pending Reveal、native の conflict
+jump / End 後縮小 / near-tail collapse / card 内 reload で regression を捕捉する。
+
+Review の追加 4 model tests は修正前にすべて FAIL。末尾 jump / collapse /
+縮小の offset はそれぞれ 1980 / 1990 / 1950、maximum は 1900 だった。
+card reload は reading slot が 40 から 41 へ移った。native 追加契約も修正前に
+**4/4 FAIL**（reflow、conflict End fill、tail collapse、card 内 reload）を確認し、
+修正後は model **15/15 PASS**、従来 gate を含む native **18/18 PASS**。
+native は推定値ではなく実 paint bounds を読み、修復用 wheel を送る前の下端差
+≤ 1px と、その後の小さい upward wheel の連続移動を確認する。
+Review 後の workspace は **3,428 PASS / 44 ignored**。locked/plain build、
+clippy（新規警告なし）、fmt、CI check-all も再実行して PASS。

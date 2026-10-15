@@ -219,7 +219,7 @@ fn reading(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Reading {
             row: top.item_ix,
             fraction: f32::from(top.offset_in_item) / f32::from(height),
             viewport,
-            extent: f32::from(scroll.max_offset_for_scrollbar().y + viewport.size.height),
+            extent: f32::from(scroll.max_offset() + viewport.size.height),
         }
     })
 }
@@ -339,6 +339,15 @@ fn zoom_to(
         if (current - target).abs() < 0.01 {
             return;
         }
+        let next = theme::step_zoom(current, current < target);
+        if (current < target && next > target) || (current > target && next < target) {
+            // #1479-S5C: menu commands use 0.1 steps; preserve the precise
+            // 1.667 metric case through the supported persisted zoom setting.
+            theme::set_zoom(target);
+            paint(cx, window);
+            assert_eq!(theme::zoom(), target, "precise zoom setting must be active");
+            return;
+        }
         command(
             cx,
             app,
@@ -434,6 +443,100 @@ fn widen_navigation(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window
         gpui::Modifiers::none(),
     );
     paint(cx, window);
+}
+
+fn offscreen_thread_update(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    // Reopen via the same product callback, then measure the real parsed card.
+    app.update(cx, |app, cx| app.pr_mode_toggle_thread(8, cx));
+    paint(cx, window);
+    reveal_current_thread(cx, app, window);
+    let old_body = control(cx, window, "pr-thread-body-8-0-0").expect("original body painted");
+    let old_height = row(cx, app, 9)
+        .expect("original expansion painted")
+        .size
+        .height;
+    wheel(cx, app, window, -20_000_000.);
+    let before = reading(cx, app);
+    assert!(
+        before.row > 9 && row(cx, app, 9).is_none(),
+        "review card must be genuinely offscreen"
+    );
+    let (count, tail_height) = cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().unwrap();
+        let scroll = &mode.tabs[mode.active.unwrap()].diff_scroll;
+        assert_eq!(scroll.measured_height(9), Some(old_height));
+        (
+            scroll.item_count(),
+            scroll
+                .measured_height(LINES + 1)
+                .expect("true tail measured"),
+        )
+    });
+    let marker = "OFFSCREEN_REVIEW_CHANGED ";
+    let response = GH.replace(
+        "A current review comment",
+        &format!("{} A current review comment", marker.repeat(120)),
+    );
+    let _changed_transport = OfflineGh::with_script(&response);
+    app.update(cx, |app, cx| app.pr_mode_reload_conversation_for_e2e(cx));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        paint(cx, window);
+        if cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().unwrap();
+            mode.tabs[mode.active.unwrap()].line_comments[0]
+                .body
+                .contains(marker)
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "changed review body did not pass production gh parser"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    anchor(
+        before,
+        reading(cx, app),
+        "offscreen same-count review source update",
+    );
+    cx.read(|cx| {
+        let mode = app.read(cx).pr_mode().unwrap();
+        let scroll = &mode.tabs[mode.active.unwrap()].diff_scroll;
+        assert_eq!(
+            scroll.item_count(),
+            count,
+            "body replacement must not insert a row"
+        );
+        assert!(
+            scroll.bounds_for_item(9).is_none(),
+            "offscreen body has no painted bounds"
+        );
+        assert!(
+            scroll.measured_height(9).is_none(),
+            "old offscreen body measurement must be invalidated, not relabelled as an estimate"
+        );
+        assert_eq!(
+            scroll.measured_height(LINES + 1),
+            Some(tail_height),
+            "unchanged distant code measurement survives review refresh"
+        );
+    });
+    wheel(cx, app, window, 20_000_000.);
+    reveal_current_thread(cx, app, window);
+    let changed_body =
+        control(cx, window, "pr-thread-body-8-0-0").expect("accepted changed body painted");
+    let changed = row(cx, app, 9).expect("changed expansion actually painted");
+    assert!(
+        changed_body.size.height > old_body.size.height && changed.size.height > old_height,
+        "returning to updated card must measure its taller real content"
+    );
+    ends(cx, app, window, LINES + 1);
 }
 
 pub fn scenario_pr_diff_extent_reflow(cx: &mut VisualTestAppContext) {
@@ -585,10 +688,16 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
             (warm.extent - stable.extent).abs() < 1.,
             "warm renders must not replace measured expansion extent"
         );
-        let retained = row(cx, app, distant_index)
-            .expect("warm expanded renders must retain offscreen actual measurement");
+        let retained = cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().unwrap();
+            let scroll = &mode.tabs[mode.active.unwrap()].diff_scroll;
+            assert!(scroll.bounds_for_item(distant_index).is_none());
+            scroll
+                .measured_height(distant_index)
+                .expect("warm expanded renders must retain offscreen actual measurement")
+        });
         assert!(
-            (f32::from(retained.size.height - distant.size.height)).abs() < 1.,
+            (f32::from(retained - distant.size.height)).abs() < 1.,
             "warm render must not replace a distant measured row with an estimate"
         );
         reveal_current_thread(cx, app, window);
@@ -640,6 +749,7 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
         let retired_extent = pre_collapse.extent - collapsed.extent;
         assert!(retired_extent > 0. && retired_extent >= f32::from(removed_height - pre_collapse.viewport.size.height), "collapse must retire expansion extent while allowing at most one viewport of newly exposed actual row measurements");
         ends(cx, app, window, LINES);
+        offscreen_thread_update(cx, app, window);
         assert_owner(cx, app, fixture, 0);
     });
 }
@@ -647,6 +757,12 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
 pub fn scenario_pr_diff_extent_source_recolor(cx: &mut VisualTestAppContext) {
     with_pr(cx, |cx, app, window, fixture| {
         let short_height = row(cx, app, 1).unwrap().size.height;
+        wheel(cx, app, window, -20_000_000.);
+        let distant = row(cx, app, LINES)
+            .expect("true tail painted before recolor")
+            .size
+            .height;
+        wheel(cx, app, window, 20_000_000.);
         wheel(cx, app, window, -1800.);
         let before = reading(cx, app);
         assert!(before.row > 1);
@@ -685,6 +801,16 @@ pub fn scenario_pr_diff_extent_source_recolor(cx: &mut VisualTestAppContext) {
         anchor(before, reading(cx, app), "highlight-only theme recolor");
         cx.read(|cx| {
             let mode = app.read(cx).pr_mode().unwrap();
+            let scroll = &mode.tabs[mode.active.unwrap()].diff_scroll;
+            assert!(
+                scroll.bounds_for_item(LINES).is_none(),
+                "recolor tail remains offscreen"
+            );
+            assert_eq!(
+                scroll.measured_height(LINES),
+                Some(distant),
+                "recolor must retain distant actual measurement"
+            );
             let diff = mode.tabs[mode.active.unwrap()].diff.as_ref().unwrap();
             assert_eq!(
                 diff.highlighted,
@@ -701,9 +827,12 @@ pub fn scenario_pr_diff_extent_source_recolor(cx: &mut VisualTestAppContext) {
             new.size.height > short_height * 2.,
             "equal-count different Git source must render its wrapped geometry"
         );
-        if let Some(cached) = row(cx, app, measured_index) {
-            assert!(cached.size.height > old.size.height * 2., "offscreen old source must not supply short measured geometry to equal-count wrapped source");
-        }
+        cx.read(|cx| {
+            let mode = app.read(cx).pr_mode().unwrap();
+            if let Some(cached) = mode.tabs[mode.active.unwrap()].diff_scroll.measured_height(measured_index) {
+                assert!(cached > old.size.height * 2., "offscreen old source must not supply short measured geometry to equal-count wrapped source");
+            }
+        });
         ends(cx, app, window, LINES);
         assert_owner(cx, app, fixture, 1);
     });

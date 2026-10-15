@@ -17,6 +17,7 @@ pub use kagi_ui_file_history::*;
 use super::*;
 
 use kagi_git::{FileDiff, FileHistoryEntry, FileHistoryEntryKind};
+use kagi_ui_core::variable_list::VariableListState;
 
 /// Host-side diff viewer slot for the File History pane (ADR-0121 C3).
 ///
@@ -30,8 +31,8 @@ pub struct FhDiffPane {
     owner: crate::app::SessionId,
     /// Diff of the selected entry, reusing the existing diff renderer.
     pub diff: Option<MainDiffView>,
-    /// Native variable-height measurements for this selected diff.
-    pub scroll: gpui::ListState,
+    /// Kagi-owned variable-height measurements for this selected diff.
+    pub scroll: VariableListState,
     pub list_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Monotonic per-diff request token, bumped on every diff load.
     pub req: u64,

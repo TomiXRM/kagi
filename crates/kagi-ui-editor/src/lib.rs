@@ -72,6 +72,7 @@ use kagi_ui_core::i18n::Msg;
 use kagi_ui_core::klog;
 use kagi_ui_core::theme::{self, theme};
 use kagi_ui_core::tree_a11y;
+use kagi_ui_core::variable_list::VariableListState;
 
 pub(crate) use panes::render_history_pane;
 use save_binding::{deliver, dirty_after_save, SaveDelivery};
@@ -463,7 +464,7 @@ pub struct EditorWorkspaceView {
     history_diff_req: RequestSlot<(u64, String)>,
     /// Scroll state for `history_diff`'s list — separate from `diff_scroll`
     /// (the WIP hunks pane), which the History diff never shares.
-    pub history_diff_scroll: gpui::ListState,
+    pub history_diff_scroll: VariableListState,
     pub history_diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The selected commit's full file content, seeded by the bin
     /// ([`seed_snapshot`](Self::seed_snapshot)). Plain `kagi_domain` data —
@@ -535,8 +536,8 @@ pub struct EditorWorkspaceView {
     pub tree_scroll: UniformListScrollHandle,
     #[cfg(feature = "gui-e2e")]
     tree_probes: tree_probes::TreeProbes,
-    /// Native variable-height measurements for the right hunks list.
-    pub diff_scroll: gpui::ListState,
+    /// Kagi-owned variable-height measurements for the right hunks list.
+    pub diff_scroll: VariableListState,
     pub diff_layout: kagi_ui_core::diff_list::DiffListLayout,
 
     /// Whether the left tree pane renders (T-WS-EDITOR-005 finding #3).
@@ -3388,11 +3389,11 @@ fn buffer_sig(path: &Path, result: &str) -> u64 {
     h
 }
 
-/// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item
+/// Construct a fresh owner-retained diff list (item
 /// count 0 — the bin's `render_diff_list` syncs it). `px(1000.)` overdraw
 /// matches the bin's `render_helpers::new_diff_list_state`.
-fn new_diff_list_state() -> gpui::ListState {
-    gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
+fn new_diff_list_state() -> VariableListState {
+    VariableListState::new(0, px(1000.))
 }
 
 /// Vertical-scrollbar wrapper (same shape as the bin's

@@ -43,8 +43,9 @@ PR mode は line comment を conversation の時系列リストとして表示�
 5. **対象の diff**: PR 全体の head 側 diff（merge-base..head）だけ。1 コミットを選んでいる間と Conflicts
    表示には重ねない（行番号の基準が違う）。ローカルの working tree との対応付けはしない。
 6. **仕組み**: `render_diff_list` に per-row overlay（`render_helpers::row_overlay::RowOverlay`）を追加し、
-   埋め込み側（PR mode）が gutter のマーカーと展開内容を渡す。展開・折り畳みは `ListState::splice` で
-   item を差し込み・取り除くので、スクロール位置は保たれる（件数不一致による reset を起こさない）。
+   埋め込み側（PR mode）が gutter のマーカーと展開内容を渡す。展開・折り畳みは
+   Kagi-owned `VariableListState::splice` で item を差し込み・取り除くので、
+   survivor の reading key を保つ（件数不一致による reset を起こさない）。
    他の diff 埋め込み（Main Diff・File History・Editor）は overlay を渡さず、見た目は変わらない。
 7. **本文**: `timeline_row::body_markdown`（`prepare_github_markdown` → `sanitize_markdown_for_view`）を
    通す。path と author は `safe_text`。
@@ -69,3 +70,16 @@ PR mode は line comment を conversation の時系列リストとして表示�
   - Tier A `pr_threads`: 実 PR ref fetch と 3 thread で、unified のバッジ → 実クリックで直下に展開・本文が
     描画 → outdated は薄い版 → 閉じると item 数が行数に戻る → split で LEFT / RIGHT の gutter、context 行の
     RIGHT は右だけ。
+
+## 改訂 — 2026-10-15: shared variable geometry（#1479-S5C）
+
+当初の GPUI `ListState::splice` 依存は [ADR-0222 の改訂](0222-diff-list-estimated-height.md)
+により Kagi-owned owner に移す。thread の配置、本文 renderer、開閉状態、
+read-only の契約は不変。取得済み thread の更新は、画面外であっても開いている
+expansion slot の実測 cache を失効させる。同じ item count は同じ geometry の
+証拠ではない。新しい本文が表示された際に実測し、他の survivor の読み位置と
+未変更 code row の実測値を維持する。全件 `measure_all` は使用しない。
+
+native `pr_diff_extent_threads` は既存の展開・幅/zoom reflow・collapse の oracle に
+画面外 card 更新を加える。画面外 cache は `measured_height`、現 frame の
+表示位置は `bounds_for_item` で別々に観測し、推定高さを実測と呼ばない。

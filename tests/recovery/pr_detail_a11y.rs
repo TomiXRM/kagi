@@ -155,15 +155,16 @@ fn cancel_merge_plan(cx: &mut VisualTestAppContext, cell: &Cell) {
     cell.paint(cx);
     assert!(
         cx.update_window(cell.win, |_, window, cx| {
-            cell.app
-                .read(cx)
-                .root_focus
-                .as_ref()
-                .unwrap()
-                .is_focused(window)
+            let app = cell.app.read(cx);
+            assert!(
+                app.pr_merge_modal().unwrap().plan.destructive,
+                "branch-deleting Merge retains its destructive interaction role"
+            );
+            let modal = app.modal_focus.as_ref().unwrap();
+            modal.is_focused(window) || modal.contains_focused(window, cx)
         })
         .unwrap(),
-        "accepted Merge plan hands focus to the modal root"
+        "accepted deleting Merge plan hands focus to the alert, not the workspace root"
     );
     let opened = pr_detail::activation_count("pr-mode-merge");
     crate::keyboard_nav::keys(cx, cell.win, "escape");

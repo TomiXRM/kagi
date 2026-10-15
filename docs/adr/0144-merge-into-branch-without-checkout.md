@@ -157,11 +157,15 @@ Only proven self/alias identity is an early no-op. A destination absent from
 the inventory is not prohibited merely because it is absent. In particular,
 the detached `HEAD` graph chip retains the normal merge-plan trigger so its
 `HeadDetached` blocker explains the refusal; it never becomes executable.
-`branch_drag_detached_target` sends a real drop to that chip and asserts both
-its highlight and the blocked plan. The read-model integration regression
-checks remote-name additions/removals and session-owner isolation.
+`branch_drag_detached_target` sends a real drop to that chip at the 1000×720
+desktop breakpoint and asserts both its highlight and the blocked plan. The
+read-model integration regression checks remote-name additions/removals and
+session-owner isolation.
 
 `branch_drag_self_target` sends real native drag events and compares target
 fill pixels, cursor state and modal/toast outcomes for self, remote alias and
-distinct targets in EN/JA, Apple Light/Dark, 100%/167%, 940×660 and 1392×883.
+distinct targets in EN/JA, Apple Light/Dark, 100%/167%, 1000×720 and 1392×883.
+The 940×660 compact leg opens the actual Local rail Popover and drags its rows
+onto self and a distinct branch, retaining no-op feedback and read-only planning
+coverage at the minimum window rather than expecting an undrawn inline Sidebar.
 This is Tier A evidence, not native VoiceOver or real-window Tier B evidence.

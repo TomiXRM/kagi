@@ -111,7 +111,7 @@ fn assert_graph_age_fit(cx: &mut VisualTestAppContext, window: gpui::AnyWindowHa
                         len: text.len(),
                         font: gpui::Font {
                             family: theme::MONO_FONT.into(),
-                            ..Default::default()
+                            ..kagi_ui_core::fonts::ui_font()
                         },
                         ..Default::default()
                     }],

@@ -111,6 +111,7 @@ pub(crate) fn terminal_font_size(zoom: f32) -> f32 {
 pub fn build_terminal_config() -> TerminalConfig {
     TerminalConfig {
         font_family: pick_font_family(),
+        font_fallbacks: kagi_ui_core::fonts::ui_font().fallbacks,
         // Follows the global UI zoom (View -> Zoom In/Out), like every other
         // text surface: kagi applies zoom by scaling the window's rem size,
         // but the terminal is a PTY grid sized in real pixels, so it never saw
@@ -758,6 +759,20 @@ pub fn ensure_terminal(
 #[cfg(test)]
 mod font_size_tests {
     use super::*;
+
+    #[test]
+    fn terminal_config_uses_ui_fallback_without_replacing_primary() {
+        let config = build_terminal_config();
+        assert_eq!(config.font_family, pick_font_family());
+        assert_eq!(
+            config.font_fallbacks.as_ref().unwrap().fallback_list(),
+            kagi_ui_core::fonts::ui_font()
+                .fallbacks
+                .as_ref()
+                .unwrap()
+                .fallback_list(),
+        );
+    }
 
     /// The PTY grid uses physical pixels instead of rems; it must follow the
     /// same base and relative zoom as text in the other panes.

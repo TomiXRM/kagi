@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Japanese terminal text keeps the bundled Japanese typeface when changing fonts, zooming, switching sessions or restarting a terminal. Status-bar text fitting uses the same Japanese fallback as drawing. (#1479-S1)
 - Update the toolbar count scaling GUI regression to expect the reachable 170% preset after seven public zoom steps, rather than the former 167% cap. Direct legacy 1667-permille rendering coverage remains unchanged.
 - Diff geometry is now Kagi-owned across Main Diff, File History, PR diff/conflicts and Editor WIP/history, without depending on the patched GPUI list APIs. The shared virtual list retains actual distant measurements across unchanged reloads/recolor, reflows reading anchors, and resolves giant wheel and scrollbar-end requests against the true tail without eager `measure_all`. Native extent contracts retain all seven scenarios and add physical thumb and offscreen review-card update coverage. (#1479-S5C; ADR-0222)
   - Review: near-tail conflict jumps, shrinking reflow and review-card collapse refill the viewport from the real tail; same-count review-card reloads retain the reading slot and fractional position.

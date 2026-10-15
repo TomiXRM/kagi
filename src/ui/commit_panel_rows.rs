@@ -148,6 +148,7 @@ fn render_cp_file_row(
         .w_full()
         .h(theme::scaled_px(FILE_ROW_HEIGHT))
         .min_h(px(20.))
+        .block_mouse_except_scroll()
         .flex()
         .flex_row()
         .items_center()

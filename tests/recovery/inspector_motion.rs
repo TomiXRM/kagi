@@ -123,7 +123,7 @@ fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     let row = bounds(window, id);
     cx.simulate_click(
         window,
-        point(row.right() - px(7.), row.center().y),
+        point(row.left() + px(80.), row.center().y),
         gpui::Modifiers::none(),
     );
     // Do not leave hover on the row whose wash is sampled.
@@ -133,7 +133,11 @@ fn selected(path: &str) {
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
     let rows: Vec<_> = ax.rows.values().filter(|(_, selected)| *selected).collect();
     assert_eq!(rows.len(), 1, "selection intent/AX must not wait for paint");
-    assert!(rows[0].0.ends_with(path));
+    assert!(
+        rows[0].0.ends_with(path),
+        "expected {path}, selected {:?}",
+        rows[0].0
+    );
 }
 fn generated_semantics(present: bool) {
     let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
@@ -392,4 +396,224 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         "motion never writes Git state"
     );
     eprintln!("[gui-e2e] PASS inspector_file_motion");
+}
+
+pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _motion = MotionRestore(theme::reduce_motion());
+    assert!(theme::set_active("apple-light"));
+    theme::set_zoom(1.67);
+    theme::set_reduce_motion(false);
+    cx.update(theme::sync_gpui_component_theme);
+    let repo = fixture();
+    std::fs::write(
+        repo.path().join(".gitattributes"),
+        "*.generated linguist-generated=true\n",
+    )
+    .unwrap();
+    let mut paths = vec!["Cargo.lock".to_owned(), "package-lock.json".to_owned()];
+    for path in ["a.txt", "b.txt", "Cargo.lock", "package-lock.json"] {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(repo.path().join(path))
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(b"\nviewport fixture\n")
+            })
+            .unwrap();
+    }
+    for n in 0..40 {
+        let path = format!("x-{n:02}.generated");
+        std::fs::write(repo.path().join(&path), "generated fixture\n").unwrap();
+        paths.push(path);
+    }
+    git(repo.path(), &["add", "."]);
+    git(
+        repo.path(),
+        &["commit", "-qm", "Scrollable generated Inspector"],
+    );
+    let (app, window) = mount(cx, repo.path());
+    app.update(cx, |app, cx| {
+        app.inspector_visible = true;
+        app.inspector_tree_view = false;
+        app.inspector_generated_expanded = false;
+        app.sidebar.width = 240.;
+        app.panel_width = 360.;
+        app.bottom_panel_open = false;
+        app.select(0);
+        app.set_window_active_for_e2e(true, cx);
+        app.close_main_diff();
+        cx.notify();
+    });
+    draw(cx, window);
+    let indices: Vec<_> = paths.iter().map(|path| index(cx, &app, path)).collect();
+    let t = Instant::now();
+    frame(cx, window, t);
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t);
+    for index in &indices {
+        e2e::clear_control_bounds(window.window_id(), &format!("inspector-file-{index}"));
+    }
+    frame(cx, window, t + Duration::from_millis(37));
+    let viewport = bounds(window, "inspector-files-scroll");
+    let first = bounds(window, &format!("inspector-file-{}", indices[0]));
+    let second = bounds(window, &format!("inspector-file-{}", indices[1]));
+    let gap = f32::from(second.top() - first.top());
+    assert!(gap > 0. && gap < f32::from(first.size.height));
+    let tail = ((f32::from(viewport.bottom() - first.top() - first.size.height) / gap).floor()
+        as usize)
+        .min(indices.len() - 1);
+    assert!(
+        tail + 4 > (viewport.size.height / first.size.height) as usize,
+        "fixture tail {tail} must exceed final-slot viewport: {viewport:?}, {first:?}, gap {gap}"
+    );
+    let row = e2e::control_bounds(
+        window.window_id(),
+        &format!("inspector-file-{}", indices[tail]),
+    )
+    .expect("displaced generated viewport-tail row remains realized");
+    near(
+        row.top(),
+        first.top() + px(gap * tail as f32),
+        "off-range generated content follows the measured painted pitch",
+    );
+    assert!(row.top() >= viewport.top() && row.bottom() <= viewport.bottom());
+    let name = bounds(window, &format!("inspector-file-name-{}", indices[tail]));
+    cx.update_window(window, |_, window, _| {
+        let image = window
+            .render_to_image()
+            .expect("native displaced row pixels");
+        let scale = window.scale_factor();
+        let bg = image
+            .get_pixel(
+                (f32::from(row.right() - px(4.)) * scale) as u32,
+                (f32::from(row.top() + px(1.)) * scale) as u32,
+            )
+            .0;
+        let mut ink = 0;
+        for y in 0..(gap.min(f32::from(name.size.height)) * scale) as u32 {
+            for x in 0..(24. * scale) as u32 {
+                let pixel = image
+                    .get_pixel(
+                        (f32::from(name.left()) * scale) as u32 + x,
+                        (f32::from(name.top()) * scale) as u32 + y,
+                    )
+                    .0;
+                ink = ink.max(distance(pixel, bg));
+            }
+        }
+        assert!(
+            ink > 40,
+            "displaced filename has real rasterized ink, not just bounds"
+        );
+    })
+    .unwrap();
+    // Incoming fixed-height contents overlap while their gaps grow. Hit the
+    // visible leading strip, not a centre already covered by the following row.
+    cx.simulate_click(
+        window,
+        point(row.right() - px(7.), row.top() + px(3.)),
+        gpui::Modifiers::none(),
+    );
+    frame(cx, window, t + Duration::from_millis(37));
+    selected(&paths[tail]);
+    let a = index(cx, &app, "a.txt");
+    click(cx, window, &format!("inspector-file-{a}"));
+    frame(cx, window, t + Duration::from_millis(37));
+    let live_paint_top = paint(window, indices[tail]).top();
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(37));
+    generated_semantics(false);
+    near(
+        paint(window, indices[tail]).top(),
+        live_paint_top,
+        "long closing starts in place",
+    );
+    frame(cx, window, t + Duration::from_millis(80));
+    let ghost = bounds(window, &format!("inspector-file-ghost-{}", indices[tail]));
+    let closing_paint_top = paint(window, indices[tail]).top();
+    assert!(
+        ghost.top() < row.top(),
+        "retained long-list tail moves while closing"
+    );
+    cx.simulate_click(window, ghost.center(), gpui::Modifiers::none());
+    draw(cx, window);
+    selected("a.txt");
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(80));
+    near(
+        paint(window, indices[tail]).top(),
+        closing_paint_top,
+        "long-list reversal is continuous",
+    );
+    frame(cx, window, t + Duration::from_millis(300));
+    let scroll = cx.read(|cx| app.read(cx).inspector_scroll_for_e2e());
+    let pitch =
+        scroll.0.borrow().last_item_size.unwrap().contents.height / (indices.len() + 4) as f32;
+    scroll.scroll_to_item_strict(tail + 4, gpui::ScrollStrategy::Top);
+    e2e::clear_control_bounds(
+        window.window_id(),
+        &format!("inspector-file-{}", indices[tail]),
+    );
+    draw(cx, window);
+    near(
+        bounds(window, &format!("inspector-file-{}", indices[tail])).top(),
+        viewport.top() + pitch * (tail + 4) as f32 + scroll.0.borrow().base_handle.offset().y,
+        "settled tail follows the actual snapped uniform-list pitch",
+    );
+    scroll.scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+    draw(cx, window);
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(300));
+    frame(cx, window, t + Duration::from_millis(600));
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(600));
+    frame(cx, window, t + Duration::from_millis(690));
+    scroll
+        .0
+        .borrow()
+        .base_handle
+        .set_offset(point(px(0.), -pitch * 4.5));
+    draw(cx, window);
+    let clipped = bounds(window, &format!("inspector-file-{}", indices[0]));
+    let next = bounds(window, &format!("inspector-file-{}", indices[1]));
+    assert!(clipped.top() < viewport.top() && clipped.bottom() > viewport.top() + px(3.));
+    assert!(next.top() > viewport.top() + px(3.));
+    cx.simulate_click(
+        window,
+        point(clipped.left() + px(80.), viewport.top() + px(2.)),
+        gpui::Modifiers::none(),
+    );
+    frame(cx, window, t + Duration::from_millis(690));
+    selected(&paths[0]);
+    theme::set_reduce_motion(true);
+    scroll.scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+    draw(cx, window);
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(690));
+    assert!(!cx.read(|cx| app.read(cx).inspector_generated_expanded));
+    generated_semantics(false);
+    e2e::clear_control_bounds(
+        window.window_id(),
+        &format!("inspector-file-ghost-{}", indices[tail]),
+    );
+    draw(cx, window);
+    assert!(e2e::control_bounds(
+        window.window_id(),
+        &format!("inspector-file-ghost-{}", indices[tail])
+    )
+    .is_none());
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(690));
+    assert!(cx.read(|cx| app.read(cx).inspector_generated_expanded));
+    generated_semantics(true);
+    near(
+        paint(window, indices[1]).top() - paint(window, indices[0]).top(),
+        pitch,
+        "reduced opening reaches final snapped slots immediately",
+    );
+    motion::set_clock_for_e2e(None);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS inspector_generated_viewport_motion");
 }

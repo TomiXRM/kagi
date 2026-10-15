@@ -3592,6 +3592,7 @@ mod macos {
             ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
             ("changes_file_motion", Box::new(crate::changes_motion::scenario)),
             ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
+            ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
             ("modal_disclosure_motion", Box::new(crate::modal_motion::scenario_modal_disclosure_motion)),
             (
                 "inspector_files_keyboard",

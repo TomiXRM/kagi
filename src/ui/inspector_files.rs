@@ -11,10 +11,12 @@ use gpui::{
 use kagi_ui_core::{
     file_tree::{status_badge, TreeRow},
     i18n::{self, Msg},
-    motion::{self, Easing, KeyedTransition, RowSplice},
+    motion::{self, RowSplice},
     theme::{self, theme},
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Instant};
+use std::{cell::RefCell, rc::Rc};
+mod presentation;
+use presentation::Motion;
 
 const LIST: &str = "inspector-files-scroll";
 const FOLD: &str = "\0generated";
@@ -66,50 +68,6 @@ struct Presentation {
     expanded: bool,
     selected: Option<usize>,
     active: bool,
-}
-#[derive(Default)]
-struct Motion {
-    splice: RowSplice<SharedString>,
-    // Only selected and still-fading paths are retained.
-    washes: HashMap<SharedString, KeyedTransition<bool>>,
-    selected: Option<SharedString>,
-    initialized: bool,
-    order: HashMap<SharedString, usize>,
-    ghosts: Vec<FileRow>,
-}
-impl Motion {
-    fn sync_selection(
-        &mut self,
-        selected: Option<SharedString>,
-        now: Instant,
-        instant: bool,
-    ) -> bool {
-        let first = !self.initialized;
-        self.initialized = true;
-        if let Some(path) = selected.as_ref() {
-            self.washes
-                .entry(path.clone())
-                .or_insert_with(|| KeyedTransition::new(false, 0.));
-        }
-        self.selected = selected;
-        let selected = &self.selected;
-        let mut moving = false;
-        self.washes.retain(|path, wash| {
-            let target = selected.as_ref() == Some(path);
-            wash.retarget(
-                target,
-                if target { 1. } else { 0. },
-                now,
-                motion::TRANSITION,
-                Easing::OutCubic,
-                instant || first,
-            );
-            let sample = wash.sample(now);
-            moving |= !sample.done;
-            target || !sample.done
-        });
-        moving
-    }
 }
 struct State {
     layout: Option<(bool, bool, i18n::Lang)>,
@@ -293,88 +251,119 @@ impl InspectorKeyboard {
             active,
         };
         let count = entries.len();
+        let render_scroll = scroll.clone();
         let render = cx.processor(
-            move |_: &mut KagiApp, range: std::ops::Range<usize>, _, cx| {
+            move |_: &mut KagiApp, requested: std::ops::Range<usize>, _, cx| {
+                let pitch = render_scroll
+                    .0
+                    .borrow()
+                    .last_item_size
+                    .filter(|_| count > 0)
+                    .map_or(theme::scaled_px(ROW_HEIGHT), |size| {
+                        size.contents.height / count as f32
+                    });
+                let motion = motion.borrow();
+                let range = motion.presentation_range(&entries, requested.clone(), pitch, now);
                 *drawn.borrow_mut() = range.clone();
                 let rows = Rc::new(rows.as_drawn(&range));
-                range
-                    .map(|ix| {
-                        let motion = motion.borrow();
-                        let sample = match &entries[ix] {
-                            Entry::File(row) => {
-                                let path = &row.source.files[row.index].path;
-                                let rank = motion.order[path];
-                                motion
-                                    .splice
-                                    .row(path, theme::scaled_px(ROW_HEIGHT), now, |key| {
-                                        motion.order[key] < rank
-                                    })
-                            }
-                            Entry::More(_) => motion.splice.row(
-                                &SharedString::from("\0tail"),
-                                theme::scaled_px(ROW_HEIGHT),
+                let mut slots = Vec::with_capacity(requested.len());
+                let mut overflow = Vec::new();
+                let mut leading = 0;
+                for ix in range {
+                    let sample = motion.sample(&entries[ix], pitch, now);
+                    let wash = match &entries[ix] {
+                        Entry::File(row) => motion
+                            .washes
+                            .get(&row.source.files[row.index].path)
+                            .map_or(0., |wash| wash.sample(now).value),
+                        _ => 0.,
+                    };
+                    let content = render_entry(ix, &entries[ix], &rows, presentation, wash, cx);
+                    let mut slot = div()
+                        .relative()
+                        .h(theme::scaled_px(ROW_HEIGHT))
+                        .w_full()
+                        .child(
+                            div()
+                                .relative()
+                                .top(sample.offset)
+                                .opacity(sample.opacity)
+                                .child(content),
+                        );
+                    if matches!(&entries[ix], Entry::Generated { .. }) {
+                        let fold: SharedString = FOLD.into();
+                        for (at, ghost) in motion.ghosts.iter().enumerate() {
+                            let path = &ghost.source.files[ghost.index].path;
+                            if let Some(sample) = motion.splice.ghost(
+                                path,
+                                Some(&fold),
+                                motion.ghosts[..at]
+                                    .iter()
+                                    .map(|row| &row.source.files[row.index].path),
+                                pitch,
                                 now,
-                                |_| true,
-                            ),
-                            _ => motion::RowSample {
-                                offset: px(0.),
-                                opacity: 1.,
-                            },
-                        };
-                        let wash = match &entries[ix] {
-                            Entry::File(row) => motion
-                                .washes
-                                .get(&row.source.files[row.index].path)
-                                .map_or(0., |wash| wash.sample(now).value),
-                            _ => 0.,
-                        };
-                        let content = render_entry(ix, &entries[ix], &rows, presentation, wash, cx);
-                        let mut slot = div()
-                            .relative()
-                            .h(theme::scaled_px(ROW_HEIGHT))
-                            .w_full()
-                            .child(
-                                div()
-                                    .relative()
-                                    .top(sample.offset)
-                                    .opacity(sample.opacity)
-                                    .child(content),
-                            );
-                        if matches!(&entries[ix], Entry::Generated { .. }) {
-                            let fold: SharedString = FOLD.into();
-                            for (at, ghost) in motion.ghosts.iter().enumerate() {
-                                let path = &ghost.source.files[ghost.index].path;
-                                if let Some(sample) = motion.splice.ghost(
-                                    path,
-                                    Some(&fold),
-                                    motion.ghosts[..at]
-                                        .iter()
-                                        .map(|row| &row.source.files[row.index].path),
-                                    theme::scaled_px(ROW_HEIGHT),
-                                    now,
-                                ) {
-                                    let wash = motion
-                                        .washes
-                                        .get(path)
-                                        .map_or(0., |wash| wash.sample(now).value);
-                                    slot = slot.child(
-                                        div()
-                                            .absolute()
-                                            .top(sample.offset)
-                                            .left_0()
-                                            .w_full()
-                                            .h(theme::scaled_px(ROW_HEIGHT))
-                                            .border_2()
-                                            .border_color(gpui::transparent_black())
-                                            .opacity(sample.opacity)
-                                            .child(file_content(ghost, presentation, wash, false)),
-                                    );
-                                }
+                            ) {
+                                let wash = motion
+                                    .washes
+                                    .get(path)
+                                    .map_or(0., |wash| wash.sample(now).value);
+                                slot = slot.child(
+                                    div()
+                                        .absolute()
+                                        .top(sample.offset)
+                                        .left_0()
+                                        .w_full()
+                                        .h(theme::scaled_px(ROW_HEIGHT))
+                                        .border_2()
+                                        .border_color(gpui::transparent_black())
+                                        .opacity(sample.opacity)
+                                        .child(file_content(ghost, presentation, wash, false)),
+                                );
                             }
                         }
-                        slot.into_any_element()
-                    })
-                    .collect::<Vec<_>>()
+                    }
+                    if requested.contains(&ix) {
+                        slots.push(slot.into_any_element());
+                    } else {
+                        let anchor = if ix < requested.start {
+                            leading += 1;
+                            requested.start
+                        } else {
+                            requested.end - 1
+                        };
+                        overflow.push(
+                            div()
+                                .absolute()
+                                .w_full()
+                                .top(pitch * (ix as f32 - anchor as f32))
+                                .child(slot),
+                        );
+                    }
+                }
+                for (at, count, before) in [
+                    (0, leading, true),
+                    (
+                        requested.len().saturating_sub(1),
+                        overflow.len() - leading,
+                        false,
+                    ),
+                ] {
+                    if count == 0 {
+                        continue;
+                    }
+                    if let Some(slot) = slots.get_mut(at) {
+                        let content = std::mem::replace(slot, div().into_any_element());
+                        let edge = div().relative().w_full().h(theme::scaled_px(ROW_HEIGHT));
+                        let fringe = overflow.drain(..count);
+                        *slot = if before {
+                            edge.children(fringe).child(content)
+                        } else {
+                            edge.child(content).children(fringe)
+                        }
+                        .into_any_element();
+                    }
+                }
+                slots
             },
         );
         let body = gpui::uniform_list("inspector-file-rows", count, move |range, window, cx| {
@@ -614,6 +603,7 @@ fn file_row(
     .relative()
     .w_full()
     .h(theme::scaled_px(ROW_HEIGHT))
+    .block_mouse_except_scroll()
     .when(!selected, |el| {
         el.hover(|style| style.bg(rgb(theme().surface)))
     })

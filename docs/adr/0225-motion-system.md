@@ -200,6 +200,22 @@ of the interpolation formula are not contrast evidence. Both old surfaces
 failed that oracle at 1.943:1 before this correction. The original active-window
 frame38 contact sheet is retained as the visual before-failure.
 
+### Inspector generated viewport realization
+
+Generated expansion retains the final fixed-height list count immediately, but
+realizes the bounded neighbouring rows whose displaced content intersects the
+requested viewport. Inspector mounts those rows once as out-of-flow children
+at the appropriate requested edge, preserving logical paint/hit order, real
+indices, input handlers and accessibility identity. Placement uses the list's
+measured pixel-snapped pitch, not the unsnapped configured height. Closing
+ghosts remain presentation-only and the shared splice cap bounds extra work.
+
+Changes uses the same leading-before-first/trailing-after-last placement order.
+Both lists block non-scroll mouse hits behind real interactive rows: compressed
+incoming contents overlap, and GPUI's normal hitboxes otherwise dispatch clicks
+to multiple rows. Wheel input continues to the virtual list. Presentation-only
+removal ghosts never acquire file actions or duplicate accessibility rows.
+
 ## Sidebar and editor tree amendment (#1617)
 
 The dense Repository Navigator and Editor file tree retain their existing row

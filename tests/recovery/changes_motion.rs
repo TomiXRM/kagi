@@ -172,6 +172,24 @@ fn fold_motion(
     frame(cx, window, at);
     toggle(cx, true);
     frame(cx, window, at);
+    frame(cx, window, at + Duration::from_millis(37));
+    let incoming = e2e::control_bounds(window.window_id(), &format!("cp-us-density-file-{fi}"))
+        .expect("incoming fold child");
+    cx.simulate_click(
+        window,
+        gpui::point(
+            incoming.left() + gpui::px(80.),
+            incoming.top() + gpui::px(3.),
+        ),
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    frame(cx, window, at + Duration::from_millis(37));
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).active_wip.clone()),
+        Some((false, std::path::PathBuf::from(path))),
+        "overlapping incoming fold row, not its predecessor, owns the click",
+    );
     frame(cx, window, at + Duration::from_millis(90));
     let mid = top();
     frame(cx, window, at + Duration::from_millis(250));
@@ -260,6 +278,20 @@ fn viewport_edges(
         .expect("displaced tail outside final uniform_list range is mounted");
     assert!(painted.top() < viewport.bottom() && painted.bottom() > viewport.top(),
         "tail content fills the viewport during insertion: {painted:?}, {viewport:?}, pitch={pitch}");
+    let expected_tail = cx.read(|cx| panel.read(cx).state.unstaged[tail_file].path.clone());
+    let visible = painted.intersect(&viewport);
+    cx.simulate_click(
+        window,
+        gpui::point(visible.right() - gpui::px(7.), visible.center().y),
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    frame(cx, window, at + Duration::from_millis(300));
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).active_wip.clone()),
+        Some((false, expected_tail)),
+        "viewport-tail row keeps its real path-keyed click target",
+    );
     frame(cx, window, at + Duration::from_millis(550));
 
     panel.update(cx, |panel, cx| {

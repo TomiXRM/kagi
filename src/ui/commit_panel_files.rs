@@ -271,30 +271,52 @@ impl FileListMotion {
     ) -> Vec<gpui::AnyElement> {
         let mut slots = Vec::with_capacity(requested.len());
         let mut overflow = Vec::new();
+        let mut leading = 0;
         for i in range {
             let Some(row) = render(i) else { continue };
             let row = self.wrap(i, row, height);
             if requested.contains(&i) {
                 slots.push(row);
             } else {
+                let anchor = if i < requested.start {
+                    leading += 1;
+                    requested.start
+                } else {
+                    requested.end - 1
+                };
                 overflow.push(
                     div()
                         .absolute()
                         .w_full()
-                        .top(height * (i as f32 - requested.start as f32))
+                        .top(height * (i as f32 - anchor as f32))
                         .child(row),
                 );
             }
         }
-        if !overflow.is_empty() {
-            if let Some(first) = slots.first_mut() {
-                *first = div()
+        for (at, count, before) in [
+            (0, leading, true),
+            (
+                requested.len().saturating_sub(1),
+                overflow.len() - leading,
+                false,
+            ),
+        ] {
+            if count == 0 {
+                continue;
+            }
+            if let Some(slot) = slots.get_mut(at) {
+                let content = std::mem::replace(slot, div().into_any_element());
+                let edge = div()
                     .relative()
                     .w_full()
-                    .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
-                    .child(std::mem::replace(first, div().into_any_element()))
-                    .children(overflow)
-                    .into_any_element();
+                    .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)));
+                let fringe = overflow.drain(..count);
+                *slot = if before {
+                    edge.children(fringe).child(content)
+                } else {
+                    edge.child(content).children(fringe)
+                }
+                .into_any_element();
             }
         }
         slots

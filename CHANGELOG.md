@@ -13,6 +13,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Open repository folders dropped from Finder onto a Kagi window or its Dock icon through the existing repository-tab opening flow. Window drops highlight the target; files and non-repository folders retain existing failure feedback. The macOS bundle registers as an alternate folder viewer without taking over the default folder handler. (#1605)
+  - Clear folder-drop feedback immediately when a drag leaves or is cancelled, and show the highlight only where the repository target can actually receive the drop—not over dialogs or other blocking overlays.
 - Quit (including from Settings), Close Window, and the window close button now protect unsaved Editor changes in every repository and file tab. One confirmation counts unsaved files and offers Save All, Discard, or Cancel; saving errors keep the window open, and running operations still prevent closure. (#1603)
 - Serialize user-text tests that implicitly read the shared UI language with the existing i18n test lock, preventing parallel language-switching tests from changing diagnostic expectations mid-assertion. Production behavior is unchanged.
 - Replace internal operation names and implementation diagnostics in notifications, preview cards and Operation Log with English/Japanese action-oriented text. Existing receipts and stderr contracts stay unchanged; branch names, paths, commit IDs and raw Git diagnostics remain available. (#1588, shared presentation)

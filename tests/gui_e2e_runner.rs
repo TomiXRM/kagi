@@ -855,6 +855,14 @@ mod squash_publish_owner;
 mod worktree_graph;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/folder_drop.rs"]
+mod folder_drop;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/folder_urls.rs"]
+mod folder_urls;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/workspace_mode_toolbar.rs"]
 mod workspace_mode_toolbar;
 
@@ -4025,6 +4033,30 @@ mod macos {
             (
                 "ecosystem_evidence_detached_samepath",
                 Box::new(crate::ecosystem_evidence_owner::scenario_ecosystem_evidence_detached_samepath),
+            ),
+            (
+                "folder_drop_open",
+                Box::new(crate::folder_drop::scenario_folder_drop_open),
+            ),
+            (
+                "folder_drop_exit",
+                Box::new(crate::folder_drop::scenario_folder_drop_exit),
+            ),
+            (
+                "folder_drop_occluded",
+                Box::new(crate::folder_drop::scenario_folder_drop_occluded),
+            ),
+            (
+                "folder_urls_existing_root",
+                Box::new(crate::folder_urls::scenario_folder_urls_existing_root),
+            ),
+            (
+                "folder_urls_without_root",
+                Box::new(crate::folder_urls::scenario_folder_urls_without_root),
+            ),
+            (
+                "folder_urls_settings_only",
+                Box::new(crate::folder_urls::scenario_folder_urls_settings_only),
             ),
             (
                 "remote_source_merge_into",

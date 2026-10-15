@@ -512,6 +512,7 @@ pub(super) fn render_filter(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::A
         .when_some(app.sidebar.filter.as_ref(), |row, input| {
             row.child(
                 Input::new(input)
+                    .context_menu(kagi_ui_core::input::context_menu(input, false))
                     .aria_label(Msg::A11ySidebarFilter.t())
                     .role(input_role)
                     .xsmall()

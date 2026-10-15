@@ -128,6 +128,7 @@ pub(super) fn reset_alert(
         cancel,
     )
     .focus_trap("settings-analyze-reset-alert", &modal.focus)
+    .key_context("KagiCancelDialog")
     .on_action(move |_: &super::CloseMainDiff, window, cx| {
         action_cancel(window, cx);
         cx.stop_propagation();

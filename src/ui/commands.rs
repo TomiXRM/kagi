@@ -1480,6 +1480,49 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         gpui_component::input::SelectAll,
         Some("Input"),
     )]);
+    #[cfg(target_os = "macos")]
+    {
+        // Remove only the old code-action candidate. Otherwise, after Input's
+        // Escape propagates, ToggleCodeActions consumes Command-Period before
+        // its Popover / dialog owner can handle the next matching binding.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            gpui::Unbind(gpui::Action::name(&gpui_component::input::ToggleCodeActions).into()),
+            Some("Input"),
+        )]);
+        // Reuse Escape's registered actions AND owner predicates. This keeps
+        // child menus / Find / completion ahead of their containing dialog
+        // and overrides Input's earlier Command-Period code-action binding.
+        // Keymap inspection/loading is public even when a component's action
+        // type is private (for example gpui-kit's menu cancellation action).
+        let escape = [gpui::Keystroke::parse("escape").expect("valid Escape keystroke")];
+        let aliases: Vec<_> = cx
+            .key_bindings()
+            .borrow()
+            .bindings()
+            // false means complete; true would mean a multi-key prefix.
+            .filter(|binding| binding.match_keystrokes(&escape) == Some(false))
+            .map(|binding| {
+                KeyBinding::load(
+                    "cmd-.",
+                    binding.action().boxed_clone(),
+                    binding.predicate(),
+                    false,
+                    None,
+                    cx.keyboard_mapper().as_ref(),
+                )
+                .expect("valid Command-Period keystroke")
+            })
+            .collect();
+        cx.bind_keys(aliases);
+        // These native Settings alerts handle Escape as a raw key event,
+        // rather than registering an action with the application keymap.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            CloseMainDiff,
+            Some("KagiCancelDialog"),
+        )]);
+    }
 }
 
 /// Install the application-wide command bindings and native menu definition.

@@ -14,6 +14,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Context menus in text fields drawn by Kagi follow the selected English/Japanese UI language and contain only Cut, Copy, Paste and Select All, including Editor, Conflict and Issue composition fields. Find/Replace bar inputs retain gpui-kit’s default English context menu because the pinned library exposes no customization API for those internal fields. (#1606)
+- Command-Period follows Escape's child-first cancellation route: focused menus, dropdowns and Find bars close before the dialog or workspace behind them, including when a text field owns focus. Escape and Command-Period inside the compact commit composer close its popup without dismissing background notifications or losing the draft. (#1609)
 - Open repository folders dropped from Finder onto a Kagi window or its Dock icon through the existing repository-tab opening flow. Window drops highlight the target; files and non-repository folders retain existing failure feedback. The macOS bundle registers as an alternate folder viewer without taking over the default folder handler. (#1605)
   - Clear folder-drop feedback immediately when a drag leaves or is cancelled, and show the highlight only where the repository target can actually receive the drop—not over dialogs or other blocking overlays.
 - Quit (including from Settings), Close Window, and the window close button now protect unsaved Editor changes in every repository and file tab. One confirmation counts unsaved files and offers Save All, Discard, or Cancel; saving errors keep the window open, and running operations still prevent closure. (#1603)

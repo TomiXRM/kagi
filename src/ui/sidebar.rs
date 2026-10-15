@@ -163,6 +163,8 @@ pub struct SidebarState {
     pub pane_weights: [u16; 5],
     /// Measured window-space bounds for drag calculations, including zoom.
     pub pane_geom: [std::rc::Rc<std::cell::Cell<(f32, f32)>>; 5],
+    /// Pane viewport height, including unused flex space when every pane is closed.
+    pub(super) pane_viewport_height: std::rc::Rc<std::cell::Cell<f32>>,
     /// T-PERF-RENDER-002 (ADR-0116 Wave 2): fingerprint of the inputs that
     /// produced the cached `rows`. `render` hashes cheap input revisions,
     /// collapse sets and filter text; unchanged frames do not rebuild refs.
@@ -212,6 +214,7 @@ impl SidebarState {
             pane_ranges: std::array::from_fn(|_| 0..0),
             pane_weights: layout.weights,
             pane_geom: std::array::from_fn(|_| Default::default()),
+            pane_viewport_height: Default::default(),
             rows_fingerprint: u64::MAX,
             tree_positions: Vec::new(),
             tree_positions_for: None,
@@ -548,14 +551,14 @@ impl SidebarState {
         let now = motion::now();
         let instant = motion::instant();
         let header_h = f32::from(theme::scaled_px(SIDEBAR_SECTION_HEADER_H));
-        let available: f32 = self
+        // A fully collapsed stack occupies only its headers. Its viewport still
+        // owns the unused flex space into which the next pane must reveal.
+        let dividers: f32 = self
             .pane_geom
-            .iter()
-            .map(|geom| {
-                let (a, b) = geom.get();
-                b - a
-            })
+            .windows(2)
+            .map(|pair| (pair[1].get().0 - pair[0].get().1).max(0.))
             .sum();
+        let available = (self.pane_viewport_height.get() - dividers).max(0.);
         let expanded_weight: f32 = super::sidebar_panes::SECTIONS
             .iter()
             .enumerate()

@@ -24,6 +24,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Consume context-menu clicks on presentation-only Editor tree ghosts and displaced edge rows, instead of opening the blank-tree New File / New Folder menu behind collapsing content. Real file, directory and blank-space menus retain their existing targets. (#1617, #1621)
+- Measure the Navigator pane viewport when reopening from an entirely collapsed stack, so the body expands into unused flex space instead of remaining header-only and jumping at the animation endpoint. Closed-window resizing and Reduce Motion preserve the measured endpoint. (#1617, #1621)
 - Clear the Navigator's retained keyboard-ring motion when its panes leave the front workspace or are replaced inside the compact rail, so hiding the sidebar or visiting another pane, Pull Requests, Issues or Editor cannot replay an unfocused ring on return. (#1617, #1621)
 - Correct the existing right-selection motion GUI oracle to allow native pixel snapping when comparing full pane width; the same 327.5px/327.6px mismatch reproduced on unchanged dev. Production motion is unchanged. (#1617)
 - Use native menu checkmarks for Theme, Language, Toolbar and the active workspace, with plain Graph / Pull Requests / Editor names (グラフ / Pull Request / エディター in Japanese). Add File > Open Recent and matching Dock entries from Home history, with history-only Clear Menu and a clearly separated, aligned portable menu group. Expose Find… only for an available target and disable Clear Menu when history is empty using native action availability. Preserve the existing sidebar shortcut priority; further Find navigation awaits public upstream actions. (#1604, #1608; Refs #1607)

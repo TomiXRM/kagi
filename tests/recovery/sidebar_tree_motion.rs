@@ -119,7 +119,94 @@ pub fn scenario_sidebar_tree_pane_motion(cx: &mut VisualTestAppContext) {
             "Reduce Motion settles the drawn body immediately"
         );
     }
+    pane_reopen_from_all_closed(cx, &app, window);
     unmount(cx, app, window);
+}
+
+fn pane_reopen_from_all_closed(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let mut t = Instant::now();
+    theme::set_reduce_motion(true);
+    app.update(cx, |app, cx| {
+        app.sidebar
+            .collapsed
+            .extend(["local", "remote", "worktrees", "tags", "stashes"]);
+        cx.notify();
+    });
+    frame(cx, app, window, t);
+    for height in [900., 720., 1040.] {
+        let wanted = gpui::size(gpui::px(1440.), gpui::px(height));
+        cx.update_window(window, |_, window, _| window.resize(wanted))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            crate::macos::drain_native_events();
+            cx.run_until_parked();
+            if cx
+                .update_window(window, |_, window, _| window.viewport_size())
+                .unwrap()
+                == wanted
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "native all-closed pane window resized"
+            );
+        }
+        frame(cx, app, window, t);
+        let closed = pane_height(cx, app, 0);
+        let container = e2e::control_bounds(window.window_id(), "sidebar-panes").unwrap();
+        let occupied = app.read_with(cx, |app, _| {
+            app.sidebar.pane_geom[4].get().1 - app.sidebar.pane_geom[0].get().0
+        });
+        let expected_body = f32::from(container.size.height) - occupied;
+        assert!(
+            expected_body > closed,
+            "all-closed stack leaves real flex space"
+        );
+        theme::set_reduce_motion(false);
+        click(cx, app, window, "local");
+        frame(cx, app, window, t + Duration::from_millis(75));
+        let middle_body = pane_height(cx, app, 0) - closed;
+        frame(cx, app, window, t + Duration::from_millis(179));
+        let near_endpoint = pane_height(cx, app, 0);
+        frame(cx, app, window, t + Duration::from_millis(400));
+        let endpoint = pane_height(cx, app, 0);
+        let body = endpoint - closed;
+        assert!(
+            middle_body > 1. && middle_body < body - 1.,
+            "all-closed reopen at viewport {height}: midpoint body must be nonzero and below endpoint: middle={middle_body}, endpoint={body}"
+        );
+        assert!(
+            (body - expected_body).abs() < 2.,
+            "pane consumes measured unused container space"
+        );
+        assert!(
+            (near_endpoint - endpoint).abs() < 2.,
+            "opening must not jump when flex growth resumes"
+        );
+        click(cx, app, window, "local");
+        frame(cx, app, window, t + Duration::from_millis(700));
+        assert!((pane_height(cx, app, 0) - closed).abs() < 1.);
+        theme::set_reduce_motion(true);
+        click(cx, app, window, "local");
+        frame(cx, app, window, t + Duration::from_millis(701));
+        assert!(
+            (pane_height(cx, app, 0) - endpoint).abs() < 1.,
+            "Reduce Motion opens all-closed pane immediately"
+        );
+        click(cx, app, window, "local");
+        frame(cx, app, window, t + Duration::from_millis(702));
+        assert!(
+            (pane_height(cx, app, 0) - closed).abs() < 1.,
+            "Reduce Motion closes pane immediately"
+        );
+        t += Duration::from_secs(1);
+    }
 }
 
 pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {

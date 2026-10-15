@@ -7,14 +7,14 @@
 //! Contrast Before-FAIL: return `theme().selection_foreground(window_active)`
 //! unconditionally from tree_selection_foreground (new-selection start fails).
 use crate::macos::{build_fixture, git, mount, unmount};
-use gpui::{px, AnyWindowHandle, Entity, VisualTestAppContext};
+use gpui::{point, px, AnyWindowHandle, Entity, Modifiers, MouseButton, VisualTestAppContext};
 use kagi::ui::{e2e::system_accessibility::SystemDisplayInjection, KagiApp};
 use kagi_ui_core::{
     motion, theme,
     tree_a11y::{clear_recorded_trees, recorded_tree},
 };
 use kagi_ui_editor::{
-    dir_path_for_tree_index, EditorTreeMotionProbe, EditorWorkspaceView, TreeSource,
+    dir_path_for_tree_index, EditorTreeMotionProbe, EditorWorkspaceView, TreeMenuTarget, TreeSource,
 };
 use std::{
     path::Path,
@@ -44,6 +44,16 @@ fn frame(
     })
     .unwrap();
     cx.read(|cx| editor.read(cx).tree_motion_probes_for_e2e())
+}
+
+fn right_click(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    position: gpui::Point<gpui::Pixels>,
+) {
+    cx.simulate_mouse_move(window, position, None, Modifiers::none());
+    cx.simulate_mouse_down(window, position, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(window, position, MouseButton::Right, Modifiers::none());
 }
 
 fn wait_editor(
@@ -221,6 +231,49 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         );
         let full = frame(cx, &editor, window, t + Duration::from_millis(300));
         assert_settled(&full);
+        let file_target = cx.read(|cx| {
+            editor
+                .read(cx)
+                .files
+                .iter()
+                .position(|file| file.path == Path::new("motion/a.txt"))
+                .unwrap()
+        });
+        right_click(
+            cx,
+            window,
+            sample(&full, "motion/a.txt", false).bounds.center(),
+        );
+        assert_eq!(
+            cx.read(|cx| editor.read(cx).tree_menu.map(|(target, _)| target)),
+            Some(TreeMenuTarget::File(file_target)),
+            "ordinary file context menu retains its real file target"
+        );
+        editor.update(cx, |view, cx| view.close_tree_menu(cx));
+        frame(cx, &editor, window, t + Duration::from_millis(300));
+        right_click(cx, window, sample(&full, "motion", false).bounds.center());
+        assert_eq!(
+            cx.read(|cx| editor.read(cx).tree_menu.map(|(target, _)| target)),
+            Some(TreeMenuTarget::Dir(dir)),
+            "ordinary directory context menu retains its real directory target"
+        );
+        editor.update(cx, |view, cx| view.close_tree_menu(cx));
+        frame(cx, &editor, window, t + Duration::from_millis(300));
+        if source == TreeSource::Changes {
+            let tail = sample(&full, "z-tail.txt", false).bounds;
+            right_click(
+                cx,
+                window,
+                point(tail.center().x, tail.bottom() + row_height),
+            );
+            assert_eq!(
+                cx.read(|cx| editor.read(cx).tree_menu.map(|(target, _)| target)),
+                Some(TreeMenuTarget::Root),
+                "genuine blank tree space retains its root context menu"
+            );
+            editor.update(cx, |view, cx| view.close_tree_menu(cx));
+            frame(cx, &editor, window, t + Duration::from_millis(300));
+        }
 
         // Selection wash is path-keyed; both old and new paint coexist, while
         // the authoritative selected TreeItem changes on the first frame.
@@ -343,6 +396,19 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         );
         assert!(closing_tail.offset > px(0.) && closing_tail.offset < row_height * 2.);
         assert_children_absent_from_ax();
+        let ghost_bounds = sample(&closing, "motion/a.txt", true).bounds;
+        // Collapsing fixed-height contents overlap; the first ghost's leading
+        // edge remains above the following ghost and the displaced real tail.
+        right_click(
+            cx,
+            window,
+            point(ghost_bounds.center().x, ghost_bounds.top() + px(0.5)),
+        );
+        assert_eq!(
+            cx.read(|cx| editor.read(cx).tree_menu.map(|(target, _)| target)),
+            None,
+            "right-clicking a closing presentation ghost must not open a root or file menu"
+        );
         editor.update(cx, |view, cx| view.step_selection(1, cx));
         assert_eq!(
             cx.read(|cx| {

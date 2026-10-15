@@ -158,6 +158,7 @@ pub(crate) fn render_rows(
                 }
                 this.commit_menu = None;
                 this.select(ix);
+                cx.stop_propagation();
                 // ADR-0089 Phase 2c: kick off the remote changed-files load now
                 // that we have `cx` (the render trigger is a fallback for
                 // keyboard navigation). Idempotent.
@@ -279,7 +280,6 @@ pub(crate) fn render_rows(
             })
             .bg(row_bg)
             .text_color(foreground)
-            .block_mouse_except_scroll()
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
             .when(is_dimmed, |el| el.opacity(0.32))

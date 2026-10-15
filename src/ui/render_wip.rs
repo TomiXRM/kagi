@@ -105,6 +105,7 @@ impl KagiApp {
                 // committed mid-run just from looking at it).
                 let peek = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                     this.open_stash_peek(index, cx);
+                    cx.stop_propagation();
                     cx.notify();
                 });
                 let menu = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -149,7 +150,6 @@ impl KagiApp {
                 .w_full()
                 .px_3()
                 .h(px(rh))
-                .block_mouse_except_scroll()
                 .on_click(peek)
                 .on_mouse_down(gpui::MouseButton::Right, menu)
                 .when(selection == 0., |row| {
@@ -375,7 +375,6 @@ impl KagiApp {
         let wash = theme().selection_wash(self.window_active);
         row = row
             .bg(base.blend(row_wash).blend(wash.alpha(wash.a * selection)))
-            .when(!ghost, |row| row.block_mouse_except_scroll())
             .when(selection > 0., |row| {
                 row.child(
                     div()
@@ -406,6 +405,7 @@ impl KagiApp {
                 WipRowClick::CommitPanel => {
                     row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
                         this.open_commit_panel(window, cx);
+                        cx.stop_propagation();
                         cx.notify();
                     }))
                 }
@@ -420,6 +420,7 @@ impl KagiApp {
                             window,
                             cx,
                         );
+                        cx.stop_propagation();
                         cx.notify();
                     }))
                     // #473: the WIP row had no context menu at all (the one on the

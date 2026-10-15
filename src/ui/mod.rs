@@ -1144,6 +1144,8 @@ pub struct KagiApp {
     /// How the bottom panel, the sidebar and the right pane slide open and
     /// closed toward their toggles (#950, #955).
     pub(crate) panel_motion: panel_motion::PanelMotions,
+    /// Last presented owner/center, solely to retire motion on visibility edges.
+    workspace_motion_visible: Option<(crate::app::SessionId, workspace::CenterPane)>,
     /// Active tab in the bottom panel.
     pub bottom_tab: BottomTab,
     /// Non-Tab-stop scope for handing off focus before the panel disappears.
@@ -1545,6 +1547,7 @@ impl KagiApp {
                 .unwrap_or(BOTTOM_PANEL_H_UNSET),
             bottom_panel_drag_origin: None,
             panel_motion: Default::default(),
+            workspace_motion_visible: None,
             bottom_tab: BottomTab::Terminal, // user request: terminal is the default tab
             bottom_panel_focus: None,
             bottom_tab_focus: Default::default(),

@@ -306,6 +306,20 @@ without restoring any row action or accessibility node. Frozen-clock native
 coverage right-clicks an unobscured closing ghost in both tree sources and
 retains ordinary file, directory and genuine blank-space menu targets.
 
+Retained Editor motion is retired at the actual resolved workspace visibility
+edge, before root rendering can return early for Home or the conflict body.
+The root shares its existing center resolution with this lifetime hook; it does
+not duplicate route policy or infer visibility from the presence of an entity.
+One cached `(SessionId, CenterPane)` is presentation-only: unchanged frames do
+no owner scan, entity clone/update or allocation. A newly hidden Editor is
+settled once through its existing API, using an optional owner lookup so closing
+the last tab is safe. PRs, Issues, File History, Analyze, branch cleanup, loading,
+Home and conflict replacement all reach that boundary. Tab-entry retirement
+remains, and the still-mounted Editor's tree-only hide already samples motion
+instantly through `show_tree`. Frozen native coverage returns from PRs/Issues
+at the same clock tick during selection and collapse, checks first-frame settled
+presentation in both sources, and verifies ordinary new motion after return.
+
 ## Graph surface amendment (#1617)
 
 The dense Graph retains its existing stripes, lane tints, fixed row height and
@@ -359,11 +373,33 @@ with the other motion slices. The owner's screen is not locked.
 New rows in a small multi-commit batch temporarily have less than one full row
 of visual spacing. GPUI's normal hitboxes can dispatch the same click to each
 overlapping row, letting an older handler overwrite the visible row's selection.
-Real commit, stash and WIP rows therefore use the public
-`block_mouse_except_scroll` behavior; inert ghosts and fixed slot shells do not.
-This makes the top painted row own pointer input while wheel events still chain.
+Real commit, stash and WIP click handlers therefore stop propagation after
+performing their existing action. Hitboxes remain normal: ancestor hover,
+external folder drops and mouse-down focus still work, as does wheel chaining.
+Ghosts and fixed slot shells remain inert; only the winning real click is consumed.
 Leading fringe paints before the first requested row and trailing fringe after
 the last, matching logical row order rather than mounting both at the first slot.
 Native coverage clicks both the actual displaced tail and the visible strip of
 a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
+Native controls also drop external folders onto occupied commit/WIP/stash rows
+and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
+
+### Graph retained visibility boundary
+
+Graph joins the root's existing actual-center visibility edge, not a second
+workspace-mode routing table. Leaving a visible CommitList marks that session's
+existing presentation reset flag. Only an actually visible Graph CommitList
+consumes selection/splice synchronization: hidden frames neither schedule Graph
+motion nor repeatedly rebuild its identity caches.
+
+The reset survives full reads and cheap WIP updates while hidden, so the first
+returning frame settles old washes, displacement and retained ghosts, including
+newly accepted hidden arrivals. It then clears normally; later visible arrivals
+still animate. The root's cached owner/center edge also covers Home, conflict
+takeovers and repository ownership changes without scanning sessions per frame.
+
+`graph_mode_motion_reset` starts with real partial wash/displacement at 37ms,
+hides Graph behind PRs, Issues or Editor, accepts a real commit read while hidden,
+and returns without advancing the clock. It requires no ghost and exact endpoint
+wash/geometry on the first visible frame, then proves fresh WIP motion still runs.
 

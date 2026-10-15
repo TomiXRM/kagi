@@ -324,12 +324,19 @@ impl Render for KagiApp {
             // The same for the Graph sidebar's rows and headers (#981).
             self.yield_sidebar_focus(window, cx);
         }
+        // Share the actual body route with presentation lifetime retirement.
+        // Preserve the Home/conflict short-circuit when there is no repo owner.
+        let center = if self.home_in_front() || self.conflict_body_visible() {
+            None
+        } else {
+            Some(
+                super::workspace::resolve_workspace(&self.workspace_inputs(false, false, false))
+                    .center,
+            )
+        };
+        self.sync_workspace_motion_visibility(center, cx);
         // A hidden Graph stop must not strand focus after a workspace takeover.
-        let graph_hidden = self.home_in_front()
-            || self.conflict_body_visible()
-            || super::workspace::resolve_workspace(&self.workspace_inputs(false, false, false))
-                .center
-                != super::workspace::CenterPane::CommitList;
+        let graph_hidden = center != Some(super::workspace::CenterPane::CommitList);
         if graph_hidden
             && self
                 .graph_focus

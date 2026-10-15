@@ -366,68 +366,71 @@ impl KagiApp {
         let wip_count = wip_params.len();
         let prefix_count = wip_count + self.view().stash_graph_rows.len();
 
-        let selected_key = if commit_panel_open {
-            // The ordinary panel canonicalizes its path on open; the current
-            // row remains identified by the session's path (including fixture
-            // aliases). Foreign metadata is the authoritative target distinction.
-            self.ui()
-                .commit_panel
-                .as_ref()
-                .and_then(|panel| {
-                    let panel = panel.read(cx);
-                    if panel.foreign.is_some() {
-                        Some(RowKey::Wip(panel.repo_path.clone()))
-                    } else {
-                        self.repo_path.clone().map(RowKey::Wip)
+        if let Some(session) = self.active_session().filter(|_| {
+            mode == workspace_mode::WorkspaceMode::Graph
+                && layout.center == workspace::CenterPane::CommitList
+        }) {
+            let selected_key = if commit_panel_open {
+                // The ordinary panel canonicalizes its path on open; the current
+                // row remains identified by the session's path (including fixture
+                // aliases). Foreign metadata is the authoritative target distinction.
+                self.ui()
+                    .commit_panel
+                    .as_ref()
+                    .and_then(|panel| {
+                        let panel = panel.read(cx);
+                        if panel.foreign.is_some() {
+                            Some(RowKey::Wip(panel.repo_path.clone()))
+                        } else {
+                            self.repo_path.clone().map(RowKey::Wip)
+                        }
+                    })
+                    .or_else(|| self.repo_path.clone().map(RowKey::Wip))
+            } else {
+                self.ui()
+                    .compare_view
+                    .as_ref()
+                    .and_then(|compare| {
+                        if let CompareTarget::Commit(id) = &compare.read(cx).view().target {
+                            self.view()
+                                .stashes
+                                .iter()
+                                .any(|stash| &stash.target == id)
+                                .then(|| RowKey::Stash(id.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| {
+                        selected
+                            .and_then(|ix| self.view().rows.get(ix))
+                            .map(|row| RowKey::Commit(row.id.clone()))
+                    })
+            };
+            let mut passing = Vec::new();
+            let wip_presentations = wip_params
+                .iter()
+                .zip(&wip_anchors)
+                .map(|(params, lane)| {
+                    let path = match &params.5 {
+                        WipRowClick::CommitPanel => self.repo_path.clone().unwrap_or_default(),
+                        WipRowClick::Worktree { path, .. } => path.clone(),
+                    };
+                    let row = WipPresentation {
+                        key: RowKey::Wip(path),
+                        params: params.clone(),
+                        lane: *lane,
+                        passing: passing.clone(),
+                    };
+                    if let Some(lane) = lane {
+                        let trace = (lane.lane, lane.color);
+                        if !passing.contains(&trace) {
+                            passing.push(trace);
+                        }
                     }
+                    row
                 })
-                .or_else(|| self.repo_path.clone().map(RowKey::Wip))
-        } else {
-            self.ui()
-                .compare_view
-                .as_ref()
-                .and_then(|compare| {
-                    if let CompareTarget::Commit(id) = &compare.read(cx).view().target {
-                        self.view()
-                            .stashes
-                            .iter()
-                            .any(|stash| &stash.target == id)
-                            .then(|| RowKey::Stash(id.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .or_else(|| {
-                    selected
-                        .and_then(|ix| self.view().rows.get(ix))
-                        .map(|row| RowKey::Commit(row.id.clone()))
-                })
-        };
-        let mut passing = Vec::new();
-        let wip_presentations = wip_params
-            .iter()
-            .zip(&wip_anchors)
-            .map(|(params, lane)| {
-                let path = match &params.5 {
-                    WipRowClick::CommitPanel => self.repo_path.clone().unwrap_or_default(),
-                    WipRowClick::Worktree { path, .. } => path.clone(),
-                };
-                let row = WipPresentation {
-                    key: RowKey::Wip(path),
-                    params: params.clone(),
-                    lane: *lane,
-                    passing: passing.clone(),
-                };
-                if let Some(lane) = lane {
-                    let trace = (lane.lane, lane.color);
-                    if !passing.contains(&trace) {
-                        passing.push(trace);
-                    }
-                }
-                row
-            })
-            .collect();
-        if let Some(session) = self.active_session() {
+                .collect();
             let view = self.reads.get(Some(session));
             if let Some(ui) = self.ui.get_mut(&session) {
                 let selection_moving =

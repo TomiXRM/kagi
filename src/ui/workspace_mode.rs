@@ -646,6 +646,35 @@ impl KagiApp {
         }
     }
 
+    /// Retire only the presentation that just left the actual resolved body.
+    /// Unchanged animation frames neither scan owners nor touch child entities.
+    pub(super) fn sync_workspace_motion_visibility(
+        &mut self,
+        center: Option<super::workspace::CenterPane>,
+        cx: &mut Context<Self>,
+    ) {
+        let visible = self.active_session().zip(center);
+        if self.workspace_motion_visible == visible {
+            return;
+        }
+        let previous = std::mem::replace(&mut self.workspace_motion_visible, visible);
+        if let Some((owner, super::workspace::CenterPane::Editor)) = previous {
+            if let Some(editor) = self
+                .ui
+                .get(&owner)
+                .and_then(|ui| ui.editor_workspace.as_ref())
+            {
+                editor.update(cx, |editor, _| editor.settle_tree_motion());
+            }
+        }
+        if let Some((owner, super::workspace::CenterPane::CommitList)) = previous {
+            if let Some(ui) = self.ui.get_mut(&owner) {
+                // Hidden reads must leave this pending until Graph is visible.
+                ui.graph_motion.reset = true;
+            }
+        }
+    }
+
     /// The mode the resolver will show. PR and Issues mode both outrank Editor
     /// (`resolve_workspace`), so an editor open behind either takeover is not
     /// the active mode — the toolbar must agree with what is on screen.

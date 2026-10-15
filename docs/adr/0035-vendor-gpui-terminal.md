@@ -1,4 +1,4 @@
-# ADR-0035: gpui-terminal の一時 vendor fork
+# ADR-0035: Kagi-owned gpui-terminal
 
 - Status: Accepted / Date: 2026-06-12
 - 関連: ADR-0008(terminal 方式)/ ADR-0031(外部コード流用ポリシー)
@@ -11,24 +11,38 @@ gpui-terminal 0.1.0(crates.io 唯一の公開版)はマウス選択が **TODO �
 
 ## Decision
 
-- **in-tree vendor**: `vendor/gpui-terminal/` にソースを直接コミットし、
-  Cargo.toml を path 依存に切替。**git submodule は採らない**:
-  - 並列 worktree agent(`git worktree add`)が submodule init なしで即ビルドできることが必須
-  - codex の sandbox はネットワーク不可のことがあり、submodule fetch が前提になると lane が壊れる
-  - 一時 fork(下記 exit 条件)に対して submodule の運用コストが見合わない
-- ライセンス: 上流は **MIT OR Apache-2.0**(原文確認済み)。LICENSE 2 ファイルと
-  README を vendor 内に保持し、改変箇所には `// kagi:` コメントで出自を示す
-- **改変ポリシー**: 変更は選択・コピー機能(と必要最小限のバグ修正)に限定。
-  kagi 固有の見た目・機能は app 側(src/ui/terminal.rs)に置き、vendor は汎用のまま保つ
-  (upstream に PR できる形を維持する)
-- **exit 条件(一時 fork の解消)**: 上流が選択/コピーを公開したら crates.io 依存へ戻し
-  vendor を削除する。可能なら本実装を upstream PR として提案する
+- **Kagi-owned terminal**: `vendor/gpui-terminal/` is maintained in this
+  repository as Kagi's terminal frontend, selection and PTY integration boundary.
+  Keep the package name and path dependency; no submodule or directory rename
+  is needed to establish ownership.
+- **Origin**: this package derives from Leonard Seibold's
+  [`gpui-terminal` 0.1.0](https://github.com/zortax/gpui-terminal), originally
+  obtained from crates.io. Track that origin when reviewing upstream changes;
+  ownership does not erase the original authorship.
+- **License**: retain the upstream **MIT OR Apache-2.0** terms, both
+  `LICENSE-MIT` and `LICENSE-APACHE`, attribution and existing `// kagi:`
+  provenance markers. Do not replace upstream notices with Kagi-only copyright.
+- **Boundary**: Kagi maintains frontend rendering, selection/copy, scrollback
+  navigation and PTY integration. VTE parsing and emulator state continue to
+  use official `alacritty_terminal`; there is no emulator rewrite.
+  Application-specific confirmation, session ownership and presentation remain
+  in Kagi's application/UI code.
+- **Superseded policy**: the original temporary-fork restriction and automatic
+  deletion when upstream adds selection/copy no longer apply. Evaluate useful
+  upstream changes explicitly rather than assuming upstream feature parity
+  replaces Kagi's integration.
+- **No general fork exception**: this explicitly owned terminal is not a
+  precedent for copying or forking other dependencies. Do not transcribe or
+  replace it wholesale with Zed's GPL terminal.
 
 ## Consequences
 
-- repo にクレート1個分のソースが入る(小規模、許容)
-- 上流更新の追従は手動(diff は小さく保たれる前提)
-- Cargo.toml の「変更禁止」規約に vendor path 切替の例外履歴が1件付く(本 ADR が根拠)
+- Kagi is responsible for maintenance of the in-tree terminal frontend.
+- Upstream comparison and adoption remain manual, with origin and licensing
+  preserved. The existing source and public behavior are unchanged by this
+  ownership decision.
+- The historical path-dependency exception remains documented here; dependency
+  pin updates and font fallback changes are separate migration slices.
 
 ## Amendment — 2026-10-13: mode-owned clipboard paste (#1403)
 
@@ -36,8 +50,8 @@ gpui-terminal 0.1.0(crates.io 唯一の公開版)はマウス選択が **TODO �
 existing emulator mode. It refuses unapproved plain multi-line text without
 writing; Kagi owns the confirmation UI. `SharedWriter::write_input` remains
 raw key transport only, replacing the former app-side clipboard write path.
-This is a safety correction within the minimal vendor-fix policy; no second
-mode parser or Kagi-specific modal dependency is introduced into the vendor.
+This safety correction belongs to the owned terminal's generic transport
+boundary; no second mode parser or Kagi-specific modal dependency is introduced.
 
 Review: enabled bracketed payloads remove ESC and ETX, matching alacritty's
 paste policy so clipboard content cannot terminate its own paste bracket.
@@ -52,3 +66,17 @@ with the app's localized warning selection; CR/LF have the existing newline
 warning and clipboard Tab remains ordinary text. Vendor modifications retain
 the `kagi:` provenance marker. Approval/session ownership stays in Kagi, while
 the vendor's existing mode recheck and bracketed ESC/ETX stripping are unchanged.
+
+## Amendment — 2026-10-15: explicit terminal ownership (#1479-S2)
+
+The Decision above supersedes the original temporary vendor-fork policy.
+Selection/copy and scrollback navigation are already implemented; describing
+them as upstream prerequisites or unimplemented limitations is obsolete.
+This amendment changes ownership/provenance documentation only, not terminal
+implementation, public behavior, dependency sources or license notices.
+
+Remove registry-import artifacts (`.cargo_vcs_info.json`, `.cargo-ok` and the
+obsolete `Cargo.toml.orig`) from the owned source package: the reserved VCS
+metadata prevents `cargo package --list`, and the duplicate manifest no longer
+describes this package. Preserve the imported upstream SHA in the README and
+retain both license files and attribution unchanged.

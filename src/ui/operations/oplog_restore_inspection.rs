@@ -80,7 +80,13 @@ impl InspectionList {
         self.scroll
             .clone()
             .with_uniform_item_height(crate::ui::theme::scaled_px(self.row_height));
-        self.keyboard.rows(keys, &self.scroll, fallback, window, cx)
+        self.keyboard.rows(
+            keys,
+            &crate::ui::keyboard_nav::RowScroll::List(self.scroll.clone()),
+            fallback,
+            window,
+            cx,
+        )
     }
     pub(crate) fn wheel_handler(
         &self,

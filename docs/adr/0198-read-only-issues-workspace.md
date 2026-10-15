@@ -5,6 +5,62 @@
 - Related: ADR-0163（MCPのGPUI分離）、ADR-0183（session-owned read model）、ADR-0197（session-owned UI state）、ADR-0078（UIのGit境界）
 - Scope: `crates/kagi-domain/src/github.rs`、`crates/kagi-git/src/github*.rs`、`src/ui/github.rs`、`src/ui/tab_view.rs`、Issues workspace pane
 
+## Amendment — 2026-10-15: official TextView default scope（#1479）
+
+ownerは複数投稿を跨ぐ選択・Copy・会話全体Select All（画面外投稿を含む）
+をKagi独自の保証として維持しないと決定した。公式TextView/default scopeを
+改変せず使い、投稿単位の選択・Copy・Select Allは公式の挙動のまま残す。
+公式がmounted複数view間で自然に許す選択は禁止せず、独立per-post scopeや
+境界保証のupstream APIは要求しない。独自rich-selection renderer案も採らない。
+
+これは移行先の仕様決定であり、[#1479-S0](../rearch/upstream-migration-1479.md)で現行group/leaseを削除したという意味ではない。
+以下の#1091追補にある全投稿canonical interval、outer edge autoscroll、
+outer-unmount後の選択保持／SelectAll fallback、no-App DropによるSDK内部状態の
+即時失効保証は、#1479-S6の実装・consumer oracle同時cutoverでsupersedeする。
+#1479-S3はmounted単一投稿の正条件を補強する準備に留める。
+
+目的の投稿を再表示して公式操作する。既存の投稿本文全体Copyボタンは無く、
+新設もしない（PRのCopy this hunkは別機能のまま保持）。
+privacy、accepted-source差替え、repo/session所有、Input/modal優先、draftと
+repository不変条件は縮小しない。既存Kagi active/generation guardを実Copy/
+SelectAll action境界で検証し、actual-unmount cleanupは公式へ委譲する。
+旧画面外保証を黙って落とすのではなく、#1479-S6でADR・13既存oracleと単一投稿の
+正条件を同時更新する。#1479-S0ではruntime/test oracleは意図的に変更しない。
+
+
+## Amendment — 2026-10-15: shared Issue geometry (#1479-S5D)
+
+The feed, accepted conversation and pending conversation use the same Kagi-owned
+`VariableListState` as the diff panes. Row rendering, density, focus owners,
+loading/error states and the current selection-group contract remain unchanged.
+This is a geometry cutover, not the #1479-S6 selection-policy cutover.
+
+- Stable Issue/post identities reconcile numeric row geometry. Surviving rows
+  keep their element identity and measurements; changed source or metadata
+  invalidates the affected measurement, including offscreen same-count updates.
+  A reading row retains its intra-row fraction across insert/delete and reflow.
+- Width, font/zoom and localized presentation invalidate geometry independently
+  of accepted source identity. Header, posts and the complete Reply/preview
+  share one viewport; giant rows are not truncated or eagerly measured as a
+  whole conversation. Laying out a single giant fit-content post still costs
+  that post's complete layout.
+- End is a one-shot alignment against the measured tail, not append-follow.
+  Explicit reset callers still return to the beginning. Pending and accepted
+  owners remain separate; accepting a detail does not repurpose a stale pending
+  handle or replace the retained Reply input.
+- Pagination uses actual clipped visibility, retains session/request/cursor
+  guards, and rechecks current client filtering before fetching. Estimates are
+  never reported as measured heights or as proof of painted visibility.
+- The existing selection-group viewport callback scrolls the shared owner.
+  Group retirement, generation checks, offscreen Copy and selection remain
+  until their coordinated #1479-S6 removal. No new fork API or dependency change
+  is introduced.
+
+The `ListState` references below describe the earlier implementation. This
+amendment supersedes those geometry-specific details, including the old
+intra-post *pixel* anchor description; source, selection and safety contracts
+otherwise remain in force.
+
 ## Context
 
 KagiのPR表示は、`gh`を認証・取得境界として使い、純粋な `PullRequest` モデルをGit/UIから分離している。GitHub Issuesの読み取りUIには、一覧、選択したIssueの本文・ラベル・担当者・コメントを表示する要件がある。一方、現在のモデルと取得APIにはIssue型、ページング情報、詳細・コメント取得、session-owned表示状態がない。

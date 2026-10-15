@@ -15,6 +15,7 @@ use std::sync::Arc;
 use gpui::prelude::*;
 use gpui::{div, px, rgb, AnyElement, App, Context, Entity, SharedString, Window};
 use kagi_domain::review_thread::{anchor_rows, DiffSide, ReviewThread};
+use kagi_ui_core::variable_list::VariableListState;
 
 use super::{KagiApp, PrView};
 use crate::ui::diff_view::{DiffRow, MainDiffView};
@@ -48,7 +49,7 @@ impl PrThreads {
     pub(crate) fn set(
         &mut self,
         threads: Vec<ReviewThread>,
-        list: &gpui::ListState,
+        list: &VariableListState,
         diff: Option<&MainDiffView>,
     ) {
         self.threads = Rc::new(threads);
@@ -61,7 +62,7 @@ impl PrThreads {
                     item += 1;
                     if base.iter().flatten().any(|row| self.open.contains(row)) {
                         if item < list.item_count() {
-                            list.remeasure_items(item..item + 1);
+                            list.splice(item..item + 1, 1);
                         }
                         item += 1;
                     }

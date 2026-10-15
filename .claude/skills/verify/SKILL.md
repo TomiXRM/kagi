@@ -80,6 +80,31 @@ owner and restore `cp-coauthor`, not dismiss the containing composer.
 `compact_group_reveal_escape` check child-menu/reveal dismissal before the
 navigator, preserving opener focus. The complete Popover ancestry audit is in
 ADR-0014's #1479-S4 amendment.
+For #1479-S1 use `KAGI_GUI_E2E_ONLY='terminal_,status_bar_,relative_time_ja,cleanup_local_date,oplog_row_typography,issues_row_secondary_text,finder_scale_rest,home_heading,inspector_scale'`
+with KEEP_GOING. `terminal_font_fallback` checks real terminal configuration,
+font/zoom updates, session changes and restart, with Regular/Bold Japanese face
+references and terminal two-cell/cursor state. The native measurement probes
+carry the same explicit fallback as production shaping.
+
+Linux is an independent required lane, not a macOS substitute. Run
+`cargo test -p kagi-ui-core linux_cosmic_text_uses_bundled_fallback_for_regular_and_bold -- --nocapture`
+on Linux; it uses real CosmicTextSystem with system fonts disabled and compares
+each Han glyph's selected face to explicit Noto Sans JP. For a real Nerd primary,
+set `KAGI_TEST_NERD_FONT_REGULAR` and `KAGI_TEST_NERD_FONT_BOLD` to readable
+JetBrainsMono Nerd Font Mono static files, then run
+`cargo test -p kagi-ui-core linux_cosmic_text_nerd_primary_preserves_icons_and_japanese_fallback -- --ignored --nocapture`.
+That explicit lane fails if the font files are absent. Retain the actual Linux
+logs, architecture and tested commit; do not count the ignored default as PASS.
+In an isolated container with Noto CJK SC/JP installed, run
+`cargo test -p kagi-ui-core linux_cosmic_text_system_fonts_preserve_explicit_japanese_fallback -- --ignored --nocapture`
+in separate `LANG=ja_JP.UTF-8` and `LANG=en_US.UTF-8` processes. This test
+requires both competing families to be present and compares selected faces
+against the same bundled JP reference; it is shaping evidence, not a capture.
+The separate native acceptance in `docs/rearch/upstream-migration-1479.md`
+still requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
+X11/Wayland where available, terminal/reference images and the other UI shaping
+surfaces. Never delete a user's fonts or change host fontconfig. Keep the cosmic
+patch until those Linux requirements have observed evidence.
 
 For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
 `update_notice_in_flight` queues an installer completion with
@@ -2641,8 +2666,10 @@ The locked GPUI revision does not expose the complete, last-rendered hitbox
 collection to `VisualTestAppContext`. Do not treat a scenario-specific recorded
 bound (for example, a measured button or footer) as a generic hitbox dump. A
 complete `id -> window-relative bounds` failure diagnostic needs a public GPUI
-API or a deliberately maintained dependency fork; until then, use Tier A's
-state assertions and Tier B's live-window inspection together.
+API. Propose missing APIs upstream and record the proposal in `docs/decisions.md`;
+do not introduce a dependency fork for inspection (AGENTS.md / #1479).
+Until an official API exists, use Tier A's state assertions and Tier B's
+live-window inspection together.
 
 ### What reaches a real `InputState` and what goes around it (#516)
 

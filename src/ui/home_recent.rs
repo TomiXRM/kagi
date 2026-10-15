@@ -122,7 +122,7 @@ impl KagiApp {
                 .iter()
                 .enumerate()
                 .map(|(at, key)| (key.as_str(), at + 1)),
-            &state,
+            &super::keyboard_nav::RowScroll::List(state.clone()),
             self.root_focus.as_ref(),
             window,
             cx,

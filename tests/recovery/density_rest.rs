@@ -96,6 +96,7 @@ fn inspect(cx: &mut VisualTestAppContext, log: bool) {
                         cx.update_window(window, |_, window, _| {
                             let mut style = window.text_style();
                             style.font_family = theme::UI_FONT.into();
+                            style.font_fallbacks = kagi_ui_core::fonts::ui_font().fallbacks;
                             let system = window.text_system();
                             let age = kagi_ui_core::time::relative_time(
                                 kagi_ui_core::time_parse::iso_to_epoch("2026-10-13T10:00:00Z")

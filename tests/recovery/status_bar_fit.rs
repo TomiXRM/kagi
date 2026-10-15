@@ -199,10 +199,7 @@ fn natural_width(cx: &mut VisualTestAppContext, win: AnyWindowHandle, text: &str
                 px(theme::rem_size_px() * 0.75),
                 &[gpui::TextRun {
                     len: text.len(),
-                    font: gpui::Font {
-                        family: theme::UI_FONT.into(),
-                        ..Default::default()
-                    },
+                    font: kagi_ui_core::fonts::ui_font(),
                     ..Default::default()
                 }],
                 None,

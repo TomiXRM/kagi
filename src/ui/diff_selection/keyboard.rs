@@ -1,8 +1,7 @@
 //! The shared diff body owns selection keys; hunk Buttons remain separate Tab stops.
 use super::super::diff_view::DiffRow;
-use gpui::{
-    prelude::*, App, Div, IntoElement, KeyBinding, ListState, RenderOnce, Stateful, Window,
-};
+use gpui::{prelude::*, App, Div, IntoElement, KeyBinding, RenderOnce, Stateful, Window};
+use kagi_ui_core::variable_list::VariableListState;
 use std::sync::Arc;
 
 const CONTEXT: &str = "KagiDiffSelection";
@@ -76,7 +75,7 @@ pub(crate) struct Pane<F: Fn(usize) -> usize + 'static> {
     pub key: super::SelectionKey,
     pub focus_key: u64,
     pub rows: Arc<Vec<DiffRow>>,
-    pub scroll: ListState,
+    pub scroll: VariableListState,
     pub item_index: F,
     pub projection: Option<Arc<super::super::diff_split::cache::SplitProjection>>,
     pub items: Option<std::rc::Rc<Vec<super::super::render_helpers::row_overlay::Item>>>,
@@ -162,10 +161,7 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
                     )
                 };
                 if let Some(cursor) = cursor {
-                    super::super::keyboard_nav::reveal_list_row(
-                        &self.scroll,
-                        (self.item_index)(cursor),
-                    );
+                    self.scroll.scroll_to_reveal_item((self.item_index)(cursor));
                     window.refresh();
                 }
             })
@@ -175,7 +171,7 @@ impl<F: Fn(usize) -> usize + 'static> RenderOnce for Pane<F> {
 /// Count actual fully visible aligned rows; expansion items consume height,
 /// but must never become keyboard caret stops.
 fn page_distance(
-    scroll: &ListState,
+    scroll: &VariableListState,
     items: Option<&[super::super::render_helpers::row_overlay::Item]>,
 ) -> usize {
     use super::super::render_helpers::row_overlay::Item;

@@ -48,7 +48,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 # through the app's AssetSource, so kagi must be able to serve them — see
 # `src/ui/assets.rs`.
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
-gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
+gpui-terminal = { path = "vendor/gpui-terminal" }  # Kagi-owned terminal; upstream origin/notices: ADR-0035
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }
 notify = "7"
@@ -168,18 +168,24 @@ assets = [
 ]
 
 # ── Dependency patches ─────────────────────────────────────────────────────
-# cosmic-text Han-unification locale fix (Ubuntu ja-JP kanji rendered with SC
-# glyph forms). Same one-commit patch as before, rebased 0.14 → 0.19 for the
-# zed-main migration. Drop once upstream PR pop-os/cosmic-text#522 ships in a
-# release that gpui pulls in.
+# Slice definitions: docs/rearch/upstream-migration-1479.md (#1479 namespace).
+# Transitional patch: normalize Han-unification locales (ja-JP/ko-KR and locale
+# suffixes) instead of falling back to SC glyph forms on Unix.
+# Upstream: pop-os/cosmic-text#522 remains open; official main is still unfixed
+# at the #1479 review. Remove in #1479-S1 after explicit bundled JP fallback reaches
+# terminal glyphs/metrics, status and test probes, with Linux shape/native evidence;
+# alternatively an upstream release consumed by GPUI must provide the fix.
 [patch.crates-io]
 cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.19" }
-# Cosmetic gpui / gpui-component fork patches (rounded text-run highlight
-# backgrounds; heading_top_gap on TextViewStyle) were dropped in the zed-main
-# migration; re-add by rebasing the forks if the polish is missed.
-
-# Published Kagi list fix (estimated unmeasured heights and end intent), pending upstream.
-# Keep all Zed sibling crates on the same fork revision to avoid duplicate sources.
+# Retired cosmetic highlight/heading-gap patches must not be reintroduced.
+#
+# Transitional list fix: retain estimates across layout/reset/splice, preserve
+# measured nodes on equal estimates, and resolve downward wheel/scroll_by End
+# intent. Upstream already has estimated-height APIs, but not these fixes;
+# no TomiXRM Zed PR existed at the #1479 review. Remove in #1479-S6 after #1479-S5 moves
+# geometry to official uniform lists / Kagi-owned variable lists and preserves
+# the real geometry oracles. The other 21 siblings below have no independent
+# fixes: keep one GPUI source identity only until the official family cutover.
 [patch."https://github.com/zed-industries/zed"]
 collections = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 derive_refineable = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
@@ -203,6 +209,17 @@ util_macros = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8e
 zlog = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 ztracing = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
 ztracing_macro = { git = "https://github.com/TomiXRM/zed", rev = "caf5007618c309a8ea66002d44a9c9ab629a2d35" }
+#
+# Transitional Kit patch: managed/offscreen conversation selection, presentation
+# retention, cached composer rows, Input/Select/Find accessibility, IME, Radio
+# painting and atomic replacement Undo; b50a0796 fixes next-frame retention leaks
+# through weak capture, and f5f68275 includes Find keyboard containment.
+# Official main includes some but not all equivalents; longbridge/gpui-kit#3421
+# merged presentation retention only.
+# Remove both entries together in #1479-S6: official component/assets at one revision,
+# public-API compositions and typed inputs, owner-approved default TextView scope,
+# and the official cached Textarea row accessor (U1) with consumer gates.
+# Assets has no independent fix; it shares the component fork source/revision.
 [patch."https://github.com/longbridge/gpui-component"]
 gpui-component = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }
 gpui-component-assets = { git = "https://github.com/TomiXRM/gpui-kit.git", rev = "7a116a2019160e6d8091075f88f349a9fe9a2a7e" }

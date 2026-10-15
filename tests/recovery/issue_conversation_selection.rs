@@ -1,5 +1,5 @@
-//! #1091 consumer regressions. These scenarios are intentionally identical on
-//! original pinned SDK / all-post Before and managed virtual-conversation After.
+//! #1091 consumer regressions, including #1479-S3 single-post preparation.
+//! Existing cross-post/offscreen guarantees remain until the #1479-S6 cutover.
 #[path = "issue_conversation_support.rs"]
 pub(crate) mod support;
 use gpui::{point, px, VisualTestAppContext};
@@ -67,14 +67,17 @@ pub fn scenario_issue_conversation_offscreen_copy(cx: &mut VisualTestAppContext)
 pub fn scenario_issue_conversation_giant_copy(cx: &mut VisualTestAppContext) {
     let _restore = Restore::capture();
     let producer = Producer::install();
-    // Independent rendered oracle: source carries bold syntax and blank source
-    // lines; canonical rendered paragraphs carry no syntax and one LF each.
+    // One fit-content TextView, not internal block virtualization: the outer
+    // viewport clips it while its complete rendered text remains selectable.
+    // The independent oracle includes multi-byte Unicode and literal inline-code
+    // thin spaces, strips emphasis syntax and joins rendered paragraphs with LF.
+    // No SDK text extraction API derives the expected clipboard bytes.
     let source = (0..180)
-        .map(|line| format!("**GIANT_{line:03}**"))
+        .map(|line| format!("**GIANT_{line:03} 日本語🙂** _café_ and `code🧭`."))
         .collect::<Vec<_>>()
         .join("\n\n");
     let expected = (0..180)
-        .map(|line| format!("GIANT_{line:03}"))
+        .map(|line| format!("GIANT_{line:03} 日本語🙂 café and \u{2009}code🧭\u{2009}."))
         .collect::<Vec<_>>()
         .join("\n");
     producer.publish("a", &source, &[]);
@@ -123,6 +126,7 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
     );
     let (fixture, app, win, before) = fixture(cx, BASE);
     load(cx, &app, win);
+    visible(cx, win, &comment(1)).expect("true B is mounted before initial selection");
     assert_eq!(select(cx, win, &comment(1)), "OLD_B");
     producer.publish(
         "a",
@@ -130,6 +134,9 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
         &[("IC_true_B", "**OLD_B**"), ("IC_true_A", "**OLD_A**")],
     );
     load(cx, &app, win);
+    // Do not seek or reselect before Copy: this is retention while B is actually
+    // mounted, not the old managed group's outer-unmount retention guarantee.
+    visible(cx, win, &comment(0)).expect("reordered true B is painted inside the viewport");
     assert_eq!(
         copy(cx, win),
         "OLD_B",
@@ -150,6 +157,7 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
         ],
     );
     load(cx, &app, win);
+    visible(cx, win, &comment(1)).expect("prepended snapshot still paints selected true B");
     assert_eq!(
         copy(cx, win),
         "OLD_B",
@@ -216,6 +224,20 @@ pub fn scenario_issue_conversation_refresh_anchor(cx: &mut VisualTestAppContext)
             )
         })
         .collect();
+    let mut appended: Vec<_> = owned
+        .iter()
+        .map(|(id, text)| (id.as_str(), text.as_str()))
+        .collect();
+    appended.push(("IC_true_append", "**APPENDED**"));
+    producer.publish("a", "**A**", &appended);
+    load(cx, &app, win);
+    assert_eq!(
+        measure(cx, win, &comment(11)).unwrap().top(),
+        y,
+        "append must not follow the new tail while reading true M"
+    );
+    assert!(visible(cx, win, &comment(25)).is_none());
+    measured_row(cx, &app, win, 13, &comment(11));
     let mut posts = vec![("IC_true_prepend", "**PREPEND**")];
     posts.extend(owned.iter().map(|(id, text)| (id.as_str(), text.as_str())));
     producer.publish("a", "**A**", &posts);
@@ -225,6 +247,7 @@ pub fn scenario_issue_conversation_refresh_anchor(cx: &mut VisualTestAppContext)
         y,
         "true M remains at the same viewport pixel after prepend"
     );
+    measured_row(cx, &app, win, 14, &comment(12));
     producer.publish("a", "**A**", &posts[2..]);
     load(cx, &app, win);
     assert_eq!(
@@ -232,6 +255,7 @@ pub fn scenario_issue_conversation_refresh_anchor(cx: &mut VisualTestAppContext)
         y,
         "deleting earlier true posts preserves M's pixel anchor"
     );
+    measured_row(cx, &app, win, 12, &comment(10));
     // Select M physically; beginning and failing a refresh cannot overwrite it.
     assert_eq!(select(cx, win, &comment(10)), "M");
     producer.fail("a");
@@ -283,6 +307,126 @@ pub fn scenario_issue_conversation_geometry(cx: &mut VisualTestAppContext) {
         );
     }
     finish(cx, fixture, app, win, before);
+    offscreen_geometry(cx);
+}
+
+fn offscreen_geometry(cx: &mut VisualTestAppContext) {
+    let producer = Producer::install();
+    let owned: Vec<_> = (b'B'..=b'Z')
+        .map(|letter| {
+            (
+                format!("IC_geometry_{letter}"),
+                format!("**{}**", letter as char),
+            )
+        })
+        .collect();
+    let posts: Vec<_> = owned
+        .iter()
+        .map(|(id, body)| (id.as_str(), body.as_str()))
+        .collect();
+    producer.publish("a", "**ROOT**", &posts);
+    let (fixture, app, win, before) = fixture(cx, BASE);
+    load(cx, &app, win);
+    let short = measured_row(cx, &app, win, 1, BODY).size.height;
+    let reading = seek(cx, win, &comment(11), -1.).top();
+    let expanded = (0..6)
+        .map(|n| format!("Expanded paragraph {n} 日本語"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    producer.publish("a", &expanded, &posts);
+    load(cx, &app, win);
+    assert_invalidated_body(cx, &app, win, reading);
+    seek(cx, win, BODY, 1.);
+    let expanded_height = measured_row(cx, &app, win, 1, BODY).size.height;
+    assert!(
+        expanded_height > short,
+        "accepted body growth must be measured by the renderer"
+    );
+    let reading = seek(cx, win, &comment(11), -1.).top();
+    producer.metadata(
+        "a",
+        &"Wrapping metadata title ".repeat(18),
+        "changed-author",
+    );
+    load(cx, &app, win);
+    assert_invalidated_body(cx, &app, win, reading);
+    wheel(cx, win, 100_000.);
+    assert!(measured_row(cx, &app, win, 1, BODY).size.height > expanded_height);
+    producer.publish("a", "", &posts);
+    load(cx, &app, win);
+    assert_eq!(select(cx, win, BODY), "No description provided.");
+    measured_row(cx, &app, win, 1, BODY);
+    let reading = seek(cx, win, &comment(11), -1.).top();
+    app.update(cx, |app, cx| app.set_lang(kagi::ui::i18n::Lang::Ja, cx));
+    cx.run_until_parked();
+    assert_invalidated_body(cx, &app, win, reading);
+    assert_eq!(select(cx, win, BODY), "説明はありません。");
+    measured_row(cx, &app, win, 1, BODY);
+    for (sidebar, zoom) in [(340., 1.), (340., 1.25), (220., 1.25), (220., 1.)] {
+        seek(cx, win, &comment(11), -1.);
+        app.update(cx, |app, cx| {
+            kagi::ui::e2e::issue_thread_list(app, cx).scroll_to(gpui::ListOffset {
+                item_ix: 13,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        let before_row = measured_row(cx, &app, win, 13, &comment(11));
+        let before_zoom = theme::zoom();
+        app.update(cx, |app, cx| {
+            app.sidebar.width = sidebar;
+            theme::set_zoom(zoom);
+            cx.notify();
+        });
+        measure(cx, win, &comment(11)).expect("reading post survives width/zoom reflow");
+        let list = cx.read(|cx| kagi::ui::e2e::issue_thread_list(app.read(cx), cx));
+        assert_eq!(
+            list.measured_height(1),
+            None,
+            "offscreen body must be remeasured at new width/zoom"
+        );
+        let after_row = measured_row(cx, &app, win, 13, &comment(11));
+        if before_zoom != zoom {
+            assert_ne!(
+                before_row.size.height, after_row.size.height,
+                "zoom must change actual painted comment height"
+            );
+        } else {
+            assert_ne!(
+                before_row.size.width, after_row.size.width,
+                "sidebar width must change actual painted conversation width"
+            );
+        }
+        assert_eq!(select(cx, win, BODY), "説明はありません。");
+        measured_row(cx, &app, win, 1, BODY);
+    }
+    finish(cx, fixture, app, win, before);
+}
+
+fn assert_invalidated_body(
+    cx: &mut VisualTestAppContext,
+    app: &NativeApp,
+    win: gpui::AnyWindowHandle,
+    reading: gpui::Pixels,
+) {
+    assert_eq!(measure(cx, win, &comment(11)).unwrap().top(), reading);
+    let list = cx.read(|cx| kagi::ui::e2e::issue_thread_list(app.read(cx), cx));
+    assert_eq!(
+        list.item_count(),
+        28,
+        "replacement does not change row count"
+    );
+    assert_eq!(
+        list.bounds_for_item(1),
+        None,
+        "changed body is genuinely offscreen"
+    );
+    assert_eq!(
+        list.measured_height(1),
+        None,
+        "old offscreen height is invalid, not an observed estimate"
+    );
+    measured_row(cx, app, win, 13, &comment(11));
 }
 
 pub fn scenario_issue_conversation_edge_drag(cx: &mut VisualTestAppContext) {

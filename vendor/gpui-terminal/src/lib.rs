@@ -60,6 +60,7 @@
 //!         let config = TerminalConfig {
 //!             font_family: "monospace".into(),
 //!             font_size: px(14.0),
+//!             font_fallbacks: None,
 //!             cols: 80,
 //!             rows: 24,
 //!             scrollback: 10000,
@@ -152,6 +153,7 @@
 //!     // Font settings
 //!     font_family: "JetBrains Mono".into(),
 //!     font_size: px(13.0),
+//!     font_fallbacks: None, // platform defaults, or explicit gpui::FontFallbacks
 //!
 //!     // Line height multiplier for tall glyphs (nerd fonts)
 //!     line_height_multiplier: 1.2,

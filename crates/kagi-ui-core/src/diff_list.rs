@@ -1,9 +1,10 @@
-//! Source/layout invalidation metadata for owner-retained native diff lists.
+//! Source/layout invalidation metadata for owner-retained diff geometry.
 
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gpui::{px, rems, ListState, Pixels, TextStyle};
+use crate::variable_list::VariableListState;
+use gpui::{px, rems, Pixels, TextStyle};
 
 /// Identity of one row source, independent of highlight-only Arc changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +31,7 @@ struct LayoutKey {
     gutter: bool,
 }
 
-/// One memo per native list; heights and scroll position remain in ListState.
+/// One memo per retained list; measured heights and scroll live in its owned geometry.
 #[derive(Default)]
 pub struct DiffListLayout {
     selection_owner: DiffListSource,
@@ -46,7 +47,7 @@ impl DiffListLayout {
 
     pub fn sync(
         &self,
-        list: &ListState,
+        list: &VariableListState,
         source: DiffListSource,
         split: bool,
         gutter: bool,
@@ -68,19 +69,19 @@ impl DiffListLayout {
         };
         match self.key.get() {
             Some(previous) if previous.source == source && previous.split == split => {
-                list.clone().with_uniform_item_height(height);
+                list.set_estimate(height);
                 if list.item_count() != count {
                     list.reset(count);
                 } else if previous.gutter != gutter {
                     list.remeasure();
                 }
             }
-            _ => list.reset_with_uniform_height(count, height),
+            _ => list.reset_with_estimate(count, height),
         }
         self.key.set(Some(key));
     }
 
-    pub fn clear(&self, list: &ListState) {
+    pub fn clear(&self, list: &VariableListState) {
         if self.key.take().is_some() || list.item_count() != 0 {
             list.reset(0);
         }
@@ -100,11 +101,11 @@ fn estimated_row_height(rem_size: Pixels) -> Pixels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{ListAlignment, ListOffset};
+    use gpui::ListOffset;
 
     #[test]
     fn same_count_sources_reset_but_repaints_and_gutters_keep_anchor() {
-        let list = ListState::new(0, ListAlignment::Top, px(0.));
+        let list = VariableListState::new(0, px(0.));
         let layout = DiffListLayout::default();
         let source = DiffListSource::default();
         layout.sync(&list, source, false, false, 100);
@@ -130,7 +131,7 @@ mod tests {
 
     #[test]
     fn expansion_splice_does_not_reset_the_existing_anchor() {
-        let list = ListState::new(0, ListAlignment::Top, px(0.));
+        let list = VariableListState::new(0, px(0.));
         let layout = DiffListLayout::default();
         let source = DiffListSource::default();
         layout.sync(&list, source, false, true, 100);

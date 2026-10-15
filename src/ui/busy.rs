@@ -99,9 +99,35 @@ impl KagiApp {
     /// driven by KagiApp state: the write latch, and a read that has been slow
     /// for two seconds (#355). Returns `None` before the window (and thus the
     /// toast entity) exists.
-    pub(super) fn render_toasts(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub(super) fn render_toasts(
+        &self,
+        repository_window: Option<&gpui::Window>,
+        show_clone_action: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         let toast_stack = self.toast_stack.clone()?;
         let mut stack = toast_container();
+        if let Some(window) = repository_window
+            .filter(|window| super::compact::for_window(window) && self.bottom_panel_open)
+        {
+            // Keep compact panel tabs above the stack, without moving its
+            // status-bar anchor. The viewport's 30% cap still applies below.
+            let ui = self.ui();
+            let layout = super::workspace::resolve_workspace(
+                &self.workspace_inputs(
+                    ui.commit_panel_open,
+                    ui.commit_panel.is_some(),
+                    ui.selected
+                        .and_then(|index| self.view().details.get(index))
+                        .is_some(),
+                ),
+            );
+            let body = self.bottom_panel_body_height(
+                window,
+                matches!(layout.center, super::workspace::CenterPane::Editor),
+            );
+            stack = stack.max_h(theme::scaled_px((body - super::TOAST_INSET_PX).max(0.)));
+        }
 
         // While an async op runs, show a busy snackbar with a spinning sync icon
         // (user request) — a lighter alternative to a blocking popup. A slow
@@ -126,7 +152,8 @@ impl KagiApp {
                     .map(SharedString::from)
             });
         if let Some(label) = label {
-            stack = stack.child(self.render_busy_snackbar(label, slow, write, cx));
+            stack =
+                stack.child(self.render_busy_snackbar(label, slow, write, show_clone_action, cx));
         }
 
         // The toast cards are an independently-rendered child entity.
@@ -146,6 +173,7 @@ impl KagiApp {
         label: SharedString,
         slow: Option<SlowRead>,
         write: Option<(&'static str, u64)>,
+        show_clone_action: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let accent = theme().ui_accent();
@@ -192,6 +220,8 @@ impl KagiApp {
             )
         });
         div()
+            .relative()
+            .child(super::e2e::measure_inside("busy-snackbar"))
             .w_full()
             .flex()
             .flex_row()
@@ -210,7 +240,9 @@ impl KagiApp {
             .child(div().flex_shrink_0().child(icon))
             .child(text)
             .children(skip)
-            .children(self.render_clone_progress_action(cx))
+            .when(show_clone_action, |el| {
+                el.children(self.render_clone_progress_action(cx))
+            })
             .into_any()
     }
 
@@ -316,8 +348,10 @@ mod tests {
 pub(super) fn toast_container() -> gpui::Div {
     div()
         .absolute()
-        .top(gpui::relative(0.22))
-        .right(theme::scaled_px(super::TOAST_INSET_PX))
+        .bottom(theme::scaled_px(
+            super::STATUS_BAR_H + super::TOAST_INSET_PX,
+        ))
+        .left(theme::scaled_px(super::TOAST_INSET_PX))
         .w(theme::scaled_px(460.))
         .max_w(gpui::relative(0.45))
         .flex()

@@ -51,15 +51,17 @@ impl KagiApp {
                 .iter()
                 .enumerate()
                 .map(|(at, name)| (name.as_str(), at)),
-            &navigation.scroll,
+            &super::keyboard_nav::RowScroll::List(navigation.scroll.clone()),
             self.root_focus.as_ref(),
             window,
             cx,
         );
         if navigation.first.replace(false)
-            && !navigation
-                .keyboard
-                .focus_first(&navigation.scroll, window, cx)
+            && !navigation.keyboard.focus_first(
+                &super::keyboard_nav::RowScroll::List(navigation.scroll.clone()),
+                window,
+                cx,
+            )
         {
             navigation.trap.focus(window, cx);
         }

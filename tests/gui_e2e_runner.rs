@@ -278,6 +278,10 @@ mod recovery_terminal_states;
 mod recovery_terminal_keys;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/terminal_fonts.rs"]
+mod recovery_terminal_fonts;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/unborn_empty.rs"]
 mod recovery_unborn_empty;
 
@@ -1556,6 +1560,10 @@ mod macos {
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
             (
+                "terminal_font_fallback",
+                Box::new(crate::recovery_terminal_fonts::scenario_terminal_font_fallback),
+            ),
+            (
                 "terminal_auto_lock",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock),
             ),
@@ -2652,6 +2660,14 @@ mod macos {
                 Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),
             (
+                "toast_stack_budget_large_zoom",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_large_zoom),
+            ),
+            (
+                "toast_stack_budget_compact_editor",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_compact_editor),
+            ),
+            (
                 "toast_live_status",
                 Box::new(crate::feedback_status::scenario_toast_live_status),
             ),
@@ -3169,6 +3185,14 @@ mod macos {
             (
                 "pr_diff_extent_reflow",
                 Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_reflow),
+            ),
+            (
+                "pr_diff_extent_conflict_end_fill",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_conflict_end_fill),
+            ),
+            (
+                "pr_diff_extent_tail_collapse",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_tail_collapse),
             ),
             (
                 "pr_diff_extent_threads",

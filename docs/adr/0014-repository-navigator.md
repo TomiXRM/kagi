@@ -21,3 +21,55 @@ IME marked-text cancellation is consumed by Input before the containing
 workspace's Escape handler runs. The Input's optional Clear button receives its
 own localized EN/JA action name, distinct from “Filter sidebar”; native AXPress
 uses the existing clear-and-refocus callback and empty inputs expose no Clear.
+
+## Amendment — 2026-10-15: public Input boundaries (#1479-S4)
+
+Slice definitions: [official upstream migration #1479](../rearch/upstream-migration-1479.md).
+
+The sidebar keeps the same dense xsmall Input and ghost CircleX Button:
+empty queries expose no Clear, hover/pressed colours remain the component's,
+the button is not an extra Tab stop, and EN/JA names stay on the real Button
+and TextInput nodes. Clear changes only the existing query owner and restores
+that Input's focus; no extra editor or semantic Group is introduced.
+Use public `Input::suffix` with `cleanable(false)`, not the fork-only
+`clear_button_aria_label` API.
+
+The current pin's `InputState::clean` is private. Its public
+`EntityInputHandler::replace_text_in_range` over the whole UTF-16 range is the
+closest equivalent for this plain, enabled search field: it emits Change,
+retains normal typing-history grouping, and places the empty caret at zero.
+Unlike `replace_all`, it does not force a new undo group; unlike `set_value`,
+it does not clear history or suppress Change. There is no highlighter or
+completion provider on this search field, so the private clean path's silent
+LSP/highlighter handling has no observable counterpart here.
+
+Repository and independent Settings roots each retain one window-owned bool.
+Capture of `input::Escape` overwrites it from the actually focused Input's
+public marked-text query, then propagates. The child keeps its menu/completion
+and IME priorities. Bubble consumes only if that action began with marked
+text, preventing a later Escape binding from clearing search or closing its
+host after upstream unmarks. No early unmark, per-render allocation or global
+registry is introduced. A retained but unfocused Input is never an editing
+target. No caller enables `clean_on_escape`; adding one requires revisiting
+the boundary because child-side clear precedes bubble.
+
+The pinned fork's Input action already consumes IME Escape, but the native
+regression exposed a separate Kagi binding bug: the negation-only
+`!Terminal && !SearchPanel` predicate matched at Input depth and its later
+registration outranked the child action. Commit and Issue body Escape left
+marked text intact; directly dispatching `input::Escape` unmarked it.
+The shared workspace/Welcome routing container now declares `KagiWorkspace`,
+and the fallback binding requires that positive context in addition to the
+existing exclusions. GPUI ranks the child's Input/PopupMenu binding ahead of
+the shallower workspace context; an unhandled child Escape still reaches the
+unchanged modal/menu/filter/selection/bottom-pane fallback. Adding `!Input`
+instead would disable that fallback throughout the focus path.
+The same child-first rule applies to Settings' open theme Select: the first
+Escape closes its popup, and the next closes Settings and restores the
+underlying File History focus. The prior focus-return oracle incorrectly
+relied on the global binding skipping that popup; it now checks both layers.
+
+Input naming oracles inspect the native AX tree's actual focused TextInput or
+MultilineTextInput. The IME regression also covers a real toolbar PopupMenu's
+Escape and button-focused editing-action isolation (#1554). This is preparation
+for the official dependency cutover, not that cutover.

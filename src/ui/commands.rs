@@ -1384,10 +1384,12 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-j", ToggleBottomPanel, None)]);
     // T-UI-003: Esc closes the main diff view (no-op when main_diff is None).
     // Terminal and the built-in Find bar own Escape while their controls focus.
+    // A positive owner context keeps this fallback below Input / PopupMenu
+    // bindings. A negation-only predicate matches at their deepest context.
     cx.bind_keys([KeyBinding::new(
         "escape",
         CloseMainDiff,
-        Some("!Terminal && !SearchPanel"),
+        Some("KagiWorkspace && !Terminal && !SearchPanel"),
     )]);
     cx.bind_keys([KeyBinding::new(
         "secondary-enter",

@@ -107,6 +107,7 @@ struct SettingsWindow {
     owner: WeakEntity<KagiApp>,
     pane: usize,
     focus: FocusHandle,
+    input_escape_started_marked: bool,
     tabs: keyboard_nav::TabFocus,
     scroll: ScrollHandle,
     last_fit: Option<(f32, usize, f32, u64)>,
@@ -172,6 +173,7 @@ impl SettingsWindow {
             owner: owner.downgrade(),
             pane,
             focus,
+            input_escape_started_marked: false,
             tabs: Default::default(),
             scroll: Default::default(),
             last_fit: None,
@@ -349,6 +351,20 @@ impl Render for SettingsWindow {
             .font_family(super::UI_FONT)
             .text_color(gpui::rgb(theme::theme().text_main))
             .track_focus(&self.focus)
+            .capture_action(
+                cx.listener(|this, _: &gpui_component::input::Escape, window, cx| {
+                    this.input_escape_started_marked =
+                        kagi_ui_core::input_actions::focused_input_has_marked_text(window, cx);
+                    cx.propagate();
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &gpui_component::input::Escape, _, cx| {
+                    if !this.input_escape_started_marked {
+                        cx.propagate();
+                    }
+                }),
+            )
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.modifiers != gpui::Modifiers::none() {
                     return;

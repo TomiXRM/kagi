@@ -1676,6 +1676,10 @@ mod macos {
                 Box::new(crate::input_names::scenario_input_names_inventory),
             ),
             (
+                "input_ime_escape_boundaries",
+                Box::new(crate::input_names::scenario_input_ime_escape_boundaries),
+            ),
+            (
                 "branch_rename_neutral_state",
                 Box::new(crate::rename_form_state::scenario_branch_rename_neutral_state),
             ),

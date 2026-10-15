@@ -288,18 +288,21 @@ mod tests {
     #[test]
     fn branch_display_preserves_user_names() {
         let branch = "feature/repo_session-unavailable-日本語";
+        let _guard = crate::i18n::tests::LOCK.lock();
         let shown = branch_result(branch, &OperationOutcome::Pull(PullOutcome::UpToDate));
         assert!(shown.contains(branch));
     }
 
     #[test]
     fn unknown_git_output_is_not_rewritten() {
+        let _guard = crate::i18n::tests::LOCK.lock();
         let reason = "remote: user-defined_hook rejected feature/my_branch-123";
         assert!(pull_summary(reason).ends_with(reason));
     }
 
     #[test]
     fn uncertain_results_are_not_success_summaries() {
+        let _guard = crate::i18n::tests::LOCK.lock();
         let reason = "remote: custom_hook";
         let success = completed("branch-push");
         let uncertain = unknown("branch-push", reason);

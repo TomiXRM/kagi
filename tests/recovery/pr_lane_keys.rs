@@ -98,6 +98,53 @@ pub fn scenario_pr_lane_keyboard(cx: &mut VisualTestAppContext) {
             .collect();
         ordered.sort_by_key(|(index, _)| *index);
         assert_extent(cx, cell, history_rows.len());
+        let mut wide = history_rows.clone();
+        for (index, row) in wide.iter_mut().enumerate() {
+            row.lane = index;
+        }
+        cell.app
+            .update(cx, |app, cx| app.set_pr_lane_history_for_e2e(wide, cx));
+        cell.paint(cx);
+        let vertical = cx.read(|cx| cell.app.read(cx).pr_lane_vertical_offset_for_e2e().unwrap());
+        for modifiers in [
+            gpui::Modifiers::none(),
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        ] {
+            cx.simulate_event(
+                cell.win,
+                gpui::ScrollWheelEvent {
+                    position: cell.bounds("pr-lane-body").center(),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(-100.), gpui::px(0.))),
+                    modifiers,
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            cell.paint(cx);
+            assert_eq!(
+                cx.read(|cx| cell.app.read(cx).pr_lane_vertical_offset_for_e2e().unwrap()),
+                vertical,
+                "horizontal wheel must not move the vertical PR list"
+            );
+            assert!(
+                cx.read(|cx| cell
+                    .app
+                    .read(cx)
+                    .pr_mode()
+                    .unwrap()
+                    .lane_scroll_x
+                    .unwrap_or(0.))
+                    > 0.,
+                "horizontal wheel still reaches the overflowing lane rail"
+            );
+        }
+        cell.app.update(cx, |app, cx| {
+            app.set_pr_lane_history_for_e2e(history_rows.clone(), cx)
+        });
+        cell.paint(cx);
         wheel(cx, cell, -1_000_000.);
         let viewport = cell.bounds("pr-lane-body");
         let tail = cell.bounds(&format!("pr-lane-row-{}", history_rows.len() - 1));

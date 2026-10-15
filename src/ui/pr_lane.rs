@@ -302,6 +302,11 @@ impl LaneBody {
                         render(range, window, cx)
                     })
                     .track_scroll(&scroll)
+                    .map(|mut list| {
+                        // Horizontal wheel belongs to the lane rail, never the row list.
+                        list.style().restrict_scroll_to_axis = Some(true);
+                        list
+                    })
                     .flex_1()
                     .min_h(px(0.)),
                 )
@@ -525,6 +530,18 @@ fn render_lane_row(
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn pr_lane_vertical_offset_for_e2e(&self) -> Option<f32> {
+        let mode = self.pr_mode()?;
+        Some(f32::from(
+            mode.lane_navigation
+                .scroll
+                .0
+                .borrow()
+                .base_handle
+                .offset()
+                .y,
+        ))
+    }
     /// Live native geometry, not a second estimate of the list's extent.
     pub fn pr_lane_geometry_for_e2e(&self) -> Option<(f32, f32)> {
         let mode = self.pr_mode()?;

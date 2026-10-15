@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Inspector file lists and Restore inspection panes retain stable keyboard focus while scrolling through fixed-height rows, including generated files and overflow notes. Nested Restore panes keep boundary-wheel chaining and do not pull pointer scrolling back to the focused row; horizontal wheel gestures no longer turn into vertical row movement. (#1479-S5B)
+  - Review: retain the minimum 940×660 Restore-card keyboard and nested-wheel regressions at 167% zoom alongside the added 1000×720 desktop coverage.
 - PR swimlane geometry uses GPUI's public uniform-list API for its fixed-height commit and elision rows. Shared list keyboard navigation accepts the existing row-scroll adapter directly; Branch Picker, Home Recent, Issue feed and restore inspection retain their current list geometry. This prepares the official-upstream migration without changing dependency pins. (#1479-S5A)
   - Review: horizontal wheel gestures retain the lane rail's horizontal scrolling without moving the vertical row list.
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

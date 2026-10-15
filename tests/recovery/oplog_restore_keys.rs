@@ -20,7 +20,7 @@ pub fn scenario_oplog_restore_keyboard(cx: &mut VisualTestAppContext) {
     let repo = fixture.path().canonicalize().unwrap();
     let before = git_output(&repo, &["show-ref"]);
     let (app, window) = mount(cx, &repo);
-    for dimensions in [(1000., 720.), (1392., 883.)] {
+    for dimensions in [(940., 660.), (1000., 720.), (1392., 883.)] {
         crate::pr_detail_adaptive::resize(cx, window, dimensions);
         for preset in ["apple-light", "apple-dark"] {
             theme::set_active(preset);
@@ -337,30 +337,32 @@ fn review_card(
     let (fixture, point) = keyboard_fixture(targets);
     let repo = fixture.path().canonicalize().unwrap();
     let refs = git_output(&repo, &["show-ref"]);
-    let (app, window) = mount(cx, &repo);
-    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
-    theme::set_zoom(1.67);
-    app.update(cx, |app, cx| {
-        app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point }, cx);
-    });
-    wait_idle(cx, &app);
-    let card = restore_card(cx, &app);
-    let mut plan = (*card.plan).clone();
-    plan.warnings.extend((0..31).map(|n| {
-        PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty {
-            branch: format!("target-{n}"),
-            path: format!("/worktrees/target-{n}"),
-        })
-    }));
-    app.update(cx, |app, cx| {
-        app.admit_oplog_restore_plan_for_test(card.op.clone(), plan, cx)
-    });
-    paint(cx, window);
-    check(cx, &app, window);
-    assert!(!restore_card(cx, &app).confirm_armed);
-    assert_eq!(git_output(&repo, &["show-ref"]), refs);
-    press_key(cx, &app, window, "escape");
-    unmount(cx, app, window);
+    for dimensions in [(940., 660.), (1000., 720.)] {
+        let (app, window) = mount(cx, &repo);
+        crate::pr_detail_adaptive::resize(cx, window, dimensions);
+        theme::set_zoom(1.67);
+        app.update(cx, |app, cx| {
+            app.open_oplog_restore_modal(Operation::RestoreToPoint { entry_id: point }, cx);
+        });
+        wait_idle(cx, &app);
+        let card = restore_card(cx, &app);
+        let mut plan = (*card.plan).clone();
+        plan.warnings.extend((0..31).map(|n| {
+            PlanNote::OplogRestore(OplogRestoreNote::CheckedOutDirty {
+                branch: format!("target-{n}"),
+                path: format!("/worktrees/target-{n}"),
+            })
+        }));
+        app.update(cx, |app, cx| {
+            app.admit_oplog_restore_plan_for_test(card.op.clone(), plan, cx)
+        });
+        paint(cx, window);
+        check(cx, &app, window);
+        assert!(!restore_card(cx, &app).confirm_armed);
+        assert_eq!(git_output(&repo, &["show-ref"]), refs);
+        press_key(cx, &app, window, "escape");
+        unmount(cx, app, window);
+    }
 }
 
 fn tab_to(

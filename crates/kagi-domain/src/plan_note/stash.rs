@@ -166,6 +166,23 @@ impl StashNote {
             StashNote::ListChanged => crate::advice_template_en!(StashListChanged).to_string(),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            StashNote::UntrackedExcluded { count } => {
+                format!(crate::advice_template_display_en!(UntrackedExcluded), count)
+            }
+            StashNote::TargetChanged { index, expected } => format!(
+                crate::advice_template_display_en!(StashTargetChanged),
+                index, expected
+            ),
+            StashNote::ListChanged => {
+                crate::advice_template_display_en!(StashListChanged).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the stash op family (appendix §C stash-* rows).
@@ -199,6 +216,11 @@ impl StashTitle {
             StashTitle::Drop { index } => format!("Stash drop — delete stash@{{{}}}", index),
             StashTitle::DropRemote { label } => format!("Drop {}", label),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -267,6 +289,11 @@ impl StashRecovery {
                  stash reflog until gc, but Kagi does not manage remote recovery."
                 .to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

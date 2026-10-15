@@ -83,6 +83,24 @@ impl CheckoutNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CheckoutNote::CheckoutOverlap { count, files } => format!(
+                crate::advice_template_display_en!(CheckoutCheckoutOverlap),
+                count,
+                files.join(", ")
+            ),
+            CheckoutNote::DirtyMayFail { display } => {
+                format!(
+                    crate::advice_template_display_en!(CheckoutDirtyMayFail),
+                    display
+                )
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the checkout op family.
@@ -103,6 +121,11 @@ impl CheckoutTitle {
                 format!("Checkout commit {} '{}' (detached HEAD)", sha, summary)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -131,6 +154,11 @@ impl CheckoutRecovery {
                 previous
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

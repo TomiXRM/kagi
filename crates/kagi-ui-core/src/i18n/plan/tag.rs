@@ -9,9 +9,9 @@ pub(crate) const ADVICE_TAG_NAME_ERROR_EMPTY: &str = "tag 名を入力してく�
 pub(crate) const ADVICE_TAG_NAME_ERROR_LEADING_DASH: &str =
     "tag 名が '-' で始まっており、フラグと誤認される可能性があります。\ntag `{}`";
 pub(crate) const ADVICE_TAG_PUSH_REMOTE_SIDE_EFFECT: &str =
-    "tag を {} に公開します。他の tag 操作と違い、このマシンの外に出て他の人から見えます。\ntag `{}`";
+    "tag を {} に公開します。他の人から見えるようになります。\ntag `{}`";
 pub(crate) const ADVICE_TAG_PUSH_REJECTED_IF_MOVED: &str =
-    "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `{}`";
+    "remote 側で別の commit を指して既に存在する場合、push は拒否されます。\ntag `{}`";
 
 /// Japanese rendering of one tag-name validation error.
 fn name_error_ja(err: &TagNameError) -> String {

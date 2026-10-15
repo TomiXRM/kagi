@@ -32,7 +32,7 @@ pub(crate) const ADVICE_COMMON_DIRTY_ROLLBACK_HINT: &str =
 
 /// JA template for `Msg::AdviceCommonPartialCloneObjectMissing`.
 pub(crate) const ADVICE_COMMON_PARTIAL_CLONE_OBJECT_MISSING: &str =
-    "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。`git` は不足 object を必要に応じて取得しますが、Kagi は取得しません。";
+    "この repository は partial clone で、必要な object がまだ取得されていないため読めません({})。repository で `git fetch` を実行して取得してください。";
 
 /// JA template for `Msg::AdviceCommonSparseExcludedPath`.
 pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
@@ -40,16 +40,16 @@ pub(crate) const ADVICE_COMMON_SPARSE_EXCLUDED_PATH: &str =
 
 /// JA template for `Msg::AdviceCommonExternalFilter`.
 pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER: &str =
-    "'{}' は外部 filter ({}) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。";
+    "'{}' は Kagi が扱えない外部 filter ({}) を使っています。git で stage / discard してください。何も変更していません。";
 
 pub(crate) const ADVICE_COMMON_EXTERNAL_FILTER_SYNC: &str =
-    "'{}' は外部 filter ({}) を使用しています。Kagi は強制 checkout でその filter を実行できないため、まだ sync できません。書込みは行っていません。filter に対応するまで git で sync してください。";
+    "'{}' は Kagi が扱えない外部 filter ({}) を使っています。git で sync してください。何も変更していません。";
 
 pub(crate) const ADVICE_COMMON_SPARSE_CHECKOUT_UNSUPPORTED: &str =
-    "この repository は {} を使用しています。sparse path と index flag を保全できないため、Kagi では強制 checkout できません。git で操作してください。書込みは行っていません。";
+    "{} を使う repository では Kagi はこの操作を行えません。git で操作してください。何も変更していません。";
 
 pub(crate) const ADVICE_COMMON_SUBMODULE_CHECKOUT_UNSUPPORTED: &str =
-    "'{}' は{}の submodule です。内部の working tree を保全できないため、Kagi では強制 checkout できません。先に git で submodule を初期化するか変更を保存してください。書込みは行っていません。";
+    "submodule '{}' が{}のため実行できません。先に git で初期化するか変更を保存してください。何も変更していません。";
 
 /// JA template for `Msg::AdviceCommonHunkChanged`.
 pub(crate) const ADVICE_COMMON_HUNK_CHANGED: &str =

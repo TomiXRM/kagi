@@ -16,9 +16,9 @@ pub(crate) const ADVICE_PULL_DIRTY_PULL_GUARD: &str =
 pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
     "branch `{}` に upstream が設定されていません: {}\n  git branch --set-upstream-to=<remote>/<branch>";
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
-    "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。";
+    "この pull は conflict する見込みです。remote が変わっていなければ、何も変更せずに安全に停止します。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
-    "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:{}\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。";
+    "stash を戻すときに次のファイルが conflict します:{}\nstash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
@@ -130,10 +130,10 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             if *behind == 0 {
-                format!("{} を pull(最新、ローカル情報)", branch)
+                format!("{} を pull(前回の fetch 時点で最新)", branch)
             } else {
                 format!(
-                    "`{}` を `{}` から pull({} commit 遅れ)",
+                    "`{}` を `{}` から pull({} commit 遅れ、前回の fetch 時点)",
                     branch, upstream, behind
                 )
             }
@@ -144,12 +144,9 @@ pub fn title_ja(title: &PullTitle) -> String {
             behind,
         } => {
             let behind_label = if *behind == 0 {
-                "最新、ローカル情報、fetch でさらに判明する場合あり".to_string()
+                "前回の fetch 時点で最新".to_string()
             } else {
-                format!(
-                    "{} commit 遅れ、ローカル情報、fetch でさらに判明する場合あり",
-                    behind
-                )
+                format!("{} commit 遅れ、前回の fetch 時点", behind)
             };
             format!("`{}` を `{}` から pull({})", branch, remote, behind_label)
         }

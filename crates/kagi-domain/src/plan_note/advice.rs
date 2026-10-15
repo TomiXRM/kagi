@@ -635,3 +635,126 @@ macro_rules! advice_template_en {
         "gh reported an error, so the transport did not authorize deleting the local branch: {}"
     };
 }
+
+/// User-facing English advice; legacy receipt and log templates stay unchanged.
+#[macro_export]
+macro_rules! advice_template_display_en {
+    (UntrackedExcluded) => {
+        "{} untracked file(s) will NOT be included in the stash. They stay in the working tree."
+    };
+    (CommonPartialCloneObjectMissing) => {
+        "This repository is a partial clone and the object this needs has not been fetched yet, so Kagi cannot read it ({}). Run `git fetch` in the repository to download it."
+    };
+    (CommonExternalFilter) => {
+        "'{}' uses an external filter ({}) that Kagi can't handle. Stage or discard it with git. Nothing was changed."
+    };
+    (CommonExternalFilterSync) => {
+        "'{}' uses an external filter ({}) that Kagi can't handle. Sync this branch with git. Nothing was changed."
+    };
+    (CommonSparseCheckoutUnsupported) => {
+        "Kagi can't do this in a repository that uses {}. Use git instead. Nothing was changed."
+    };
+    (CommonSubmoduleCheckoutUnsupported) => {
+        "Kagi can't do this with {} submodule ('{}'). Initialize or save it with git first. Nothing was changed."
+    };
+    (CommitNothingStaged) => {
+        "Nothing to commit: stage some changes first."
+    };
+    (CommitStagedContentChanged) => {
+        "Staged changes changed after you confirmed. Nothing was committed; review them and commit again."
+    };
+    (DiscardUntrackedWillBeDeleted) => {
+        "⚠️ {} untracked file(s) will be PERMANENTLY DELETED from disk (and any now-empty folders removed). A backup is saved first; restore it from the Operation Log."
+    };
+    (RulesetConstraintsUnknown) => {
+        "Couldn't read this branch's GitHub rules. GitHub may still reject the push."
+    };
+    (MergeIntoRemoteSource) => {
+        "'{}' at {} is as of your last fetch and may be out of date."
+    };
+    (CherryRevertDirtyMayRefuse) => {
+        "Working tree has {}. Revert may stop if it touches those files."
+    };
+    (HistoryPushedHistoryRewriteAmend) => {
+        "Commit {} has already been pushed and others may be using it, so it can't be amended. Make a new commit instead."
+    };
+    (HistoryEntryStaleBranchMoved) => {
+        "Branch '{}' has moved since this operation (now at {}, expected {}), so this undo step is skipped."
+    };
+    (HistoryEntryStaleUnreachable) => {
+        "Commit {} no longer exists, so this undo step is skipped."
+    };
+    (ConflictsObservationChanged) => {
+        "The conflict changed. Reopen it and try again."
+    };
+    (ConflictsPlanChanged) => {
+        "The conflict changed; no files were modified. Try again."
+    };
+    (ConflictsRepositoryIdentityChanged) => {
+        "A different repository is now open. Reopen it and try again."
+    };
+    (ConflictsAbortStartUnavailable) => {
+        "Abort was refused and nothing was changed: Kagi can't find where this operation started. Check `git status` in a terminal before fixing it by hand."
+    };
+    (ConflictsAbortHeadMoved) => {
+        "Abort was refused: HEAD moved after the operation started, so going back could lose work. Nothing was changed."
+    };
+    (ConflictsResolutionMarkers) => {
+        "Conflict markers remain in the result. Remove them before saving."
+    };
+    (ConflictsIndexUnmerged) => {
+        "Some unmerged files are not shown here: {}. Refresh the repository."
+    };
+    (ConflictsPartialResolutionsPreserved) => {
+        "Your partial resolutions are kept; nothing is discarded."
+    };
+    (ConflictsSkipDiscardsStep) => {
+        "Skip drops this commit's changes. Your partial resolution is kept."
+    };
+    (BranchRenameConfigChanged) => {
+        "Branch settings changed after you confirmed. Rename again to review them."
+    };
+    (CheckoutCheckoutOverlap) => {
+        "Your local changes to {} file(s) would be overwritten: {}. Stash or commit them first."
+    };
+    (CheckoutDirtyMayFail) => {
+        "Working tree is dirty ({}). Checkout may fail; stash or commit first."
+    };
+    (SwitchFfLocalKnowledge) => {
+        "Fast-forward {} commit(s) (checked again after fetching)."
+    };
+    (WorktreeIncludeOverCap) => {
+        ".worktreeinclude matches {} (more than {}). Copying continues but may take a while."
+    };
+    (WorktreeRemoveDirty) => {
+        "Worktree '{}' has uncommitted changes ({}) — commit or stash them first."
+    };
+    (WorktreeRemoveLocked) => {
+        "Worktree '{}' is locked ({}) — unlock it before removing."
+    };
+    (WorktreeRemoveLiveShell) => {
+        "A terminal shell Kagi started in worktree '{}' is still running — `exit` it in that terminal first."
+    };
+    (TagPushRemoteSideEffect) => {
+        "This publishes tag '{}' to '{}', where others will see it."
+    };
+    (TagPushRejectedIfMoved) => {
+        "If '{}' already exists on the remote pointing at a different commit, the remote rejects the push rather than moving it."
+    };
+    (PullMergePrediction) => {
+        "This pull will likely conflict with your branch. If the remote hasn't changed, it stops safely without changing anything."
+    };
+    (PullRestoreConflict) => {
+        "These files will conflict when your stashed changes are restored after this pull:{}\nCommit or stash those files yourself first, or resolve the conflict after the pull — the stash is kept either way."
+    };
+    (StashTargetChanged) => {
+        "stash@{{{}}} is no longer the stash you chose ({}). Nothing was changed; try again."
+    };
+    (StashListChanged) => {
+        "The stash list changed. Nothing was changed; try again."
+    };
+    (GithubLocalBranchNotDeletedDeletionUnauthorized) => {
+        "GitHub CLI reported an error, so the local branch was kept: {}"
+    };
+    ($tag:ident) => { $crate::advice_template_en!($tag) };
+}

@@ -104,6 +104,17 @@ impl CherryRevertNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CherryRevertNote::DirtyMayRefuse { parts } => format!(
+                crate::advice_template_display_en!(CherryRevertDirtyMayRefuse),
+                parts.parts_en()
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the cherry_revert op family (appendix §C `cherry-pick` /
@@ -150,6 +161,11 @@ impl CherryRevertTitle {
             } => format!("Revert {} '{}' on {}", sha, summary, branch),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the cherry_revert op family (appendix §D `cherry-pick`
@@ -180,6 +196,11 @@ impl CherryRevertRecovery {
                     .to_string()
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

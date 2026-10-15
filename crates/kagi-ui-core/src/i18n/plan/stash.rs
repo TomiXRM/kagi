@@ -29,9 +29,9 @@ pub(crate) const ADVICE_STASH_POP_PREDICTION_UNAVAILABLE: &str =
 pub(crate) const ADVICE_STASH_REMOTE_DROP_IRREVERSIBLE: &str =
     "remote 上の stash entry を完全に削除します。kagi からは元に戻せません。";
 pub(crate) const ADVICE_STASH_TARGET_CHANGED: &str =
-    "stash@{{}} は承認した entry {} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。";
+    "stash@{{}} は選んだ stash {} ではなくなりました。何も変更していません。もう一度操作してください。";
 pub(crate) const ADVICE_STASH_LIST_CHANGED: &str =
-    "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。";
+    "stash 一覧が変わりました。何も変更していません。もう一度操作してください。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA
 /// (mirrors `plan/common.rs::parts_ja`; stash has its own module so it stays
@@ -163,12 +163,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preflight_identity_notes_are_localized() {
-        assert!(note_ja(&StashNote::TargetChanged {
+    fn identity_refusals_preserve_target_data_without_internal_stages() {
+        let target = note_ja(&StashNote::TargetChanged {
             index: 1,
             expected: "0123456789abcdef".into(),
-        })
-        .contains("何も変更していません"));
-        assert!(note_ja(&StashNote::ListChanged).contains("再 plan してください"));
+        });
+        assert!(target.contains("stash@{1}"));
+        assert!(target.contains("0123456789abcdef"));
+        for text in [target, note_ja(&StashNote::ListChanged)] {
+            assert!(!text.contains("plan"), "{text}");
+            assert!(!text.contains("承認した entry"), "{text}");
+        }
     }
 }

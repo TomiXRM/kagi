@@ -18,22 +18,20 @@ fn diff_line_ending_annotations_are_localized_in_both_languages() {
 }
 
 #[test]
-fn shortcuts_remap_help_localizes_prose_and_preserves_config_syntax() {
+fn shortcuts_remap_help_does_not_expose_internal_config_syntax() {
     let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
     let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);
     assert_ne!(english, japanese);
     for text in [english, japanese] {
         for syntax in [
-            "~/.kagi/settings.json",
-            "keybinding.<command id>",
+            "settings.json",
+            "keybinding.",
             "secondary-shift-b",
-            "\"\"",
+            "<command id>",
         ] {
-            assert!(text.contains(syntax));
+            assert!(!text.contains(syntax), "{text}");
         }
     }
-    assert!(english.contains("restart"));
-    assert!(japanese.contains("再起動"));
 }
 
 #[test]
@@ -505,14 +503,6 @@ fn special_repo_blockers_name_variants_in_english_and_japanese() {
                 SparseCheckoutKind::SkipWorktree => "skip-worktree エントリー",
             };
             assert!(text.contains(expected), "{text}");
-            assert!(
-                text.contains(if language == Lang::En {
-                    "Nothing was written"
-                } else {
-                    "書込みは行っていません"
-                }),
-                "{text}"
-            );
         }
         let filter_text = plan_note_text(&PlanNote::Common(CommonNote::ExternalFilterSync {
             path: path.into(),
@@ -520,14 +510,6 @@ fn special_repo_blockers_name_variants_in_english_and_japanese() {
         }));
         assert!(
             filter_text.contains(path) && filter_text.contains("(lfs)"),
-            "{filter_text}"
-        );
-        assert!(
-            filter_text.contains(if language == Lang::En {
-                "sync with git"
-            } else {
-                "git で sync"
-            }),
             "{filter_text}"
         );
         assert!(
@@ -542,13 +524,16 @@ fn special_repo_blockers_name_variants_in_english_and_japanese() {
                 },
             ));
             assert!(text.contains(path), "{text}");
-            let variant = match (language, uninitialized) {
-                (Lang::En, true) => "uninitialized submodule",
-                (Lang::En, false) => "dirty submodule",
-                (Lang::Ja, true) => "未初期化",
-                (Lang::Ja, false) => "未保存の変更あり",
-            };
-            assert!(text.contains(variant), "{text}");
+            let other = plan_note_text(&PlanNote::Common(
+                CommonNote::SubmoduleCheckoutUnsupported {
+                    path: path.into(),
+                    uninitialized: !uninitialized,
+                },
+            ));
+            assert_ne!(
+                text, other,
+                "distinct submodule states need distinct guidance"
+            );
         }
     }
     set_lang_no_persist(previous);

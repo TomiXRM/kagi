@@ -448,6 +448,61 @@ impl WorktreeNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            WorktreeNote::IncludeOverCap {
+                total_bytes,
+                cap_bytes,
+            } => format!(
+                crate::advice_template_display_en!(WorktreeIncludeOverCap),
+                crate::worktree_include::human_bytes(*total_bytes),
+                crate::worktree_include::human_bytes(*cap_bytes)
+            ),
+            WorktreeNote::RemoveDirty { path, summary } => format!(
+                crate::advice_template_display_en!(WorktreeRemoveDirty),
+                path, summary
+            ),
+            WorktreeNote::RemoveLocked { path, reason } => {
+                let reason_display = match reason {
+                    Some(r) => format!("\"{}\"", r),
+                    None => "(no reason recorded)".to_string(),
+                };
+                format!(
+                    crate::advice_template_display_en!(WorktreeRemoveLocked),
+                    path, reason_display
+                )
+            }
+            WorktreeNote::RemoveLiveShell { path } => {
+                format!(
+                    crate::advice_template_display_en!(WorktreeRemoveLiveShell),
+                    path
+                )
+            }
+            WorktreeNote::AutoUnlockRefused { name, refusal } => {
+                use crate::worktree_autolock::AutoUnlockRefusal as R;
+                let why = match refusal {
+                    R::NotLocked => "it is not locked".to_string(),
+                    R::NotAutoLock { reason: Some(r) } => format!(
+                        "it is locked manually (\"{}\") — only a lock Kagi placed for this terminal is released automatically",
+                        r
+                    ),
+                    R::NotAutoLock { reason: None } => "it was locked by hand — only locks Kagi added for this terminal are removed automatically".to_string(),
+                    R::TokenMismatch { found } => format!(
+                        "it is locked by another Kagi terminal ({})",
+                        found.reason()
+                    ),
+                    R::IdentityMismatch => "it is not the worktree this terminal locked".to_string(),
+                };
+                format!(
+                    "Worktree '{}' will not be unlocked automatically: {}.",
+                    name, why
+                )
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the worktree op family.
@@ -492,6 +547,11 @@ impl WorktreeTitle {
             WorktreeTitle::PruneWorktrees => "Prune stale worktrees".to_string(),
             WorktreeTitle::RepairWorktrees => "Repair worktree links".to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -558,6 +618,11 @@ impl WorktreeRecovery {
                     .to_string()
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

@@ -46,7 +46,7 @@ pub fn note_ja(note: &RebaseNote) -> String {
                 list = format!("{}(+{} 件)", list, more);
             }
             format!(
-                "git replay が印字したとおりに {} 個の ref を更新します:\n  {}",
+                "{} 個の branch を更新します:\n  {}",
                 count, list
             )
         }
@@ -80,7 +80,7 @@ pub fn recovery_ja(recovery: &RebaseRecovery) -> String {
             "rebase 中はconflict バナーから abort すれば `{branch}` を {from} へ戻せます。完了済みなら rebase 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}"
         ),
         RebaseRecovery::ReplayOnto { branch, from } => format!(
-            "replay は ref を動かすだけで checkout はしません。replay 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}\n(同じ先端は この entry を forget するまで refs/kagi/backups/ に保持されます)"
+            "replay は ref を動かすだけで checkout はしません。replay 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}\n(バックアップは Operation Log からこの記録を削除するまで保持されます)"
         ),
     }
 }

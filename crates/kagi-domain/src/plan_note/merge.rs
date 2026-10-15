@@ -181,6 +181,17 @@ impl MergeNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            MergeNote::IntoRemoteSource { reference, tip } => format!(
+                crate::advice_template_display_en!(MergeIntoRemoteSource),
+                reference, tip
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Render a capped file list: the shown names joined by `", "`, with
@@ -224,6 +235,11 @@ impl MergeTitle {
             } => format!("Merge {} into current branch", target),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the merge op family (appendix §D `merge` row).
@@ -257,6 +273,11 @@ impl MergeRecovery {
                 "HEAD did not move, so git reflog will not show this. To put '{target}' back:\n  git branch -f {target} {previous_sha}\nThe branch's own reflog (git reflog {target}) also records the move."
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

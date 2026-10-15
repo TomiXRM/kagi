@@ -29,6 +29,11 @@ impl RemoteBranchNote {
             ),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the remote-branch op family.
@@ -46,6 +51,11 @@ impl RemoteBranchTitle {
                 format!("Delete remote branch '{}/{}'", remote, branch)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -73,6 +83,11 @@ impl RemoteBranchRecovery {
                 "If commit '{sha}' still exists (locally or on the remote's reflog before GC), you can recreate the branch:\n  git push {remote} {sha}:refs/heads/{branch}\nOtherwise this cannot be undone from kagi."
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

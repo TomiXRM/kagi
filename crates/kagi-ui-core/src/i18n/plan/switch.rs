@@ -12,7 +12,7 @@ pub(crate) const ADVICE_DIVERGED_SWITCH_ONLY: &str =
 pub(crate) const ADVICE_SWITCH_WILL_CREATE_TRACKING: &str =
     "local branch がないため、{} を追跡して新規作成します。\nbranch `{}`";
 pub(crate) const ADVICE_SWITCH_FF_LOCAL_KNOWLEDGE: &str =
-    "{} commit 分 fast-forward します(ローカル情報での判定、fetch 後に再確認)。";
+    "{} commit 分 fast-forward します(fetch 後にもう一度確認します)。";
 pub(crate) const ADVICE_SWITCH_AHEAD_SWITCH_ONLY: &str =
     "{} に対して {} commit 進んでいます。切り替えのみ行い、更新はしません。\nbranch `{}`";
 

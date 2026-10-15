@@ -87,6 +87,11 @@ impl SyncNote {
             SyncNote::KeepsIgnored => "Ignored files are left untouched. If a file from the remote would overwrite an ignored file, the sync stops before anything moves.".to_string(),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the sync-to-remote op.
@@ -110,6 +115,11 @@ impl SyncTitle {
                 to,
             } => format!("Sync '{}' to '{}' ({})", branch, upstream, to),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -150,6 +160,32 @@ impl SyncRecovery {
                     ));
                 }
                 s.push_str("\nBoth refs stay until this entry is forgotten.");
+                s
+            }
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            SyncRecovery::SyncToRemote {
+                branch,
+                from,
+                tip_backup,
+                work_backup,
+            } => {
+                let mut s = format!(
+                    "Restore the pre-sync tip of '{branch}' ({}) with:\n  git update-ref refs/heads/{branch} {tip_backup}",
+                    &from[..from.len().min(7)]
+                );
+                if let Some(work) = work_backup {
+                    s.push_str(&format!(
+                        "\nRestore the index and working tree (staged/unstaged/untracked) with:\n  git stash apply --index {work}"
+                    ));
+                }
+                s.push_str(
+                    "\nBoth backups stay until you delete this entry from the Operation Log.",
+                );
                 s
             }
         }

@@ -44,6 +44,11 @@ impl MaintenanceNote {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the repository-health fixes.
@@ -62,6 +67,11 @@ impl MaintenanceTitle {
             MaintenanceTitle::WriteCommitGraph => "Write the commit-graph".to_string(),
             MaintenanceTitle::EnableFsmonitor => "Enable the filesystem monitor".to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -88,6 +98,11 @@ impl MaintenanceRecovery {
                 "To undo, remove the setting again from this repository's config.".to_string()
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

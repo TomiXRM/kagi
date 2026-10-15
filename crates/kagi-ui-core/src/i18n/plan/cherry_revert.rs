@@ -12,7 +12,7 @@ pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_CHERRY_PICK: &str =
 pub(crate) const ADVICE_CHERRY_REVERT_WOULD_CONFLICT_REVERT: &str =
     "revert すると {} 件 conflict します。先に解決してください。\nfiles {}";
 pub(crate) const ADVICE_CHERRY_REVERT_DIRTY_MAY_REFUSE: &str =
-    "working tree に{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。";
+    "working tree に{}があります。revert が同じファイルを変更する場合は中止されることがあります。";
 
 /// `「stage 済み 2 件、変更 1 件」` — the dirty-parts fragment in JA (mirrors
 /// `i18n::plan::common::parts_ja`; kept local since that helper is private to

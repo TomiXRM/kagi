@@ -44,4 +44,15 @@ impl DiscardNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            DiscardNote::UntrackedWillBeDeleted { count } => format!(
+                crate::advice_template_display_en!(DiscardUntrackedWillBeDeleted),
+                count
+            ),
+            _ => self.message_en(),
+        }
+    }
 }

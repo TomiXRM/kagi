@@ -110,8 +110,12 @@ impl KagiApp {
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
             self.app_notices.push_back(
-                i18n::op::user_text::operations::recording_failed(&entry.repo, &error.to_string())
-                    .into(),
+                i18n::op::user_text::operations::recording_failed(
+                    &entry.repo,
+                    &entry.op,
+                    &error.to_string(),
+                )
+                .into(),
             );
         }
     }

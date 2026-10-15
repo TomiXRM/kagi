@@ -91,6 +91,72 @@ pub fn note_ja(note: &ConflictsNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &ConflictsNote) -> String {
+    match note {
+        ConflictsNote::PlanChanged => "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。".to_string(),
+        ConflictsNote::RepositoryIdentityChanged => "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。".to_string(),
+        ConflictsNote::AbortStartUnavailable => "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。".to_string(),
+        ConflictsNote::AbortHeadMoved => "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。".to_string(),
+        ConflictsNote::ResolutionMarkers => "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。".to_string(),
+        ConflictsNote::IndexUnmerged { files } => format!(
+            "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}",
+            files.join(", ")
+        ),
+        ConflictsNote::PartialResolutionsPreserved => "部分的な解決内容は autosave と oplog に保存されます。破棄されません。".to_string(),
+        ConflictsNote::SkipDiscardsStep => "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn changed_notes_preserve_legacy_bytes_and_raw_payloads() {
+        let cases = [
+            (
+                ConflictsNote::PlanChanged,
+                "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。",
+            ),
+            (
+                ConflictsNote::RepositoryIdentityChanged,
+                "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。",
+            ),
+            (
+                ConflictsNote::AbortStartUnavailable,
+                "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。",
+            ),
+            (
+                ConflictsNote::AbortHeadMoved,
+                "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。",
+            ),
+            (
+                ConflictsNote::ResolutionMarkers,
+                "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。",
+            ),
+            (
+                ConflictsNote::IndexUnmerged {
+                    files: vec!["日本語/{}".into(), "raw\npath".into()],
+                },
+                "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles 日本語/{}, raw\npath",
+            ),
+            (
+                ConflictsNote::PartialResolutionsPreserved,
+                "部分的な解決内容は autosave と oplog に保存されます。破棄されません。",
+            ),
+            (
+                ConflictsNote::SkipDiscardsStep,
+                "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。",
+            ),
+        ];
+        for (note, expected) in cases {
+            assert_eq!(note_ja_contract(&note), expected);
+        }
+    }
+}
+
 /// Japanese rendering of one conflicts title.
 pub fn title_ja(title: &ConflictsTitle) -> String {
     match title {

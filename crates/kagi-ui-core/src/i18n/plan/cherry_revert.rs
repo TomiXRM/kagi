@@ -84,6 +84,17 @@ pub fn note_ja(note: &CherryRevertNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &CherryRevertNote) -> String {
+    match note {
+        CherryRevertNote::DirtyMayRefuse { parts } => format!(
+            "working tree に{}があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。",
+            parts_ja(parts)
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one cherry_revert title.
 pub fn title_ja(title: &CherryRevertTitle) -> String {
     match title {
@@ -154,6 +165,19 @@ mod tests {
     use super::*;
     use crate::i18n::Lang;
     use kagi_domain::plan_note::{PlanDisposition, PlanTitle};
+
+    #[test]
+    fn dirty_may_refuse_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&CherryRevertNote::DirtyMayRefuse {
+                parts: DirtyParts {
+                    staged: 2,
+                    modified: 1,
+                },
+            }),
+            "working tree にstage 済み 2 件、変更 1 件があります。対象ファイルが重複すると安全な checkout が拒否されることがあります。"
+        );
+    }
 
     #[test]
     fn revert_after_summary_preserves_user_text() {

@@ -112,6 +112,80 @@ pub fn plan_note_text(note: &PlanNote) -> String {
     }
 }
 
+/// Historical plan-note text for contract logs, never display payload projection.
+pub fn plan_note_contract(note: &PlanNote) -> String {
+    plan_note_contract_for(note, lang())
+}
+
+fn plan_note_contract_for(note: &PlanNote, language: Lang) -> String {
+    match language {
+        Lang::En => note.message_en(),
+        Lang::Ja => note_ja_contract_any(note),
+    }
+}
+
+/// Legacy Japanese diagnostic wording, separate from display-only revisions.
+pub(crate) fn note_ja_contract_any(note: &PlanNote) -> String {
+    match note {
+        PlanNote::Branch(n) => branch::note_ja_contract(n),
+        PlanNote::CherryRevert(n) => cherry_revert::note_ja_contract(n),
+        PlanNote::Commit(n) => commit::note_ja_contract(n),
+        PlanNote::Common(n) => common::note_ja_contract(n),
+        PlanNote::Conflicts(n) => conflicts::note_ja_contract(n),
+        PlanNote::Discard(n) => discard::note_ja_contract(n),
+        PlanNote::Github(n) => github::note_ja_contract(n),
+        PlanNote::History(n) => history::note_ja_contract(n),
+        PlanNote::Merge(n) => merge::note_ja_contract(n),
+        PlanNote::OplogRestore(n) => oplog_restore::note_ja_contract(n),
+        PlanNote::Pull(n) => pull::note_ja_contract(n),
+        PlanNote::Rebase(n) => rebase::note_ja_contract(n),
+        PlanNote::Ruleset(n) => ruleset::note_ja_contract(n),
+        PlanNote::Stash(n) => stash::note_ja_contract(n),
+        PlanNote::Switch(n) => switch::note_ja_contract(n),
+        PlanNote::Tag(n) => tag::note_ja_contract(n),
+        PlanNote::Worktree(n) => worktree::note_ja_contract(n),
+        _ => note_ja_any(note),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn plan_note_contract_preserves_wording_and_raw_payloads_in_both_locales() {
+    use kagi_domain::plan_note::{CommitNote, CommonNote, WorktreeNote};
+
+    let staged = PlanNote::Commit(CommitNote::StagedContentChanged);
+    assert_ne!(staged.message_en(), staged.message_display_en());
+    for language in [Lang::En, Lang::Ja] {
+        let expected = match language {
+            Lang::En => staged.message_en(),
+            Lang::Ja => "確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。".to_string(),
+        };
+        assert_eq!(plan_note_contract_for(&staged, language), expected);
+
+        for payload in [
+            "git error: index.write() failed: Permission denied",
+            "kagi:auto:terminal-owner",
+        ] {
+            for note in [
+                PlanNote::Common(CommonNote::GitErrorPassthrough {
+                    message: payload.into(),
+                }),
+                PlanNote::Worktree(WorktreeNote::LockedWithReason {
+                    reason: Some(payload.into()),
+                }),
+            ] {
+                let expected = match language {
+                    Lang::En => note.message_en(),
+                    Lang::Ja => note_ja_any(&note),
+                };
+                let actual = plan_note_contract_for(&note, language);
+                assert_eq!(actual, expected);
+                assert!(actual.contains(payload), "{actual}");
+            }
+        }
+    }
+}
+
 /// The JA half of [`plan_note_text`], callable without going through `lang()`.
 ///
 /// A note can **carry** another note — a PR merge keeps the local branch for

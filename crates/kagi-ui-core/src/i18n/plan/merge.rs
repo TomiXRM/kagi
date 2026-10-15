@@ -117,6 +117,33 @@ pub fn note_ja(note: &MergeNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &MergeNote) -> String {
+    match note {
+        MergeNote::IntoRemoteSource { reference, tip } => format!(
+            "remote-tracking ref `{}` (tip: {}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。",
+            reference, tip
+        ),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn remote_source_preserves_legacy_bytes_and_raw_payloads() {
+        assert_eq!(
+            note_ja_contract(&MergeNote::IntoRemoteSource {
+                reference: "origin/日本語-{}".into(),
+                tip: "abc{}\nraw".into(),
+            }),
+            "remote-tracking ref `origin/日本語-{}` (tip: abc{}\nraw) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。"
+        );
+    }
+}
+
 /// Japanese rendering of one merge title.
 pub fn title_ja(title: &MergeTitle) -> String {
     match title {

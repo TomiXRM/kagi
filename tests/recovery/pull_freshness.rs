@@ -380,8 +380,13 @@ fn auto_stash_guard_drift(
             1
         );
         let details = kagi::ui::oplog_panel::detail_lines(&pulls[0]).join("\n");
+        assert!(
+            details.contains(reason),
+            "Details retain the recorded cause"
+        );
+        let summary = kagi::ui::oplog_panel::outcome_summary(&pulls[0]);
         for internal in ["approved Pull target", "paths Kagi would stash"] {
-            assert!(!details.contains(internal), "{details}");
+            assert!(!summary.contains(internal), "{summary}");
         }
     });
     unmount(cx, app, window);

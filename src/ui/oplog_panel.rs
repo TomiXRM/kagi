@@ -456,7 +456,15 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
     lines
 }
 
-/// The existing receipt facts; recovery is drawn as its own AX-labelled group.
+fn append_recorded_diagnostic(lines: &mut Vec<String>, entry: &OpLogEntry, label: P, raw: &str) {
+    let shown = entry_diagnostic(entry, raw);
+    lines.push(detail_line(label, &shown));
+    if shown.as_ref() != raw {
+        lines.push(detail_line(P::DetailTechnical, raw));
+    }
+}
+
+/// Localize explanations while retaining their complete recorded causes.
 pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
     let mut lines = vec![
         detail_line(P::DetailBefore, &state_text(&entry.before.head)),
@@ -486,19 +494,39 @@ pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
         | OpOutcome::Partial { after, error } => {
             lines.push(detail_line(P::DetailAfter, &state_text(&after.head)));
             lines.push(detail_line(P::DetailChanges, &state_text(&after.dirty)));
-            lines.push(detail_line(P::DetailError, &entry_diagnostic(entry, error)));
+            append_recorded_diagnostic(&mut lines, entry, P::DetailError, error);
         }
         OpOutcome::Failed { error } => {
-            lines.push(detail_line(P::DetailError, &entry_diagnostic(entry, error)))
+            append_recorded_diagnostic(&mut lines, entry, P::DetailError, error)
         }
         OpOutcome::Refused { blockers } => {
             for b in blockers {
-                lines.push(detail_line(P::DetailBlocker, &entry_diagnostic(entry, b)));
+                append_recorded_diagnostic(&mut lines, entry, P::DetailBlocker, b);
             }
         }
     }
     if let Some(detail) = &entry.technical_detail {
-        lines.push(detail_line(P::DetailTechnical, &diagnostic(detail)));
+        lines.push(detail_line(P::DetailTechnical, detail));
+    }
+    // Keep full backup identifiers and path associations for command-line recovery.
+    for reference in &entry.backup_refs {
+        lines.push(detail_line(P::DetailBackup, reference));
+    }
+    for handle in &entry.recovery {
+        let mut line = detail_line(P::DetailBackup, &handle.oid);
+        if let Some(path) = &handle.path {
+            line.push_str("; ");
+            line.push_str(Msg::OplogPanel(P::DetailFile).t());
+            line.push_str(": ");
+            line.push_str(path);
+        }
+        if let Some(reference) = &handle.reference {
+            line.push_str("; ");
+            line.push_str(Msg::OplogPanel(P::DetailReference).t());
+            line.push_str(": ");
+            line.push_str(reference);
+        }
+        lines.push(line);
     }
     lines
 }
@@ -649,13 +677,96 @@ mod tests {
             ),
         };
         let persisted = kagi_git::oplog::entry_to_json(&entry);
-        for shown in [outcome_summary(&entry), entry_clipboard_text(&entry)] {
+        let summary = outcome_summary(&entry);
+        assert!(summary.contains(&entry.repo));
+        assert!(summary.contains(path));
+        assert!(summary.contains("Permission denied"));
+        assert!(!summary.contains("index.write"));
+        for shown in [
+            detail_lines(&entry).join("\n"),
+            entry_clipboard_text(&entry),
+        ] {
             assert!(shown.contains(&entry.repo));
             assert!(shown.contains(path));
-            assert!(shown.contains("Permission denied"));
-            assert!(!shown.contains("index.write"));
+            assert!(shown.contains("git error: index.write() failed: Permission denied"));
         }
         assert_eq!(kagi_git::oplog::entry_to_json(&entry), persisted);
+    }
+
+    #[test]
+    fn details_and_copy_preserve_raw_recorded_causes() {
+        let error = "Restore plan ref rows could not be decoded: invalid OID at row 42";
+        let evidence =
+            "git update-ref child 42; process termination is unconfirmed — do not retry this operation";
+        let technical = "git error: index.write() failed: Permission denied";
+        let mut entry = dummy_entry("restore-to-point");
+        entry.technical_detail = Some(technical.into());
+        for (outcome, cause) in [
+            (
+                OpOutcome::Failed {
+                    error: error.into(),
+                },
+                error,
+            ),
+            (
+                OpOutcome::Partial {
+                    after: entry.before.clone(),
+                    error: error.into(),
+                },
+                error,
+            ),
+            (
+                OpOutcome::Unknown {
+                    after: entry.before.clone(),
+                    evidence: evidence.into(),
+                },
+                evidence,
+            ),
+            (
+                OpOutcome::Refused {
+                    blockers: vec![error.into()],
+                },
+                error,
+            ),
+        ] {
+            entry.outcome = outcome;
+            let receipt = kagi_git::oplog::entry_to_json(&entry);
+            for shown in [
+                detail_lines(&entry).join("\n"),
+                entry_clipboard_text(&entry),
+            ] {
+                assert!(shown.contains(cause), "{shown}");
+                assert!(shown.contains(technical), "{shown}");
+            }
+            assert_eq!(kagi_git::oplog::entry_to_json(&entry), receipt);
+        }
+    }
+
+    #[test]
+    fn details_and_copy_expose_recorded_backup_identifiers_without_rewriting_receipt() {
+        use kagi_git::oplog::recovery::RecoveryHandle;
+
+        let oid = "1234567890abcdef1234567890abcdef12345678";
+        let reference = "refs/kagi/backups/receipt-42/file-1";
+        let path = "dir/my file;before=abc.rs";
+        for op in ["discard", "apply-suggestion"] {
+            let mut entry = dummy_entry(op);
+            entry.backup_refs = vec![reference.into()];
+            entry.recovery = vec![RecoveryHandle::file(path, oid, Some(reference.into()))];
+            let receipt = kagi_git::oplog::entry_to_json(&entry);
+            for shown in [
+                detail_lines(&entry).join("\n"),
+                entry_clipboard_text(&entry),
+            ] {
+                for data in [reference, oid, path] {
+                    assert!(shown.contains(data), "{shown}");
+                }
+                for internal in ["backup_refs:", "kind=file-backup", "oid="] {
+                    assert!(!shown.contains(internal), "{shown}");
+                }
+            }
+            assert_eq!(kagi_git::oplog::entry_to_json(&entry), receipt);
+        }
     }
 
     #[test]
@@ -857,14 +968,11 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains(&detail_line(
-                P::DetailBlocker,
-                &diagnostic("uncommitted changes")
-            )),
+            text.contains(&detail_line(P::DetailBlocker, "uncommitted changes")),
             "{text}"
         );
         assert!(
-            text.contains(&detail_line(P::DetailBlocker, &diagnostic("detached HEAD"))),
+            text.contains(&detail_line(P::DetailBlocker, "detached HEAD")),
             "{text}"
         );
     }

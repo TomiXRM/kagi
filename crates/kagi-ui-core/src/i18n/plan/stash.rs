@@ -117,6 +117,18 @@ pub fn note_ja(note: &StashNote) -> String {
     }
 }
 
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &StashNote) -> String {
+    match note {
+        StashNote::TargetChanged { index, expected } => format!(
+            "stash@{{{}}} は承認した entry {} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。",
+            index, expected
+        ),
+        StashNote::ListChanged => "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one stash title.
 pub fn title_ja(title: &StashTitle) -> String {
     match title {
@@ -161,6 +173,21 @@ pub fn recovery_ja(recovery: &StashRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_target() {
+        assert_eq!(
+            note_ja_contract(&StashNote::TargetChanged {
+                index: 1,
+                expected: "0123456789abcdef{}\n\u{1b}".into(),
+            }),
+            "stash@{1} は承認した entry 0123456789abcdef{}\n\u{1b} ではなくなりました。別の stash がその位置にあります。何も変更していません。再 plan してください。"
+        );
+        assert_eq!(
+            note_ja_contract(&StashNote::ListChanged),
+            "plan 以降に stash 一覧が変化しました(順序または entry が異なります)。何も変更していません。再 plan してください。"
+        );
+    }
 
     #[test]
     fn identity_refusals_preserve_target_data_without_internal_stages() {

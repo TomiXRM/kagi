@@ -50,6 +50,17 @@ pub fn note_ja(note: &SwitchNote) -> String {
     }
 }
 
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &SwitchNote) -> String {
+    match note {
+        SwitchNote::FfLocalKnowledge { behind } => format!(
+            "{} commit 分 fast-forward します(ローカル情報での判定、fetch 後に再確認)。",
+            behind
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one switch title.
 pub fn title_ja(title: &SwitchTitle) -> String {
     match title {
@@ -73,5 +84,18 @@ pub fn recovery_ja(recovery: &SwitchRecovery) -> String {
             "{} を fetch して {} に切り替え、安全な場合のみ fast-forward します。分岐・先行している場合は切り替えのみです。\n元に戻す:\n  git checkout -",
             remote, branch
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_fast_forward_bytes() {
+        assert_eq!(
+            note_ja_contract(&SwitchNote::FfLocalKnowledge { behind: 12 }),
+            "12 commit 分 fast-forward します(ローカル情報での判定、fetch 後に再確認)。"
+        );
     }
 }

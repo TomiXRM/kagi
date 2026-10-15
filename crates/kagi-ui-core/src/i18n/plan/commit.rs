@@ -49,6 +49,27 @@ pub fn note_ja(note: &CommitNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &CommitNote) -> String {
+    match note {
+        CommitNote::StagedContentChanged => "確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn staged_content_changed_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&CommitNote::StagedContentChanged),
+            "確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。"
+        );
+    }
+}
+
 /// Japanese rendering of one commit title.
 pub fn title_ja(title: &CommitTitle) -> String {
     match title {

@@ -39,10 +39,10 @@ pub(super) const EXACT: &[(&str, &str, &str)] = &[
     ("draft: could not determine drafts dir (no HOME or KAGI_LOG_DIR)", "The draft storage folder is unavailable. Keep this window open until your draft is saved.", "下書きの保存先フォルダを利用できません。保存されるまでこのウィンドウを閉じないでください。"),
     ("draft: missing directory", "The draft storage folder is unavailable. Keep this window open until your draft is saved.", "下書きの保存先フォルダを利用できません。保存されるまでこのウィンドウを閉じないでください。"),
     ("could not determine trust-store path (no HOME or KAGI_LOG_DIR)", "Could not save your trust decision because the settings folder is unavailable.", "設定フォルダを利用できないため、信頼する設定を保存できません。"),
-    ("could not determine oplog path (no HOME or KAGI_LOG_DIR)", "Could not save this operation in Operation Log because its storage folder is unavailable.", "保存先フォルダを利用できないため、この操作を Operation Log に記録できません。"),
+    ("could not determine oplog path (no HOME or KAGI_LOG_DIR)", "Could not save this operation in Operation Log because its storage folder is unavailable.", "保存先フォルダを利用できないため、この操作を操作ログに記録できません。"),
     ("backup ref is symbolic", "Could not confirm the recovery backup. This operation could not be recorded safely.", "復旧用 backup を確認できません。この操作を安全に記録できませんでした。"),
     ("backup is not a blob, tree, commit or tag object", "Could not confirm the recovery backup. This operation could not be recorded safely.", "復旧用 backup を確認できません。この操作を安全に記録できませんでした。"),
-    ("oplog sequence exhausted", "Operation Log cannot accept more entries.", "Operation Log にこれ以上記録できません。"),
+    ("oplog sequence exhausted", "Operation Log cannot accept more entries.", "操作ログにこれ以上記録できません。"),
     ("config dry-run path is not UTF-8", "Could not check the branch settings because the settings filename is unsupported.", "設定ファイル名を扱えないため、branch 設定を確認できません。"),
     ("HEAD tree or parents differ from the approved commit; inspect hooks and repository before continuing", "The new commit differs from what you reviewed. Do not retry until you have checked the commit and hooks.", "作成された commit が確認した内容と異なります。commit と hook を確認するまで再実行しないでください。"),
     ("discard refused: target paths differ from the approved plan. Please re-plan before proceeding.", "The selected files changed. Review the discard again.", "対象ファイルが変わりました。破棄する内容を確認し直してください。"),
@@ -421,7 +421,7 @@ pub(super) const CAUSES: &[(&str, &str, &str)] = &[
     (
         "oplog retention: ",
         "Could not save Operation Log",
-        "Operation Log を保存できません",
+        "操作ログを保存できません",
     ),
     (
         "wait failed: ",

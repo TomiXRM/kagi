@@ -220,8 +220,8 @@ fn diagnostic_frame(value: &str) -> Option<String> {
             if known_operation(op) {
                 let reason = diagnostic(reason);
                 return Some(match lang() {
-                    Lang::En => format!("Could not prepare {label}: {reason}"),
-                    Lang::Ja => format!("{label}を準備できませんでした: {reason}"),
+                    Lang::En => format!("{label}: Could not prepare: {reason}"),
+                    Lang::Ja => format!("{label}: 準備できませんでした: {reason}"),
                 });
             }
         }
@@ -239,13 +239,13 @@ fn diagnostic_frame(value: &str) -> Option<String> {
                 let reason = diagnostic(reason);
                 return Some(if separator.contains("plan") {
                     match lang() {
-                        Lang::En => format!("Could not prepare {label}: {reason}"),
-                        Lang::Ja => format!("{label}を準備できませんでした: {reason}"),
+                        Lang::En => format!("{label}: Could not prepare: {reason}"),
+                        Lang::Ja => format!("{label}: 準備できませんでした: {reason}"),
                     }
                 } else {
                     match lang() {
-                        Lang::En => format!("{label} failed: {reason}"),
-                        Lang::Ja => format!("{label}に失敗しました: {reason}"),
+                        Lang::En => format!("{label}: Failed: {reason}"),
+                        Lang::Ja => format!("{label}: 失敗しました: {reason}"),
                     }
                 });
             }

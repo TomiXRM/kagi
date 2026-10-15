@@ -18,20 +18,23 @@ fn diff_line_ending_annotations_are_localized_in_both_languages() {
 }
 
 #[test]
-fn shortcuts_remap_help_does_not_expose_internal_config_syntax() {
+fn shortcuts_remap_help_explains_the_settings_procedure() {
     let english = Msg::ShortcutsRemapHelp.t_for(Lang::En);
     let japanese = Msg::ShortcutsRemapHelp.t_for(Lang::Ja);
     assert_ne!(english, japanese);
     for text in [english, japanese] {
         for syntax in [
-            "settings.json",
-            "keybinding.",
+            "~/.kagi/settings.json",
+            "keybinding.<command id>",
+            "keybinding.view.toggleSidebar",
             "secondary-shift-b",
-            "<command id>",
+            "\"\"",
         ] {
-            assert!(!text.contains(syntax), "{text}");
+            assert!(text.contains(syntax), "{text}");
         }
     }
+    assert!(english.contains("restart"));
+    assert!(japanese.contains("再起動"));
 }
 
 #[test]

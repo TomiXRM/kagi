@@ -18,7 +18,7 @@ pub(crate) const ADVICE_PULL_NO_UPSTREAM_WITH_HINT: &str =
 pub(crate) const ADVICE_PULL_MERGE_PREDICTION: &str =
     "この pull は conflict する見込みです。remote が変わっていなければ、何も変更せずに安全に停止します。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT: &str =
-    "stash を戻すときに次のファイルが conflict します:{}\nstash は保持されます。";
+    "stash を戻すときに次のファイルが conflict します:{}\n先に対象ファイルを commit か stash するか、pull 後に conflict を解決してください。どちらの場合も stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_POSSIBLE: &str =
     "pull 後の stash 復元は conflict する可能性があります。次のパスは両方で変更されており、事前に merge を判定できませんでした(binary、mode 変更、片側での追加・削除):{}\n復元は試行されます。conflict した場合、stash は保持されます。";
 pub(crate) const ADVICE_PULL_RESTORE_CONFLICT_MORE: &str = "\n  - 他 {} 件";
@@ -121,6 +121,18 @@ pub fn note_ja(note: &PullNote) -> String {
     }
 }
 
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &PullNote) -> String {
+    match note {
+        PullNote::MergePrediction => "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。".to_string(),
+        PullNote::RestoreConflict { paths } => format!(
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:{}\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。",
+            path_block_ja(paths)
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one pull title.
 pub fn title_ja(title: &PullTitle) -> String {
     match title {
@@ -199,6 +211,26 @@ pub fn recovery_ja(recovery: &PullRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_paths() {
+        assert_eq!(
+            note_ja_contract(&PullNote::MergePrediction),
+            "merge 予測: 現在の upstream の先端は HEAD と conflict します。fetch で変わる可能性があるため実行はブロックしませんが、変化がなければ安全に失敗し、リポジトリは変更されません。"
+        );
+        assert_eq!(
+            note_ja_contract(&PullNote::RestoreConflict {
+                paths: vec!["raw{}\n\u{1b}.txt".into(), "日本語.rs".into()],
+            }),
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:\n  - raw{}\n\u{1b}.txt\n  - 日本語.rs\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。"
+        );
+        assert_eq!(
+            note_ja_contract(&PullNote::RestoreConflict {
+                paths: (0..15).map(|i| format!("f{i}.txt")).collect(),
+            }),
+            "pull 後の stash 復元は conflict します。あなたの編集と incoming の変更を merge した結果、次のパスは merge できません:\n  - f0.txt\n  - f1.txt\n  - f2.txt\n  - f3.txt\n  - f4.txt\n  - f5.txt\n  - f6.txt\n  - f7.txt\n  - f8.txt\n  - f9.txt\n  - f10.txt\n  - f11.txt\n  - 他 3 件\n先に commit か stash するか、pull 後に conflict を解決してください。stash はどちらでも保持されます。"
+        );
+    }
 
     /// #625: JA must name the paths too — a localized count is still a count.
     #[test]

@@ -55,6 +55,21 @@ pub fn note_ja(note: &TagNote) -> String {
     }
 }
 
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &TagNote) -> String {
+    match note {
+        TagNote::PushRemoteSideEffect { remote, name } => format!(
+            "tag を {} に公開します。他の tag 操作と違い、このマシンの外に出て他の人から見えます。\ntag `{}`",
+            remote, name
+        ),
+        TagNote::PushRejectedIfMoved { name } => format!(
+            "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `{}`",
+            name
+        ),
+        _ => note_ja(note),
+    }
+}
+
 /// Japanese rendering of one tag title.
 pub fn title_ja(title: &TagTitle) -> String {
     match title {
@@ -158,6 +173,25 @@ fn display_push_url(url: &str) -> String {
 #[cfg(test)]
 mod scope_tests {
     use super::display_push_url;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_tag_payloads() {
+        use super::{note_ja_contract, TagNote};
+
+        assert_eq!(
+            note_ja_contract(&TagNote::PushRemoteSideEffect {
+                remote: "ssh://user:secret@example/{}\n\u{1b}".into(),
+                name: "tag{}\n\u{1b}".into(),
+            }),
+            "tag を ssh://user:secret@example/{}\n\u{1b} に公開します。他の tag 操作と違い、このマシンの外に出て他の人から見えます。\ntag `tag{}\n\u{1b}`"
+        );
+        assert_eq!(
+            note_ja_contract(&TagNote::PushRejectedIfMoved {
+                name: "tag{}\n\u{1b}".into(),
+            }),
+            "remote 側で別の commit を指して既に存在する場合、push は拒否されます(移動しません)。kagi は tag を force push しません。\ntag `tag{}\n\u{1b}`"
+        );
+    }
 
     #[test]
     fn push_tag_scope_redacts_secrets_without_changing_the_destination() {

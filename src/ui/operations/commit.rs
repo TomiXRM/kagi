@@ -1152,16 +1152,13 @@ impl KagiApp {
                     }
                 }
                 Err(failure) => {
-                    let presentation = RunPresentation::status(FooterStatus::Failed(
-                        crate::ui::operations::display_text(SharedString::from(
-                            failure.message.clone(),
-                        )),
+                    let message = crate::ui::operations::display_text(SharedString::from(
+                        failure.display_message().to_owned(),
                     ));
+                    let presentation =
+                        RunPresentation::status(FooterStatus::Failed(message.clone()));
                     if let Some(expected) = expected_panel {
-                        presentation.update_commit_panel(CommitPanelFailure {
-                            expected,
-                            message: SharedString::from(failure.message.clone()),
-                        })
+                        presentation.update_commit_panel(CommitPanelFailure { expected, message })
                     } else {
                         presentation
                     }

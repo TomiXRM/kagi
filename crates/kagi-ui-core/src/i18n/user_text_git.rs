@@ -388,19 +388,19 @@ fn storage(text: &str) -> Option<String> {
             "oplog: mkdir failed for ",
             ": ",
             "Could not save this operation in Operation Log",
-            "この操作を Operation Log に記録できません",
+            "この操作を操作ログに記録できません",
         ),
         (
             "oplog: open failed for ",
             ": ",
             "Could not save this operation in Operation Log",
-            "この操作を Operation Log に記録できません",
+            "この操作を操作ログに記録できません",
         ),
         (
             "oplog: write failed for ",
             ": ",
             "Could not save this operation in Operation Log",
-            "この操作を Operation Log に記録できません",
+            "この操作を操作ログに記録できません",
         ),
     ] {
         if let Some((path, reason)) = text

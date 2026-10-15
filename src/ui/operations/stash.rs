@@ -219,6 +219,7 @@ impl KagiApp {
                             {
                                 let message = i18n::op::user_text::operations::recording_failed(
                                     &attempted.repo,
+                                    &attempted.op,
                                     &error.to_string(),
                                 );
                                 app.push_toast(ToastKind::Error, message.clone(), cx);

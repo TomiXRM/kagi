@@ -120,23 +120,27 @@ pub(super) fn diagnostic(value: &str) -> Option<String> {
             Lang::Ja => format!("{target} の確認済み状態を保存できませんでした。"),
         });
     }
-    if value.ends_with("; process termination is unconfirmed — do not retry this operation") {
-        return Some(
+    if let Some(reason) =
+        value.strip_suffix("; process termination is unconfirmed — do not retry this operation")
+    {
+        return Some(format!(
+            "{}: {}",
             text(
                 "The operation may still be running. Do not retry it yet.",
                 "操作がまだ実行中の可能性があります。まだ再試行しないでください。",
-            )
-            .into(),
-        );
+            ),
+            present(reason),
+        ));
     }
-    if value.starts_with("Restore plan ref rows could not be decoded: ") {
-        return Some(
+    if let Some(reason) = value.strip_prefix("Restore plan ref rows could not be decoded: ") {
+        return Some(format!(
+            "{}: {}",
             text(
-                "Could not prepare restoration. Reopen the Operation Log and try again.",
-                "復元を準備できませんでした。Operation Log を開き直してやり直してください。",
-            )
-            .into(),
-        );
+                "Could not read the restoration details",
+                "復元の詳細を読み取れませんでした",
+            ),
+            present(reason),
+        ));
     }
     if let Some(reason) = value.strip_prefix("Repository changed since planning: ") {
         let reason = present(reason);
@@ -201,11 +205,42 @@ pub(super) fn diagnostic(value: &str) -> Option<String> {
             let label = operation_label(op);
             if super::known_operation(op) {
                 return Some(match lang() {
-                    Lang::En => format!("Could not prepare {label}. Please try again."),
-                    Lang::Ja => format!("{label}を準備できませんでした。もう一度お試しください。"),
+                    Lang::En => format!("{label}: Could not prepare. Please try again."),
+                    Lang::Ja => format!("{label}: 準備できませんでした。もう一度お試しください。"),
                 });
             }
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_decode_diagnostic_preserves_the_presented_reason() {
+        for reason in [
+            "invalid ref row at byte 42",
+            "git error: index.write() failed: denied",
+        ] {
+            let shown = diagnostic(&format!(
+                "Restore plan ref rows could not be decoded: {reason}"
+            ))
+            .unwrap();
+            assert!(shown.ends_with(present(reason).as_ref()), "{shown}");
+            assert!(!shown.contains("Reopen the Operation Log"), "{shown}");
+        }
+    }
+
+    #[test]
+    fn unconfirmed_termination_diagnostic_preserves_the_presented_reason() {
+        let reason = "git update-ref: child 42 did not terminate";
+        let shown = diagnostic(&format!(
+            "{reason}; process termination is unconfirmed — do not retry this operation"
+        ))
+        .unwrap();
+        assert!(shown.ends_with(present(reason).as_ref()), "{shown}");
+        assert!(shown.contains(text("Do not retry it yet.", "まだ再試行しないでください。",)));
+    }
 }

@@ -186,7 +186,7 @@ impl RebaseRecovery {
     pub fn message_display_en(&self) -> String {
         match self {
             RebaseRecovery::ReplayOnto { branch, from } => format!(
-                "Replay moves refs only; nothing is checked out. Restore the pre-replay tip with:\n  git update-ref refs/heads/{branch} {from}\nThe backup stays until you delete this entry from the Operation Log."
+                "Replay moves refs only; nothing is checked out. Restore the pre-replay tip with:\n  git update-ref refs/heads/{branch} {from}\nThe backup is not automatically deleted."
             ),
             _ => self.message_en(),
         }

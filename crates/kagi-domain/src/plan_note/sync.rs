@@ -183,9 +183,7 @@ impl SyncRecovery {
                         "\nRestore the index and working tree (staged/unstaged/untracked) with:\n  git stash apply --index {work}"
                     ));
                 }
-                s.push_str(
-                    "\nBoth backups stay until you delete this entry from the Operation Log.",
-                );
+                s.push_str("\nBackups are not automatically deleted.");
                 s
             }
         }

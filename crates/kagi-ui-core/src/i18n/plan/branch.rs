@@ -109,6 +109,27 @@ pub fn note_ja(note: &BranchNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &BranchNote) -> String {
+    match note {
+        BranchNote::RenameConfigChanged => "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn rename_config_changed_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&BranchNote::RenameConfigChanged),
+            "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。"
+        );
+    }
+}
+
 /// Japanese rendering of one branch title.
 pub fn title_ja(title: &BranchTitle) -> String {
     match title {
@@ -143,7 +164,7 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name,
             tip: Some(tip),
         } => format!(
-            "復元する:\n  git branch {} {}\n先端 commit `{}` はバックアップとして保持します。Git の GC 後は Operation Log から復元してください。",
+            "復元する:\n  git branch {} {}\n先端 commit `{}` はバックアップとして保持します。Git の GC 後は操作ログから復元してください。",
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => {

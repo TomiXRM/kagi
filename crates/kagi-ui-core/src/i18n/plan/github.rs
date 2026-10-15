@@ -167,6 +167,36 @@ pub fn note_ja(note: &GithubNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, including nested plan reasons.
+pub(crate) fn note_ja_contract(note: &GithubNote) -> String {
+    match note {
+        GithubNote::KeepsLocalBranch { branch, reason } => super::advice_text(
+            Msg::AdviceGithubKeepsLocalBranch,
+            &[&reason_ja_contract(reason), branch],
+        ),
+        GithubNote::LocalBranchKept { name, reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchKept,
+            &[name, &reason_ja_contract(reason)],
+        ),
+        GithubNote::LocalBranchNotDeleted { reason } => super::advice_text(
+            Msg::AdviceGithubLocalBranchNotDeleted,
+            &[&reason_ja_contract(reason)],
+        ),
+        _ => note_ja(note),
+    }
+}
+
+fn reason_ja_contract(reason: &PrMergeLocalReason) -> String {
+    match reason {
+        PrMergeLocalReason::Plan(note) => super::note_ja_contract_any(note),
+        PrMergeLocalReason::DeletionUnauthorized { detail } => format!(
+            "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}",
+            detail
+        ),
+        _ => reason_ja(reason),
+    }
+}
+
 /// Japanese rendering of one kept-local-branch reason.
 ///
 /// [`PrMergeLocalReason::Plan`] recurses through the **whole** plan-note
@@ -240,7 +270,7 @@ pub fn recovery_ja(recovery: &GithubRecovery) -> String {
             number
         ),
         GithubRecovery::ApplySuggestion =>
-            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容を先に保存します。backup ref は Operation Log のエントリで確認できます。"
+            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容を先に保存します。操作ログの詳細で backup ref を確認し、`git cat-file blob <backup-ref>` で内容を取り出せます。"
                 .to_string(),
     }
 }
@@ -250,6 +280,83 @@ mod tests {
     use super::*;
     use crate::i18n::{plan::plan_note_text, set_lang_no_persist, Lang};
     use kagi_domain::plan_note::{branch::BranchNote, PlanNote};
+
+    #[test]
+    fn contract_reasons_preserve_legacy_bytes_through_every_wrapper() {
+        let reasons = [
+            (
+                PrMergeLocalReason::Plan(Box::new(PlanNote::Branch(
+                    BranchNote::RenameConfigChanged,
+                ))),
+                "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。",
+            ),
+            (
+                PrMergeLocalReason::DeletionUnauthorized {
+                    detail: "transport {}\nraw 日本語".into(),
+                },
+                "gh がエラーを返したため、local branch の削除は transport に許可されていません: transport {}\nraw 日本語",
+            ),
+            (
+                PrMergeLocalReason::Detail("transport {}\nraw 日本語".into()),
+                "transport {}\nraw 日本語",
+            ),
+        ];
+        for (reason, expected) in reasons {
+            assert_eq!(
+                note_ja_contract(&GithubNote::KeepsLocalBranch {
+                    branch: "日本語-{}".into(),
+                    reason: reason.clone(),
+                }),
+                format!("local branch は削除しません: {expected}\nbranch `日本語-{{}}`")
+            );
+            assert_eq!(
+                note_ja_contract(&GithubNote::LocalBranchKept {
+                    name: "日本語-{}".into(),
+                    reason: reason.clone(),
+                }),
+                format!("local branch を残しました: 日本語-{{}} ({expected})")
+            );
+            assert_eq!(
+                note_ja_contract(&GithubNote::LocalBranchNotDeleted { reason }),
+                format!("merge は完了しました。local branch は削除していません: {expected}")
+            );
+        }
+    }
+
+    #[test]
+    fn contract_recurses_through_nested_github_notes_without_changing_payloads() {
+        let nested = PlanNote::Github(GithubNote::LocalBranchNotDeleted {
+            reason: PrMergeLocalReason::Plan(Box::new(PlanNote::Common(
+                kagi_domain::plan_note::CommonNote::ExternalFilter {
+                    path: "日本語/{}".into(),
+                    filter: "filter{}\nraw".into(),
+                },
+            ))),
+        });
+        assert_eq!(
+            note_ja_contract(&GithubNote::LocalBranchNotDeleted {
+                reason: PrMergeLocalReason::Plan(Box::new(nested)),
+            }),
+            "merge は完了しました。local branch は削除していません: merge は完了しました。local branch は削除していません: '日本語/{}' は外部 filter (filter{}\nraw) を使用しています。Kagi はまだ filter 後の内容を保全できないため、filter に対応するまで git で stage / discard してください。書込みは行っていません。"
+        );
+    }
+
+    #[test]
+    fn contract_keeps_unchanged_local_reasons_identical() {
+        for reason in [
+            PrMergeLocalReason::NotAtPrHead {
+                tip: "tip{}".into(),
+                head: "head{}\nraw".into(),
+            },
+            PrMergeLocalReason::Queued,
+            PrMergeLocalReason::Changed,
+            PrMergeLocalReason::HeadChanged,
+            PrMergeLocalReason::IdentityChanged,
+            PrMergeLocalReason::Detail("raw{}\n日本語".into()),
+        ] {
+            assert_eq!(reason_ja_contract(&reason), reason_ja(&reason));
+        }
+    }
 
     /// The reason a merge kept the local branch is carried, not printed: a
     /// blocker raised by the delete-branch family reaches the Japanese notice

@@ -221,21 +221,19 @@ pub fn oplog_write_failed(err: impl std::fmt::Display) -> String {
              You cannot undo it from there."
         ),
         Lang::Ja => format!(
-            "操作は完了しましたが、Operation Log に保存できませんでした({err})。Operation Log からは取り消せません。"
+            "操作は完了しましたが、操作ログに保存できませんでした({err})。操作ログからは取り消せません。"
         ),
     }
 }
 
-/// `"Pull failed: <err>"` / `"pull に失敗しました: <err>"`.
-///
-/// The single sentence every operation-failure string in the UI goes through.
+/// Display-only failure text; keep labels separate from the status sentence.
 /// Known Kagi diagnostics are localized; unknown Git details remain intact.
 pub fn op_failed(op: Op, err: impl std::fmt::Display) -> String {
     let raw = err.to_string();
     let err = user_text::diagnostic(&raw);
     match lang() {
-        Lang::En => format!("{} failed: {}", op.t(), err),
-        Lang::Ja => format!("{} に失敗しました: {}", op.t(), err),
+        Lang::En => format!("{}: Failed: {}", op.t(), err),
+        Lang::Ja => format!("{}: 失敗しました: {}", op.t(), err),
     }
 }
 
@@ -278,18 +276,13 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
     let raw = err.to_string();
     let err = user_text::diagnostic(&raw);
     match lang() {
-        Lang::En => format!("Could not prepare {}: {}", op.t(), err),
-        Lang::Ja => format!("{}を準備できませんでした: {}", op.t(), err),
+        Lang::En => format!("{}: Could not prepare: {}", op.t(), err),
+        Lang::Ja => format!("{}: 準備できませんでした: {}", op.t(), err),
     }
 }
 
-/// `"checkout refused: <reason> (+1 more in Operation Log)"` /
-/// `"checkout は拒否されました: <reason>（ほか 1 件は Operation Log）"` — the
-/// footer / toast for a plan-time refusal (#353). `op` is the operation's
-/// oplog name, `reason` the first blocker already in the user's language, and
-/// `more` how many further blockers only the Operation Log lists. A reason
-/// written over several lines is joined into one: the footer and toast show
-/// only a first line, which would otherwise drop its detail and the count.
+/// Footer / toast for a refusal. Keep the action label separate from the
+/// status sentence, and preserve every line of the reason in the preview.
 pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> String {
     let op = user_text::operation_label(op);
     let reason = reason.to_string();
@@ -301,10 +294,10 @@ pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> Stri
     let reason = reason.join(" ");
     let reason = user_text::diagnostic(&reason);
     match (lang(), more) {
-        (Lang::En, 0) => format!("{op} refused: {reason}"),
-        (Lang::En, n) => format!("{op} refused: {reason} (+{n} more in Operation Log)"),
-        (Lang::Ja, 0) => format!("{op} は拒否されました: {reason}"),
-        (Lang::Ja, n) => format!("{op} は拒否されました: {reason}（ほか {n} 件は Operation Log）"),
+        (Lang::En, 0) => format!("{op}: Cannot proceed: {reason}"),
+        (Lang::En, n) => format!("{op}: Cannot proceed: {reason} (+{n} more in Operation Log)"),
+        (Lang::Ja, 0) => format!("{op}: 実行できません: {reason}"),
+        (Lang::Ja, n) => format!("{op}: 実行できません: {reason}（ほか {n} 件は操作ログ）"),
     }
 }
 
@@ -314,8 +307,7 @@ pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> Stri
 pub fn plan_not_shown_retry(op: Op) -> String {
     match lang() {
         Lang::En => format!(
-            "{} was cancelled because another dialog opened. Run {} again.",
-            op.t(),
+            "{}: Cancelled because another dialog opened. Try again.",
             op.t()
         ),
         Lang::Ja => format!(
@@ -330,7 +322,7 @@ pub fn recorded_outcome_notice(message: impl std::fmt::Display) -> String {
     match lang() {
         Lang::En => format!("{message}. Review Operation Log before deciding whether to retry."),
         Lang::Ja => {
-            format!("{message}。再実行するか判断する前に Operation Log を確認してください。")
+            format!("{message}。再実行するか判断する前に操作ログを確認してください。")
         }
     }
 }
@@ -456,14 +448,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn display_failures_are_unchanged_by_toast_normalization() {
+        let _guard = super::super::tests::LOCK.lock();
+        let previous = lang();
+        for language in [Lang::En, Lang::Ja] {
+            super::super::set_lang_no_persist(language);
+            for op in [Op::Pull, Op::CreateBranch, Op::Delete, Op::Merge] {
+                for shown in [
+                    op_failed(op, "remote: example_reason"),
+                    op_plan_failed(op, "remote: example_reason"),
+                ] {
+                    assert!(shown.starts_with(&format!("{}: ", op.t())));
+                    assert_eq!(user_text::diagnostic(&shown), shown);
+                }
+            }
+        }
+        super::super::set_lang_no_persist(previous);
+    }
+
+    #[test]
     fn async_slot_notices_switch_language() {
         let _guard = super::super::tests::LOCK.lock();
         super::super::set_lang_no_persist(Lang::En);
         assert!(!plan_not_shown_retry(Op::Merge).contains("plan"));
-        assert!(recorded_outcome_notice("Push failed").contains("Review Operation Log"));
+        assert!(recorded_outcome_notice("remote: failure_17").contains("remote: failure_17"));
         super::super::set_lang_no_persist(Lang::Ja);
         assert!(!plan_not_shown_retry(Op::Merge).contains("plan"));
-        assert!(recorded_outcome_notice("push に失敗しました").contains("Operation Log"));
+        assert!(recorded_outcome_notice("remote: failure_17").contains("remote: failure_17"));
         super::super::set_lang_no_persist(Lang::En);
     }
 

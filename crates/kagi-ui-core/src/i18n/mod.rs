@@ -346,9 +346,6 @@ pub enum Msg {
     BusyDeleteBranch,
     BusyDeleteBranchPlan,
     BusyDiscard,
-    /// Footer label when a discard mutated the working tree but did not finish
-    /// (issue #281). The backup blob SHAs are in the oplog entry.
-    DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
     /// Footer label while a worktree removal runs off the main thread (issue
@@ -2027,7 +2024,7 @@ impl Msg {
                 "Can't restore: this Operation Log entry is damaged. See the Operation Log for details."
             }
             (Ja, RestorePlanRowsInvalidSeeLog) => {
-                "復元できません: この操作記録が破損しています。詳細は Operation Log を確認してください。"
+                "復元できません: この操作記録が破損しています。詳細は操作ログを確認してください。"
             }
             (En, RestorePlanRowsInvalidNoRepository) => {
                 "Can't restore: this Operation Log entry is damaged. No repository is open."
@@ -2450,8 +2447,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "branch の ruleset に違反する可能性があります:",
 
-            (En, ShortcutsRemapHelp) => "See the documentation to customize shortcuts. Restart Kagi to apply changes.",
-            (Ja, ShortcutsRemapHelp) => "ショートカットの変更方法はドキュメントを確認してください。Kagi を再起動すると反映されます。",
+            (En, ShortcutsRemapHelp) => "In ~/.kagi/settings.json, set \"keybinding.<command id>\" to a key combination; for example, \"keybinding.view.toggleSidebar\": \"secondary-shift-b\". Separate modifiers and the key with hyphens (secondary = ⌘ on macOS, Ctrl elsewhere). Use \"\" to unbind, then restart Kagi.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\" にキーの組み合わせを設定します。例: \"keybinding.view.toggleSidebar\": \"secondary-shift-b\"。修飾キーとキーはハイフンで区切ります(secondary は macOS では ⌘、その他では Ctrl)。\"\" で割り当てを解除できます。変更後は Kagi を再起動してください。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",
@@ -2467,7 +2464,7 @@ impl Msg {
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
-            (Ja, AppNoticeDetailsInOpLog) => "Operation Log で操作の詳細を確認・コピーできます。",
+            (Ja, AppNoticeDetailsInOpLog) => "操作ログで操作の詳細を確認・コピーできます。",
             (En, AppReconcileInspect) => "Inspect current state",
             (Ja, AppReconcileInspect) => "現在の状態を照会",
             (En, AppReconcileConfirm) => "I've checked",
@@ -2603,8 +2600,6 @@ impl Msg {
             (Ja, BusyDeleteBranchPlan) => "delete branch 計画中…",
             (En, BusyDiscard) => "discard in progress…",
             (Ja, BusyDiscard) => "discard 実行中…",
-            (En, DiscardPartial) => "Discard was only partly applied. Your original files can be restored from the Operation Log.",
-            (Ja, DiscardPartial) => "破棄は一部のみ適用されました。元の内容は Operation Log から復元できます。",
             (En, BusyCommit) => "commit in progress…",
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",

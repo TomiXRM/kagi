@@ -513,6 +513,16 @@ pub fn scenario_commit_index_identity_refusal(cx: &mut VisualTestAppContext) {
                 assert!(matches!(toast.kind, ToastKind::Error) && toast.message.contains(reason),
                     "localized reason must reach the bounded error toast: {}", toast.message);
             });
+            let contract_line = match lang {
+                Lang::En => "[kagi] async: commit failed — Commit failed: Staged content changed since confirmation. Nothing was committed. Review the staged changes and confirm a new plan.",
+                Lang::Ja => "[kagi] async: commit failed — commit に失敗しました: 確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。",
+            };
+            assert!(
+                kagi_ui_core::klog::tail()
+                    .iter()
+                    .any(|line| line == contract_line),
+                "localized display must not rewrite the stderr contract: {contract_line}"
+            );
             assert_eq!(rev_parse(&repo, &["HEAD"]), head);
             assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
             assert_eq!(

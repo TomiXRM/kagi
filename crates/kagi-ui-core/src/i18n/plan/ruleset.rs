@@ -97,3 +97,24 @@ pub fn note_ja(note: &RulesetNote) -> String {
         }
     }
 }
+
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &RulesetNote) -> String {
+    match note {
+        RulesetNote::ConstraintsUnknown => "branch の ruleset を確定できませんでした。ルール無しとは仮定せず、保守的なフローを維持します。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_unknown_constraints_bytes() {
+        assert_eq!(
+            note_ja_contract(&RulesetNote::ConstraintsUnknown),
+            "branch の ruleset を確定できませんでした。ルール無しとは仮定せず、保守的なフローを維持します。"
+        );
+    }
+}

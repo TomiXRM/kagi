@@ -14,6 +14,27 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
+fn right_at(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    point: gpui::Point<gpui::Pixels>,
+) {
+    cx.simulate_mouse_move(window, point, None, gpui::Modifiers::none());
+    cx.simulate_mouse_down(
+        window,
+        point,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        window,
+        point,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    draw(cx, window);
+}
+
 pub fn scenario_graph_unborn_wip_motion(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _gh = crate::pr_fields_focus::OfflineGh::install();
@@ -266,6 +287,14 @@ pub fn scenario_graph_insert_motion_hit_targets(cx: &mut VisualTestAppContext) {
                     Some(expected),
                     "painted commit {index} owns its visible hit strip at zoom {zoom}"
                 );
+                right_at(cx, window, point);
+                assert_eq!(
+                    cx.read(|cx| app.read(cx).commit_menu.as_ref().map(|menu| menu.row_index)),
+                    Some(index),
+                    "painted commit owns its semantic right menu at zoom {zoom}"
+                );
+                cx.simulate_keystrokes(window, "escape");
+                draw(cx, window);
                 app.update(cx, |app, cx| {
                     app.select_headless(index);
                     cx.notify();
@@ -292,8 +321,169 @@ pub fn scenario_graph_insert_motion_hit_targets(cx: &mut VisualTestAppContext) {
         click(cx, 2, next);
         motion::set_clock_for_e2e(None);
         unmount(cx, app, window);
+        graph_wip_right_targets(cx, zoom);
     }
     theme::set_reduce_motion(reduced);
+}
+
+fn graph_wip_right_targets(cx: &mut VisualTestAppContext, zoom: f32) {
+    use gpui::{point, px};
+    let fixture = crate::macos::build_fixture();
+    let linked_root = tempfile::tempdir().unwrap();
+    let linked = linked_root.path().join("linked");
+    git(
+        fixture.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked-motion",
+            linked.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let linked = linked.canonicalize().unwrap();
+    std::fs::write(linked.join("linked-wip"), "linked\n").unwrap();
+    let (app, window) = mount(cx, fixture.path());
+    draw(cx, window);
+    let t = Instant::now();
+    motion::set_clock_for_e2e(Some(t));
+    std::fs::write(fixture.path().join("current-wip"), "current\n").unwrap();
+    for n in 0..2 {
+        std::fs::write(fixture.path().join("README.md"), format!("stash {n}\n")).unwrap();
+        git(
+            fixture.path(),
+            &["stash", "push", "-q", "-m", &format!("motion stash {n}")],
+        );
+    }
+    app.update(cx, |app, cx| app.reload(cx));
+    cx.run_until_parked();
+    draw(cx, window);
+    motion::set_clock_for_e2e(Some(t + Duration::from_millis(37)));
+    draw(cx, window);
+    let current = e2e::control_bounds(window.window_id(), "graph-wip-row").unwrap();
+    let linked_row = e2e::control_bounds(window.window_id(), "graph-wip-row-1").unwrap();
+    let stash0 = e2e::control_bounds(window.window_id(), "graph-stash-row-0").unwrap();
+    let stash1 = e2e::control_bounds(window.window_id(), "graph-stash-row-1").unwrap();
+    let commit = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+    let upper = |row: gpui::Bounds<gpui::Pixels>| point(row.center().x, row.top() + px(3.));
+    assert!(
+        upper(current).y < linked_row.top(),
+        "current WIP's visible leading strip has no underlying later-painted row"
+    );
+    right_at(cx, window, upper(current));
+    assert!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.commit_menu.is_none() && app.stash_menu.is_none() && app.worktree_menu.is_none()
+        }),
+        "current WIP has no context action at zoom {zoom}"
+    );
+    assert!(
+        upper(linked_row).y < current.bottom(),
+        "linked WIP's leading strip really overlaps the preceding current row"
+    );
+    right_at(cx, window, upper(linked_row));
+    assert_eq!(
+        cx.read(|cx| app
+            .read(cx)
+            .worktree_menu
+            .as_ref()
+            .and_then(|menu| menu.path.as_ref())
+            .map(|path| path.canonicalize().unwrap())),
+        Some(linked)
+    );
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
+    assert!(
+        upper(stash1).y < stash0.bottom() && upper(stash1).y < commit.top(),
+        "stash1 owns the visible compressed strip, not stash0 or the following commit"
+    );
+    let expected_stash = cx.read(|cx| app.read(cx).view().stashes[1].target.clone());
+    right_at(cx, window, upper(stash1));
+    assert_eq!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.stash_menu
+                .as_ref()
+                .map(|menu| app.view().stashes[menu.index].target.clone())
+        }),
+        Some(expected_stash),
+        "moving stash right menu retains its identity"
+    );
+    cx.simulate_keystrokes(window, "escape");
+    draw(cx, window);
+    assert!(upper(commit).y < stash1.bottom());
+    right_at(cx, window, upper(commit));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).commit_menu.as_ref().map(|menu| menu.row_index)),
+        Some(0)
+    );
+    cx.simulate_keystrokes(window, "escape");
+    motion::set_clock_for_e2e(None);
+    unmount(cx, app, window);
+
+    // A first-prefix ghost paints after the first real commit in that same slot.
+    // Its lower visible strip overlaps that commit, unlike current-WIP insertion
+    // above, where the later-painted survivor covers the lower WIP strip.
+    let fixture = crate::macos::build_fixture();
+    let file = fixture.path().join("closing-wip");
+    std::fs::write(&file, "closing\n").unwrap();
+    let (app, window) = mount(cx, fixture.path());
+    draw(cx, window);
+    let t = Instant::now();
+    motion::set_clock_for_e2e(Some(t));
+    std::fs::remove_file(file).unwrap();
+    app.update(cx, |app, cx| app.refresh_working_tree_external(cx));
+    cx.run_until_parked();
+    draw(cx, window);
+    motion::set_clock_for_e2e(Some(t + Duration::from_millis(37)));
+    draw(cx, window);
+    let ghost = e2e::control_bounds(window.window_id(), "graph-wip-ghost").unwrap();
+    let covered = e2e::control_bounds(window.window_id(), "graph-row-0").unwrap();
+    let following = e2e::control_bounds(window.window_id(), "graph-row-1").unwrap();
+    let top = ghost.top().max(covered.top());
+    let bottom = ghost.bottom().min(covered.bottom());
+    assert!(
+        bottom - top > px(3.),
+        "real painted ghost/commit overlap at zoom {zoom}"
+    );
+    let at = point(ghost.center().x, (top + bottom) / 2.);
+    assert!(
+        at.y < following.top(),
+        "no later-painted real row covers this ghost strip"
+    );
+    let selected_before = cx.read(|cx| app.read(cx).ui().selected);
+    right_at(cx, window, at);
+    assert!(
+        cx.read(|cx| app.read(cx).commit_menu.is_none()),
+        "closing current-WIP ghost must not open the covered commit menu at zoom {zoom}"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).ui().selected),
+        selected_before,
+        "a ghost context press cannot select the covered commit"
+    );
+    let dropped = crate::macos::build_fixture();
+    cx.simulate_event(
+        window,
+        gpui::FileDropEvent::Entered {
+            position: at,
+            paths: gpui::ExternalPaths(vec![dropped.path().to_path_buf()].into_iter().collect()),
+        },
+    );
+    draw(cx, window);
+    cx.simulate_event(window, gpui::FileDropEvent::Submit { position: at });
+    cx.run_until_parked();
+    draw(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).repo_path.clone()),
+        Some(dropped.path().canonicalize().unwrap()),
+        "the ghost's context-only handler must retain ancestor external folder drops"
+    );
+    motion::set_clock_for_e2e(None);
+    unmount(cx, app, window);
 }
 
 fn graph_targets_fixture() -> tempfile::TempDir {

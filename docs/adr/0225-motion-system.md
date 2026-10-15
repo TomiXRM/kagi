@@ -296,6 +296,15 @@ a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
 Native controls also drop external folders onto occupied commit/WIP/stash rows
 and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
 
+A closing first-prefix WIP ghost paints after the surviving commit and can cover
+its context-menu hitbox. Consume only Right MouseDown on that inert ghost, so
+the covered commit cannot open its menu or become selected. Do not occlude
+other input: a real external folder drop through the same ghost still reaches
+the ancestor. The genuinely visible leading strip of an arriving current WIP
+has no underlying row and needs no context handler. At 37ms and both zooms,
+native right-button controls exercise these negative targets and the actual
+commit, stash and linked-worktree menu owners in compressed geometry.
+
 ### Graph retained visibility boundary
 
 Graph joins the root's existing actual-center visibility edge, not a second

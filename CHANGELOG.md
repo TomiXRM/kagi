@@ -5,11 +5,19 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Prepare the upstream dependency migration with native single-post selection coverage: exact giant-post rendered Unicode Copy, freshly painted mounted-post witnesses after reorder/prepend, and mounted partial → Select All → full Copy before the existing offscreen regression. This test-only preparation leaves the current selection implementation and offscreen/cross-post guarantees unchanged; their official-upstream cutover belongs to #1479-S6. (#1479-S3)
+- Document the in-tree terminal as Kagi-owned frontend, selection/copy, scrollback and PTY integration rather than a temporary fork. Retain gpui-terminal's upstream origin, MIT/Apache notices and official alacritty_terminal emulator; terminal behavior and dependency pins are unchanged. (#1479-S2)
+  - Remove stale registry-import metadata and the obsolete duplicate manifest so the owned package can be packaged; preserve its upstream source SHA in the README and retain both license files and attribution.
+
 ### Fixed
 
 - Diff geometry is now Kagi-owned across Main Diff, File History, PR diff/conflicts and Editor WIP/history, without depending on the patched GPUI list APIs. The shared virtual list retains actual distant measurements across unchanged reloads/recolor, reflows reading anchors, and resolves giant wheel and scrollbar-end requests against the true tail without eager `measure_all`. Native extent contracts retain all seven scenarios and add physical thumb and offscreen review-card update coverage. (#1479-S5C; ADR-0222)
   - Review: near-tail conflict jumps, shrinking reflow and review-card collapse refill the viewport from the real tail; same-count review-card reloads retain the reading slot and fractional position.
   - Re-review: explicit near-tail jumps keep their requested header visible when subsequent rows wrap beyond the estimated height; bottom alignment is decided only after measuring the requested region.
+- PR swimlane geometry uses GPUI's public uniform-list API for its fixed-height commit and elision rows. Shared list keyboard navigation accepts the existing row-scroll adapter directly; Branch Picker, Home Recent, Issue feed and restore inspection retain their current list geometry. This prepares the official-upstream migration without changing dependency pins. (#1479-S5A)
+  - Review: horizontal wheel gestures retain the lane rail's horizontal scrolling without moving the vertical row list.
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)
   - Review: invalidated opening reads retry even when no reload follows; Smart provider discovery starts independently of status publication; Amend waits for authoritative staged status, with English/Japanese unavailable help.
 - Home Recent items offer a localized “Remove from Recently Opened” context-menu action through right-click and Shift+F10/Menu. Removal persists only the history entry; repository/worktree files, Git state and open tabs remain unchanged. Empty history retains Open Folder. (#1567)
@@ -414,6 +422,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 - Home の絞り込み中に、一覧が不完全または古いにもかかわらず、一致する行が無いと「一致なし」と表示していた問題を修正しました。対象は、読み込みに失敗した一覧・上限で打ち切られた一覧・organization の読み込み中・Refresh の読み込み中(保存済みの一覧を表示している間を含む)・自分の一覧の読み直しに失敗して前回の一覧を表示している場合です。Repositories / Pull Request / Issue のいずれでも、絞り込み中も既存の失敗理由・「さらにあり」/「100 件以上」を残し、前回読めた一致行も表示します。「一致なし」は切り替え先ごとに判定し、他の切り替え先の失敗や打ち切りには影響されません。自分の一覧の読み直しに失敗したときは toast に加えて理由を一覧の先頭に表示し、再び失敗すれば新しい理由に置き換えます。この理由は絞り込みや切り替えでは消さず、次の読み込みが成功するかアカウントが変わるまで残します。「一致なし」は現在の読み込みがすべて完了したときだけ表示し、Refresh 後も絞り込みの文字列を保持します。一致判定・取得の上限・保存・アカウントの扱いは変更しません。native GUI E2E(Tier A)では、最初に追加した二つの回帰シナリオが修正前は両方 FAIL し、修正後は Home 周辺の既存 6 シナリオと合わせて 8 シナリオすべて PASS しました。review で追加した三つの回帰(読み直しの失敗・Repositories の Refresh 中・Pull Request / Issue の検索中)は修正前に三つとも FAIL し、修正後は同じ 6 シナリオと合わせて 9 シナリオすべて PASS しました。最終のソースでも 9 シナリオと 7 つの gate がすべて通過しています。default build の実アプリでも、合成した offline の `gh`(実際の GitHub の障害・SAML・アカウント切り替えではない)で、3 つの切り替え先の失敗・絞り込み・前回の一致行・読み込み中・成功後の回復、Repositories / Issues の打ち切り、切り替え先ごとの判定、理由の置き換え、アプリが保存した一覧からの起動中の絞り込みと読み込み完了後の「一致なし」を確認しました。アカウントが変わったときに理由が消えることはコードの確認のみです。(#1070)
 
 ### Changed
+
+- Adopt an official-upstream/public-API-first dependency policy and a staged zero-`[patch]` migration (#1479/#436). Existing pins remain unchanged in this policy-only slice; new fork commits/pins and reintroduced cosmetic patches are prohibited. Record the owner-approved move to official GPUI Kit's `gpui-pre` family and unmodified TextView/default selection scope: cross-post/offscreen conversation selection will no longer be a Kagi guarantee, while naturally supported mounted cross-view behavior is not prohibited. The runtime/oracle cutover remains [#1479-S6](docs/rearch/upstream-migration-1479.md).
 
 - Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 

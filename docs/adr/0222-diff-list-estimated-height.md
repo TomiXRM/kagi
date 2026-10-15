@@ -6,13 +6,13 @@
 
 ## 文脈
 
-可変高の diff list は全行を描画せずに必要な行だけを計測する。upstream GPUI の `list` は未計測行を高さ 0 として集計し、estimated-height API を持たないため、大きな diff の scrollbar が計測済み prefix だけを表し、大きなホイール入力でも実際の末尾に届かなかった。行の source identity を未変更 reload で交換すると、読んでいた位置も reset される。
+可変高の diff list は全行を描画せずに必要な行だけを計測する。upstream GPUI には `with_uniform_item_height` / `reset_with_uniform_height` / `measure_all` が既にある。しかし推定高さは初回layout/reset/splice/幅変更で保持されず、同値estimateの再設定もMeasured状態を失わせる（既知サイズhintまで全消去するわけではない）。このため大きな diff の推定extentと末尾到達が不安定だった。行の source identity を未変更 reload で交換すると、読んでいた位置も reset される。
 
 ## 当初の決定（2026-10-10、下記 #1479-S5C 改訂で supersede）
 
-1. 公開 fork [TomiXRM/zed](https://github.com/TomiXRM/zed/commit/caf5007618c309a8ea66002d44a9c9ab629a2d35) の `caf5007618c309a8ea66002d44a9c9ab629a2d35`（branch `fix/kagi-list-estimated-height`、base `90b3aa0b3bd3b453775b11a386907c7ac9acd997`）を pin する。upstream PR 待ちの Kagi list fix であり、同じ Zed source の sibling crates もこの rev に統一し、一時的な absolute path patch を残さない。
-2. `crates/kagi-ui-core/src/diff_list.rs` の `DiffListLayout::sync` から diff list だけが未計測行の推定高さと end intent に opt-in する。source / zoom / gutter の変更だけが reset を要求し、remeasure は位置を保つ。全行 eager render や第二の scroll model は作らない。
-3. thread の展開・折りたたみは measured nodes を splice する。PR の同じ選択の reload と Editor の未変更 reload は adopt / install により source identity を保持する。幅による reflow は行内の fractional anchor を保持する。
+1. 当時の決定として公開 fork [TomiXRM/zed](https://github.com/TomiXRM/zed/commit/caf5007618c309a8ea66002d44a9c9ab629a2d35) の `caf5007618c309a8ea66002d44a9c9ab629a2d35`（branch `fix/kagi-list-estimated-height`、base `90b3aa0b3bd3b453775b11a386907c7ac9acd997`）を pin した。同じ Zed source の22 sibling packagesを統一し、一時的なabsolute path patchを残さない。#1479調査時点で同等fixはofficial main/pre0.3.9に無く、TomiXRMのZed upstream PRも無い。「upstream PR待ち」は提出済みという意味ではない。
+2. `crates/kagi-ui-core/src/diff_list.rs` の `DiffListLayout::sync` が推定高さとend intentを使用する。diffだけでなくPR lane、Issue conversation/feed/pending thread、Inspector files、oplog restore inspectionの6 callsitesでも推定高さを使う。source / zoom / gutterの変更と位置を保つremeasureを区別する。
+3. thread の展開・折りたたみは measured nodes を splice する。PR の同じ選択の reload と Editor の未変更 reload は adopt / install により source identity を保持する。明示remeasure/estimate変更はproportional anchorを使うが、自動width-change枝はforkでもabsolute anchorであり、幅変更一般でfractional anchorを保証するわけではない。
 
 ## 帰結
 
@@ -152,3 +152,16 @@ Next の指定 header が paint 範囲外になって FAIL した。元の短い
 修正後は model **16/16 PASS**、native gate **18/18 PASS**、workspace
 **3,429 PASS / 44 ignored**。locked/plain build、clippy（新規警告なし）、
 fmt、CI check-all も再実行して PASS。
+## Amendment — 2026-10-15: fork解消方針（#1479）
+
+末尾intent補正はTop + Normalの下方向wheel/scroll_byに限る。
+Normal scrollbar dragにはfork自体も同等補正が無く、Tailは継続追従という別契約。
+上記の過去PASSはその受入範囲の記録であり、全scroll操作の証明ではない。
+
+[#1479-S5](../rearch/upstream-migration-1479.md)で固定slotは公式uniform list、可変高はKagi-owned共有geometryへ移し、
+#1479-S6でofficial package familyへ切り替えて22 entriesを除去する。
+公開Element/Scrollbar APIを使い、forkソースのコピーやgpui-preへのpatch移植はしない。
+production `measure_all` の採用は0とする。小規模なら常に安価とは仮定せず、
+既存7 native geometry oracleとthumb/resize/spliceの実測で受入れる。
+この文書改訂だけで実装・patch撤去・新たな検証が完了したとは扱わない。
+

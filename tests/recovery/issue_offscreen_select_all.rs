@@ -1,6 +1,7 @@
-//! #1091 physical SelectAll for a focused post after virtual-list unmount.
+//! #1091 offscreen fallback plus #1479-S3 mounted single-post positive coverage.
+//! The old offscreen oracle changes only at the atomic #1479-S6 cutover.
 use crate::issue_conversation_selection::support::*;
-use gpui::{point, px, VisualTestAppContext};
+use gpui::VisualTestAppContext;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -95,17 +96,43 @@ pub fn scenario_issue_conversation_offscreen_select_all(cx: &mut VisualTestAppCo
     load(cx, &app, win);
     let draft = cx.read(|cx| app.read(cx).issue_reply_draft_for_e2e(4));
 
-    let body = visible(cx, win, BODY).expect("GFM/Unicode body starts fully visible");
-    // Drag only the first visual paragraph. The next paragraph contains the
-    // Unicode/emphasis suffix, so this is not already an all-post select.
-    let first_line_end = point(body.right() - px(2.), body.top() + px(2.));
-    down(cx, win, start(body));
-    move_to(cx, win, first_line_end);
-    up(cx, win, first_line_end);
+    // Establish the mounted post's partial → full positive independently of the
+    // legacy offscreen fallback below. No injected selection or focus changes.
     assert_eq!(
-        copy(cx, win),
+        select_first_line(cx, win, BODY),
         PARTIAL,
         "physical drag selects exactly the first rendered paragraph, not the whole post"
+    );
+    visible(cx, win, BODY).expect("partial selection belongs to a freshly painted mounted body");
+    cx.simulate_keystrokes(win, "secondary-a");
+    assert_eq!(
+        copy(cx, win),
+        RENDERED,
+        "mounted Cmd-A/C copies exactly this post's rendered GFM/Unicode, not source or other posts"
+    );
+    visible(cx, win, BODY).expect("SelectAll leaves the same body mounted");
+    assert_eq!(
+        producer.requests(),
+        vec!["a"],
+        "mounted SelectAll/Copy does not ask the producer for another snapshot"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).issue_reply_draft_for_e2e(4)),
+        draft,
+        "mounted post commands leave the complete Reply draft unchanged"
+    );
+    assert_eq!(
+        RepositoryState::read(&repo),
+        unchanged,
+        "mounted post commands preserve repository and oplog state"
+    );
+
+    // Reset with a fresh physical partial drag, not with SDK state mutation.
+    // Otherwise an already-full range could make offscreen Cmd-A a vacuous pass.
+    assert_eq!(
+        select_first_line(cx, win, BODY),
+        PARTIAL,
+        "offscreen leg starts partial again after the mounted full-copy positive"
     );
 
     // Bounded physical wheel events only: no focus or model/selection mutation.

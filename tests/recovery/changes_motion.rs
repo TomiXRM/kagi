@@ -45,6 +45,61 @@ fn fill(cx: &mut VisualTestAppContext, window: AnyWindowHandle, index: usize) ->
     .unwrap()
 }
 
+/// Contrast comes from rasterized glyph cores against the actual native fill,
+/// not renderer colour metadata or an echo of the foreground selection formula.
+pub(crate) fn assert_native_ink_contrast(
+    cx: &mut VisualTestAppContext,
+    window: AnyWindowHandle,
+    background: [u8; 4],
+    ids: &[String],
+) {
+    let regions: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            (
+                id,
+                e2e::control_bounds(window.window_id(), id)
+                    .unwrap_or_else(|| panic!("missing native glyph region {id}")),
+            )
+        })
+        .collect();
+    let luminance = |pixel: [u8; 4]| {
+        let linear = |value: u8| {
+            let value = f64::from(value) / 255.;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(pixel[0]) + 0.7152 * linear(pixel[1]) + 0.0722 * linear(pixel[2])
+    };
+    let background = luminance(background);
+    cx.update_window(window, |_, window, _| {
+        let image = window.render_to_image().expect("native glyph contrast");
+        let scale = window.scale_factor();
+        for (id, bounds) in regions {
+            let left = (f32::from(bounds.left()) * scale) as u32;
+            let top = (f32::from(bounds.top()) * scale) as u32;
+            let width = (f32::from(bounds.size.width).min(24.) * scale) as u32;
+            let height = (f32::from(bounds.size.height) * scale) as u32;
+            let mut strongest: f64 = 1.;
+            for y in top..top + height {
+                for x in left..left + width {
+                    let ink = luminance(image.get_pixel(x, y).0);
+                    strongest =
+                        strongest.max((ink.max(background) + 0.05) / (ink.min(background) + 0.05));
+                }
+            }
+            assert!(
+                strongest >= 3.,
+                "{id}: actual native glyph contrast {strongest:.3}:1 < 3:1"
+            );
+        }
+    })
+    .unwrap();
+}
+
 fn select(cx: &mut VisualTestAppContext, panel: &Entity<CommitPanelView>, index: usize) {
     panel.update(cx, |panel, cx| {
         panel.state.selected_file =
@@ -337,15 +392,27 @@ fn foreground_motion(
             normal,
             "logical selection does not switch ink early"
         );
+        frame(cx, window, at + Duration::from_millis(287));
+        let background = fill(cx, window, fi);
+        assert_native_ink_contrast(
+            cx,
+            window,
+            background,
+            &[
+                format!("cp-us-file-label-{fi}"),
+                format!("cp-us-file-badge-{fi}"),
+            ],
+        );
         frame(cx, window, at + Duration::from_millis(340));
-        let mid = color();
-        let expected = normal.blend(theme::theme().selection_foreground(true).alpha(0.875));
-        let actual = mid.to_rgb();
-        let expected = expected.to_rgb();
-        assert!(
-            (actual.r - expected.r).abs() < 0.002
-                && (actual.g - expected.g).abs() < 0.002
-                && (actual.b - expected.b).abs() < 0.002
+        let background = fill(cx, window, fi);
+        assert_native_ink_contrast(
+            cx,
+            window,
+            background,
+            &[
+                format!("cp-us-file-label-{fi}"),
+                format!("cp-us-file-badge-{fi}"),
+            ],
         );
         frame(cx, window, at + Duration::from_millis(500));
         assert_eq!(color(), theme::theme().selection_foreground(true));

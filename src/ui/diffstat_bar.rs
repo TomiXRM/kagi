@@ -35,12 +35,35 @@ const SEG_W: f32 = 4.0;
 const SEG_H: f32 = 9.0;
 const SEG_GAP: f32 = 1.0;
 
+/// File-row ink keeps its settled styles; in flight, choose one opaque ink
+/// against the composited wash using the existing on-accent contrast policy.
+pub(super) fn file_selection_ink(
+    wash: f32,
+    window_active: bool,
+    background: gpui::Hsla,
+) -> Option<(gpui::Hsla, gpui::Hsla)> {
+    let palette = theme();
+    if wash <= 0. || !palette.selection_uses_on_accent(true, window_active) {
+        return None;
+    }
+    if wash >= 1. {
+        return Some((
+            palette.selection_foreground(window_active),
+            palette.selection_secondary_foreground(window_active),
+        ));
+    }
+    let ink = rgb(theme::on_accent_foreground(
+        u32::from(background.to_rgb()) >> 8,
+    ))
+    .into();
+    Some((ink, ink))
+}
+
 /// Build the trailing diffstat unit for one file row.
 ///
 /// `id_seed` must be unique within the parent list (e.g. the file index) so the
 /// tooltip's stateful element id does not collide.
-/// `selected_foreground` blends labels from their normal colour toward the
-/// selected colour by its wash fraction; bar segments retain their Git fills.
+/// `selected_foreground` overrides label ink; bar segments retain their Git fills.
 ///
 /// Returns a right-aligned, `flex_shrink_0` row element.  When `stat` is `None`
 /// (diffstat unavailable for this file), an empty spacer of the same width is
@@ -48,7 +71,7 @@ const SEG_GAP: f32 = 1.0;
 pub fn diffstat_unit(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<(gpui::Hsla, f32)>,
+    selected_foreground: Option<gpui::Hsla>,
 ) -> gpui::AnyElement {
     render_diffstat(id_seed, stat, selected_foreground, true)
 }
@@ -56,7 +79,7 @@ pub fn diffstat_unit(
 /// The same retained paint, without tooltip identities or input handlers.
 pub fn diffstat_unit_inert(
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<(gpui::Hsla, f32)>,
+    selected_foreground: Option<gpui::Hsla>,
 ) -> gpui::AnyElement {
     render_diffstat(0, stat, selected_foreground, false)
 }
@@ -64,20 +87,11 @@ pub fn diffstat_unit_inert(
 fn render_diffstat(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<(gpui::Hsla, f32)>,
+    selected_foreground: Option<gpui::Hsla>,
     interactive: bool,
 ) -> gpui::AnyElement {
     let t = theme();
-    let foreground = |normal| {
-        let normal = gpui::Hsla::from(rgb(normal));
-        selected_foreground.map_or(normal, |(selected, wash)| {
-            // Blend RGB and opacity separately so the selected secondary label
-            // still reaches its original translucent endpoint exactly.
-            normal
-                .blend(selected.alpha(wash))
-                .alpha(1. + (selected.a - 1.) * wash)
-        })
-    };
+    let foreground = |normal| selected_foreground.unwrap_or_else(|| gpui::Hsla::from(rgb(normal)));
     let base = gpui::div()
         .flex()
         .flex_row()

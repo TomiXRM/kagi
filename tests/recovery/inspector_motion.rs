@@ -91,6 +91,15 @@ fn inks(cx: &mut VisualTestAppContext, window: AnyWindowHandle, index: usize) ->
     })
 }
 fn assert_inks(actual: [gpui::Hsla; 3], wash: f32, active: bool) {
+    if active && wash > 0. && wash < 1. {
+        assert_eq!(
+            actual[0], actual[1],
+            "filename and badge share transient ink"
+        );
+        assert_eq!(actual[0], actual[2], "diffstat shares transient ink");
+        assert_eq!(actual[0].a, 1., "transient text is opaque");
+        return;
+    }
     let palette = theme::theme();
     let normal = [
         palette.text_main,
@@ -98,30 +107,16 @@ fn assert_inks(actual: [gpui::Hsla; 3], wash: f32, active: bool) {
         palette.change_added,
     ];
     for (index, (actual, normal)) in actual.into_iter().zip(normal).enumerate() {
-        let normal = gpui::Hsla::from(gpui::rgb(normal)).to_rgb();
-        let selected = if index == 2 {
-            palette.selection_secondary_foreground(true)
+        let expected = if active && wash >= 1. {
+            if index == 2 {
+                palette.selection_secondary_foreground(true)
+            } else {
+                palette.selection_foreground(true)
+            }
         } else {
-            palette.selection_foreground(true)
-        }
-        .to_rgb();
-        let wash = if active { wash } else { 0. };
-        let expected = [
-            normal.r + (selected.r - normal.r) * wash,
-            normal.g + (selected.g - normal.g) * wash,
-            normal.b + (selected.b - normal.b) * wash,
-            normal.a + (selected.a - normal.a) * wash,
-        ];
-        let actual = actual.to_rgb();
-        for (actual, expected) in [actual.r, actual.g, actual.b, actual.a]
-            .into_iter()
-            .zip(expected)
-        {
-            assert!(
-                (actual - expected).abs() < 0.002,
-                "foreground {index}, wash={wash}: {actual} != {expected}"
-            );
-        }
+            gpui::Hsla::from(gpui::rgb(normal))
+        };
+        assert_eq!(actual, expected, "settled foreground {index}, wash={wash}");
     }
 }
 fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
@@ -190,6 +185,18 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         "wash starts continuously"
     );
     assert_inks(inks(cx, window, a), 0., true);
+    frame(cx, window, t + Duration::from_millis(37));
+    let background = fill(cx, window, a);
+    crate::changes_motion::assert_native_ink_contrast(
+        cx,
+        window,
+        background,
+        &[
+            format!("inspector-file-name-{a}"),
+            format!("inspector-file-badge-{a}"),
+            format!("diffstat-additions-{a}"),
+        ],
+    );
     frame(cx, window, t + Duration::from_millis(60));
     let mid = fill(cx, window, a);
     // 60ms of the shared 180ms OutCubic wash is 1 - (2/3)^3.

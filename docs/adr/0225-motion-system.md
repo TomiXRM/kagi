@@ -183,3 +183,20 @@ the existing activation-input seam after #1591. Its isolated oracle repair
 marks that window active for tooltip lifetime only; the full-path and painted
 tooltip assertions and production cancellation behavior remain unchanged.
 
+
+### In-flight file-row contrast correction
+
+Actual key-window Tier B showed that linearly interpolating normal and on-accent
+ink creates unreadable gray glyphs on the partially composited blue wash.
+Changes and Inspector therefore keep their exact normal and selected endpoint
+styles, but choose one opaque primary/status/diffstat ink during the transition
+using the existing on-accent 3:1 policy against the composited row background.
+This is a presentation-only colour decision; the wash and semantic selection
+continue unchanged. Diffstat bars keep their existing Git encoding.
+
+The native frozen-clock regression samples rasterized glyph cores and real
+row-fill pixels around the half-wash frame; renderer colour metadata and an echo
+of the interpolation formula are not contrast evidence. Both old surfaces
+failed that oracle at 1.943:1 before this correction. The original active-window
+frame38 contact sheet is retained as the visual before-failure.
+

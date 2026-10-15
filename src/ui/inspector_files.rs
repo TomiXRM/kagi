@@ -645,18 +645,14 @@ fn file_content(
     let index = row.index;
     let file = &row.source.files[index];
     let (badge, color, _) = status_badge(Some(&file.change), false);
-    // Intent/AX changes immediately; every painted foreground follows the same
-    // reversible wash, including a row that is already semantically deselected.
-    let selection_on_accent = theme().selection_uses_on_accent(true, presentation.active);
-    let foreground = selection_on_accent.then(|| {
-        (
-            theme().selection_secondary_foreground(presentation.active),
-            wash,
-        )
-    });
-    let primary = theme()
-        .selection_foreground(presentation.active)
-        .alpha(wash);
+    // Intent/AX changes immediately. In-flight labels share readable opaque
+    // ink; settled primary/secondary styles remain exactly as before.
+    let mut fill = theme().selected_for_window(presentation.active);
+    fill.a *= wash;
+    let background = gpui::Hsla::from(rgb(theme().panel)).blend(fill);
+    let ink = super::diffstat_bar::file_selection_ink(wash, presentation.active, background);
+    let primary = ink.map(|(primary, _)| primary);
+    let foreground = ink.map(|(_, secondary)| secondary);
     let label = gpui::Hsla::from(rgb(theme().text_main));
     let badge_color = gpui::Hsla::from(rgb(color));
     let stat = if probes {
@@ -670,8 +666,6 @@ fn file_content(
     } else {
         stat.into_any_element()
     };
-    let mut fill = theme().selected_for_window(presentation.active);
-    fill.a *= wash;
     div()
         .relative()
         .flex()
@@ -688,11 +682,7 @@ fn file_content(
                 .w(theme::scaled_px(16.))
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-                .text_color(if selection_on_accent {
-                    badge_color.blend(primary)
-                } else {
-                    badge_color
-                })
+                .text_color(primary.unwrap_or(badge_color))
                 .child(SharedString::from(badge))
                 .when(cfg!(feature = "gui-e2e") && probes, |badge| {
                     badge.relative().child(super::e2e::measure_inside(format!(
@@ -705,11 +695,7 @@ fn file_content(
                 .flex_1()
                 .min_w(px(0.))
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
-                .text_color(if selection_on_accent {
-                    label.blend(primary)
-                } else {
-                    label
-                })
+                .text_color(primary.unwrap_or(label))
                 .truncate()
                 .child(row.name.clone())
                 .when(cfg!(feature = "gui-e2e") && probes, |name| {

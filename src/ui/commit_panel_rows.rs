@@ -123,19 +123,6 @@ fn render_cp_file_row(
     } else {
         view.file_motion[staged as usize].selection(&file.path)
     };
-    let selection_on_accent = theme().selection_uses_on_accent(true, window_active);
-    let foreground = |normal| {
-        let base: gpui::Hsla = rgb(normal).into();
-        if selection_on_accent {
-            base.blend(
-                theme()
-                    .selection_foreground(window_active)
-                    .alpha(selection_wash),
-            )
-        } else {
-            base
-        }
-    };
     let row_bg: gpui::Hsla = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else {
@@ -144,6 +131,8 @@ fn render_cp_file_row(
         wash.a *= selection_wash;
         base.blend(wash)
     };
+    let ink = diffstat_bar::file_selection_ink(selection_wash, window_active, row_bg);
+    let foreground = |normal| ink.map_or_else(|| rgb(normal).into(), |(primary, _)| primary);
     let mut file_row = div()
         .id((row_id, fi))
         .map(|el| {
@@ -196,7 +185,13 @@ fn render_cp_file_row(
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
                 .text_color(foreground(badge_color))
-                .child(SharedString::from(badge)),
+                .child(SharedString::from(badge))
+                .when(cfg!(feature = "gui-e2e"), |badge| {
+                    badge.relative().child(super::e2e::measure_inside(format!(
+                        "cp-{}-file-badge-{fi}",
+                        if staged { "st" } else { "us" }
+                    )))
+                }),
         )
         .child(
             div()
@@ -259,12 +254,7 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
-            selection_on_accent.then(|| {
-                (
-                    theme().selection_secondary_foreground(window_active),
-                    selection_wash,
-                )
-            }),
+            ink.map(|(_, secondary)| secondary),
         ));
     file_row = super::commit_panel_navigation::file_row(
         view,

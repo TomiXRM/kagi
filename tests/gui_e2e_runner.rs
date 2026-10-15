@@ -3465,6 +3465,7 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             ("compact_rail_cmd_f", Box::new(crate::compact_rail::scenario_compact_rail_cmd_f)),
+            ("compact_rail_nested_escape", Box::new(crate::compact_rail::escape::scenario_compact_rail_nested_escape)),
             ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),

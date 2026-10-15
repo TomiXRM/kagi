@@ -73,3 +73,38 @@ Input naming oracles inspect the native AX tree's actual focused TextInput or
 MultilineTextInput. The IME regression also covers a real toolbar PopupMenu's
 Escape and button-focused editing-action isolation (#1554). This is preparation
 for the official dependency cutover, not that cutover.
+
+### Nested Popover Escape audit (#1479-S4)
+
+A containing kit Popover consumes its `Cancel`; a Kagi-owned child must not
+rely on the shallower workspace fallback to dismiss first. The co-author
+ListBox now binds Escape in `KagiCoauthorMenu` to its existing dismiss action:
+clear `coauthor_menu`, reconcile navigation, and restore `cp-coauthor` focus.
+The Worktree inspection card similarly binds Escape in `WorktreeInspection`
+to its existing row-local `CloseMainDiff` handler. Neither path dismisses the
+containing composer/navigator or retains a hidden child owner.
+
+The application has four explicit `Popover::new` host families (no additional
+constructors in the UI crates). Their child/front-layer routes are:
+
+| Host / child | Escape owner and result |
+| --- | --- |
+| Compact composer / co-author ListBox | `KagiCoauthorMenu` → `CoauthorDismiss`; retire menu, restore trigger, keep composer and draft. |
+| Compact composer / title or body Input | Input handles completion/composition first; root composition boundary prevents a second binding; ordinary unhandled Escape reaches containing Popover. |
+| Compact composer / file context menu, commit plan, Smart Commit | These are root/front-layer overlays, not composer descendants; existing named menu/modal routing owns dismissal. |
+| Compact rail local/remote/tags/stashes / filter or tree rows | Input handles composition first; otherwise Popover closes the navigator. Compact filtering intentionally preserves query on close, unlike desktop clear-first Escape. |
+| Compact rail Worktrees / inspection card | `WorktreeInspection` → row-local `CloseMainDiff`; retire card and restore row, keep navigator. Local compact activation instead opens the repository (`select_worktree`); only the remote-view fallback retains keyboard inspection. Desktop inspection uses this same scoped handler without a Popover ancestor. |
+| Compact rail / branch, remote, tag, stash or worktree context menu | Rendered as root overlays by `menu_overlay`; existing `KagiMenu` → `MenuEscape` closes submenu/menu first and returns to its origin. |
+| Compact rail PRs/Issues / title filter, category tabs or rows | Input composition first; otherwise containing Popover dismissal. These lists do not introduce an inner popup owner. |
+| Compact rail PRs/Issues / filter-option or PR context menu | Root overlays (`render_overlay` / `list_filter_strip::render_menu`), with existing `KagiMenu` Escape. They are not descendants of the navigator Popover. |
+| Toolbar overflow / kit PopupMenu | Deeper kit PopupMenu Escape dismisses the menu; existing callback synchronizes its Popover and trigger focus. |
+| Repository-tab overflow / kit PopupMenu | Same kit PopupMenu-first route; existing callback synchronizes the tab-overflow host. |
+| Settings theme Select | Kit Select popup consumes first Escape; next Escape closes Settings via its existing owner route. Settings is not an explicit Popover host. |
+
+Regression coverage includes `compact_layout_state` and
+`compact_layout_state_tall` (existing co-author owner/focus/draft assertions),
+plus `compact_rail_nested_escape` for context-menu then navigator dismissal in
+EN/JA, light/dark and 100%/167%, and `sidebar_rows` for inspection focus return.
+Run all `compact_`
+filters alongside the input boundary and workspace gates; deferred paint
+placement alone does not change the element's action ancestry.

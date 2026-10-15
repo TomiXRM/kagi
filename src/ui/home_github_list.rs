@@ -420,6 +420,7 @@ pub(super) fn search_field(input: &Entity<InputState>) -> AnyElement {
         .border_color(rgb(theme().surface))
         .child(
             Input::new(input)
+                .context_menu(kagi_ui_core::input::context_menu(input, false))
                 .aria_label(Msg::A11yHomeFilter.t())
                 .appearance(false)
                 .cleanable(true)

@@ -3,7 +3,7 @@
 use gpui::{
     div, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Element, ElementId, Entity,
     GlobalElementId, InspectorElementId, IntoElement, LayoutId, ParentElement as _, Pixels, Render,
-    RenderOnce, SharedString, StatefulInteractiveElement, Subscription, Window,
+    RenderOnce, SharedString, StatefulInteractiveElement, Styled as _, Subscription, Window,
 };
 use gpui_component::tooltip::Tooltip;
 
@@ -161,7 +161,10 @@ impl Render for HoverHelp {
             bounds.contains(&window.mouse_position()),
         );
         // Reactivation or moving back must not resurrect stale help.
-        div().children((!self.cancelled).then(|| self.content.clone()))
+        // GPUI prepaints tooltips as separate roots, outside the window Root's font scope.
+        div()
+            .font(crate::fonts::ui_font())
+            .children((!self.cancelled).then(|| self.content.clone()))
     }
 }
 
@@ -231,16 +234,16 @@ mod lifetime_tests {
 #[cfg(all(test, feature = "gui-e2e"))]
 mod tests {
     use super::*;
-    use gpui::{
-        point, px, InteractiveElement as _, Styled as _, TestAppContext, VisualTestContext,
-    };
+    use gpui::{point, px, InteractiveElement as _, TestAppContext, VisualTestContext};
     use std::{cell::Cell, rc::Rc, time::Duration};
 
     struct Content(Rc<Cell<usize>>);
     impl Render for Content {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             self.0.set(self.0.get() + 1);
-            div().child("Hover help")
+            div()
+                .child("Hover help")
+                .child(crate::fonts::e2e::probe("tooltip-test"))
         }
     }
 
@@ -264,6 +267,23 @@ mod tests {
         cx.update(|window, cx| {
             window.refresh();
             window.draw(cx).clear();
+        });
+    }
+
+    #[gpui::test]
+    fn tooltip_supplies_japanese_fallback_without_root(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Trigger(Rc::new(Cell::new(0)), px(0.)));
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        draw(cx);
+        cx.simulate_mouse_move(point(px(50.), px(50.)), None, Default::default());
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        draw(cx);
+        cx.update(|window, _| {
+            let font = crate::fonts::e2e::take(window.window_handle().window_id(), "tooltip-test")
+                .expect("the detached tooltip content was prepainted");
+            assert_eq!(font, crate::fonts::ui_font());
         });
     }
 

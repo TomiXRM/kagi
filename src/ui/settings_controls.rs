@@ -376,6 +376,7 @@ pub(super) fn smart_consent_alert(
         cancel.clone(),
     )
     .focus_trap("settings-smart-consent-alert", &alert.focus)
+    .key_context("KagiCancelDialog")
     .on_action(move |_: &super::CloseMainDiff, window, cx| {
         cancel(window, cx);
         cx.stop_propagation();

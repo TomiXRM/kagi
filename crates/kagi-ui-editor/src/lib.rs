@@ -96,6 +96,8 @@ pub enum EditorWorkspaceEvent {
     SaveBlocked,
     /// The background save write failed → host toasts + footer.
     SaveFailed { path: PathBuf, error: String },
+    /// The saved bytes have been applied to their owning buffer.
+    Saved,
     /// Load the working-tree file list for `source` (needs `Backend`); seed
     /// the result via `seed_files(generation, …)`.
     FilesRequested { generation: u64, source: TreeSource },
@@ -969,6 +971,36 @@ impl EditorWorkspaceView {
     /// must cover backgrounded tabs too.
     pub fn any_dirty(&self) -> bool {
         self.dirty || self.tab_cache.values().any(|b| b.dirty)
+    }
+
+    pub fn dirty_buffer_count(&self) -> usize {
+        usize::from(self.dirty)
+            + self
+                .tab_cache
+                .values()
+                .filter(|buffer| buffer.dirty)
+                .count()
+    }
+
+    /// Save the next unsaved file using the ordinary conflict-aware save path.
+    /// Retained tabs already own their Input; no disk reload replaces their text.
+    pub fn save_next_dirty(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.dirty {
+            let Some(path) = self
+                .open_tabs
+                .iter()
+                .find(|path| self.tab_dirty(path))
+                .cloned()
+            else {
+                return false;
+            };
+            self.activate_tab(path, cx);
+        }
+        if self.open_path.is_none() || self.editor.is_none() {
+            return false;
+        }
+        self.save(cx);
+        true
     }
 
     /// Whether any dirty open tab would be closed by deleting `path`.
@@ -1847,6 +1879,7 @@ impl EditorWorkspaceView {
                     // highlight-only, so the diff refresh runs explicitly in
                     // `apply_saved`).
                     v.start_load(cx);
+                    cx.emit(EditorWorkspaceEvent::Saved);
                     cx.notify();
                 }
                 SaveOutcome::Conflict => {
@@ -3299,6 +3332,7 @@ fn render_center_pane(
                 // (user-reported). `appearance(false)` / `bordered(false)`
                 // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
+                    .context_menu(kagi_ui_core::input::context_menu(&editor, false))
                     .aria_label(Msg::A11yEditorFileContents.t())
                     .appearance(false)
                     .bordered(false)

@@ -17,6 +17,8 @@ Kagi: `https://github.com/TomiXRM/kagi/blob/c0a4ea3ab6b3dc6aa68c2fdb2c379a4eefd5
 Kit: `https://github.com/longbridge/gpui-component/blob/1188c11003b5cb5b83bc07d3fb9112e7674fbfa7/<path>#L<line>`。
 ローカルの全 `file:line` は上記 SHA に対応する。調査後 dev が進んだら、実装開始時に line mapping と衝突箇所のみ再確認し、既存の新しい変更を上書きしない。
 
+- Upstream API candidate (#1606): let `SearchPanel` forward a host-supplied context-menu builder or locale to its internal Find/Replace `Input`s; until a public API exists, those fields retain gpui-kit’s default English menu while Kagi-rendered fields use the shared localized builder (no fork/pin changes).
+
 ### 全 slice 共通の merge 規則
 
 1. regression は **同じ PR 内で先に書く**（必要なら手元で red→green）。失敗するテストだけを dev に merge しない。挙動変更・テスト oracle・ADR/changelog を一つの green merge unit にする。

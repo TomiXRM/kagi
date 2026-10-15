@@ -386,3 +386,92 @@ fn create_branch_with_return(
     assert!(!git_fixture::git_output(repo, &["branch", "--list", "safe"]).is_empty());
     drop(input);
 }
+
+pub fn scenario_modal_command_period(cx: &mut VisualTestAppContext) {
+    use gpui::Focusable;
+    use gpui_component::WindowExt;
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = kagi_git::CommitId(git_fixture::git_output(repo, &["rev-parse", "HEAD"]));
+    let (app, window) = crate::input_context_menus::mount_at(cx, repo, 1000.);
+    for key in ["cmd-.", "escape"] {
+        app.update(cx, |app, cx| app.open_create_branch_modal(head.clone(), cx));
+        paint(cx, window);
+        let input = cx.read(|cx| {
+            app.read(cx)
+                .create_branch_modal()
+                .unwrap()
+                .input_state
+                .clone()
+                .unwrap()
+        });
+        cx.update_window(window, |_, window, cx| {
+            window.focus(&input.read(cx).focus_handle(cx), cx);
+            window.refresh();
+            window.draw(cx).clear();
+            assert!(window.has_focused_input(cx));
+        })
+        .unwrap();
+        cx.simulate_keystrokes(window, key);
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(
+            cx.read(|cx| app.read(cx).create_branch_modal().is_none()),
+            "{key} must cancel Create Branch with focus in its name field"
+        );
+        drop(input);
+    }
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS modal_command_period");
+}
+
+pub fn scenario_input_context_menu_locale(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::{i18n::Lang, input};
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["lang"]);
+    let fixture = build_fixture();
+    let repo = fixture.path();
+    let head = kagi_git::CommitId(git_fixture::git_output(repo, &["rev-parse", "HEAD"]));
+    let (app, window) = crate::input_context_menus::mount_at(cx, repo, 1000.);
+    app.update(cx, |app, cx| {
+        app.set_lang(Lang::Ja, cx);
+        app.open_create_branch_modal(head, cx);
+    });
+    paint(cx, window);
+    crate::native_ax::activate(cx);
+    cx.update_window(window, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
+    input::capture_next_menu_for_e2e();
+    let bounds = kagi::ui::e2e::control_bounds(window.window_id(), "input-modal-field")
+        .expect("Create Branch name field");
+    cx.simulate_mouse_down(
+        window,
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        window,
+        bounds.center(),
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let menu =
+        input::take_menu_for_e2e().expect("right-click must produce Kagi's localized menu model");
+    let labels: Vec<_> = menu
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            gpui::MenuItem::Action { name, .. } => Some(name.as_ref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(labels, ["カット", "コピー", "ペースト", "すべてを選択"]);
+    cx.simulate_keystrokes(window, "escape");
+    cx.run_until_parked();
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS input_context_menu_locale");
+}

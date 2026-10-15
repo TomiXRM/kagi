@@ -313,6 +313,11 @@ pub(super) struct SidebarMotion {
 }
 
 impl SidebarPaneMotion {
+    pub(super) fn clear_focus_motion(&mut self) {
+        self.selected = None;
+        self.washes.clear();
+    }
+
     pub fn row_sample(&self, position: usize, row_h: gpui::Pixels) -> motion::RowSample {
         let Some(key) = self.keys.get(position) else {
             return motion::RowSample {
@@ -484,8 +489,7 @@ impl SidebarState {
     /// Hidden/replaced lists do not paint, so they cannot retire a stale ring.
     pub(super) fn clear_focus_motion(&self) {
         for pane in &mut self.motion.borrow_mut().panes {
-            pane.selected = None;
-            pane.washes.clear();
+            pane.clear_focus_motion();
         }
     }
 

@@ -195,3 +195,9 @@ Virtual-list processors do not run while away, so deferring that reset until a
 row is painted would replay an obsolete ring on the first returning frame.
 Frozen-clock native coverage checks immediate focus evacuation and unfocused
 Metal ring pixels on return through all four paths (PR #1621 review).
+
+The same lifetime rule applies inside the compact rail: skip-reset every Git
+pane that is not the visible popup, and clear all Git rings when the popup is
+PRs or Issues. The rail itself remaining front does not keep its replaced
+pane's focus presentation alive. Native coverage returns Local → Remote → Local
+and Local → PRs/Issues → Local without replaying the skipped pane's ring.

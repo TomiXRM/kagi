@@ -295,6 +295,9 @@ pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {
 
 fn fill(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> [u8; 4] {
     let bounds = e2e::control_bounds(window.window_id(), id).expect("native row bounds");
+    let name = id.strip_prefix("sidebar-local-").expect("local branch row");
+    let ring = sidebar::sidebar_motion_for_e2e(0, &format!("branch:{name}"), "ring")
+        .expect("painted native ring geometry");
     cx.update_window(window, |_, window, _| {
         let image = window
             .render_to_image()
@@ -302,8 +305,8 @@ fn fill(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> [u8
         let scale = window.scale_factor();
         image
             .get_pixel(
-                ((f32::from(bounds.left()) - 1.) * scale) as u32,
-                ((f32::from(bounds.top()) + f32::from(bounds.size.height) / 2.) * scale) as u32,
+                (f32::from(bounds.center().x) * scale) as u32,
+                ((ring.y + 1.) * scale) as u32,
             )
             .0
     })
@@ -454,16 +457,87 @@ pub fn scenario_sidebar_tree_focus_return_motion(cx: &mut VisualTestAppContext) 
             "{departure}: first returning unfocused row must not replay its old ring: {}",
             ring.opacity
         );
-        assert!(
-            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
-            "{departure}: returning native ring pixels must match the unfocused baseline"
-        );
+        if departure != "view.toggleSidebar" {
+            assert!(
+                distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
+                "{departure}: returning native ring pixels must match the unfocused baseline"
+            );
+        }
         frame(cx, &app, window, t + Duration::from_millis(775));
+        let ring = sidebar::sidebar_motion_for_e2e(0, "branch:main", "ring").unwrap();
         assert!(
-            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
-            "{departure}: unfocused row must not fade an obsolete ring"
+            ring.opacity <= f32::EPSILON,
+            "{departure}: unfocused row must not fade an obsolete ring: {}",
+            ring.opacity
         );
         t += Duration::from_millis(1100);
+        frame(cx, &app, window, t);
+        // The View toggle translates the whole sidebar while it opens: its
+        // left-border pixel is comparable only once that clip has settled.
+        assert!(
+            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
+            "{departure}: settled native pixels must match the unfocused baseline"
+        );
+    }
+    unmount(cx, app, window);
+}
+
+pub fn scenario_sidebar_tree_compact_focus_return_motion(cx: &mut VisualTestAppContext) {
+    let _settings = Settings::capture();
+    let _reduce_setting = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _motion = MotionGuard(theme::reduce_motion());
+    let _offline = crate::pr_fields_focus::OfflineGh::with_script("#!/bin/sh\nexit 1\n");
+    theme::set_reduce_motion(false);
+    let fixture = build_fixture();
+    git(
+        fixture.path(),
+        &["update-ref", "refs/remotes/origin/feature", "HEAD"],
+    );
+    let (app, window) = mount_dimensions(cx, fixture.path(), (940., 660.));
+    appearance(
+        cx,
+        &app,
+        window,
+        kagi_ui_core::i18n::Lang::En,
+        "apple-light",
+        1.,
+        0,
+    );
+    let mut t = Instant::now();
+    frame(cx, &app, window, t);
+    click(cx, &app, window, "compact-rail-local");
+    let plain = fill(cx, window, "sidebar-local-main");
+    for destination in [
+        "compact-rail-remote",
+        "compact-rail-prs",
+        "compact-rail-issues",
+    ] {
+        cx.simulate_keystrokes(window, "f19");
+        support::focus(cx, &app, window, 0, "branch:main");
+        frame(cx, &app, window, t + Duration::from_millis(300));
+        let selected = fill(cx, window, "sidebar-local-main");
+        let departing = sidebar::sidebar_motion_for_e2e(0, "branch:main", "ring").unwrap();
+        assert!(
+            distance(selected, plain) > 12,
+            "{destination}: compact ring precondition: plain={plain:?}, selected={selected:?}, ring={departing:?}"
+        );
+        click(cx, &app, window, destination);
+        frame(cx, &app, window, t + Duration::from_millis(301));
+        assert!(support::focused(cx, &app, window).is_none_or(|(pane, _)| pane != 0));
+        click(cx, &app, window, "compact-rail-local");
+        frame(cx, &app, window, t + Duration::from_millis(302));
+        let ring = sidebar::sidebar_motion_for_e2e(0, "branch:main", "ring")
+            .expect("returning compact row paints its presentation");
+        assert!(
+            ring.opacity <= f32::EPSILON,
+            "{destination}: compact return must not replay its skipped pane's ring: {}",
+            ring.opacity
+        );
+        assert!(
+            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
+            "{destination}: compact return paints the unfocused native baseline"
+        );
+        t += Duration::from_millis(600);
         frame(cx, &app, window, t);
     }
     unmount(cx, app, window);

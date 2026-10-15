@@ -281,11 +281,13 @@ impl KagiApp {
         let compact_open = super::compact_sidebar::is_open(window, cx);
         let compact_pane = super::compact_sidebar::active_pane(window, cx);
         if compact_open && compact_pane.is_none() {
+            self.sidebar.clear_focus_motion();
             self.yield_sidebar_focus(window, cx);
             return;
         }
         for pane in 0..PANES {
             if compact_open && compact_pane != Some(pane) {
+                self.sidebar.motion.borrow_mut().panes[pane].clear_focus_motion();
                 self.sidebar.focus.lists[pane] = None;
                 continue;
             }

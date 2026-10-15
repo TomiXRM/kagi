@@ -132,6 +132,7 @@ fn graph_tooltips(
     row: gpui::Bounds<gpui::Pixels>,
     subject: gpui::Bounds<gpui::Pixels>,
 ) {
+    let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
     for (i, expected) in expected.iter().enumerate() {
         // Flush dismissal before entering another row; tooltip entities are
         // retained between renders while the pointer remains inside a target.

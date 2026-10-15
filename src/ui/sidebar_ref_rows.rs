@@ -484,19 +484,20 @@ pub(super) fn with_keyboard_group_reveal(
         .when(cfg!(feature = "gui-e2e"), |el| {
             el.child(super::e2e::measure_inside(format!("{id}-reveal")))
         });
-    el.on_action(cx.listener(|app, _: &super::CloseMainDiff, _w, cx| {
-        app.sidebar.focus.group_reveal = None;
-        cx.notify();
-    }))
-    .child(gpui::deferred(
-        gpui::anchored()
-            .position_mode(gpui::AnchoredPositionMode::Local)
-            .position(gpui::point(
-                // RowList's transparent focus border is always in the layout.
-                theme::scaled_px(app.pane_fit.sidebar) - gpui::px(super::keyboard_nav::RING),
-                gpui::px(0.),
-            ))
-            .snap_to_window_with_margin(gpui::px(8.))
-            .child(card),
-    ))
+    el.key_context("KagiRowList KagiSidebarPaneRows SidebarGroupReveal")
+        .on_action(cx.listener(|app, _: &super::CloseMainDiff, _w, cx| {
+            app.sidebar.focus.group_reveal = None;
+            cx.notify();
+        }))
+        .child(gpui::deferred(
+            gpui::anchored()
+                .position_mode(gpui::AnchoredPositionMode::Local)
+                .position(gpui::point(
+                    // RowList's transparent focus border is always in the layout.
+                    theme::scaled_px(app.pane_fit.sidebar) - gpui::px(super::keyboard_nav::RING),
+                    gpui::px(0.),
+                ))
+                .snap_to_window_with_margin(gpui::px(8.))
+                .child(card),
+        ))
 }

@@ -56,6 +56,56 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
+For #1479-S4 use
+`KAGI_GUI_E2E_ONLY='sidebar_,input_names_inventory,input_ime_escape_boundaries,settings_,commit_panel_body_focus,compact_'`
+with KEEP_GOING and a 300-second scenario timeout. Activate the native adapter
+with `native_ax::activate`, then refresh and draw before inspecting its tree.
+Naming assertions inspect `nodes[gpui_focus].aria.role/label`, not wrapper Groups
+or the fork's rendered-Input recorder. The sidebar Clear tests cover localized
+AppKit Press and pointer activation, empty absence and retained field focus.
+IME coverage calls the public marked-text handler in Sidebar, Commit body,
+Issue body and independent Settings, then dispatches Escape. This is native
+action-routing evidence, not physical macOS input-method or VoiceOver evidence.
+The old pin's Input action consumes IME Escape, but Kagi's negation-only global
+binding intercepted Commit/Issue body keys first. Preserve the regression's
+physical simulated Escape, rather than replacing it with direct action dispatch.
+The same scenario opens the real toolbar PopupMenu and checks one Escape closes
+only that menu (#1554), plus button-focused editing-action isolation. Both
+TextInput and MultilineTextInput are real AX input roles; unrelated root focus
+stops need not have a semantic AX node.
+The `compact_` gate includes `compact_layout_state` and
+`compact_layout_state_tall`: Escape in the co-author ListBox must retire its
+owner and restore `cp-coauthor`, not dismiss the containing composer.
+`compact_rail_nested_escape`, `compact_pr_menu_escape` and
+`compact_group_reveal_escape` check child-menu/reveal dismissal before the
+navigator, preserving opener focus. The complete Popover ancestry audit is in
+ADR-0014's #1479-S4 amendment.
+For #1479-S1 use `KAGI_GUI_E2E_ONLY='terminal_,status_bar_,relative_time_ja,cleanup_local_date,oplog_row_typography,issues_row_secondary_text,finder_scale_rest,home_heading,inspector_scale'`
+with KEEP_GOING. `terminal_font_fallback` checks real terminal configuration,
+font/zoom updates, session changes and restart, with Regular/Bold Japanese face
+references and terminal two-cell/cursor state. The native measurement probes
+carry the same explicit fallback as production shaping.
+
+Linux is an independent required lane, not a macOS substitute. Run
+`cargo test -p kagi-ui-core linux_cosmic_text_uses_bundled_fallback_for_regular_and_bold -- --nocapture`
+on Linux; it uses real CosmicTextSystem with system fonts disabled and compares
+each Han glyph's selected face to explicit Noto Sans JP. For a real Nerd primary,
+set `KAGI_TEST_NERD_FONT_REGULAR` and `KAGI_TEST_NERD_FONT_BOLD` to readable
+JetBrainsMono Nerd Font Mono static files, then run
+`cargo test -p kagi-ui-core linux_cosmic_text_nerd_primary_preserves_icons_and_japanese_fallback -- --ignored --nocapture`.
+That explicit lane fails if the font files are absent. Retain the actual Linux
+logs, architecture and tested commit; do not count the ignored default as PASS.
+In an isolated container with Noto CJK SC/JP installed, run
+`cargo test -p kagi-ui-core linux_cosmic_text_system_fonts_preserve_explicit_japanese_fallback -- --ignored --nocapture`
+in separate `LANG=ja_JP.UTF-8` and `LANG=en_US.UTF-8` processes. This test
+requires both competing families to be present and compares selected faces
+against the same bundled JP reference; it is shaping evidence, not a capture.
+The separate native acceptance in `docs/rearch/upstream-migration-1479.md`
+still requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
+X11/Wayland where available, terminal/reference images and the other UI shaping
+surfaces. Never delete a user's fonts or change host fontconfig. Keep the cosmic
+patch until those Linux requirements have observed evidence.
+
 For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
 `update_notice_in_flight` queues an installer completion with
 `e2e::queue_update_install` before clicking the real Update now button; it
@@ -558,6 +608,10 @@ For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport
 The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
 100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
 non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
+The 940px compact dashboard retains its rail while Cmd-B changes the shared
+Sidebar preference; the 1440px desktop dashboard toggles its inline Sidebar.
+Both zooms use the same 1000-logical-pixel breakpoint (ADR-0224), and neither
+viewport is substituted to satisfy the old inline-only oracle.
 X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
 records explicit rendered border styles for table
 rows/header and palette frame/divider; it is not a screenshot-pixel sample.

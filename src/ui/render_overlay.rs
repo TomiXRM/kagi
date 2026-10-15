@@ -92,6 +92,7 @@ impl gpui::Render for toast_stack::ToastStack {
             .flex()
             .flex_col()
             .gap_2()
+            .min_h_0()
             .max_h(budget)
             .child(e2e::measure_inside("toast-stack"));
         #[cfg(feature = "gui-e2e")]
@@ -817,8 +818,10 @@ impl KagiApp {
                             el.child(render_pr_menu_overlay(
                                 pr,
                                 pos,
-                                window.viewport_size(),
+                                self.ui().pr_menu_keys.clone(),
+                                self.active_session(),
                                 self.window_active,
+                                window,
                                 cx,
                             ))
                         },

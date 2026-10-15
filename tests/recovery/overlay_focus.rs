@@ -453,6 +453,12 @@ pub fn scenario_settings_close_returns_focus(cx: &mut VisualTestAppContext) {
         );
         if close_by == "escape" {
             keys(cx, window, "escape");
+            assert!(
+                cx.read(|cx| app.read(cx).menu_overlay.is_some()),
+                "the open theme picker consumes Escape before Settings"
+            );
+            // #1479-S4: popup Escape wins over the workspace fallback.
+            keys(cx, window, "escape");
         } else {
             // While the picker's list is open, a click outside it only
             // dismisses the list (the picker keeps focus), so × may take a

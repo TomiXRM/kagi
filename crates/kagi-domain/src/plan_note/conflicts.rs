@@ -115,6 +115,41 @@ impl ConflictsNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            ConflictsNote::ObservationChanged => {
+                crate::advice_template_display_en!(ConflictsObservationChanged).into()
+            }
+            ConflictsNote::PlanChanged => {
+                crate::advice_template_display_en!(ConflictsPlanChanged).into()
+            }
+            ConflictsNote::RepositoryIdentityChanged => {
+                crate::advice_template_display_en!(ConflictsRepositoryIdentityChanged).into()
+            }
+            ConflictsNote::AbortStartUnavailable => {
+                crate::advice_template_display_en!(ConflictsAbortStartUnavailable).into()
+            }
+            ConflictsNote::AbortHeadMoved => {
+                crate::advice_template_display_en!(ConflictsAbortHeadMoved).into()
+            }
+            ConflictsNote::ResolutionMarkers => {
+                crate::advice_template_display_en!(ConflictsResolutionMarkers).into()
+            }
+            ConflictsNote::IndexUnmerged { files } => format!(
+                crate::advice_template_display_en!(ConflictsIndexUnmerged),
+                files.join(", ")
+            ),
+            ConflictsNote::PartialResolutionsPreserved => {
+                crate::advice_template_display_en!(ConflictsPartialResolutionsPreserved).to_string()
+            }
+            ConflictsNote::SkipDiscardsStep => {
+                crate::advice_template_display_en!(ConflictsSkipDiscardsStep).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the conflicts op family — `Continue {op}` / `Abort {op}` /
@@ -139,6 +174,11 @@ impl ConflictsTitle {
             ConflictsTitle::Abort { op } => format!("Abort {}", op),
             ConflictsTitle::Skip { op } => format!("Skip {} step", op),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -170,6 +210,11 @@ impl ConflictsRecovery {
                 op
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

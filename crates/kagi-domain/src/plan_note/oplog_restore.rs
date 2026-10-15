@@ -201,6 +201,19 @@ impl OplogRestoreNote {
             OplogRestoreNote::RefsOnly => "Unchanged: working tree · index · untracked · stash · remote branches · tags changed outside Kagi".to_string(),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            OplogRestoreNote::EntryNotLoaded { id } => {
+                format!("Operation #{id} is not available in this repository's Operation Log.")
+            }
+            OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
+                "Operation #{id} is too old to restore here (only the last {window} operations can be restored)."
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles.
@@ -220,6 +233,11 @@ impl OplogRestoreTitle {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds.
@@ -234,6 +252,11 @@ impl OplogRestoreRecovery {
         match self {
             OplogRestoreRecovery::Restore => "This is itself recorded with its ref moves: revert it from the Operation Log, or put a local ref back with git update-ref <ref> <backup-ref> (the backups are listed in the entry).".to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

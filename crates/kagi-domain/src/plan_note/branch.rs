@@ -161,6 +161,16 @@ impl BranchNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            BranchNote::RenameConfigChanged => {
+                crate::advice_template_display_en!(BranchRenameConfigChanged).into()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the branch op family.
@@ -203,6 +213,11 @@ impl BranchTitle {
             BranchTitle::DeleteBranch { name, tip: None } => format!("Delete branch '{}'", name),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the branch op family.
@@ -237,6 +252,17 @@ impl BranchRecovery {
                 "Branch '{}' could not be found. Use `git branch` to list local branches.",
                 name
             ),
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            BranchRecovery::DeleteBranch { name, tip: Some(tip) } => format!(
+                "To restore the deleted branch:\n  git branch {} {}\nThe tip '{}' is kept as a backup; if Git has cleaned it up, restore it from the Operation Log.",
+                name, tip, tip
+            ),
+            _ => self.message_en(),
         }
     }
 }

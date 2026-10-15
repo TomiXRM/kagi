@@ -150,7 +150,10 @@ pub fn scenario_queue_runs_in_order(cx: &mut VisualTestAppContext) {
     assert_eq!(shown.0, 1, "queued: 1");
     assert_eq!(
         shown.1,
-        vec![("checkout b".to_string(), "waiting: write".to_string())]
+        vec![(
+            "checkout b".to_string(),
+            kagi_ui_core::i18n::queue_text(kagi_ui_core::i18n::QueueText::WaitWrite).to_string()
+        )]
     );
     assert!(drawn(cx, window, "queue-strip"), "the strip is drawn");
     cx.read(|cx| {
@@ -179,7 +182,10 @@ pub fn scenario_queue_runs_in_order(cx: &mut VisualTestAppContext) {
     assert_eq!(shown.0, 1);
     assert_eq!(
         shown.1,
-        vec![("checkout b".to_string(), "waiting: write".to_string())]
+        vec![(
+            "checkout b".to_string(),
+            kagi_ui_core::i18n::queue_text(kagi_ui_core::i18n::QueueText::WaitWrite).to_string()
+        )]
     );
     assert_eq!(
         shown.2,
@@ -683,7 +689,10 @@ pub fn scenario_queue_accepts_after_idle_fetch(cx: &mut VisualTestAppContext) {
     cx.run_until_parked();
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("checkout b".to_string(), "waiting: write".to_string())],
+        vec![(
+            "checkout b".to_string(),
+            kagi_ui_core::i18n::queue_text(kagi_ui_core::i18n::QueueText::WaitWrite).to_string()
+        )],
         "queued behind the checkout, not refused for the old fetch"
     );
     release.send(());

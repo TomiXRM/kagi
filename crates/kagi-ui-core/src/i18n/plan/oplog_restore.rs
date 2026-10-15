@@ -23,10 +23,10 @@ fn head_ja(head: &HeadAt) -> String {
 pub fn note_ja(note: &OplogRestoreNote) -> String {
     match note {
         OplogRestoreNote::EntryNotLoaded { id } => {
-            format!("操作 #{id} はこの repository の読み込まれた操作にありません(別の repository の操作かもしれません)。")
+            format!("操作 #{id} はこの repository の操作ではありません。")
         }
         OplogRestoreNote::EntryOutsideWindow { id, window } => format!(
-            "操作 #{id} は直近 {window} 件より古い操作です。restore が読むのは直近 {window} 件までなので、ここでは戻せません。"
+            "操作 #{id} は古すぎるため戻せません(戻せるのは直近 {window} 件まで)。"
         ),
         OplogRestoreNote::NotRecorded { id, op } => format!(
             "操作 #{id}({op})には ref の移動の記録が無いため、正確に戻せません。reflog からの推定は使いません。"

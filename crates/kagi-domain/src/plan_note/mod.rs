@@ -8,9 +8,10 @@
 //! Phase 3 deleted `Verbatim` and every String-conversion shim — the
 //! compiling workspace is the completeness proof, not a grep.
 //!
-//! [`PlanNote::message_en`] is the **single English renderer** and the
-//! oplog/klog boundary format, byte-identical to the pre-migration strings
-//! (golden-tested in this module and in each category's own file).
+//! [`PlanNote::message_en`] retains the historical oplog/klog boundary format,
+//! byte-identical to the pre-migration strings (golden-tested below).
+//! UI copy uses `message_display_en` and `advice_template_display_en!` instead.
+//! Display text must never be persisted or substituted into contract logs.
 //!
 //! One file per category (ADR-0129 Phase 2 foundation): each op's producer
 //! fills its own `plan_note/<category>.rs` enum and never touches this
@@ -155,6 +156,40 @@ impl PlanNote {
             PlanNote::Clone(n) => n.message_en(),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            PlanNote::Common(n) => n.message_display_en(),
+            PlanNote::Discard(n) => n.message_display_en(),
+            PlanNote::Branch(n) => n.message_display_en(),
+            PlanNote::Stash(n) => n.message_display_en(),
+            PlanNote::History(n) => n.message_display_en(),
+            PlanNote::Pull(n) => n.message_display_en(),
+            PlanNote::Push(n) => n.message_display_en(),
+            PlanNote::Switch(n) => n.message_display_en(),
+            PlanNote::Checkout(n) => n.message_display_en(),
+            PlanNote::Merge(n) => n.message_display_en(),
+            PlanNote::Worktree(n) => n.message_display_en(),
+            PlanNote::CherryRevert(n) => n.message_display_en(),
+            PlanNote::Cleanup(n) => n.message_display_en(),
+            PlanNote::Conflicts(n) => n.message_display_en(),
+            PlanNote::Commit(n) => n.message_display_en(),
+            PlanNote::Checklist(n) => n.message_display_en(),
+            PlanNote::Tag(n) => n.message_display_en(),
+            PlanNote::RemoteBranch(n) => n.message_display_en(),
+            PlanNote::Reset(n) => n.message_display_en(),
+            PlanNote::ForceLease(n) => n.message_display_en(),
+            PlanNote::Github(n) => n.message_display_en(),
+            PlanNote::Rebase(n) => n.message_display_en(),
+            PlanNote::Snapshot(n) => n.message_display_en(),
+            PlanNote::Sync(n) => n.message_display_en(),
+            PlanNote::Maintenance(n) => n.message_display_en(),
+            PlanNote::Ruleset(n) => n.message_display_en(),
+            PlanNote::OplogRestore(n) => n.message_display_en(),
+            PlanNote::Clone(n) => n.message_display_en(),
+        }
+    }
 }
 
 impl std::fmt::Display for PlanNote {
@@ -238,6 +273,45 @@ impl PlanTitle {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            PlanTitle::Branch(t) => t.message_display_en(),
+            PlanTitle::Stash(t) => t.message_display_en(),
+            PlanTitle::History(t) => t.message_display_en(),
+            PlanTitle::Pull(t) => t.message_display_en(),
+            PlanTitle::Push(t) => t.message_display_en(),
+            PlanTitle::Switch(t) => t.message_display_en(),
+            PlanTitle::Checkout(t) => t.message_display_en(),
+            PlanTitle::Merge(t) => t.message_display_en(),
+            PlanTitle::Worktree(t) => t.message_display_en(),
+            PlanTitle::CherryRevert(t) => t.message_display_en(),
+            PlanTitle::Cleanup(t) => t.message_display_en(),
+            PlanTitle::Conflicts(t) => t.message_display_en(),
+            PlanTitle::Commit(t) => t.message_display_en(),
+            PlanTitle::Tag(t) => t.message_display_en(),
+            PlanTitle::RemoteBranch(t) => t.message_display_en(),
+            PlanTitle::Reset(t) => t.message_display_en(),
+            PlanTitle::ForceLease(t) => t.message_display_en(),
+            PlanTitle::Github(t) => t.message_display_en(),
+            PlanTitle::Rebase(t) => t.message_display_en(),
+            PlanTitle::Snapshot(t) => t.message_display_en(),
+            PlanTitle::Sync(t) => t.message_display_en(),
+            PlanTitle::Maintenance(t) => t.message_display_en(),
+            PlanTitle::OplogRestore(t) => t.message_display_en(),
+            PlanTitle::Clone(t) => t.message_display_en(),
+            PlanTitle::Discard {
+                single: Some(path), ..
+            } => format!("Discard changes to '{}'", path),
+            PlanTitle::Discard {
+                single: None,
+                count,
+            } => {
+                format!("Discard changes to {} file(s)", count)
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for PlanTitle {
@@ -290,6 +364,42 @@ impl PlanRecovery {
                  tracked files are restored from the index, untracked files are deleted from \
                  disk. Either way a backup blob of each file's current content is recorded in \
                  the oplog (op=\"discard\") first; recover with `git cat-file -p <blob-sha>`."
+                    .to_string()
+            }
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match &self.kind {
+            RecoveryKind::Branch(r) => r.message_display_en(),
+            RecoveryKind::Stash(r) => r.message_display_en(),
+            RecoveryKind::History(r) => r.message_display_en(),
+            RecoveryKind::Pull(r) => r.message_display_en(),
+            RecoveryKind::Push(r) => r.message_display_en(),
+            RecoveryKind::Switch(r) => r.message_display_en(),
+            RecoveryKind::Checkout(r) => r.message_display_en(),
+            RecoveryKind::Merge(r) => r.message_display_en(),
+            RecoveryKind::Worktree(r) => r.message_display_en(),
+            RecoveryKind::CherryRevert(r) => r.message_display_en(),
+            RecoveryKind::Cleanup(r) => r.message_display_en(),
+            RecoveryKind::Conflicts(r) => r.message_display_en(),
+            RecoveryKind::Commit(r) => r.message_display_en(),
+            RecoveryKind::Tag(r) => r.message_display_en(),
+            RecoveryKind::RemoteBranch(r) => r.message_display_en(),
+            RecoveryKind::Reset(r) => r.message_display_en(),
+            RecoveryKind::ForceLease(r) => r.message_display_en(),
+            RecoveryKind::Github(r) => r.message_display_en(),
+            RecoveryKind::Rebase(r) => r.message_display_en(),
+            RecoveryKind::Snapshot(r) => r.message_display_en(),
+            RecoveryKind::Sync(r) => r.message_display_en(),
+            RecoveryKind::Maintenance(r) => r.message_display_en(),
+            RecoveryKind::OplogRestore(r) => r.message_display_en(),
+            RecoveryKind::Discard => {
+                "This discards your unstaged changes to the selected file(s): \
+                 tracked files are restored from the index, untracked files are deleted from \
+                 disk. A backup of each file is saved to the Operation Log first; \
+                 recover with `git cat-file -p <blob-sha>`."
                     .to_string()
             }
         }
@@ -573,6 +683,25 @@ mod tests {
             PlanDisposition::for_blockers(&[PlanNote::Discard(DiscardNote::NothingSelected)]),
             PlanDisposition::Blocked
         );
+    }
+
+    #[test]
+    fn display_copy_does_not_change_legacy_receipt_text() {
+        let note = PlanNote::Commit(CommitNote::NothingStaged);
+        assert_eq!(
+            note.message_display_en(),
+            "Nothing to commit: stage some changes first."
+        );
+        assert_eq!(
+            note.message_en(),
+            "Nothing to commit: no files are staged. Use stage_file() to stage changes before committing."
+        );
+        let recovery = PlanRecovery {
+            kind: RecoveryKind::Discard,
+            commands: Vec::new(),
+        };
+        assert!(recovery.message_display_en().contains("Operation Log"));
+        assert!(recovery.message_en().contains("op=\"discard\""));
     }
 
     #[test]

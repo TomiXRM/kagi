@@ -34,6 +34,11 @@ impl SnapshotNote {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the restore-snapshot op.
@@ -49,6 +54,11 @@ impl SnapshotTitle {
         match self {
             SnapshotTitle::Restore { id } => format!("Restore snapshot {}", id),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -71,6 +81,11 @@ impl SnapshotRecovery {
                     .to_string()
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

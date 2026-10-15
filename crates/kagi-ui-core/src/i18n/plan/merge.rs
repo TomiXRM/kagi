@@ -26,7 +26,7 @@ pub(crate) const ADVICE_MERGE_INTO_WORKING_TREE_UNTOUCHED: &str =
 pub(crate) const ADVICE_MERGE_INTO_CREATES_LOCAL_BRANCH: &str =
     "ローカルに `{}` が無いため `{}` の先頭に作成して merge します。push はしません。remote 側の `{}` は変わりません。";
 pub(crate) const ADVICE_MERGE_INTO_REMOTE_SOURCE: &str =
-    "remote-tracking ref `{}` (tip: {}) は最後の fetch 時点の内容で、古い可能性があります。fetch は行わず、source のローカル branch も作成しません。";
+    "`{}` (tip: {}) は前回の fetch 時点の内容で、古い可能性があります。";
 pub(crate) const ADVICE_MERGE_INTO_LOCAL_DIFFERS_FROM_REMOTE: &str =
     "ローカルの `{}` は `{}` と位置が異なります。merge はローカル branch に対して行われ、remote の ref は触れません。";
 

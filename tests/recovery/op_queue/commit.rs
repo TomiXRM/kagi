@@ -1,4 +1,5 @@
 use super::*;
+use kagi_ui_core::i18n::{queue_text, QueueText};
 
 /// Use the real Commit Panel inputs and plan button, not a synthetic queue event.
 pub(super) fn queue_commit(
@@ -110,7 +111,10 @@ pub fn scenario_queue_commit_runs_after_checkout(cx: &mut VisualTestAppContext) 
     queue_commit(cx, &app, window, "frozen subject", "frozen body");
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("commit frozen subject".into(), "waiting: write".into())]
+        vec![(
+            "commit frozen subject".into(),
+            queue_text(QueueText::WaitWrite).into()
+        )]
     );
     assert!(drawn(cx, window, "queue-strip"));
     cx.read(|cx| {
@@ -290,7 +294,10 @@ pub fn scenario_queue_commit_rechecks_staging_on_confirm(cx: &mut VisualTestAppC
     );
     assert_eq!(
         strip(cx, &app).unwrap().2,
-        vec![("commit staging guard".into(), "plan failed".into())],
+        vec![(
+            "commit staging guard".into(),
+            queue_text(QueueText::ReasonPlanError).into()
+        )],
         "the confirmation became stale before admission, not during execution"
     );
     unmount(cx, app, window);

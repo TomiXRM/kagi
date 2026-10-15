@@ -39,6 +39,11 @@ impl TagNameError {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan notes for the tag op family (create, push).
@@ -90,6 +95,24 @@ impl TagNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            TagNote::NameError(e) => e.message_display_en(),
+            TagNote::PushRemoteSideEffect { remote, name } => format!(
+                crate::advice_template_display_en!(TagPushRemoteSideEffect),
+                name, remote
+            ),
+            TagNote::PushRejectedIfMoved { name } => {
+                format!(
+                    crate::advice_template_display_en!(TagPushRejectedIfMoved),
+                    name
+                )
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the tag op family.
@@ -110,6 +133,11 @@ impl TagTitle {
                 format!("Push tag '{}' to '{}'", name, remote)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -136,6 +164,11 @@ impl TagRecovery {
                 remote, name
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

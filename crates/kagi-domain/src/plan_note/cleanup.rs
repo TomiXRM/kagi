@@ -49,6 +49,11 @@ impl CleanupNote {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the branch-cleanup op family.
@@ -66,6 +71,11 @@ impl CleanupTitle {
                 format!("Delete {} merged branch(es)", count)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -90,6 +100,18 @@ impl CleanupRecovery {
         match self {
             CleanupRecovery::CleanupDelete { .. } => {
                 "Every deleted tip OID is recorded in the oplog. To restore:\n  \
+                 git branch <name> <oid>          (local)\n  \
+                 git push origin <oid>:refs/heads/<name>   (remote)"
+                    .to_string()
+            }
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CleanupRecovery::CleanupDelete { .. } => {
+                "Every deleted branch tip is recorded in the Operation Log. To restore:\n  \
                  git branch <name> <oid>          (local)\n  \
                  git push origin <oid>:refs/heads/<name>   (remote)"
                     .to_string()

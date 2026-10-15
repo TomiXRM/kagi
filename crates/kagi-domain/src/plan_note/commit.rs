@@ -73,6 +73,19 @@ impl CommitNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CommitNote::NothingStaged => {
+                crate::advice_template_display_en!(CommitNothingStaged).to_string()
+            }
+            CommitNote::StagedContentChanged => {
+                crate::advice_template_display_en!(CommitStagedContentChanged).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the commit op family (`ops/commit.rs::plan_commit` +
@@ -93,6 +106,11 @@ impl CommitTitle {
             CommitTitle::Commit { summary } => format!("Commit: \"{}\"", summary),
             CommitTitle::FinalizeMergeCommit => "Finalize merge commit".to_string(),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -115,6 +133,11 @@ impl CommitRecovery {
                 staged_files.join(", ")
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

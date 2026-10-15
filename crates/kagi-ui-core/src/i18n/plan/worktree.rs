@@ -16,13 +16,13 @@ pub(crate) const ADVICE_WORKTREE_INCLUDE_COPY: &str =
 pub(crate) const ADVICE_WORKTREE_INCLUDE_SKIPPED_SYMLINKS: &str =
     "一致した symlink {} 件はスキップします(symlink はコピーしません)。";
 pub(crate) const ADVICE_WORKTREE_INCLUDE_OVER_CAP: &str =
-    ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。";
+    ".worktreeinclude の一致が {} あります({} 超)。コピーは続行しますが時間がかかる可能性があります。";
 pub(crate) const ADVICE_WORKTREE_REMOVE_DIRTY: &str =
-    "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`";
+    "worktree に未 commit の変更があります({})。先に commit か stash してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LOCKED: &str =
-    "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`";
+    "worktree はロックされています({})。削除前にロックを解除してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LIVE_SHELL: &str =
-    "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `{}`";
+    "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LEFTOVER_PROCESSES: &str =
     "この worktree の Kagi terminal から起動したプロセス {} 件が、shell の終了後も動いていて、このディレクトリを使っている可能性があります。kagi は停止しません。Kagi の外で起動したプロセスは確認していません。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_IGNORED_FILES: &str =
@@ -206,7 +206,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                     r
                 ),
                 R::NotAutoLock { reason: None } => {
-                    "Kagi の token が無いロックです。Kagi がこの terminal のために置いたロックだけを自動解除します"
+                    "手動で付けたロックです。Kagi がこの terminal 用に付けたロックだけを自動で解除します"
                         .to_string()
                 }
                 R::TokenMismatch { found } => {

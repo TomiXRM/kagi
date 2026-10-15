@@ -54,7 +54,7 @@ pub(crate) const ADVICE_GITHUB_REVIEW_BODY_EMPTY: &str =
 pub(crate) const ADVICE_GITHUB_FIELD_EDIT_EMPTY: &str =
     "#{} は何も変わりません。追加または削除する reviewer / 担当 / label を選んでください。";
 pub(crate) const ADVICE_GITHUB_LOCAL_BRANCH_NOT_DELETED_DELETION_UNAUTHORIZED: &str =
-    "gh がエラーを返したため、local branch の削除は transport に許可されていません: {}";
+    "GitHub CLI がエラーを返したため、local branch は残しました: {}";
 
 /// Japanese rendering of one GitHub note.
 pub fn note_ja(note: &GithubNote) -> String {
@@ -240,7 +240,7 @@ pub fn recovery_ja(recovery: &GithubRecovery) -> String {
             number
         ),
         GithubRecovery::ApplySuggestion =>
-            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容は先に backup ref に保持し、oplog(op=\"apply-suggestion\")に記録します:\n  git cat-file blob <backup-ref>"
+            "working tree のファイルだけを書き換えます(stage も commit もしません)。適用前の内容を先に保存します。backup ref は Operation Log のエントリで確認できます。"
                 .to_string(),
     }
 }
@@ -275,6 +275,6 @@ mod tests {
             "no English inside the Japanese notice: {ja}"
         );
         set_lang_no_persist(Lang::En);
-        assert_eq!(plan_note_text(&note), note.message_en());
+        assert_eq!(plan_note_text(&note), note.message_display_en());
     }
 }

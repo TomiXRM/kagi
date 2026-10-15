@@ -109,6 +109,24 @@ impl RebaseNote {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            RebaseNote::ReplayUpdates {
+                count,
+                sample,
+                more,
+            } => {
+                let mut list = sample.join("\n  ");
+                if *more > 0 {
+                    list = format!("{} (+{} more)", list, more);
+                }
+                format!("Updates {} branch(es):\n  {}", count, list)
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the rebase-current-onto op.
@@ -133,6 +151,11 @@ impl RebaseTitle {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Recovery kinds for the rebase-current-onto op.
@@ -156,6 +179,16 @@ impl RebaseRecovery {
             RebaseRecovery::ReplayOnto { branch, from } => format!(
                 "Replay moves refs only; nothing is checked out. Restore the pre-replay tip with:\n  git update-ref refs/heads/{branch} {from}\n(the same tip is retained under refs/kagi/backups/ until this entry is forgotten)"
             ),
+        }
+    }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            RebaseRecovery::ReplayOnto { branch, from } => format!(
+                "Replay moves refs only; nothing is checked out. Restore the pre-replay tip with:\n  git update-ref refs/heads/{branch} {from}\nThe backup stays until you delete this entry from the Operation Log."
+            ),
+            _ => self.message_en(),
         }
     }
 }

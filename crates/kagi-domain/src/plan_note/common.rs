@@ -348,6 +348,53 @@ impl CommonNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            CommonNote::PartialCloneObjectMissing { detail } => format!(
+                crate::advice_template_display_en!(CommonPartialCloneObjectMissing),
+                detail
+            ),
+            CommonNote::ExternalFilter { path, filter } => {
+                format!(
+                    crate::advice_template_display_en!(CommonExternalFilter),
+                    path, filter
+                )
+            }
+            CommonNote::ExternalFilterSync { path, filter } => {
+                format!(
+                    crate::advice_template_display_en!(CommonExternalFilterSync),
+                    path, filter
+                )
+            }
+            CommonNote::SparseCheckoutUnsupported { kind } => {
+                format!(
+                    crate::advice_template_display_en!(CommonSparseCheckoutUnsupported),
+                    match kind {
+                        SparseCheckoutKind::Cone => "cone sparse-checkout",
+                        SparseCheckoutKind::NonCone => "non-cone sparse-checkout",
+                        SparseCheckoutKind::SkipWorktree => "skip-worktree entries",
+                    }
+                )
+            }
+            CommonNote::SubmoduleCheckoutUnsupported {
+                path,
+                uninitialized,
+            } => {
+                format!(
+                    crate::advice_template_display_en!(CommonSubmoduleCheckoutUnsupported),
+                    if *uninitialized {
+                        "an uninitialized"
+                    } else {
+                        "a dirty"
+                    },
+                    path
+                )
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 #[cfg(test)]

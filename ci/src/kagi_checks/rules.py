@@ -205,10 +205,10 @@ def _rust_expression_end(code: str, start: int, *, delimited: bool = False) -> i
     return len(code)
 
 
-def _ja_tuple_members(
-    code: str, literals: list[tuple[int, int]], start: int, end: int, arity: int
+def _translation_tuple_members(
+    code: str, literals: list[tuple[int, int]], start: int, end: int, arity: int, locale: str
 ) -> list[tuple[int, int]]:
-    """Select JA (last) members of an explicitly bilingual tuple owner."""
+    """Select EN/JA members of an explicitly bilingual tuple owner."""
     regions: list[tuple[int, int]] = []
     cursor = start
     while (opening := code.find("(", cursor, end)) >= 0:
@@ -238,23 +238,23 @@ def _ja_tuple_members(
         ):
             members.append((member_start, tail_end))
         if len(members) == arity:
-            regions.append(members[-1])
+            regions.append(members[-1 if locale == "Ja" else -2])
     return regions
 
 
-def _ja_git_literals(text: str) -> str:
-    """Select JA translation literals, not EN, comments or assertion data.
+def _translation_literals(text: str, locale: str, *, display_only: bool = False) -> str:
+    """Select explicit translation owners, excluding comments and test data.
 
-    ADR-0048 uses locale arms and bilingual label tables/renderers; ADR-0129
-    also uses `*_ja` renderers and `ADVICE_*` constants. Only explicit translation
-    owners are candidates: passing Lang::Ja or storing a name is not localization.
+    Locale arms, bilingual label tuples and named language renderers share the
+    same structural scanner so raw strings cannot manufacture translation arms.
     """
     code, literals = _rust_literal_spans(text)
     regions: list[tuple[int, int]] = []
     ignored: list[tuple[int, int]] = []
     arrow = re.compile(r"\s*(?:if\b[^;]*?)?=>")
-    for locale, destinations in (("Ja", regions), ("En", ignored)):
-        locale_token = re.compile(rf"\b(?:Lang\s*::\s*)?{locale}\b")
+    other_locale = "En" if locale == "Ja" else "Ja"
+    for language, destinations in ((locale, regions), (other_locale, ignored)):
+        locale_token = re.compile(rf"\b(?:Lang\s*::\s*)?{language}\b")
         arms = re.compile(rf"\(|{locale_token.pattern}")
         for arm in arms.finditer(code):
             pattern_end = arm.end()
@@ -264,16 +264,23 @@ def _ja_git_literals(text: str) -> str:
                     continue
             if body := arrow.match(code, pattern_end):
                 destinations.append((body.end(), _rust_expression_end(code, body.end())))
+    constant_names = (
+        r"(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)"
+        if locale == "Ja"
+        else r"(?:EN_\w+|\w+_EN)"
+    )
+    # Domain message_en/advice_template_en feed persisted receipts. The UI
+    # jargon gate selects their display-only counterparts, never stored prose.
+    suffix = "display_en" if display_only and locale == "En" else locale.lower()
     owners = re.compile(
-        r"\bfn\s+\w+_ja(?:_\w+)?\s*\([^;{}]*\)[^;{}]*\{"
-        r"|\bconst\s+(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)\s*:[^;=]*="
+        rf"\bfn\s+\w+_{suffix}(?:_\w+)?\s*\([^;{{}}]*\)[^;{{}}]*\{{"
+        rf"|\bconst\s+{constant_names}\s*:[^;=]*="
+        rf"|\bmacro_rules!\s+\w+_{suffix}\s*\{{"
     )
     for owner in owners.finditer(code):
         start = owner.end() - 1 if owner.group().endswith("{") else owner.end()
         regions.append((start, _rust_expression_end(code, start)))
-    # A two-language helper may return EN unchanged before its JA-only body.
-    # Select only the remainder of a function whose first statement is that
-    # explicit locale guard; do not mistake an arbitrary EN block for JA.
+    # A two-language helper may return EN before its JA-only body.
     early_en = re.compile(
         r"\bfn\s+\w+\s*\([^;{}]*\b(?P<locale>\w+)\s*:\s*Lang\b[^;{}]*\)"
         r"[^;{}]*\{\s*if\s+(?P=locale)\s*==\s*Lang\s*::\s*En\s*\{"
@@ -281,10 +288,12 @@ def _ja_git_literals(text: str) -> str:
     )
     for owner in early_en.finditer(code):
         body_start = code.index("{", owner.start())
-        regions.append((owner.end(), _rust_expression_end(code, body_start)))
-    # busy.rs declares (internal tag, EN, JA) LABELS; Op::label returns
-    # (EN, JA) pairs. Restrict this to translation/label owners, not arbitrary
-    # repository-data tuples, and never select their EN or internal-tag members.
+        destination = regions if locale == "Ja" else ignored
+        destination.append((owner.end(), _rust_expression_end(code, body_start)))
+        if locale == "En":
+            regions.append((body_start, owner.end()))
+    # Label tables contain (EN, JA) or (internal tag, EN, JA). Internal tags
+    # are never translation candidates.
     table_owners = re.compile(
         r"\bconst\s+(?:LABELS|TRANSLATIONS|\w+_(?:LABELS|TRANSLATIONS))\s*:"
         r"\s*&\s*\[\s*\((?P<types>[^()]*)\)\s*\]\s*=\s*&\s*\["
@@ -297,7 +306,7 @@ def _ja_git_literals(text: str) -> str:
             continue
         start = table.end() - 1
         end = _rust_expression_end(code, start, delimited=True)
-        regions.extend(_ja_tuple_members(code, literals, start, end, len(types)))
+        regions.extend(_translation_tuple_members(code, literals, start, end, len(types), locale))
     pair_owners = re.compile(
         r"\bfn\s+(?:label|\w+_label)\s*\([^;{}]*\)\s*->\s*\("
         r"\s*&(?:'\w+\s+)?str\s*,\s*&(?:'\w+\s+)?str\s*,?\s*\)\s*\{"
@@ -305,7 +314,9 @@ def _ja_git_literals(text: str) -> str:
     for pair in pair_owners.finditer(code):
         start = pair.end() - 1
         regions.extend(
-            _ja_tuple_members(code, literals, start, _rust_expression_end(code, start), 2)
+            _translation_tuple_members(
+                code, literals, start, _rust_expression_end(code, start), 2, locale
+            )
         )
     # Test fixtures and assertions may deliberately quote the banned words.
     # Mask only test bodies, never the containing production file.
@@ -313,6 +324,22 @@ def _ja_git_literals(text: str) -> str:
     for test in test_bodies.finditer(code):
         start = test.end() - 1
         ignored.append((start, _rust_expression_end(code, start)))
+    if display_only:
+        # Explicit contract helpers retain logging/persistence wording even
+        # when their implementation has locale arms.
+        contracts = re.compile(r"\bfn\s+\w+_contract\s*\([^;{}]*\)[^;{}]*\{")
+        for contract in contracts.finditer(code):
+            start = contract.end() - 1
+            ignored.append((start, _rust_expression_end(code, start)))
+        # Match inputs identify legacy messages; only their replacement
+        # expressions are displayed. Strings/comments are already masked.
+        for start, end in literals:
+            if re.match(r"\s*(?:\|\s*)*=>", code[end:]):
+                ignored.append((start, end))
+    # Contract logging is not UI copy, even inside a translation owner.
+    for log in re.finditer(r"\bklog\s*!\s*[(\[{]", code):
+        start = log.end() - 1
+        ignored.append((start, _rust_expression_end(code, start, delimited=True)))
     selected = ["\n" if c == "\n" else " " for c in text]
     for start, end in literals:
         if not any(left <= start < right for left, right in regions):
@@ -320,15 +347,26 @@ def _ja_git_literals(text: str) -> str:
         if any(left <= start < right for left, right in ignored):
             continue
         literal = text[start:end]
-        # Only the name-collision occurrence is exempt, not every conflict in
-        # a string that happens to mention refs or a namespace.
-        literal = re.sub(
-            r"(?:名前空間|ref\s+namespace)\s*(?:が|の|で|と)?\s*競合",
-            lambda match: match.group().replace("競合", "  "),
-            literal,
-        )
+        if locale == "Ja":
+            # Only the name-collision occurrence is exempt, not every conflict
+            # in a string that happens to mention refs or a namespace.
+            literal = re.sub(
+                r"(?:名前空間|ref\s+namespace)\s*(?:が|の|で|と)?\s*競合",
+                lambda match: match.group().replace("競合", "  "),
+                literal,
+            )
         selected[start:end] = literal
     return "".join(selected)
+
+
+def _ja_git_literals(text: str) -> str:
+    return _translation_literals(text, "Ja")
+
+
+def _ui_display_literals(text: str) -> str:
+    en = _translation_literals(text, "En", display_only=True)
+    ja = _translation_literals(text, "Ja", display_only=True)
+    return "".join(left if left != " " else right for left, right in zip(en, ja, strict=True))
 
 
 JA_GIT_TERMS = (
@@ -361,6 +399,116 @@ JA_GIT_TERMS = (
 
 
 RULES: tuple[Rule, ...] = (
+    Rule(
+        name="ui-internal-jargon",
+        summary="EN/JA UI copy describes user actions, not implementation details (#1588)",
+        pattern=(
+            r"(?<![A-Za-z0-9_])ADR-\d"
+            r"|(?<![A-Za-z0-9_])MVP(?![A-Za-z0-9_])|\[kagi\]"
+            r"|(?i:(?<![A-Za-z0-9_])preflight(?![A-Za-z0-9_])"
+            r"|(?<![A-Za-z0-9_])session\s+unavailable(?![A-Za-z0-9_]))"
+            r"|(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:::[A-Za-z_][A-Za-z0-9_]*)*\s*\(\s*\)"
+        ),
+        globs=(
+            "crates/kagi-ui-core/src/i18n/**/*.rs",
+            "crates/kagi-domain/src/plan_note/**/*.rs",
+        ),
+        select_source=_ui_display_literals,
+        message=(
+            "User-facing EN/JA must describe the action or next step, not ADRs, "
+            "development scope, log prefixes, pipeline stages, sessions or Rust calls (#1588)."
+        ),
+        samples=(
+            *(
+                sample
+                for phrase in (
+                    "See ADR-0024",
+                    "Outside MVP scope",
+                    "[kagi] operation failed",
+                    "Preflight failed",
+                    "repository session unavailable",
+                    "Use stage_file() first",
+                    "Call Repository::open()",
+                    "Call refresh()",
+                )
+                for sample in (
+                    f'(En, Action) => "{phrase}",',
+                    f'Lang::En => format!(r##"{phrase}: {{err}}"##),',
+                    f'Lang::Ja => "{phrase}",',
+                    f'fn message_display_en(&self) -> String {{ "{phrase}".into() }}',
+                    f'macro_rules! advice_template_display_en {{ (Action) => {{ "{phrase}" }}; }}',
+                )
+            ),
+            'const ACTION_EN: &str = "MVP";',
+            'const EN_ACTION: &str = "ADR-1";',
+            'const LABELS: &[(&str, &str, &str)] = &[("tag", "Preflight", "確認")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("MVP", "確認")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Action => ("session unavailable", "確認"), } }',
+            'fn heading(language: Lang) -> &str { '
+            'if language == Lang::En { return "MVP"; } "確認" }',
+            '/* outer /* nested */ Lang::Ja => "safe" */ Lang::En => "MVP",',
+            '#[cfg(test)] mod tests { const ACTION_EN: &str = "safe"; }\n'
+            'Lang::En => "preflight",',
+            'const ADVICE_ACTION: &str = "MVP";',
+            'fn message_ja(&self) -> String { "ADR-0024".into() }',
+            'const LABELS: &[(&str, &str, &str)] = &[("tag", "Checking", "MVP")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "preflight")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Action => ("Checking", "MVP"), } }',
+            'fn heading(language: Lang) -> &str { '
+            'if language == Lang::En { return "Checking"; } "MVP" }',
+            'Lang::Ja => "MVP対象外です。ADR-0024を参照",',
+            'Lang::Ja => "preflightに失敗しました",',
+            'Lang::Ja => "先にstage_file()を呼んでください",',
+            'fn op_failed_contract() -> String { match lang() { '
+            'Lang::En => "Preflight failed", Lang::Ja => "preflight失敗", } }\n'
+            'fn op_failed() -> String { match lang() { '
+            'Lang::En => "MVP", Lang::Ja => "確認", } }',
+            'fn message_display_en(&self) -> String { match self { '
+            '"safe" => "MVP", _ => "Ready" } }',
+        ),
+        samples_ok=(
+            *(
+                sample
+                for phrase in (
+                    "ADR-0024", "MVP", "[kagi]", "preflight",
+                    "session unavailable", "stage_file()", "Repository::open()", "refresh()",
+                )
+                for sample in (
+                    f'// Lang::En => "{phrase}",\nLang::En => "Try again",',
+                    f'/* outer /* nested */ Lang::En => "{phrase}", */',
+                    f'Lang::En => {{ /* {phrase} */ "Try again" }},',
+                    f'fn message_en(&self) -> String {{ "{phrase}".into() }}',
+                    f'macro_rules! advice_template_en {{ (Action) => {{ "{phrase}" }}; }}',
+                    f'// Lang::Ja => "{phrase}",\nLang::Ja => "確認",',
+                    f'#[cfg(test)] mod tests {{ Lang::Ja => "{phrase}", }}',
+                    f'Lang::Ja => {{ klog!("{phrase}"); "確認" }},',
+                    f'#[cfg(test)] mod tests {{ Lang::En => "{phrase}", }}',
+                    f'#[test] fn sample() {{ assert_eq!(render(), "{phrase}"); }}',
+                    f'Lang::En => {{ klog!("{phrase}"); "Try again" }},',
+                    f'fn op_failed_contract() -> String {{ match lang() {{ '
+                    f'Lang::En => "{phrase}", Lang::Ja => "{phrase}", }} }}',
+                    f'fn message_display_en(&self) -> String {{ match self {{ '
+                    f'"{phrase}" => "Ready", _ => "Try again" }} }}',
+                    f'Lang::En => match legacy {{ "{phrase}" => "Ready", _ => "Try again" }},',
+                )
+            ),
+            'enum Internal { MVP, Preflight, SessionUnavailable }\n'
+            'Lang::En => stage_file(),',
+            'const INTERNAL_TAG: &str = "[kagi]";',
+            'const LABELS: &[(&str, &str, &str)] = &[("[kagi]", "Checking", "確認")];',
+            'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "確認")];',
+            "fn label(self) -> (&'static str, &'static str) { "
+            'match self { Preflight => ("Checking", "確認"), } }',
+            'fn heading(language: Lang) -> &str { '
+            'if language == Lang::En { return "Checking"; } "確認" }',
+            'let quoted_source = r#"Lang::En => "MVP""#;',
+            'Lang::En => "Stage changes, then commit. Check Git status and try again.",',
+            'Lang::En => "ADR notes, MVPlayer, preflighted, session is unavailable, file(s)",',
+        ),
+    ),
     Rule(
         name="ja-git-terms",
         summary="JA localization keeps Git domain terms in English (ADR-0048 / #1465)",

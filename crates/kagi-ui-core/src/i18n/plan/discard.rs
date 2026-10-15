@@ -14,7 +14,7 @@ pub(crate) const ADVICE_DISCARD_TARGET_SUBMODULE: &str =
 
 /// JA template for `Msg::AdviceDiscardUntrackedWillBeDeleted`.
 pub(crate) const ADVICE_DISCARD_UNTRACKED_WILL_BE_DELETED: &str =
-    "⚠️ 未追跡ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前に blob を oplog に保存します:\n  git cat-file -p <blob-sha>";
+    "⚠️ untracked ファイル {} 件をディスクから削除します(空フォルダも削除)。削除前にバックアップを保存し、Operation Log から復元できます。";
 
 /// Japanese rendering of one discard note.
 pub fn note_ja(note: &DiscardNote) -> String {
@@ -57,6 +57,6 @@ pub fn title_ja(title: &PlanTitle) -> String {
 /// Japanese rendering of the discard recovery block.
 pub fn recovery_ja() -> String {
     "未 stage の変更を破棄します。追跡ファイルは index から復元、未追跡ファイルはディスクから削除。\
-     実行前に現内容の blob を oplog(op=\"discard\")に記録します:\n  git cat-file -p <blob-sha>"
+     実行前に各ファイルのバックアップを Operation Log に保存します:\n  git cat-file -p <blob-sha>"
         .to_string()
 }

@@ -348,6 +348,7 @@ impl KagiApp {
 
         div()
             .size_full()
+            .key_context("KagiWorkspace")
             .on_action(escape)
             .on_action(composer)
             .on_key_down(enter)

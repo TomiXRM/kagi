@@ -121,10 +121,9 @@ pub fn sidebar_search_clear_ax(cx: &mut VisualTestAppContext) {
             .unwrap_or_else(|| panic!("native Clear button needs localized name {label}: {tree}"));
         assert_eq!(node["aria"]["role"], "Button");
         let input = cx.read(|cx| app.read(cx).sidebar.filter.clone().unwrap());
-        assert_eq!(
-            cx.read(|cx| input.read(cx).rendered_aria_label()),
-            Some(Msg::A11ySidebarFilter.t().into())
-        );
+        let focused = native_ax::focused(cx, window);
+        assert_eq!(focused["aria"]["role"], "TextInput");
+        assert_eq!(focused["aria"]["label"], Msg::A11ySidebarFilter.t());
         assert!(
             native_ax::press(cx, window, label),
             "native AXPress clears search"
@@ -145,5 +144,17 @@ pub fn sidebar_search_clear_ax(cx: &mut VisualTestAppContext) {
                 .any(|node| node["aria"]["label"] == label),
             "empty search removes Clear"
         );
+        keys(cx, window, "p o i n t e r");
+        paint(cx, window);
+        let bounds = kagi::ui::e2e::control_bounds(window.window_id(), "sidebar-filter")
+            .expect("rendered sidebar filter bounds");
+        let point = gpui::point(bounds.right() - theme::scaled_px(20.), bounds.center().y);
+        cx.simulate_click(window, point, gpui::Modifiers::none());
+        cx.run_until_parked();
+        paint(cx, window);
+        assert!(cx.read(|cx| input.read(cx).value().is_empty()));
+        let focused = native_ax::focused(cx, window);
+        assert_eq!(focused["aria"]["role"], "TextInput");
+        assert_eq!(focused["aria"]["label"], Msg::A11ySidebarFilter.t());
     });
 }

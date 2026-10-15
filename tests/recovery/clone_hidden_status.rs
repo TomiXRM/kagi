@@ -133,6 +133,7 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     let owner = cx.read(|cx| app.read(cx).home_github.cloning.clone().unwrap());
     assert_eq!(e2e::take_clone_dispatches(), 1, "one clone dispatched");
     matrix(cx, &app, window);
+    settings_busy_feedback(cx, &app, window);
     reopen_same(cx, &app, window, &owner);
     home_hidden(cx, &app, window);
     release.send(());
@@ -151,6 +152,52 @@ fn held_clone(cx: &mut VisualTestAppContext, success: bool) {
     );
     assert_eq!(e2e::take_clone_dispatches(), 0);
     unmount(cx, app, window);
+}
+
+fn settings_busy_feedback(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    repository: AnyWindowHandle,
+) {
+    let _host = crate::settings_window::SettingsHostGuard::native(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "settings_pane",
+        "settings_window_position",
+        "settings_window_height",
+        "settings_window_frame",
+    ]);
+    cx.simulate_keystrokes(repository, "cmd-,");
+    cx.run_until_parked();
+    let settings = cx
+        .read(|cx| cx.windows())
+        .into_iter()
+        .find(|window| window.window_id() != repository.window_id())
+        .expect("clone owner opens a separate Settings host");
+    for lang in [Lang::En, Lang::Ja] {
+        app.update(cx, |app, cx| app.set_lang(lang, cx));
+        e2e::clear_control_bounds(settings.window_id(), "toast-stack");
+        draw(cx, app, settings);
+        assert!(
+            e2e::control_bounds(settings.window_id(), "clone-busy-status").is_some(),
+            "Settings retains the running clone's busy feedback"
+        );
+        assert!(
+            e2e::control_bounds(settings.window_id(), "toast-stack").is_some(),
+            "Settings retains toast feedback"
+        );
+        assert!(
+            e2e::control_bounds(settings.window_id(), "clone-busy-show").is_none(),
+            "Settings must not expose an action that opens progress behind its host"
+        );
+        assert!(
+            cx.read(|cx| app.read(cx).clone_modal().is_none()),
+            "drawing Settings does not reopen the hidden clone card"
+        );
+        check_status(cx, app, repository);
+    }
+    cx.update_window(settings, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
 }
 
 fn matrix(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowHandle) {

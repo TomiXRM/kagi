@@ -98,6 +98,14 @@ cat {directory}/$owner.json
         )
         .unwrap();
     }
+    pub fn metadata(&self, owner: &str, title: &str, author: &str) {
+        let path = self.root.path().join(format!("{owner}.json"));
+        let mut payload: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        payload["title"] = title.into();
+        payload["author"]["login"] = author.into();
+        std::fs::write(path, payload.to_string()).unwrap();
+    }
     pub fn fail(&self, owner: &str) {
         std::fs::write(self.root.path().join(format!("fail-{owner}")), b"offline").unwrap();
     }
@@ -126,6 +134,7 @@ pub fn fixture(
     let repo = fixture.path().canonicalize().unwrap();
     let before = repo_fingerprint(&repo);
     let (app, win) = mount(cx, &repo);
+    crate::pr_detail_adaptive::resize(cx, win, (1000., 720.));
     configure(cx, &app, base);
     (fixture, app, win, before)
 }
@@ -179,6 +188,34 @@ pub fn measure(
     })
     .unwrap();
     e2e::control_bounds(win.window_id(), id)
+}
+/// Compare actual row layout with independent renderer content bounds. Neither
+/// an estimated extent nor a cached offscreen height is a paint witness.
+pub fn measured_row(
+    cx: &mut VisualTestAppContext,
+    app: &NativeApp,
+    win: AnyWindowHandle,
+    index: usize,
+    id: &str,
+) -> Bounds<Pixels> {
+    let content = measure(cx, win, id).expect("current renderer must paint content");
+    let list = cx.read(|cx| e2e::issue_thread_list(app.read(cx), cx));
+    let row = list.bounds_for_item(index).unwrap_or_else(|| {
+        panic!(
+            "{id}: row {index} not painted; content={content:?}, top={:?}, viewport={:?}",
+            list.logical_scroll_top(),
+            list.viewport_bounds()
+        )
+    });
+    assert_eq!(list.measured_height(index), Some(row.size.height));
+    assert!(row.size.height > px(0.));
+    assert!(
+        content.top() >= row.top() && content.bottom() <= row.bottom(),
+        "{id}: content={content:?} must fit row {index}={row:?}"
+    );
+    let viewport = list.viewport_bounds();
+    assert!(row.bottom() > viewport.top() && row.top() < viewport.bottom());
+    row
 }
 pub fn pane(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Bounds<Pixels> {
     measure(cx, win, "issue-mode-center-pane").expect("real Issue scroll viewport")

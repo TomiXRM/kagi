@@ -78,11 +78,70 @@ pub fn scenario_issue_conversation_return_pending(cx: &mut VisualTestAppContext)
         "the departed generation must not settle the resumed read"
     );
     assert!(measure(cx, win, BODY).is_none());
+    let pending = cx.read(|cx| e2e::issue_thread_list(app.read(cx), cx));
+    measured_row(cx, &app, win, 0, "issue-mode-detail-loading");
+    assert_eq!(pending.item_count(), 2);
+    let pending_top = pending.logical_scroll_top();
+    cx.update_window(win, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.insert_issue_reply_body_for_e2e(4, "pending draft 日本語", window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.simulate_keystrokes(win, "secondary-a");
+    assert_eq!(copy(cx, win), "pending draft 日本語");
     release_returned.send(returned);
     cx.run_until_parked();
+    assert_eq!(
+        copy(cx, win),
+        "pending draft 日本語",
+        "acceptance preserves focused Reply input Copy without refocus"
+    );
+    let accepted = cx.read(|cx| e2e::issue_thread_list(app.read(cx), cx));
+    assert_eq!(accepted.item_count(), 3);
+    assert_eq!(
+        pending.item_count(),
+        2,
+        "accepted and pending geometry have separate owners"
+    );
     assert_eq!(select(cx, win, BODY), "RETURNED_DETAIL");
     assert!(measure(cx, win, "issue-mode-detail-loading").is_none());
-    assert_eq!(producer.requests(), vec!["a", "a"]);
+    let owned: Vec<_> = (0..25)
+        .map(|index| {
+            (
+                format!("IC_return_{index}"),
+                format!("**RETURN_COMMENT_{index}**"),
+            )
+        })
+        .collect();
+    let posts: Vec<_> = owned
+        .iter()
+        .map(|(id, body)| (id.as_str(), body.as_str()))
+        .collect();
+    producer.publish("a", "**RETURNED_DETAIL**", &posts);
+    load(cx, &app, win);
+    measured_row(cx, &app, win, 1, BODY);
+    assert_eq!(
+        accepted.item_count(),
+        28,
+        "refresh retains the accepted scroll owner"
+    );
+    let accepted_top = accepted.logical_scroll_top();
+    wheel(cx, win, -100_000.);
+    seek(cx, win, &comment(24), -1.);
+    measured_row(cx, &app, win, 26, &comment(24));
+    assert!(
+        accepted.logical_scroll_top().item_ix > accepted_top.item_ix,
+        "wheel moves the accepted thread rather than the retired pending owner"
+    );
+    assert_eq!(pending.logical_scroll_top().item_ix, pending_top.item_ix);
+    assert_eq!(
+        pending.logical_scroll_top().offset_in_item,
+        pending_top.offset_in_item
+    );
+    assert!(visible(cx, win, "issue-reply-composer").is_some());
+    assert_eq!(producer.requests(), vec!["a", "a", "a"]);
     finish(cx, fixture, app, win, before);
 }
 

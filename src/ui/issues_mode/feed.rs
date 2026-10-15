@@ -1,9 +1,10 @@
 //! Main feed keyboard rows share the existing Composer/paging viewport.
 use super::*;
-use super::{client_membership_active, render_issue_page_tail, render_main_list_status};
+use super::{render_issue_page_tail, render_main_list_status};
 use crate::ui::{
     e2e, issues_composer, keyboard_nav, list_a11y, list_filter_strip, render_helpers, timeline_row,
 };
+use kagi_ui_core::variable_list::{variable_list, VariableListState};
 fn render_main_issue_row(
     app: &KagiApp,
     issue: &Issue,
@@ -70,17 +71,25 @@ pub(super) fn render_main_issue_list(
     let filtered_count = order.len();
     // Composer, shared strip, status, Issue rows, then the loading/retry tail.
     let count = filtered_count + 4;
-    size_feed(&state, count);
+    if state.item_count() != count {
+        reconcile_feed(
+            &state,
+            None,
+            &ui.issue_view(app.issue_host_login()).row_keys,
+        );
+    }
+    state.set_estimate(theme::scaled_px(104.));
+    state.invalidate_rows(0..3);
+    state.invalidate_rows(count - 1..count);
     let keys = ui.issue_view(app.issue_host_login()).row_keys.clone();
     let rows = ui.issue_rows.rows(
         keys.iter().map(|(key, index)| (key.as_str(), *index)),
-        &crate::ui::keyboard_nav::RowScroll::List(state.clone()),
+        &crate::ui::keyboard_nav::RowScroll::Owned(state.clone()),
         app.root_focus.as_ref(),
         window,
         cx,
     );
     let owner = app.active_session();
-    install_paging_handler(app, &state, filtered_count, cx);
     let render = cx.processor(move |app: &mut KagiApp, index: usize, window, cx| {
         if app.active_session() != owner {
             return div().into_any_element();
@@ -124,7 +133,7 @@ pub(super) fn render_main_issue_list(
     .child(render_helpers::with_vertical_scrollbar(
         "issue-main-list-scroll",
         &scrollbar,
-        gpui::list(state, move |index, window, cx| render(index, window, cx))
+        variable_list(state, move |index, window, cx| render(index, window, cx))
             .flex_1()
             .min_h(px(0.)),
         true,
@@ -174,53 +183,29 @@ fn issue_content(issue: &Issue, state_label: &'static str, state_color: u32) -> 
         )
 }
 
-fn size_feed(state: &gpui::ListState, count: usize) {
-    let old_count = state.item_count();
-    if count > old_count {
-        state.splice(old_count..old_count, count - old_count);
-        state.remeasure_items(old_count.saturating_sub(1)..count);
-        // Unmeasured rows otherwise contribute zero height, so wheel/scrollbar
-        // movement stops at the few rows measured in the initial viewport.
-        state
-            .clone()
-            .with_uniform_item_height(theme::scaled_px(104.));
-    } else if count < old_count {
-        state.splice(count..old_count, 0);
-    }
-    state.remeasure_items(0..3);
-    state.remeasure_items(count - 1..count);
-}
-
-fn install_paging_handler(
-    app: &KagiApp,
-    state: &gpui::ListState,
-    filtered_count: usize,
-    cx: &Context<KagiApp>,
+/// Reconcile only on projection publication; unchanged paints do no key scans.
+/// The cache retains the previous projection until this handoff, even after its
+/// source epoch is invalidated.
+pub(super) fn reconcile_feed(
+    state: &VariableListState,
+    previous: Option<&IssueViewCache>,
+    keys: &crate::ui::keyboard_nav::RowKeys,
 ) {
-    let owner = app.active_session();
-    let repo = app.repo_path.clone();
-    let on_scroll = cx.processor(
-        move |app: &mut KagiApp, visible: std::ops::Range<usize>, _, cx| {
-            let (Some(owner), Some(repo)) = (owner, repo.as_ref()) else {
-                return;
-            };
-            let Some(ui) = app.ui.get(&owner) else {
-                return;
-            };
-            // Read the filter here, not from the closure's capture: a
-            // predicate switched on after this list rendered must still
-            // suppress the fetch this event would have started.
-            if app.active_session() == Some(owner)
-                && ui.github_issues_error.is_none()
-                && !client_membership_active(ui)
-                && filtered_count > 0
-                && visible.end.saturating_sub(3) >= filtered_count
-            {
-                app.load_more_github_issues_for(owner, repo.clone(), cx);
-            }
-        },
+    let previous = previous.filter(|old| state.item_count() == old.row_keys.len() + 4);
+    let old_slots: std::collections::HashMap<_, _> = previous
+        .into_iter()
+        .flat_map(|old| {
+            old.row_keys
+                .iter()
+                .map(|(key, index)| (key.as_str(), *index))
+        })
+        .collect();
+    let mut retained = Vec::with_capacity(keys.len() + 4);
+    retained.extend((0..3).map(|index| previous.map(|_| index)));
+    retained.extend(
+        keys.iter()
+            .map(|(key, _)| old_slots.get(key.as_str()).copied()),
     );
-    state.set_scroll_handler(move |event, window, cx| {
-        on_scroll(event.visible_range.clone(), window, cx);
-    });
+    retained.push(previous.map(|old| old.row_keys.len() + 3));
+    state.reconcile_rows(&retained);
 }

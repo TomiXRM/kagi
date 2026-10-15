@@ -278,6 +278,10 @@ mod recovery_terminal_states;
 mod recovery_terminal_keys;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/terminal_fonts.rs"]
+mod recovery_terminal_fonts;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/unborn_empty.rs"]
 mod recovery_unborn_empty;
 
@@ -1556,6 +1560,10 @@ mod macos {
                 Box::new(crate::recovery_terminal_states::scenario_terminal_states),
             ),
             (
+                "terminal_font_fallback",
+                Box::new(crate::recovery_terminal_fonts::scenario_terminal_font_fallback),
+            ),
+            (
                 "terminal_auto_lock",
                 Box::new(crate::recovery_worktree_lock_reason::scenario_terminal_auto_lock),
             ),
@@ -1674,6 +1682,10 @@ mod macos {
             (
                 "input_names_inventory",
                 Box::new(crate::input_names::scenario_input_names_inventory),
+            ),
+            (
+                "input_ime_escape_boundaries",
+                Box::new(crate::input_names::scenario_input_ime_escape_boundaries),
             ),
             (
                 "branch_rename_neutral_state",
@@ -2648,6 +2660,14 @@ mod macos {
                 Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),
             (
+                "toast_stack_budget_large_zoom",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_large_zoom),
+            ),
+            (
+                "toast_stack_budget_compact_editor",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_compact_editor),
+            ),
+            (
                 "toast_live_status",
                 Box::new(crate::feedback_status::scenario_toast_live_status),
             ),
@@ -3469,6 +3489,9 @@ mod macos {
                 Box::new(crate::recovery_commit_panel_viewport::scenario_commit_panel_viewport),
             ),
             ("compact_rail_cmd_f", Box::new(crate::compact_rail::scenario_compact_rail_cmd_f)),
+            ("compact_rail_nested_escape", Box::new(crate::compact_rail::escape::scenario_compact_rail_nested_escape)),
+            ("compact_pr_menu_escape", Box::new(crate::compact_rail::escape::scenario_compact_pr_menu_escape)),
+            ("compact_group_reveal_escape", Box::new(crate::compact_rail::escape::scenario_compact_group_reveal_escape)),
             ("compact_rail_short_window", Box::new(crate::compact_rail::scenario_compact_rail_short_window)),
             ("compact_popover_sections", Box::new(crate::compact_rail::scenario_compact_popover_sections)),
             ("compact_rail_ax", Box::new(crate::compact_rail::scenario_compact_rail_ax)),

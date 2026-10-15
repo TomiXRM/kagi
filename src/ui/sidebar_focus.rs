@@ -47,6 +47,7 @@ pub(super) fn bind_keys(cx: &mut gpui::App) {
     cx.bind_keys([
         gpui::KeyBinding::new("tab", WorktreeCardNext, Some("WorktreeInspection")),
         gpui::KeyBinding::new("shift-tab", WorktreeCardPrev, Some("WorktreeInspection")),
+        gpui::KeyBinding::new("escape", super::CloseMainDiff, Some("SidebarGroupReveal")),
         gpui::KeyBinding::new("left", SidebarTreeLeft, Some("KagiSidebarPaneRows")),
     ]);
 }

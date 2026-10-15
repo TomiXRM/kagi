@@ -80,3 +80,43 @@ Amended decision:
 - Other CJK locales intentionally receive the Japanese glyph variant in Kagi's
   UI. A future locale-aware fallback list may add dedicated KR/SC/TC families
   if Kagi adds those interface languages.
+
+## Amendment (2026-10-15): explicit native shaping boundaries (#1479-S1)
+
+Root inheritance does not reach a freshly constructed `Font` used outside an
+element's text-style scope. Kagi now supplies `ui_font().fallbacks` through its
+single terminal config builder, including the existing all-session settings
+update route. The owned terminal keeps `None` as its generic default and clones
+the shared fallback value into both its ASCII metric and styled glyph fonts.
+Changing the config uses the existing next-render metric recalculation.
+Status-bar fitting and independent GUI geometry probes use the same explicit
+fallback as their corresponding painted text.
+
+The Linux regression compares every Han glyph in `ABC日本語直骨誤` with an explicit
+Noto Sans JP reference in the same real `CosmicTextSystem`. ASCII retains Inter
+or JetBrains Mono; Japanese Regular/Bold must resolve to their distinct bundled
+static faces, not merely two arbitrary runs. A separately invoked acceptance
+test requires real JetBrainsMono Nerd Font Mono Regular/Bold files and checks
+that its icon stays in the primary face. Missing test font files fail that lane.
+The static font assets and OFL notices remain unchanged.
+
+This supersedes the *need for implicit shaping paths* in decision 4, not its
+removal gate: the existing cosmic patch remains until #1479-S1's actual Linux
+shape and native acceptance matrix is observed. Removal belongs to a separate
+final commit. A macOS run, an empty Linux GUI suite, or a selected-font unit test
+alone must not be presented as the native X11/Wayland capture matrix.
+Fallback only handles glyphs absent from the primary; it does not replace an
+existing primary SC glyph or promise coverage of all Unicode.
+
+Validation on 2026-10-15 used an isolated aarch64 Linux container in the dedicated
+`colima-kagi-linux` profile, not the macOS text backend. The bundled-only,
+real-Nerd-primary, and competing-system-Noto tests passed in independent
+`ja_JP.UTF-8` and `en_US.UTF-8` processes. A temporary native Wayland fixture also
+produced visible Japanese normal/bold terminal and reference glyphs, Inputs,
+TextView, and Inter text. These are partial evidence, not removal approval:
+X11/Xwayland capture attempts showed blank presentation, and the full native
+application-surface matrix was not completed. The cosmic patch is therefore
+retained. The macOS terminal lifecycle scenario checks the requested application
+font stack, glyph coverage, weight, and cell geometry; exact bundled JP face
+identity remains the separate Linux oracle, since CoreText's embedded-font
+cascade can resolve differently from a direct Noto primary.

@@ -453,7 +453,16 @@ pub(crate) fn render_update_modal(
 /// discard-or-cancel gate before switching file/source or closing the
 /// workspace while its buffer is dirty. Enter/Esc come free from the
 /// existing `confirm_active_modal`/`cancel_active_modal` root plumbing.
-pub(crate) fn render_editor_dirty_guard_modal(cx: &mut Context<KagiApp>) -> gpui::AnyElement {
+pub(crate) fn render_editor_dirty_guard_modal(
+    host_close: bool,
+    count: usize,
+    saving: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
+    let busy = saving.then(|| SharedString::from(Msg::OpInProgress.t()));
+    let save = cx.listener(|this, _e: &gpui::ClickEvent, _, cx| {
+        this.save_host_dirty_guard(cx);
+    });
     let cancel = cx.listener(|this, _e: &gpui::ClickEvent, window, cx| {
         this.cancel_editor_dirty_guard();
         if let Some(fh) = this.root_focus.clone() {
@@ -471,12 +480,25 @@ pub(crate) fn render_editor_dirty_guard_modal(cx: &mut Context<KagiApp>) -> gpui
 
     let card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from(Msg::EditorWorkspaceUnsavedTitle.t()),
+            SharedString::from(if host_close {
+                Msg::EditorHostUnsavedTitle.t()
+            } else {
+                Msg::EditorWorkspaceUnsavedTitle.t()
+            }),
             Some((
                 ModalIcon::Path("icons/file-text.svg"),
                 current_theme().color_warning,
             )),
         )))
+        .when(host_close, |card| {
+            card.child(
+                div().child(
+                    Msg::EditorHostUnsavedCount
+                        .t()
+                        .replace("{count}", &count.to_string()),
+                ),
+            )
+        })
         .child(
             div().flex_shrink_0().child(
                 super::button_style::modal_button_row()
@@ -492,10 +514,20 @@ pub(crate) fn render_editor_dirty_guard_modal(cx: &mut Context<KagiApp>) -> gpui
                         "editor-dirty-guard-discard",
                         Msg::EditorWorkspaceDiscard.t(),
                         ModalButtonKind::Destructive,
-                        None,
+                        busy.clone(),
                         discard,
                         cx,
-                    )),
+                    ))
+                    .when(host_close, |row| {
+                        row.child(modal_button(
+                            "editor-dirty-guard-save",
+                            Msg::EditorHostSaveAll.t(),
+                            ModalButtonKind::Primary,
+                            busy,
+                            save,
+                            cx,
+                        ))
+                    }),
             ),
         );
 

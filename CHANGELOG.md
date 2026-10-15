@@ -13,6 +13,9 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Notifications stay fixed at the bottom-left above the status bar in repository and Settings windows, expanding upward instead of appearing below the toolbar on the right. The newest-preview/count disclosure, 30% window-height budget and 45% window-width cap from #1551 remain unchanged. (#1590)
+  - Compact repository windows with an open bottom panel further fit notifications to its body minus the toast inset, preserving the 30% upper bound and fixed anchor while leaving the panel tab strip's primary controls exposed. Settings shares the busy-snackbar/toast renderer.
+  - Review: compact Editor uses its actual capped panel height; Settings does not expose the clone-progress action targeting its repository window.
 - Japanese terminal text keeps the bundled Japanese typeface when changing fonts, zooming, switching sessions or restarting a terminal. Status-bar text fitting uses the same Japanese fallback as drawing. (#1479-S1)
 - Update the toolbar count scaling GUI regression to expect the reachable 170% preset after seven public zoom steps, rather than the former 167% cap. Direct legacy 1667-permille rendering coverage remains unchanged.
 - Diff geometry is now Kagi-owned across Main Diff, File History, PR diff/conflicts and Editor WIP/history, without depending on the patched GPUI list APIs. The shared virtual list retains actual distant measurements across unchanged reloads/recolor, reflows reading anchors, and resolves giant wheel and scrollbar-end requests against the true tail without eager `measure_all`. Native extent contracts retain all seven scenarios and add physical thumb and offscreen review-card update coverage. (#1479-S5C; ADR-0222)

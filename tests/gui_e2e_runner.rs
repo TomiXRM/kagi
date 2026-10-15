@@ -2656,6 +2656,14 @@ mod macos {
                 Box::new(crate::toast_stack_budget::scenario_toast_stack_budget),
             ),
             (
+                "toast_stack_budget_large_zoom",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_large_zoom),
+            ),
+            (
+                "toast_stack_budget_compact_editor",
+                Box::new(crate::toast_stack_budget::scenario_toast_stack_budget_compact_editor),
+            ),
+            (
                 "toast_live_status",
                 Box::new(crate::feedback_status::scenario_toast_live_status),
             ),

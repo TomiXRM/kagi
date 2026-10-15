@@ -380,6 +380,95 @@ pub fn scenario_sidebar_tree_selection_motion(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
 }
 
+/// PR #1621: a hidden Navigator cannot retain a keyboard ring until its next
+/// virtual-list paint. Check the first returning native frame, not just focus.
+pub fn scenario_sidebar_tree_focus_return_motion(cx: &mut VisualTestAppContext) {
+    let _settings = Settings::capture();
+    let _reduce_setting = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _motion = MotionGuard(theme::reduce_motion());
+    theme::set_reduce_motion(false);
+    let fixture = build_fixture();
+    git(fixture.path(), &["branch", "feature"]);
+    let (app, window) = mount_dimensions(cx, fixture.path(), (1440., 900.));
+    appearance(
+        cx,
+        &app,
+        window,
+        kagi_ui_core::i18n::Lang::En,
+        "apple-light",
+        1.,
+        0,
+    );
+    let mut t = Instant::now();
+    frame(cx, &app, window, t);
+    let plain = fill(cx, window, "sidebar-local-main");
+    for departure in [
+        "view.toggleSidebar",
+        "view.togglePrMode",
+        "issues",
+        "view.toggleEditorWorkspace",
+    ] {
+        cx.simulate_keystrokes(window, "f19");
+        support::focus(cx, &app, window, 0, "branch:main");
+        frame(cx, &app, window, t + Duration::from_millis(300));
+        assert!(
+            distance(fill(cx, window, "sidebar-local-main"), plain) > 12,
+            "{departure}: departing row must paint a settled keyboard ring"
+        );
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                if departure == "issues" {
+                    app.show_issues_mode(cx);
+                } else {
+                    app.handle_menu_command(departure, window, cx);
+                }
+            });
+        })
+        .unwrap();
+        frame(cx, &app, window, t + Duration::from_millis(301));
+        frame(cx, &app, window, t + Duration::from_millis(700));
+        assert_eq!(
+            support::focused(cx, &app, window),
+            None,
+            "{departure}: hidden Navigator must release logical row focus"
+        );
+        cx.update_window(window, |_, window, cx| {
+            app.update(cx, |app, cx| {
+                if departure == "view.toggleSidebar" {
+                    app.handle_menu_command(departure, window, cx);
+                } else {
+                    app.show_graph_mode(cx);
+                }
+            });
+        })
+        .unwrap();
+        frame(cx, &app, window, t + Duration::from_millis(701));
+        // The View toggle initially has a zero-width opening clip. Sample its
+        // first positive-width frame; mode takeovers return at full width.
+        frame(cx, &app, window, t + Duration::from_millis(702));
+        assert_eq!(support::focused(cx, &app, window), None);
+        let ring = sidebar::sidebar_motion_for_e2e(0, "branch:main", "ring")
+            .expect("returning row paints its presentation");
+        assert!(
+            ring.opacity <= f32::EPSILON,
+            "{departure}: first returning unfocused row must not replay its old ring: {}",
+            ring.opacity
+        );
+        assert!(
+            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
+            "{departure}: returning native ring pixels must match the unfocused baseline"
+        );
+        frame(cx, &app, window, t + Duration::from_millis(775));
+        assert!(
+            distance(fill(cx, window, "sidebar-local-main"), plain) <= 3,
+            "{departure}: unfocused row must not fade an obsolete ring"
+        );
+        t += Duration::from_millis(1100);
+        frame(cx, &app, window, t);
+    }
+    unmount(cx, app, window);
+}
+
 pub fn scenario_sidebar_tree_refresh_motion(cx: &mut VisualTestAppContext) {
     let _settings = Settings::capture();
     let _reduce_setting = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);

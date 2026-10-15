@@ -1714,6 +1714,12 @@ mod macos {
                 Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_selection_motion),
             ),
             (
+                "sidebar_tree_focus_return_motion",
+                Box::new(
+                    crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_focus_return_motion,
+                ),
+            ),
+            (
                 "sidebar_tree_refresh_motion",
                 Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_refresh_motion),
             ),

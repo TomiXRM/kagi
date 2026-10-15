@@ -187,3 +187,11 @@ current item count; the intrinsic slot height remains theme-derived so zoom
 changes are remeasured. This avoids cumulative device-pixel rounding drift.
 Sidebar initial-read readiness is explicit: loading headers do not consume the
 instant initialization boundary before the first accepted asynchronous read.
+
+The whole-Navigator focus boundary also owns its ring lifetime. When the panes
+leave the front workspace (hidden sidebar, PRs, Issues or Editor), clear both the
+retained focused identity and all ring transitions before yielding logical focus.
+Virtual-list processors do not run while away, so deferring that reset until a
+row is painted would replay an obsolete ring on the first returning frame.
+Frozen-clock native coverage checks immediate focus evacuation and unfocused
+Metal ring pixels on return through all four paths (PR #1621 review).

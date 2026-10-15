@@ -481,6 +481,14 @@ impl SidebarPaneMotion {
 }
 
 impl SidebarState {
+    /// Hidden/replaced lists do not paint, so they cannot retire a stale ring.
+    pub(super) fn clear_focus_motion(&self) {
+        for pane in &mut self.motion.borrow_mut().panes {
+            pane.selected = None;
+            pane.washes.clear();
+        }
+    }
+
     /// Called once by the existing row-cache publisher, before replacing rows.
     pub(super) fn prepare_rows_motion(
         &self,

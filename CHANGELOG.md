@@ -19,6 +19,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Clear the Navigator's retained keyboard-ring motion when its panes leave the front workspace, so hiding the sidebar or visiting Pull Requests, Issues or Editor cannot replay an unfocused ring on return. (#1617, #1621)
 - Correct the existing right-selection motion GUI oracle to allow native pixel snapping when comparing full pane width; the same 327.5px/327.6px mismatch reproduced on unchanged dev. Production motion is unchanged. (#1617)
 - Use native menu checkmarks for Theme, Language, Toolbar and the active workspace, with plain Graph / Pull Requests / Editor names (グラフ / Pull Request / エディター in Japanese). Add File > Open Recent and matching Dock entries from Home history, with history-only Clear Menu and a clearly separated, aligned portable menu group. Expose Find… only for an available target and disable Clear Menu when history is empty using native action availability. Preserve the existing sidebar shortcut priority; further Find navigation awaits public upstream actions. (#1604, #1608; Refs #1607)
   - Keep Clear Menu in File > Open Recent only; the Dock lists repositories that remain actionable after the last window closes.

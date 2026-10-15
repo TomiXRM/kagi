@@ -268,6 +268,7 @@ impl KagiApp {
         focus.row_anchor.clear();
         focus.focused = if front { window.focused(cx) } else { None };
         if !front {
+            self.sidebar.clear_focus_motion();
             self.yield_sidebar_focus(window, cx);
             return;
         }

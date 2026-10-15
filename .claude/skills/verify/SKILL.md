@@ -101,10 +101,27 @@ in separate `LANG=ja_JP.UTF-8` and `LANG=en_US.UTF-8` processes. This test
 requires both competing families to be present and compares selected faces
 against the same bundled JP reference; it is shaping evidence, not a capture.
 The separate native acceptance in `docs/rearch/upstream-migration-1479.md`
-still requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
-X11/Wayland where available, terminal/reference images and the other UI shaping
-surfaces. Never delete a user's fonts or change host fontconfig. Keep the cosmic
-patch until those Linux requirements have observed evidence.
+requires fresh JA/EN processes, private minimal/system-Noto fontconfig,
+X11/Wayland, terminal/reference images and the production diff/code, Inputs,
+TextView, UI and status surfaces. Never delete a user's fonts or change host
+fontconfig. #1479-S1b observed this matrix on registry cosmic-text 0.19.0 and
+removed its patch; repeat it for the later #1479-S6 GPUI cutover.
+
+For isolated Xvfb/Weston software rendering, install `mesa-vulkan-drivers`,
+`libgl1-mesa-dri`, `mesa-utils`, `vulkan-tools`, `x11-apps` and ImageMagick
+inside the container only. Check `glxinfo -B` and `vulkaninfo --summary`.
+Mesa lavapipe can initialize successfully yet present black X11 frames.
+The current pinned GPUI does not consume `WGPU_BACKEND` when constructing its
+backend mask: `WGPU_BACKEND=gl` alone is not sufficient. In that isolated
+environment, `LIBGL_ALWAYS_SOFTWARE=1` and `VK_ICD_FILENAMES` naming a
+nonexistent private ICD file force discovery to the working OpenGL fallback.
+Capture X11 with `import -window <PID-resolved-window-id> <png>` or xwd.
+For native Wayland, unset `DISPLAY`, set the private `WAYLAND_DISPLAY`, and
+run Weston with a rendering backend (`--use-pixman`, not the headless
+no-render default). A nested X11-backend Weston capture is compositor output,
+not an Xwayland application capture; record the native app PID and isolate
+the compositor to that app. Inspect actual glyph pixels and retain the
+face-identity assertions; merely counting non-black pixels is not acceptance.
 
 For #1514 use `KAGI_GUI_E2E_ONLY='update_,notice_'` with KEEP_GOING.
 `update_notice_in_flight` queues an installer completion with

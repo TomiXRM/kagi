@@ -120,3 +120,55 @@ retained. The macOS terminal lifecycle scenario checks the requested application
 font stack, glyph coverage, weight, and cell geometry; exact bundled JP face
 identity remains the separate Linux oracle, since CoreText's embedded-font
 cascade can resolve differently from a direct Noto primary.
+
+## Amendment (2026-10-15): registry cosmic-text after Linux acceptance (#1479-S1b)
+
+The native acceptance gate deferred above is now observed with **unpatched
+crates.io cosmic-text 0.19.0**. Remove its `[patch.crates-io]` entry and empty
+table; update only that package with `cargo update -p cosmic-text --precise
+0.19.0`. The remaining GPUI/Kit migration patches are unchanged.
+
+The isolated aarch64 Debian container in `colima-kagi-linux` ran all eight fresh
+process combinations: `ja_JP.UTF-8` / `en_US.UTF-8`, private minimal fontconfig
+(DejaVu plus the real Nerd primary, no system CJK) / installed system Noto CJK
+SC+JP, and native X11 / native Wayland. The capture fixture mounts the production
+KagiApp, real selected Rust diff, commit title/body Inputs and production PTY
+terminal, alongside an explicit Noto Sans JP Regular/Bold reference and the
+same TextView component used by production. It checks the terminal's ANSI bold,
+two-cell Han layout and ASCII cursor column, and compares every Han character's
+FontId with the explicit JP reference in the same native text system. The
+existing bundled-only, competing-system-font and real-Nerd tests independently
+retain their exact static-face, weight and icon-priority assertions.
+
+Xvfb had working Mesa 22.3.6 llvmpipe/lavapipe, confirmed with `glxinfo -B` and
+`vulkaninfo --summary`; adding drivers alone did **not** fix its black Vulkan
+presentation. This pinned GPUI constructs its backend mask directly, so
+`WGPU_BACKEND=gl` alone does not force OpenGL. For this container only,
+`LIBGL_ALWAYS_SOFTWARE=1` plus `VK_ICD_FILENAMES` pointing at a nonexistent
+private ICD file disables Vulkan discovery and selects working OpenGL.
+No renderer/library patch or production environment override was added.
+X11 captures target the Kagi PID's window with ImageMagick `import` (and xwd
+diagnostics); Wayland runs with `DISPLAY` unset on an isolated Weston
+X11-backend/pixman compositor, whose sole application is the recorded Kagi PID.
+Its PNG captures the compositor window, not an Xwayland Kagi window.
+The worktree-local `target/s1b-evidence/` holds PNGs, face logs, private
+fontconfigs, candidate/final matrix records and the archived capture fixture
+source. Both eight-leg matrices passed: first against an isolated unpatched
+candidate, then after the manifest/lockfile cutover. The final Linux unit matrix
+ran two bundled/Nerd tests in each minimal-font locale and all three tests in
+each system-Noto locale (10 executions, no failures). The dedicated Linux
+container and profile were stopped afterward.
+
+The requested macOS gates also passed: `cargo build --locked`,
+`cargo test --workspace` (3,484 passed, 44 ignored), `cargo clippy --workspace`,
+`cargo fmt --all`, `uv run --project ci check-all`, and the filtered native
+`terminal_,status_bar_,finder_scale_rest,inspector_scale` runner (14/14,
+including `terminal_font_fallback`). Existing Clippy/future-incompatibility
+warnings remain; no Rust production/test source was changed in this removal.
+
+Recommendation: **keep [pop-os/cosmic-text#522](https://github.com/pop-os/cosmic-text/pull/522)
+open**. Its region-subtag normalization fixes implicit Han fallback for other
+consumers; Kagi's explicit stack makes it unnecessary here, not incorrect or
+redundant upstream. No comment or state change was sent to that PR.
+This acceptance does not claim all Unicode coverage, replacement of a primary
+font's own SC glyphs, OS accessibility/IME coverage, or hardware-GPU coverage.

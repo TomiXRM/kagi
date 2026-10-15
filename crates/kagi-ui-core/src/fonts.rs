@@ -20,6 +20,39 @@ pub fn ui_font() -> Font {
     ui
 }
 
+/// Renderer-fed inherited fonts for native acceptance, never a configured-font mirror.
+#[cfg(feature = "gui-e2e")]
+pub mod e2e {
+    use gpui::{AnyElement, Font, IntoElement as _, Styled as _, WindowId};
+    use std::{cell::RefCell, collections::HashMap};
+
+    thread_local! {
+        static FONTS: RefCell<HashMap<(WindowId, &'static str), Font>> = RefCell::default();
+    }
+
+    /// Zero-size, out-of-flow probe inside the actual styled text container.
+    pub fn probe(name: &'static str) -> AnyElement {
+        gpui::canvas(
+            move |_, window, _| {
+                FONTS.with(|fonts| {
+                    fonts.borrow_mut().insert(
+                        (window.window_handle().window_id(), name),
+                        window.text_style().font(),
+                    );
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    }
+
+    pub fn take(window: WindowId, name: &'static str) -> Option<Font> {
+        FONTS.with(|fonts| fonts.borrow_mut().remove(&(window, name)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -447,8 +447,15 @@ fn inspection_card(
     let entry = app.ui().worktree_inspections.entries.get(&card.path);
     div()
         .id("worktree-inspection")
+        // GPUI's interactive hoverable_tooltip is also a separate root, outside Kit Root.
+        .font(theme::ui_font())
         .relative()
         .child(e2e::measure_inside("worktree-inspection"))
+        .map(|card| {
+            #[cfg(feature = "gui-e2e")]
+            let card = card.child(kagi_ui_core::fonts::e2e::probe("worktree-hover-card"));
+            card
+        })
         .occlude()
         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
         .w(theme::scaled_px(CARD_W))

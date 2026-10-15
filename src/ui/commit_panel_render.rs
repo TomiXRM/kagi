@@ -16,6 +16,7 @@
 
 use super::commit_panel::CommitPanelView;
 use super::commit_panel_controls as controls;
+use super::commit_panel_files::cp_tree_layout;
 use super::commit_panel_rows::*;
 use super::*;
 

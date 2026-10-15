@@ -42,42 +42,8 @@ fn cp_tree_item(
     }
 }
 
-/// Level and sibling position/size of every tree-view row of a section, in
-/// display order (#354): the pruned file tree at depth + 1, then each
-/// non-empty fold ("Generated", "Agent artifacts") as a top-level item with
-/// its expanded files one level below. Linear; rebuilt on status changes or
-/// fold toggles, never by the virtual list's per-scroll processor.
-pub(super) fn cp_tree_layout(
-    panel: &crate::ui::commit_panel::CommitPanelState,
-    staged: bool,
-) -> Vec<(usize, (usize, usize))> {
-    let tree = if staged {
-        &panel.staged_tree
-    } else {
-        &panel.unstaged_tree
-    };
-    let mut levels: Vec<usize> = tree
-        .iter()
-        .map(|row| match row {
-            file_tree::TreeRow::Dir { depth, .. } | file_tree::TreeRow::File { depth, .. } => {
-                depth + 1
-            }
-        })
-        .collect();
-    for extra in [
-        panel.generated_extra_rows(staged),
-        panel.agent_extra_rows(staged),
-    ] {
-        if extra > 0 {
-            levels.push(1);
-            levels.extend(std::iter::repeat_n(2, extra - 1));
-        }
-    }
-    let positions = kagi_ui_core::tree_a11y::sibling_positions(&levels);
-    levels.into_iter().zip(positions).collect()
-}
-
-/// The slot of display row `index` in a section laid out by [`cp_tree_layout`].
+/// The slot of display row `index` in a section laid out by
+/// [`super::commit_panel_files::cp_tree_layout`].
 pub(super) fn cp_tree_slot(
     layout: &[(usize, (usize, usize))],
     tree: &'static str,

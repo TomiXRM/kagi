@@ -540,6 +540,9 @@ pub struct EditorWorkspaceView {
     pub tree_scroll: UniformListScrollHandle,
     #[cfg(feature = "gui-e2e")]
     tree_probes: tree_probes::TreeProbes,
+    /// Explicit platform activation for hidden native paint fixtures.
+    #[cfg(feature = "gui-e2e")]
+    pub window_active_override: Option<bool>,
     /// Kagi-owned variable-height measurements for the right hunks list.
     pub diff_scroll: VariableListState,
     pub diff_layout: kagi_ui_core::diff_list::DiffListLayout,
@@ -631,6 +634,7 @@ pub struct EditorTreeForegroundProbe {
     pub dirty: gpui::Hsla,
     pub dirty_visible: bool,
     pub wash: f32,
+    pub window_active: bool,
     pub bounds: gpui::Bounds<gpui::Pixels>,
 }
 
@@ -879,6 +883,8 @@ impl EditorWorkspaceView {
             next_buf_gen: 1,
             probe_req: 0,
             tree_scroll: UniformListScrollHandle::new(),
+            #[cfg(feature = "gui-e2e")]
+            window_active_override: None,
             diff_scroll: new_diff_list_state(),
             diff_layout: Default::default(),
             show_tree: true,
@@ -2996,6 +3002,9 @@ fn render_tree_pane(
                     // key on visible position, not the base `tree` index.
                     let first_visible = range.start;
                     let visible_end = range.end;
+                    let window_active = window.is_window_active();
+                    #[cfg(feature = "gui-e2e")]
+                    let window_active = this.window_active_override.unwrap_or(window_active);
                     range
                         .filter_map(|i| {
                             let a11y = *this.tree_layout.a11y.get(i)?;
@@ -3006,7 +3015,7 @@ fn render_tree_pane(
                                 visible_end,
                                 *this.tree_layout.visible.get(i)?,
                                 a11y,
-                                window.is_window_active(),
+                                window_active,
                                 cx,
                             )
                         })
@@ -3528,6 +3537,7 @@ fn render_tree_row(
                                 |_, _, _| {},
                                 move |bounds, _, _, _| {
                                     painted.borrow_mut().push(EditorTreeForegroundProbe {
+                                        window_active,
                                         path: path.clone(),
                                         background: visual_bg,
                                         name: name_foreground,

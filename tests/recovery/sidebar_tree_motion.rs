@@ -254,12 +254,15 @@ pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {
     });
     let t = Instant::now();
     frame(cx, &app, window, t);
-    let group = e2e::control_bounds(window.window_id(), "sidebar-group-local:topic")
-        .expect("scrolled fractional group");
+    let group = sidebar::sidebar_motion_for_e2e(0, "group:local:topic", "row")
+        .expect("scrolled fractional group slot");
     let child = sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "row").unwrap();
     let neighbor = sidebar::sidebar_motion_for_e2e(0, "branch:zzz-00", "row").unwrap();
     let pitch = (neighbor.y - child.y) / 3.;
-    assert!((child.y - f32::from(group.top()) - pitch).abs() < 0.6);
+    assert!(
+        (child.y - group.y - pitch).abs() < 0.6,
+        "adjacent native slots share pitch: group={group:?}, child={child:?}, neighbor={neighbor:?}, pitch={pitch}"
+    );
     click(cx, &app, window, "sidebar-group-local:topic");
     frame(cx, &app, window, t);
     app.update(cx, |app, cx| {
@@ -273,7 +276,7 @@ pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {
         .expect("real fractional-zoom neighbor");
     assert!(
         (neighbor.y - ghost.y - pitch * 33.).abs() < 0.6,
-        "scrolled ghost and real neighbor share measured native pitch"
+        "scrolled ghost and real neighbor share measured native pitch: ghost={ghost:?}, neighbor={neighbor:?}, pitch={pitch}"
     );
     frame(cx, &app, window, t + Duration::from_millis(75));
     let ghost = sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "ghost").unwrap();
@@ -281,7 +284,8 @@ pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {
     let neighbor = sidebar::sidebar_motion_for_e2e(0, "branch:zzz-30", "row").unwrap();
     assert!(
         (neighbor.y - ghost.y - pitch * (31. + 2. * ghost.opacity)).abs() < 0.6,
-        "mid-splice ghost and real neighbor retain measured-pitch alignment"
+        "mid-splice alignment: ghost={ghost:?}, neighbor={neighbor:?}, pitch={pitch}, expected={}",
+        pitch * (31. + 2. * ghost.opacity)
     );
     frame(cx, &app, window, t + Duration::from_millis(300));
     assert!(sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "ghost").is_none());

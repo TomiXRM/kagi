@@ -271,6 +271,7 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         wait_editor(cx, &editor, window, t);
         editor.update(cx, |view, cx| {
             view.dirty = true;
+            view.window_active_override = Some(true);
             cx.notify();
         });
         for slug in ["apple-light", "apple-dark"] {
@@ -283,6 +284,7 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
                         .iter()
                         .find(|row| row.path == Path::new(path))
                         .unwrap();
+                    assert!(row.window_active, "{slug} must exercise the active accent wash: {row:?}");
                     if path == "motion/b.txt" {
                         assert!(row.dirty_visible, "probe must cover a painted dirty dot");
                     }
@@ -302,7 +304,8 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
                     });
                     assert!(
                         matches_fill,
-                        "{slug}: measured fill must be the actual composited wash"
+                        "{slug} {path}: measured fill must be the actual composited wash: {row:?}; accent={wash_color:?} panel={:06x} stripe={:06x}",
+                        base.panel, base.bg_row_alt,
                     );
                     if millis == 90 {
                         assert!(row.wash > 0. && row.wash < 1.);
@@ -326,6 +329,7 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         app.update(cx, |app, cx| app.set_theme(&original_theme, cx));
         editor.update(cx, |view, cx| {
             view.dirty = false;
+            view.window_active_override = None;
             cx.notify();
         });
         for path in ["motion/a.txt", "motion/b.txt"] {

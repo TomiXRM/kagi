@@ -75,6 +75,7 @@ impl TabUiState {
         }
         let Self {
             selected,
+            graph_motion: _, // Derived Graph presentation, not additional intent.
             // Scroll handles expose their position only under gpui `test-support`;
             // the leak matrix observes both (ADR-0197 決定 4, last paragraph).
             commit_scroll_handle: _,

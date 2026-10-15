@@ -351,6 +351,7 @@ impl TabViewState {
 pub struct TabUiState {
     /// Currently selected commit row index (`None` = no selection).
     pub selected: Option<usize>,
+    pub(crate) graph_motion: super::render_body::motion::GraphMotion,
     /// Main commit-list position and the graph walk limit that produced it.
     pub commit_scroll_handle: UniformListScrollHandle,
     pub commit_limit: usize,
@@ -531,6 +532,7 @@ impl Default for TabUiState {
     fn default() -> Self {
         Self {
             selected: None,
+            graph_motion: Default::default(),
             commit_scroll_handle: UniformListScrollHandle::new(),
             commit_limit: super::DEFAULT_COMMIT_LIMIT,
             load_more_gen: 0,

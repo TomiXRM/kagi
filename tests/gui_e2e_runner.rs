@@ -96,6 +96,12 @@ mod pr_lane_keys;
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_tree_motion.rs"]
+mod recovery_editor_tree_motion;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_tree_motion.rs"]
+mod recovery_sidebar_tree_motion;
+#[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
 
@@ -202,6 +208,10 @@ mod selection_on_accent;
 #[cfg(target_os = "macos")]
 #[path = "recovery/graph_selection_wash.rs"]
 mod graph_selection_wash;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/graph_motion_edges.rs"]
+mod graph_motion_edges;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/tab_strip.rs"]
@@ -1708,6 +1718,38 @@ mod macos {
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
             ),
             (
+                "sidebar_tree_pane_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_pane_motion),
+            ),
+            (
+                "sidebar_tree_subgroup_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_subgroup_motion),
+            ),
+            (
+                "sidebar_tree_selection_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_selection_motion),
+            ),
+            (
+                "sidebar_tree_focus_return_motion",
+                Box::new(
+                    crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_focus_return_motion,
+                ),
+            ),
+            (
+                "sidebar_tree_compact_focus_return_motion",
+                Box::new(
+                    crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_compact_focus_return_motion,
+                ),
+            ),
+            (
+                "sidebar_tree_refresh_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_refresh_motion),
+            ),
+            (
+                "editor_directory_motion",
+                Box::new(crate::recovery_editor_tree_motion::scenario_editor_directory_motion),
+            ),
+            (
                 "sidebar_search_escape",
                 Box::new(crate::sidebar_search::sidebar_search_escape),
             ),
@@ -1945,6 +1987,30 @@ mod macos {
             (
                 "graph_selection_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
+            ),
+            (
+                "graph_selection_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_selection_crossfade),
+            ),
+            (
+                "graph_commit_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_commit_insert_motion),
+            ),
+            (
+                "graph_wip_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_wip_insert_motion),
+            ),
+            (
+                "graph_target_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_target_crossfade),
+            ),
+            (
+                "graph_unborn_wip_motion",
+                Box::new(crate::graph_motion_edges::scenario_graph_unborn_wip_motion),
+            ),
+            (
+                "graph_activation_motion_reset",
+                Box::new(crate::graph_motion_edges::scenario_graph_activation_motion_reset),
             ),
             (
                 "graph_wip_hover_wash",

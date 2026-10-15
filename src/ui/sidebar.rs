@@ -1,6 +1,9 @@
 //! Graph sidebar row model and item renderers (#864).
 
-use std::collections::HashSet;
+use kagi_ui_core::motion::{self, Easing, KeyedTransition, Reveal, RowSplice};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui::{div, prelude::*, px, rgb, Context, Entity, SharedString, UniformListScrollHandle};
 use gpui_component::input::InputState;
@@ -65,6 +68,82 @@ pub fn filter_placeholder_for_e2e() -> Option<&'static str> {
     FILTER_PLACEHOLDER.with(|record| record.get())
 }
 
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Copy, Debug)]
+pub struct SidebarDrawnMotion {
+    pub opacity: f32,
+    pub y: f32,
+    pub height: f32,
+}
+
+#[cfg(feature = "gui-e2e")]
+thread_local! {
+    static DRAWN_MOTION: RefCell<HashMap<(usize, String, &'static str), SidebarDrawnMotion>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn clear_sidebar_motion_for_e2e() {
+    DRAWN_MOTION.with(|drawn| drawn.borrow_mut().clear());
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn sidebar_motion_for_e2e(
+    pane: usize,
+    key: &str,
+    kind: &'static str,
+) -> Option<SidebarDrawnMotion> {
+    DRAWN_MOTION.with(|drawn| drawn.borrow().get(&(pane, key.to_owned(), kind)).copied())
+}
+
+/// Record style opacity and actual painted geometry, not a pure-state sample.
+pub(super) fn probe_row_motion(
+    el: gpui::Div,
+    row: &SidebarRow,
+    pane: usize,
+    kind: &'static str,
+) -> gpui::Div {
+    #[cfg(feature = "gui-e2e")]
+    {
+        let mut el = el;
+        let key = match row {
+            SidebarRow::SectionHeader { section, .. } => format!("section:{section}"),
+            SidebarRow::LocalGroupHeader { key, .. }
+            | SidebarRow::RemoteHeader { key, .. }
+            | SidebarRow::RemoteSubGroup { key, .. } => format!("group:{key}"),
+            SidebarRow::LocalBranchLeaf { name, .. } => format!("branch:{name}"),
+            SidebarRow::RemoteLeaf { display, .. } => format!("remote:{display}"),
+            SidebarRow::Tag { name, .. } => format!("tag:{name}"),
+            SidebarRow::Worktree { path, .. } => format!("worktree:{}", path.display()),
+            SidebarRow::Stash { target, .. } => format!("stash:{target}"),
+        };
+        let opacity = el.style().opacity.unwrap_or(1.);
+        el.child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds: gpui::Bounds<gpui::Pixels>, (), _, _| {
+                    DRAWN_MOTION.with(|drawn| {
+                        drawn.borrow_mut().insert(
+                            (pane, key.clone(), kind),
+                            SidebarDrawnMotion {
+                                opacity,
+                                y: f32::from(bounds.origin.y),
+                                height: f32::from(bounds.size.height),
+                            },
+                        );
+                    });
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+    }
+    #[cfg(not(feature = "gui-e2e"))]
+    {
+        let _ = (row, pane, kind);
+        el
+    }
+}
+
 /// Consolidated Repository-Navigator (left sidebar) state.
 ///
 /// App-global (not per-tab), preserved across repository reloads. `new()`
@@ -113,6 +192,8 @@ pub struct SidebarState {
     pub(crate) mode_focus: super::keyboard_nav::TabFocus,
     /// The panes' rows and headers, for the keyboard (#981).
     pub(crate) focus: super::sidebar_focus::SidebarFocus,
+    /// Presentation only; logical rows, focus and accessibility never wait for it.
+    pub(super) motion: RefCell<SidebarMotion>,
 }
 
 impl SidebarState {
@@ -142,6 +223,7 @@ impl SidebarState {
             settle_gen: 0,
             mode_focus: Default::default(),
             focus: Default::default(),
+            motion: RefCell::new(SidebarMotion::default()),
         }
     }
 
@@ -165,6 +247,372 @@ impl SidebarState {
 impl Default for SidebarState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) enum SidebarMotionKey {
+    Group(String),
+    Branch(String),
+    Remote(String),
+    Tag(String),
+    Worktree(std::path::PathBuf),
+    Stash(CommitId, usize),
+}
+
+pub(super) type MotionKey = Rc<SidebarMotionKey>;
+
+impl SidebarRow {
+    fn motion_key(&self, stashes: &mut HashMap<CommitId, usize>) -> Option<MotionKey> {
+        Some(Rc::new(match self {
+            Self::SectionHeader { .. } => return None,
+            Self::LocalGroupHeader { key, .. }
+            | Self::RemoteHeader { key, .. }
+            | Self::RemoteSubGroup { key, .. } => SidebarMotionKey::Group(key.clone()),
+            Self::LocalBranchLeaf { name, .. } => SidebarMotionKey::Branch(name.clone()),
+            Self::RemoteLeaf { display, .. } => SidebarMotionKey::Remote(display.clone()),
+            Self::Tag { name, .. } => SidebarMotionKey::Tag(name.clone()),
+            Self::Worktree { path, .. } => SidebarMotionKey::Worktree(path.clone()),
+            Self::Stash { target, .. } => {
+                let rank = stashes.entry(target.clone()).or_default();
+                *rank += 1;
+                SidebarMotionKey::Stash(target.clone(), *rank)
+            }
+        }))
+    }
+}
+
+pub(super) struct SidebarGhost {
+    pub row: SidebarRow,
+    key: MotionKey,
+    after: Option<MotionKey>,
+    between: Vec<MotionKey>,
+    pub mount: usize,
+}
+
+#[derive(Default)]
+pub(super) struct SidebarPaneMotion {
+    keys: Vec<MotionKey>,
+    order: HashMap<MotionKey, usize>,
+    ordered: Vec<MotionKey>,
+    pub ghosts: Vec<SidebarGhost>,
+    splice: RowSplice<MotionKey>,
+    washes: HashMap<MotionKey, KeyedTransition<bool>>,
+    selected: Option<MotionKey>,
+    pub reveal: Reveal,
+    pub natural_body: f32,
+    pub closing_rows: Vec<SidebarRow>,
+}
+
+#[derive(Default)]
+pub(super) struct SidebarMotion {
+    owner: Option<crate::app::SessionId>,
+    filter: String,
+    initialized: bool,
+    pub panes: [SidebarPaneMotion; 5],
+}
+
+impl SidebarPaneMotion {
+    pub(super) fn clear_focus_motion(&mut self) {
+        self.selected = None;
+        self.washes.clear();
+    }
+
+    pub fn row_sample(&self, position: usize, row_h: gpui::Pixels) -> motion::RowSample {
+        let Some(key) = self.keys.get(position) else {
+            return motion::RowSample {
+                offset: px(0.),
+                opacity: 1.,
+            };
+        };
+        let at = self.order.get(key);
+        self.splice.row(key, row_h, motion::now(), |changed| {
+            self.order.get(changed) < at
+        })
+    }
+
+    pub fn wash(&self, position: usize) -> f32 {
+        self.keys
+            .get(position)
+            .and_then(|key| self.washes.get(key))
+            .map_or(0., |wash| wash.sample(motion::now()).value)
+    }
+
+    pub fn ghost_sample<'a>(
+        &'a self,
+        ghost: &'a SidebarGhost,
+        row_h: gpui::Pixels,
+    ) -> Option<motion::GhostSample<'a, MotionKey>> {
+        self.splice.ghost(
+            &ghost.key,
+            ghost.after.as_ref(),
+            ghost.between.iter(),
+            row_h,
+            motion::now(),
+        )
+    }
+
+    /// Derived from this frame's existing RowList, after its focus sync. No
+    /// logical selection is introduced, and reordered rows never borrow an index.
+    pub fn sync_wash(&mut self, at: Option<usize>) -> bool {
+        let selected = at.and_then(|at| self.keys.get(at)).cloned();
+        if let Some(key) = &selected {
+            self.washes
+                .entry(key.clone())
+                .or_insert_with(|| KeyedTransition::new(false, 0.));
+        }
+        self.selected = selected;
+        let now = motion::now();
+        let mut moving = false;
+        for (key, wash) in &mut self.washes {
+            let selected = self.selected.as_ref() == Some(key);
+            wash.retarget(
+                selected,
+                if selected { 1. } else { 0. },
+                now,
+                motion::TRANSITION,
+                Easing::OutCubic,
+                motion::instant(),
+            );
+            moving |= !wash.sample(now).done;
+        }
+        moving
+    }
+
+    fn set_rows(
+        &mut self,
+        old: &[SidebarRow],
+        new: &[SidebarRow],
+        instant: bool,
+        pane_toggle: bool,
+    ) {
+        let now = motion::now();
+        let mut stashes = HashMap::new();
+        let keys: Vec<_> = new
+            .iter()
+            .filter_map(|row| row.motion_key(&mut stashes))
+            .collect();
+        let present: HashSet<_> = keys.iter().cloned().collect();
+        let previous: HashSet<_> = self.keys.iter().cloned().collect();
+        let changed = keys.iter().filter(|key| !previous.contains(*key)).count()
+            + self
+                .keys
+                .iter()
+                .filter(|key| !present.contains(*key))
+                .count();
+        let instant = instant || pane_toggle || changed > 24;
+        if instant {
+            self.splice.advance(now, true);
+            self.ghosts.clear();
+        } else {
+            self.ghosts.retain(|ghost| !present.contains(&ghost.key));
+            for (key, row) in self.keys.iter().zip(old) {
+                if !present.contains(key) && !self.ghosts.iter().any(|ghost| &ghost.key == key) {
+                    self.ghosts.push(SidebarGhost {
+                        key: key.clone(),
+                        row: row.clone(),
+                        after: None,
+                        between: Vec::new(),
+                        mount: 0,
+                    });
+                }
+            }
+            if self.splice.splice(
+                keys.iter().filter(|key| !previous.contains(*key)).cloned(),
+                self.keys
+                    .iter()
+                    .filter(|key| !present.contains(*key))
+                    .cloned(),
+                now,
+                false,
+            ) {
+                self.ghosts.clear();
+            }
+        }
+        // Keep removed identities in their old logical order, anchored to the
+        // nearest survivor. Only a bounded active splice is merged on a rebuild.
+        let mut ordered = keys.clone();
+        let mut previous_key: Option<MotionKey> = None;
+        for key in &self.ordered {
+            if present.contains(key) {
+                previous_key = Some(key.clone());
+            } else if self.ghosts.iter().any(|ghost| &ghost.key == key) {
+                let at = previous_key
+                    .as_ref()
+                    .and_then(|key| ordered.iter().position(|other| other == key))
+                    .map_or(0, |at| at + 1);
+                ordered.insert(at, key.clone());
+                previous_key = Some(key.clone());
+            }
+        }
+        let positions: HashMap<_, _> = keys
+            .iter()
+            .enumerate()
+            .map(|(at, key)| (key.clone(), at))
+            .collect();
+        let mut anchor = None;
+        let mut between = Vec::new();
+        for key in &ordered {
+            if present.contains(key) {
+                anchor = Some(key.clone());
+                between.clear();
+            } else if let Some(ghost) = self.ghosts.iter_mut().find(|ghost| &ghost.key == key) {
+                ghost.after = anchor.clone();
+                ghost.between.clone_from(&between);
+                ghost.mount = anchor
+                    .as_ref()
+                    .and_then(|key| positions.get(key))
+                    .copied()
+                    .unwrap_or(0);
+                between.push(key.clone());
+            }
+        }
+        self.order = ordered
+            .iter()
+            .enumerate()
+            .map(|(at, key)| (key.clone(), at))
+            .collect();
+        self.ordered = ordered;
+        self.keys = keys;
+        self.washes.retain(|key, _| present.contains(key));
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|key| !present.contains(key))
+        {
+            self.selected = None;
+        }
+    }
+}
+
+impl SidebarState {
+    /// Hidden/replaced lists do not paint, so they cannot retire a stale ring.
+    pub(super) fn clear_focus_motion(&self) {
+        for pane in &mut self.motion.borrow_mut().panes {
+            pane.clear_focus_motion();
+        }
+    }
+
+    /// Called once by the existing row-cache publisher, before replacing rows.
+    pub(super) fn prepare_rows_motion(
+        &self,
+        rows: &[SidebarRow],
+        owner: Option<crate::app::SessionId>,
+        filter: &str,
+        ready: bool,
+    ) {
+        let ranges = super::sidebar_panes::pane_ranges(rows);
+        let mut state = self.motion.borrow_mut();
+        let reset = !state.initialized || state.owner != owner || state.filter != filter;
+        if reset {
+            *state = SidebarMotion {
+                owner,
+                filter: filter.to_owned(),
+                initialized: ready,
+                ..Default::default()
+            };
+        }
+        for (pane, range) in ranges.iter().enumerate() {
+            let old_range = &self.pane_ranges[pane];
+            let old = self
+                .rows
+                .get(old_range.start + 1..old_range.end)
+                .unwrap_or_default();
+            let new = rows.get(range.start + 1..range.end).unwrap_or_default();
+            let old_closed = matches!(
+                self.rows.get(old_range.start),
+                Some(SidebarRow::SectionHeader {
+                    collapsed: true,
+                    ..
+                })
+            );
+            let closed = matches!(
+                rows.get(range.start),
+                Some(SidebarRow::SectionHeader {
+                    collapsed: true,
+                    ..
+                })
+            );
+            let pane_motion = &mut state.panes[pane];
+            if !reset && closed && !old_closed {
+                pane_motion.closing_rows = old.to_vec();
+            } else if !closed || reset {
+                pane_motion.closing_rows.clear();
+            }
+            pane_motion.set_rows(old, new, reset || motion::instant(), old_closed != closed);
+        }
+    }
+
+    /// Owner-frame sampling, including empty/closing lists and offscreen fades.
+    pub(super) fn advance_motion(&self, window: &gpui::Window, _cx: &gpui::App) {
+        let now = motion::now();
+        let instant = motion::instant();
+        let header_h = f32::from(theme::scaled_px(SIDEBAR_SECTION_HEADER_H));
+        let available: f32 = self
+            .pane_geom
+            .iter()
+            .map(|geom| {
+                let (a, b) = geom.get();
+                b - a
+            })
+            .sum();
+        let expanded_weight: f32 = super::sidebar_panes::SECTIONS
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| !self.collapsed.contains(**key))
+            .map(|(pane, _)| f32::from(self.pane_weights[pane]))
+            .sum();
+        let closed_count = self.collapsed.len().min(5) as f32;
+        let mut moving = false;
+        let mut state = self.motion.borrow_mut();
+        for (index, pane) in state.panes.iter_mut().enumerate() {
+            let open = !self
+                .collapsed
+                .contains(super::sidebar_panes::SECTIONS[index]);
+            if pane.reveal.target() == Some(true) && !pane.reveal.animating(now) {
+                let (top, bottom) = self.pane_geom[index].get();
+                pane.natural_body = (bottom - top - header_h).max(0.);
+            } else if open && pane.reveal.target() == Some(false) && !pane.reveal.animating(now) {
+                pane.natural_body = ((available - closed_count * header_h)
+                    * f32::from(self.pane_weights[index])
+                    / expanded_weight.max(1.)
+                    - header_h)
+                    .max(0.);
+            }
+            pane.reveal.sync(open, now, instant);
+            moving |= pane.reveal.animating(now);
+            if !pane
+                .reveal
+                .sample(px(pane.natural_body), now)
+                .retain_content
+            {
+                pane.closing_rows.clear();
+            }
+            moving |= pane.splice.advance(now, instant);
+            pane.ghosts.retain(|ghost| {
+                pane.splice
+                    .ghost(&ghost.key, None, std::iter::empty(), px(1.), now)
+                    .is_some()
+            });
+            if !open {
+                pane.sync_wash(None);
+            }
+            pane.washes.retain(|key, wash| {
+                let selected = pane.selected.as_ref() == Some(key);
+                wash.retarget(
+                    selected,
+                    if selected { 1. } else { 0. },
+                    now,
+                    motion::TRANSITION,
+                    Easing::OutCubic,
+                    instant,
+                );
+                let sample = wash.sample(now);
+                moving |= !sample.done;
+                selected || !sample.done
+            });
+        }
+        motion::request_frame(window, moving);
     }
 }
 
@@ -294,6 +742,17 @@ pub(super) fn build_sidebar_row(
     now_secs: i64,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
+    build_sidebar_row_presentation(this, row, now_secs, true, cx)
+}
+
+/// Ghosts reuse the real row's content but install no hit targets, focus or AX.
+pub(super) fn build_sidebar_row_presentation(
+    this: &KagiApp,
+    row: &SidebarRow,
+    now_secs: i64,
+    interactive: bool,
+    cx: &mut Context<KagiApp>,
+) -> gpui::AnyElement {
     match row {
         SidebarRow::SectionHeader {
             section,
@@ -303,20 +762,40 @@ pub(super) fn build_sidebar_row(
         } => build_section_header(section, *title, *count, *collapsed, cx),
         SidebarRow::LocalGroupHeader { .. }
         | SidebarRow::RemoteHeader { .. }
-        | SidebarRow::RemoteSubGroup { .. } => build_group_row(row, cx),
+        | SidebarRow::RemoteSubGroup { .. } => build_group_row(row, interactive, cx),
         SidebarRow::LocalBranchLeaf {
             name,
             display_label,
             is_head,
             indented,
-        } => build_local_branch_leaf(this, name, *is_head, display_label, *indented, now_secs, cx),
+        } => build_local_branch_leaf(
+            this,
+            name,
+            *is_head,
+            display_label,
+            *indented,
+            now_secs,
+            interactive,
+            cx,
+        ),
         SidebarRow::RemoteLeaf {
             display,
             display_label,
             target,
             depth,
-        } => build_remote_leaf(this, display, display_label, target, *depth, now_secs, cx),
-        SidebarRow::Tag { name, target } => build_tag_row(this, name, target.clone(), cx),
+        } => build_remote_leaf(
+            this,
+            display,
+            display_label,
+            target,
+            *depth,
+            now_secs,
+            interactive,
+            cx,
+        ),
+        SidebarRow::Tag { name, target } => {
+            build_tag_row(this, name, target.clone(), interactive, cx)
+        }
         SidebarRow::Worktree {
             name,
             branch,
@@ -336,9 +815,12 @@ pub(super) fn build_sidebar_row(
                 port: *port,
             },
             this,
+            interactive,
             cx,
         ),
-        SidebarRow::Stash { index, message, .. } => build_stash_row(*index, message, cx),
+        SidebarRow::Stash { index, message, .. } => {
+            build_stash_row(*index, message, interactive, cx)
+        }
     }
 }
 
@@ -387,6 +869,7 @@ fn branch_row_meta(
 
 /// A local branch leaf. HEAD is a merge drop target that only jumps on click;
 /// a non-HEAD row drags, checks out on double click, and carries the delete.
+#[allow(clippy::too_many_arguments)] // Existing leaf facts plus inert-ghost presentation.
 fn build_local_branch_leaf(
     this: &KagiApp,
     branch_name: &str,
@@ -394,6 +877,7 @@ fn build_local_branch_leaf(
     display_label: &str,
     indented: bool,
     now_secs: i64,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let upstream_label: Option<SharedString> = this
@@ -487,11 +971,13 @@ fn build_local_branch_leaf(
             .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
-            .on_click(head_click)
-            .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
-            .on_drop::<BranchDrag>(drop_handler)
-            .hover(|style| style.bg(rgb(theme().surface)))
+            .when(interactive, |el| {
+                el.on_click(head_click)
+                    .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                    .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
+                    .on_drop::<BranchDrag>(drop_handler)
+                    .hover(|style| style.bg(rgb(theme().surface)))
+            })
             .child(
                 div()
                     .relative()
@@ -506,11 +992,17 @@ fn build_local_branch_leaf(
                     }),
             )
             .map(|el| branch_row_meta(el, age, upstream_label, pr_badge))
-            .hover_tooltip_builder(
-                SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
-                name_tooltip(full_name),
-            )
-            .into_any_element()
+            .map(|el| {
+                if interactive {
+                    el.hover_tooltip_builder(
+                        SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                        name_tooltip(full_name),
+                    )
+                    .into_any_element()
+                } else {
+                    el.into_any_element()
+                }
+            })
     } else {
         let branch_for_dbl = branch_name.to_string();
         let branch_for_delete = branch_name.to_string();
@@ -564,20 +1056,22 @@ fn build_local_branch_leaf(
             .line_height(gpui::relative(1.2))
             .text_color(rgb(text_color))
             .overflow_hidden()
-            .on_click(click_handler)
-            .on_mouse_down(gpui::MouseButton::Right, menu_click)
-            .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
-            .on_drop::<BranchDrag>(drop_handler)
-            .on_drag(
-                BranchDrag {
-                    name: branch_for_drag.clone(),
-                },
-                move |drag: &BranchDrag, _pos, _window, cx| {
-                    let name = SharedString::from(drag.name.clone());
-                    cx.new(|_| BranchDragGhost { name })
-                },
-            )
-            .hover(|style| style.bg(rgb(theme().surface)))
+            .when(interactive, |el| {
+                el.on_click(click_handler)
+                    .on_mouse_down(gpui::MouseButton::Right, menu_click)
+                    .map(|el| super::branch_drag::feedback(el, branch_name.to_string(), cx))
+                    .on_drop::<BranchDrag>(drop_handler)
+                    .on_drag(
+                        BranchDrag {
+                            name: branch_for_drag.clone(),
+                        },
+                        move |drag: &BranchDrag, _pos, _window, cx| {
+                            let name = SharedString::from(drag.name.clone());
+                            cx.new(|_| BranchDragGhost { name })
+                        },
+                    )
+                    .hover(|style| style.bg(rgb(theme().surface)))
+            })
             .child(
                 div()
                     .relative()
@@ -603,15 +1097,23 @@ fn build_local_branch_leaf(
                     .px_1()
                     .text_xs()
                     .text_color(rgb(theme().text_muted))
-                    .on_click(delete_handler)
-                    .hover(|s| s.text_color(rgb(theme().color_blocker)))
+                    .when(interactive, |el| {
+                        el.on_click(delete_handler)
+                            .hover(|s| s.text_color(rgb(theme().color_blocker)))
+                    })
                     .child(SharedString::from("\u{00d7}")),
             )
-            .hover_tooltip_builder(
-                SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
-                name_tooltip(full_name),
-            )
-            .into_any_element()
+            .map(|el| {
+                if interactive {
+                    el.hover_tooltip_builder(
+                        SharedString::from(format!("sidebar-branch-{branch_name}-hover-help")),
+                        name_tooltip(full_name),
+                    )
+                    .into_any_element()
+                } else {
+                    el.into_any_element()
+                }
+            })
     };
     #[cfg(feature = "gui-e2e")]
     {
@@ -624,6 +1126,7 @@ fn build_local_branch_leaf(
 }
 
 /// A remote branch leaf: a merge drag source, clickable while its tip is loaded.
+#[allow(clippy::too_many_arguments)] // Share the real leaf renderer with noninteractive ghosts.
 fn build_remote_leaf(
     this: &KagiApp,
     display: &str,
@@ -631,6 +1134,7 @@ fn build_remote_leaf(
     rb_target: &CommitId,
     depth: u8,
     now_secs: i64,
+    interactive: bool,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let can_jump = this.view().commit_row_index.contains_key(rb_target);
@@ -679,18 +1183,20 @@ fn build_remote_leaf(
         .line_height(gpui::relative(1.2))
         .text_color(rgb(theme().color_remote))
         .overflow_hidden()
-        .on_mouse_down(gpui::MouseButton::Right, menu_click)
-        .cursor_grab()
-        .on_drag(
-            BranchDrag {
-                name: drag_name.clone(),
-            },
-            move |drag: &BranchDrag, _pos, _window, cx| {
-                let name = SharedString::from(drag.name.clone());
-                cx.new(|_| BranchDragGhost { name })
-            },
-        )
-        .hover(|style| style.bg(rgb(theme().surface)))
+        .when(interactive, |el| {
+            el.on_mouse_down(gpui::MouseButton::Right, menu_click)
+                .cursor_grab()
+                .on_drag(
+                    BranchDrag {
+                        name: drag_name.clone(),
+                    },
+                    move |drag: &BranchDrag, _pos, _window, cx| {
+                        let name = SharedString::from(drag.name.clone());
+                        cx.new(|_| BranchDragGhost { name })
+                    },
+                )
+                .hover(|style| style.bg(rgb(theme().surface)))
+        })
         .child(
             div()
                 .relative()
@@ -706,7 +1212,7 @@ fn build_remote_leaf(
         )
         .map(|el| branch_row_meta(el, age, None, None));
 
-    let base = if can_jump {
+    let base = if can_jump && interactive {
         let target_for_jump = rb_target.clone();
         let click_handler = cx.listener(
             move |this: &mut KagiApp, _event: &gpui::ClickEvent, _window, cx| {
@@ -718,11 +1224,15 @@ fn build_remote_leaf(
     } else {
         base
     };
-    base.hover_tooltip_builder(
-        SharedString::from(format!("sidebar-remote-{display}-hover-help")),
-        name_tooltip(full_name),
-    )
-    .into_any_element()
+    if interactive {
+        base.hover_tooltip_builder(
+            SharedString::from(format!("sidebar-remote-{display}-hover-help")),
+            name_tooltip(full_name),
+        )
+        .into_any_element()
+    } else {
+        base.into_any_element()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────

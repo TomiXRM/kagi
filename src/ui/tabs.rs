@@ -298,6 +298,9 @@ impl KagiApp {
             panel.update(cx, |panel, _| panel.settle_file_motion());
         }
         self.error = None;
+        if let Some(editor) = self.ui().editor_workspace.clone() {
+            editor.update(cx, |editor, _| editor.settle_tree_motion());
+        }
 
         // ── Remote tab (ADR-0089 Phase 2b): re-enter the read-only view from
         //    the cached snapshot. No local path, no Backend, no watcher. ──
@@ -557,7 +560,13 @@ impl KagiApp {
         #[cfg(feature = "gui-e2e")]
         super::e2e::record_tab_load_commit_limit(session, commit_limit);
         let read = self.begin_slow_read(session, None, cx);
+        #[cfg(feature = "gui-e2e")]
+        let hold = super::slow_reads::take_snapshot_hold();
         let task = cx.background_spawn(async move {
+            #[cfg(feature = "gui-e2e")]
+            if let Some(hold) = hold {
+                hold.await;
+            }
             let mut backend = kagi_git::Backend::open(&bg_path)
                 .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
             let snap = backend

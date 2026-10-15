@@ -200,3 +200,117 @@ of the interpolation formula are not contrast evidence. Both old surfaces
 failed that oracle at 1.943:1 before this correction. The original active-window
 frame38 contact sheet is retained as the visual before-failure.
 
+behavior gate. Math tests and hidden native windows do not establish Tier B
+visual comparison; completed real-window evidence is recorded per surface.
+
+## Sidebar and editor tree amendment (#1617)
+
+The dense Repository Navigator and Editor file tree retain their existing row
+heights, virtual lists, focus owners and accessibility models. `SidebarState`
+owns sidebar presentation; `EditorWorkspaceView` owns Editor presentation.
+There is no second tree model or Git read in the animation path.
+
+- Editor selection intent changes immediately. The Navigator has no independent
+  selection: its existing keyboard `RowFocus` ring crossfades, without adding a
+  persistent selected-looking row fill. Pointer hover keeps its existing
+  appearance. Stable ref names, worktree paths, stash commit identities and
+  Editor paths key presentation only; no graph-target-driven Navigator wash or
+  new AX selection state is introduced.
+- Local/remote subgroups and Editor directories use `RowSplice`: final logical
+  membership is immediate, children fade/slide, and content below them settles
+  into its final slot. Removed content is retained only as noninteractive,
+  accessibility-hidden presentation until the closing splice settles.
+- Top-level Navigator headers remain mounted while their bodies reveal/close.
+  Pane weights and persisted collapse intent retain their existing ownership.
+- Chevrons remain immediate rather than crossfading or rotating: they report
+  current disclosure intent even during reversal; motion is on the content.
+- Sidebar refresh arrivals animate only within the same owner/filter/list
+  context. Initial loading, repository changes and large replacements settle
+  immediately. Ordinary GUI E2E remains instant; frozen-clock scenarios opt
+  into real intermediate presentation.
+- Reduce Motion is sampled during rendering so enabling it during a transition
+  settles presentation immediately. Animation changes neither selection nor
+  the keyboard and accessibility models.
+
+Native Tier A is the behavior gate for mid-flight geometry/opacity, endpoints,
+reversal and instant policy. Tier B uses an isolated PID-targeted fixture window;
+foreground activation is allowed only with owner authorization. Neither lane
+controls the user's pointer; hidden native assertions are not screenshot evidence.
+
+### Review corrections
+
+The Navigator's prior presentation was a keyboard focus ring and pointer hover,
+not a selected-row fill. Its keyed transition therefore scales only the existing
+focus-ring color, retaining the direct-focus and keyboard-visible gates. Editor
+selection foregrounds retain the exact original normal/on-accent endpoints.
+During the transition, on-accent becomes eligible once it meets the existing
+3:1 policy against the actual composited wash; logical selection remains immediate.
+
+Both virtual trees paint a bounded inert fringe when displaced rows outside the
+final virtual range enter the viewport. Motion offsets, ghost anchors and fringe
+origins use the public list handle's measured content height divided by its
+current item count; the intrinsic slot height remains theme-derived so zoom
+changes are remeasured. This avoids cumulative device-pixel rounding drift.
+Sidebar initial-read readiness is explicit: loading headers do not consume the
+instant initialization boundary before the first accepted asynchronous read.
+
+The whole-Navigator focus boundary also owns its ring lifetime. When the panes
+leave the front workspace (hidden sidebar, PRs, Issues or Editor), clear both the
+retained focused identity and all ring transitions before yielding logical focus.
+Virtual-list processors do not run while away, so deferring that reset until a
+row is painted would replay an obsolete ring on the first returning frame.
+Frozen-clock native coverage checks immediate focus evacuation and unfocused
+Metal ring pixels on return through all four paths (PR #1621 review).
+
+The same lifetime rule applies inside the compact rail: skip-reset every Git
+pane that is not the visible popup, and clear all Git rings when the popup is
+PRs or Issues. The rail itself remaining front does not keep its replaced
+pane's focus presentation alive. Native coverage returns Local → Remote → Local
+and Local → PRs/Issues → Local without replaying the skipped pane's ring.
+
+## Graph surface amendment (#1617)
+
+The dense Graph retains its existing stripes, lane tints, fixed row height and
+selection endpoints. Its single presentation owner lives in `TabUiState`, not
+the published read model. Selection transitions are keyed by commit OID, stash
+OID or worktree path and retain all still-visible outgoing washes through
+A → B → C retargets; keyboard/AX selection remains immediate.
+
+Only accepted full reads authorize commit arrivals. Initial/activation reads,
+pagination, filter/solo changes and broad rewrites settle immediately. Live WIP
+prefix membership is compared separately so cheap status refreshes do not need
+to rebuild commit rows. Changes larger than the measured viewport settle.
+Removed WIP rows retain their old content as presentation-only ghosts.
+Reset again when an initial/activation read is accepted, not only when it
+starts: a cached pre-read frame can consume the earlier reset. This also
+excludes the first dirty unborn snapshot while preserving later live WIP motion.
+
+The uniform list adopts its final length immediately. Fixed-height slot shells
+offset/fade their complete row content, including graph canvases: `graph_view`
+paints from the canvas's measured absolute bounds, so lanes move with their
+nodes and return to the original connector geometry at rest. The viewport
+clips overflowing presentation rather than changing row heights.
+Because the pinned public `uniform_list` realizes only final-index visible rows,
+expand the presentation range only for edge content displaced into the viewport,
+including visible ghosts whose anchor scrolled out. Mount these real rows once as
+out-of-flow children of the first realized slot, retaining their true final index
+for hit testing and AX. Expansion is capped at `MAX_ANIMATED_ROWS` additional
+slots; fixed list length and geometry never change to accommodate animation.
+
+When a splice occurs above a scrolled viewport, preserve the first visible
+logical key and its within-row pixel offset, and settle that splice instead of
+animating the reading anchor. At the top, new arrivals push visible content.
+Use the measured list pitch (`last_item_size.contents.height / item_count`)
+for offsets and anchor arithmetic, while keeping intrinsic slot heights
+theme-scaled so zoom can remeasure them. Compare scroll offsets numerically:
+GPUI's total pixel ordering distinguishes negative zero from positive zero,
+but a programmatic scroll to negative zero is still the unanchored top.
+Cache identity/order only on changed reads/prefixes; frame sampling visits only
+visible rows and the bounded active/ghost set, never rebuilds the read model.
+
+Native frozen-clock coverage checks midpoint wash/geometry, interruption,
+settlement and Reduce Motion. Existing default-instant scenarios retain their
+oracles. The empty/unborn-list case retains its final disappearing WIP ghost
+over the empty-state page until settlement. Tier B uses an isolated,
+PID-targeted application; foreground access is owner-authorized but serialized
+with the other motion slices. The owner's screen is not locked.

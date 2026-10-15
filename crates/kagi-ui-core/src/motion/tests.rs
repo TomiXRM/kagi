@@ -101,35 +101,167 @@ fn transition_zero_duration_instant_and_clock_bounds() {
 }
 
 #[test]
-fn insert_offsets_add_and_inserted_opacity_settles() {
+fn row_splice_inserts_n_rows_with_cumulative_offsets() {
     let now = Instant::now();
-    let mut first = InsertOffset::new("commit-a", now, false);
-    let mut second = InsertOffset::new("worktree-path", now, false);
-    assert_eq!(first.key(), &"commit-a");
+    let mut splice = RowSplice::default();
+    splice.retarget(["a", "b", "c"], true, now, false);
+    assert!(splice.advance(now, false));
+    assert_eq!(splice.row(&"tail", px(20.), now, |_| true).offset, px(-60.));
+    assert_eq!(splice.row(&"head", px(20.), now, |_| false).offset, px(0.));
     assert_eq!(
-        first
-            .sample(&"commit-a", false, px(29.), now, false)
-            .opacity,
-        0.
+        splice.row(&"b", px(20.), now, |key| *key == "a").offset,
+        px(-20.)
     );
+    assert_eq!(splice.row(&"b", px(20.), now, |_| false).opacity, 0.);
+    let mid = now + TRANSITION / 2;
+    assert_eq!(splice.row(&"tail", px(20.), mid, |_| true).offset, px(-7.5));
+    assert_eq!(splice.row(&"b", px(20.), mid, |_| false).opacity, 0.875);
+    assert!(!splice.advance(now + TRANSITION, false));
+    let end = splice.row(&"tail", px(20.), now + TRANSITION, |_| true);
+    assert_eq!(end.offset, px(0.));
+    assert_eq!(end.opacity, 1.);
+}
+
+#[test]
+fn row_splice_removes_n_rows_and_positions_retained_ghosts() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(["a", "b", "c"], false, now, false);
+    assert_eq!(splice.row(&"tail", px(20.), now, |_| true).offset, px(60.));
+    let ghost = splice
+        .ghost(&"c", Some(&"head"), [&"a", &"b"], px(20.), now)
+        .unwrap();
+    assert_eq!(ghost.after, Some(&"head"));
+    assert_eq!(ghost.offset, px(60.));
+    assert_eq!(ghost.opacity, 1.);
+    let mid = now + TRANSITION / 2;
+    assert_eq!(splice.row(&"tail", px(20.), mid, |_| true).offset, px(7.5));
+    let ghost = splice
+        .ghost(&"c", Some(&"head"), [&"a", &"b"], px(20.), mid)
+        .unwrap();
+    assert_eq!(ghost.offset, px(25.));
+    assert_eq!(ghost.opacity, 0.125);
+    let first = splice.ghost(&"a", None, [], px(20.), mid).unwrap();
     assert_eq!(
-        first.sample(&"before", false, px(29.), now, false).offset,
+        first.offset,
+        px(0.),
+        "unanchored ghost starts at list origin"
+    );
+    assert!(splice
+        .ghost(&"c", Some(&"head"), [&"a", &"b"], px(20.), now + TRANSITION)
+        .is_none());
+    assert!(!splice.advance(now + TRANSITION, false));
+    assert_eq!(
+        splice
+            .row(&"tail", px(20.), now + TRANSITION, |_| true)
+            .offset,
         px(0.)
     );
-    let a = first.sample(&"below", true, px(29.), now, false);
-    let b = second.sample(&"below", true, px(29.), now, false);
-    assert_eq!(a.offset + b.offset, px(-58.));
-    assert_eq!(a.opacity, 1.);
-    let middle = first.sample(&"commit-a", false, px(29.), now + TRANSITION / 2, false);
-    assert_eq!(middle.opacity, 0.875);
-    assert!(!middle.done);
-    let end = first.sample(&"below", true, px(29.), now + TRANSITION, false);
-    assert_eq!(end.offset, px(0.));
-    assert!(end.done);
-    let instant = second.sample(&"worktree-path", false, px(29.), now, true);
-    assert_eq!(instant.opacity, 1.);
-    assert!(instant.done);
-    assert!(second.sample(&"below", true, px(29.), now, false).done);
+}
+
+#[test]
+fn overlapping_row_splices_preserve_existing_presentation() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(["a", "b"], true, now, false);
+    let mid = now + TRANSITION / 2;
+    // Final tail slot is after two new rows; visual position is 35px.
+    let before = px(40.) + splice.row(&"tail", px(20.), mid, |_| true).offset;
+    splice.retarget(["c"], true, mid, false);
+    let after = px(60.) + splice.row(&"tail", px(20.), mid, |_| true).offset;
+    assert_eq!(
+        before, after,
+        "another insertion must not jump existing rows"
+    );
+    assert_eq!(splice.row(&"a", px(20.), mid, |_| false).opacity, 0.875);
+    // An unrelated removal likewise shifts the final layout baseline, not the
+    // current presentation or the already-running insertion generations.
+    splice.retarget(["old"], false, mid, false);
+    assert_eq!(
+        px(40.) + splice.row(&"tail", px(20.), mid, |_| true).offset,
+        before
+    );
+    assert_eq!(
+        splice
+            .row(&"a", px(20.), now + TRANSITION, |_| false)
+            .opacity,
+        1.
+    );
+    assert!(
+        splice.advance(now + TRANSITION, false),
+        "later batch still moves"
+    );
+    assert!(!splice.advance(mid + TRANSITION, false));
+}
+
+#[test]
+fn row_splice_reverses_opening_and_closing_without_position_or_opacity_jumps() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(["a", "b"], true, now, false);
+    let turn = now + TRANSITION / 2;
+    let before = px(40.) + splice.row(&"tail", px(20.), turn, |_| true).offset;
+    let opacity = splice.row(&"a", px(20.), turn, |_| false).opacity;
+    splice.retarget(["a", "b"], false, turn, false);
+    assert_eq!(splice.row(&"tail", px(20.), turn, |_| true).offset, before);
+    let first = splice.ghost(&"a", None, [], px(20.), turn).unwrap();
+    let second = splice.ghost(&"b", None, [&"a"], px(20.), turn).unwrap();
+    assert_eq!(first.opacity, opacity);
+    assert_eq!(second.offset, px(20.) * opacity);
+    let back = turn + TRANSITION / 2;
+    let before = splice.row(&"tail", px(20.), back, |_| true).offset;
+    let opacity = splice.ghost(&"a", None, [], px(20.), back).unwrap().opacity;
+    splice.retarget(["a", "b"], true, back, false);
+    assert_eq!(
+        px(40.) + splice.row(&"tail", px(20.), back, |_| true).offset,
+        before
+    );
+    assert_eq!(splice.row(&"a", px(20.), back, |_| false).opacity, opacity);
+    assert!(splice.ghost(&"a", None, [], px(20.), back).is_none());
+}
+
+#[test]
+fn ghost_anchor_can_be_removed_or_reinserted_mid_flight() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(["b"], false, now, false);
+    let mid = now + TRANSITION / 2;
+    let before = splice.ghost(&"b", Some(&"a"), [], px(20.), mid).unwrap();
+    splice.retarget(["a"], false, mid, false);
+    let after = splice.ghost(&"b", None, [&"a"], px(20.), mid).unwrap();
+    assert_eq!(
+        before.offset, after.offset,
+        "caller reanchors removed predecessor"
+    );
+    let back = mid + TRANSITION / 4;
+    let before = splice.ghost(&"b", None, [&"a"], px(20.), back).unwrap();
+    splice.retarget(["a"], true, back, false);
+    let after = splice.ghost(&"b", Some(&"a"), [], px(20.), back).unwrap();
+    assert_eq!(
+        before.offset, after.offset,
+        "partial anchor contributes its current presence"
+    );
+}
+
+#[test]
+fn row_splice_instant_settles_insertions_removals_and_active_batches() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(["a", "b"], true, now, true);
+    splice.retarget(["old"], false, now, true);
+    assert!(!splice.advance(now, false));
+    assert_eq!(splice.row(&"a", px(20.), now, |_| true).opacity, 1.);
+    assert!(splice.ghost(&"old", None, [], px(20.), now).is_none());
+    splice.retarget(["c"], true, now, false);
+    splice.retarget(["d"], false, now, false);
+    assert!(splice.advance(now, false));
+    assert!(!splice.advance(now, true));
+    assert!(
+        !splice.advance(now, false),
+        "re-enabling motion cannot revive a batch"
+    );
+    assert_eq!(splice.row(&"tail", px(20.), now, |_| true).offset, px(0.));
+    assert!(splice.ghost(&"d", None, [], px(20.), now).is_none());
 }
 
 #[test]

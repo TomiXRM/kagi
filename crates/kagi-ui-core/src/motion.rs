@@ -238,61 +238,146 @@ fn reveal_duration(open: bool, from: f32) -> Duration {
     Duration::from_micros((full.as_micros() as f32 * left.clamp(0., 1.)).round() as u64)
 }
 
-/// One newly inserted logical key. Store only active insertions in the owning
-/// view, not every row. Multiple insertions' offsets add; row opacity is supplied
-/// only by its own insertion. The list's final length changes immediately.
+/// Active changes to a fixed-height list. Publish the final list immediately;
+/// retain removed content separately as ghosts until `ghost` returns `None`.
+/// Only changing logical keys are stored, never indices or a copy of the list.
 #[derive(Clone, Debug)]
-pub struct InsertOffset<K> {
-    key: K,
-    transition: KeyedTransition<bool>,
+pub struct RowSplice<K> {
+    rows: std::collections::HashMap<K, KeyedTransition<bool>>,
+}
+
+impl<K> Default for RowSplice<K> {
+    fn default() -> Self {
+        Self {
+            rows: std::collections::HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InsertSample {
-    /// Add to the final row position: initially -one row for rows below insertion.
+pub struct RowSample {
+    /// Add to the row's final-list position; do not change the uniform row height.
     pub offset: Pixels,
     pub opacity: f32,
-    pub done: bool,
 }
 
-impl<K: PartialEq> InsertOffset<K> {
-    pub fn new(key: K, now: Instant, instant: bool) -> Self {
-        let mut transition = KeyedTransition::new(false, 0.);
-        transition.retarget(true, 1., now, TRANSITION, Easing::OutCubic, instant);
-        Self { key, transition }
-    }
+#[derive(Clone, Copy, Debug)]
+pub struct GhostSample<'a, K> {
+    /// Previous surviving row, or `None` for the list-start boundary.
+    pub after: Option<&'a K>,
+    /// Relative to that row's animated top, or the list start when unanchored.
+    pub offset: Pixels,
+    pub opacity: f32,
+}
 
-    pub fn key(&self) -> &K {
-        &self.key
-    }
-
-    /// `below` is derived from the current logical order by the caller, never
-    /// stored as identity. Pass the actual zoomed fixed row height. `instant`
-    /// settles permanently, including if Reduce Motion changes mid-flight.
-    pub fn sample(
+impl<K: Eq + std::hash::Hash> RowSplice<K> {
+    /// Apply a batch of inserted (`present=true`) or removed (`false`) keys.
+    /// Existing keys reverse from their current presence/opacity; unaffected
+    /// transitions continue, so overlapping batches do not restart one another.
+    /// Call only on logical changes, not on viewport mounts or each render.
+    pub fn retarget(
         &mut self,
-        row_key: &K,
-        below: bool,
-        row_height: Pixels,
+        keys: impl IntoIterator<Item = K>,
+        present: bool,
         now: Instant,
         instant: bool,
-    ) -> InsertSample {
-        self.transition
-            .retarget(true, 1., now, TRANSITION, Easing::OutCubic, instant);
-        let sample = self.transition.sample(now);
-        InsertSample {
-            offset: if below {
-                row_height * (sample.value - 1.)
-            } else {
-                gpui::px(0.)
-            },
-            opacity: if row_key == &self.key {
-                sample.value
-            } else {
-                1.
-            },
-            done: sample.done,
+    ) {
+        for key in keys {
+            if instant {
+                self.rows.remove(&key);
+                continue;
+            }
+            let transition = self
+                .rows
+                .entry(key)
+                .or_insert_with(|| KeyedTransition::new(!present, if present { 0. } else { 1. }));
+            transition.retarget(
+                present,
+                if present { 1. } else { 0. },
+                now,
+                TRANSITION,
+                Easing::OutCubic,
+                false,
+            );
         }
+    }
+
+    /// Call each render before sampling. Settled changes are retired; instant
+    /// policy clears all motion permanently. Returns whether to request a frame.
+    pub fn advance(&mut self, now: Instant, instant: bool) -> bool {
+        if instant {
+            self.rows.clear();
+        } else {
+            self.rows
+                .retain(|_, transition| !transition.sample(now).done);
+        }
+        !self.rows.is_empty()
+    }
+
+    /// `precedes(key)` tells whether an active key precedes this row in the
+    /// caller's logical order, including retained removals. Cache that ordering
+    /// when the list changes; do not scan the whole list inside this callback.
+    pub fn row(
+        &self,
+        key: &K,
+        row_height: Pixels,
+        now: Instant,
+        mut precedes: impl FnMut(&K) -> bool,
+    ) -> RowSample {
+        let mut offset = 0.;
+        let mut opacity = 1.;
+        for (changed, transition) in &self.rows {
+            let presence = transition.sample(now).value;
+            if changed == key {
+                opacity = presence;
+            } else if precedes(changed) {
+                // Insertions reserve their final slot now; removals no longer
+                // have one. This baseline switch preserves position on reversal.
+                offset += presence - if *transition.key() { 1. } else { 0. };
+            }
+        }
+        RowSample {
+            offset: row_height * offset,
+            opacity,
+        }
+    }
+
+    /// Position a retained removed row after its nearest surviving predecessor.
+    /// `between` contains removed logical keys between that predecessor and this
+    /// ghost, in the caller's retained order. Supply updated anchors after every
+    /// splice, including when an earlier anchor is itself removed or reinserted.
+    /// Add `offset` to the predecessor's animated top (or list start for `None`).
+    /// No key or placement is copied, and a reversed/settled ghost is not drawn.
+    pub fn ghost<'a>(
+        &self,
+        key: &K,
+        after: Option<&'a K>,
+        between: impl IntoIterator<Item = &'a K>,
+        row_height: Pixels,
+        now: Instant,
+    ) -> Option<GhostSample<'a, K>> {
+        let transition = self.rows.get(key)?;
+        let sample = transition.sample(now);
+        if *transition.key() || sample.done {
+            return None;
+        }
+        let mut offset = after.map_or(0., |anchor| {
+            self.rows
+                .get(anchor)
+                .map_or(1., |transition| transition.sample(now).value)
+        });
+        for preceding in between {
+            if let Some(transition) = self.rows.get(preceding) {
+                if !*transition.key() {
+                    offset += transition.sample(now).value;
+                }
+            }
+        }
+        Some(GhostSample {
+            after,
+            offset: row_height * offset,
+            opacity: sample.value,
+        })
     }
 }
 

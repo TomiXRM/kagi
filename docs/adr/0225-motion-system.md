@@ -42,17 +42,21 @@ layout, toggle interpretation and retained Inspector content remain with
    transition increments its generation on key/target changes and reports
    bounded value, elapsed progress and completion; unchanged targets do not
    restart. First-render reveals settle immediately.
-5. **Graph insertion is approach A.** Keep fixed-height `uniform_list`; publish
-   the final list length immediately. Each active inserted key contributes
-   `-row_height * (1 - eased_progress)` to rows below it; sum contributions for
-   multiple insertions. The inserted row fades from zero to full opacity.
-   Offsets settle at zero. This is presentation displacement, not animated row
-   height or a variable-list migration. The caller derives below/above from the
-   current logical order and supplies the zoomed row height.
+5. **Fixed-height row splices use approach A.** Keep `uniform_list`; publish the
+   final list length immediately. Each inserted key contributes
+   `-row_height * (1 - presence)` to rows below it and fades in. Each removed key
+   contributes `+row_height * presence` to rows below it and fades out as retained
+   ghost content. N simultaneous insertions/removals therefore displace by
+   `-N*h*(1-e)` / `+N*h*(1-e)`, respectively. All offsets settle at zero.
+   Overlapping batches leave unaffected keys running; reversing a key retargets
+   its current presence. Switching its final-list membership changes the offset
+   baseline by exactly one row, preserving its painted position.
+   The caller supplies logical order including ghosts and the zoomed row height.
+   This is presentation displacement, not row-height animation or list migration.
 6. **Identity is logical, never positional.** Retain row presentation by
    `CommitId`, worktree path or file path, scoped to the owning session/surface.
    List indices may locate geometry but are never animation identity. Remove
-   settled insertion state and state for removed/replaced owners. Selection
+   settled splice state and state for removed/replaced owners. Selection
    intent and accessibility state remain immediate and authoritative; animation
    changes only the visual presentation.
 7. **Measured reveal.** `Reveal` exposes fraction, clipped height and
@@ -71,11 +75,30 @@ layout, toggle interpretation and retained Inspector content remain with
   `TransitionSample { value, progress, done }`. Crossfade can retain a transition
   per logical row, using selected/unselected as its target key and 1/0 as opacity.
   This supports A → B → C and reversals without dropping still-visible fades.
-- `InsertOffset<K>`: construct once when a logical key actually arrives, not on
-  every render or viewport mount. For each affected row, `sample(row_key, below,
-  row_height, now, instant)` returns offset, opacity and done. Track only active
-  insertions; derive ordering once when the published list changes rather than
-  rescanning the entire list for every painted row. Discard done entries.
+- `RowSplice<K: Eq + Hash>` replaces the single-insertion helper. Construct with
+  `default()` per list owner. On a logical change call
+  `retarget(keys, present, now, instant)` with inserted keys (`present=true`) or
+  removed keys (`false`); do not call this on viewport mounts or each render.
+  Existing keys reverse from their current value; new batches do not restart
+  unaffected keys. Duplicate keys cannot double the displacement.
+  Call `advance(now, instant)` each render to retire settled keys or clear all
+  motion under instant policy; its bool is the owning view's frame demand.
+  `row(key, row_height, now, precedes)` returns `RowSample { offset, opacity }`.
+  The callback identifies active keys before that row in the caller's logical
+  order, including retained removals. Cache ordering when the list changes;
+  do not scan the full list per callback. Only active keys are stored.
+- For removal, retain the real removed content and its logical order in the
+  view until `ghost(key, after, between, row_height, now)` returns `None`.
+  `after` is the nearest surviving predecessor key (or `None` for list start);
+  `between` supplies removed keys between that anchor and this ghost.
+  `GhostSample { after, offset, opacity }` locates the ghost relative to the
+  anchor's animated top, or to list start. Its offset sums intervening removed
+  keys' current presence plus the anchor's own current presence (normally one
+  row, but partial when that anchor was just inserted/reinserted). Recompute
+  anchors after overlapping splices; neither key nor position is copied during
+  sampling. Ghosts are presentation-only, not additional selectable list rows.
+  A reinserted key stops being a ghost immediately and continues fading as its
+  normal row with unchanged opacity.
 - `Reveal`: `sync(open, now, instant)` before `sample(natural_height, now)`;
   preserve existing open-state ownership. `visible` and `animating` also support
   the existing pane clipping integration.
@@ -88,7 +111,8 @@ active collection lifetimes belong to the caller.
 ## Validation boundary
 
 Ordinary math tests cover key generations, interruption, exact pane endpoints,
-multiple insertion offsets, measured heights and closing retention. Existing
+batched insertion/removal, overlapping splices, reversals, ghost reanchoring,
+instant settlement, measured heights and closing retention. Existing
 native motion scenarios migrate their frozen-clock calls without changing their
 behavior coverage. A separate oracle repair allows the existing 1px tolerance
 for five settled-width checks: unchanged dev reproduced the exact comparison

@@ -89,7 +89,9 @@ active collection lifetimes belong to the caller.
 
 Ordinary math tests cover key generations, interruption, exact pane endpoints,
 multiple insertion offsets, measured heights and closing retention. Existing
-native motion scenarios retain their assertions; only their frozen-clock call
-moves to the shared module. Native Tier A remains the behavior gate. A locked
-screen prevents Tier B visual comparison; math tests and hidden native windows
-must not be described as that evidence.
+native motion scenarios migrate their frozen-clock calls without changing their
+behavior coverage. A separate oracle repair allows the existing 1px tolerance
+for five settled-width checks: unchanged dev reproduced the exact comparison
+of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
+behavior gate. A locked screen prevents Tier B visual comparison; math tests
+and hidden native windows must not be described as that evidence.

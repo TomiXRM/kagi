@@ -265,9 +265,7 @@ def _translation_literals(text: str, locale: str, *, display_only: bool = False)
             if body := arrow.match(code, pattern_end):
                 destinations.append((body.end(), _rust_expression_end(code, body.end())))
     constant_names = (
-        r"(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)"
-        if locale == "Ja"
-        else r"(?:EN_\w+|\w+_EN)"
+        r"(?:ADVICE_(?!EN_|\w*_EN\b)\w+|JA_\w+|\w+_JA)" if locale == "Ja" else r"(?:EN_\w+|\w+_EN)"
     )
     # Domain message_en/advice_template_en feed persisted receipts. The UI
     # jargon gate selects their display-only counterparts, never stored prose.
@@ -446,35 +444,40 @@ RULES: tuple[Rule, ...] = (
             'const TRANSLATIONS: &[(&str, &str)] = &[("MVP", "確認")];',
             "fn label(self) -> (&'static str, &'static str) { "
             'match self { Action => ("session unavailable", "確認"), } }',
-            'fn heading(language: Lang) -> &str { '
+            "fn heading(language: Lang) -> &str { "
             'if language == Lang::En { return "MVP"; } "確認" }',
             '/* outer /* nested */ Lang::Ja => "safe" */ Lang::En => "MVP",',
-            '#[cfg(test)] mod tests { const ACTION_EN: &str = "safe"; }\n'
-            'Lang::En => "preflight",',
+            '#[cfg(test)] mod tests { const ACTION_EN: &str = "safe"; }\nLang::En => "preflight",',
             'const ADVICE_ACTION: &str = "MVP";',
             'fn message_ja(&self) -> String { "ADR-0024".into() }',
             'const LABELS: &[(&str, &str, &str)] = &[("tag", "Checking", "MVP")];',
             'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "preflight")];',
             "fn label(self) -> (&'static str, &'static str) { "
             'match self { Action => ("Checking", "MVP"), } }',
-            'fn heading(language: Lang) -> &str { '
+            "fn heading(language: Lang) -> &str { "
             'if language == Lang::En { return "Checking"; } "MVP" }',
             'Lang::Ja => "MVP対象外です。ADR-0024を参照",',
             'Lang::Ja => "preflightに失敗しました",',
             'Lang::Ja => "先にstage_file()を呼んでください",',
-            'fn op_failed_contract() -> String { match lang() { '
+            "fn op_failed_contract() -> String { match lang() { "
             'Lang::En => "Preflight failed", Lang::Ja => "preflight失敗", } }\n'
-            'fn op_failed() -> String { match lang() { '
+            "fn op_failed() -> String { match lang() { "
             'Lang::En => "MVP", Lang::Ja => "確認", } }',
-            'fn message_display_en(&self) -> String { match self { '
+            "fn message_display_en(&self) -> String { match self { "
             '"safe" => "MVP", _ => "Ready" } }',
         ),
         samples_ok=(
             *(
                 sample
                 for phrase in (
-                    "ADR-0024", "MVP", "[kagi]", "preflight",
-                    "session unavailable", "stage_file()", "Repository::open()", "refresh()",
+                    "ADR-0024",
+                    "MVP",
+                    "[kagi]",
+                    "preflight",
+                    "session unavailable",
+                    "stage_file()",
+                    "Repository::open()",
+                    "refresh()",
                 )
                 for sample in (
                     f'// Lang::En => "{phrase}",\nLang::En => "Try again",',
@@ -488,21 +491,20 @@ RULES: tuple[Rule, ...] = (
                     f'#[cfg(test)] mod tests {{ Lang::En => "{phrase}", }}',
                     f'#[test] fn sample() {{ assert_eq!(render(), "{phrase}"); }}',
                     f'Lang::En => {{ klog!("{phrase}"); "Try again" }},',
-                    f'fn op_failed_contract() -> String {{ match lang() {{ '
+                    f"fn op_failed_contract() -> String {{ match lang() {{ "
                     f'Lang::En => "{phrase}", Lang::Ja => "{phrase}", }} }}',
-                    f'fn message_display_en(&self) -> String {{ match self {{ '
+                    f"fn message_display_en(&self) -> String {{ match self {{ "
                     f'"{phrase}" => "Ready", _ => "Try again" }} }}',
                     f'Lang::En => match legacy {{ "{phrase}" => "Ready", _ => "Try again" }},',
                 )
             ),
-            'enum Internal { MVP, Preflight, SessionUnavailable }\n'
-            'Lang::En => stage_file(),',
+            "enum Internal { MVP, Preflight, SessionUnavailable }\nLang::En => stage_file(),",
             'const INTERNAL_TAG: &str = "[kagi]";',
             'const LABELS: &[(&str, &str, &str)] = &[("[kagi]", "Checking", "確認")];',
             'const TRANSLATIONS: &[(&str, &str)] = &[("Checking", "確認")];',
             "fn label(self) -> (&'static str, &'static str) { "
             'match self { Preflight => ("Checking", "確認"), } }',
-            'fn heading(language: Lang) -> &str { '
+            "fn heading(language: Lang) -> &str { "
             'if language == Lang::En { return "Checking"; } "確認" }',
             'let quoted_source = r#"Lang::En => "MVP""#;',
             'Lang::En => "Stage changes, then commit. Check Git status and try again.",',

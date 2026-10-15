@@ -10,6 +10,10 @@ use kagi_ui_core::{motion, theme};
 use std::time::{Duration, Instant};
 use support::{appearance, mount_dimensions, paint, Settings};
 
+#[path = "sidebar_tree_motion/pointer.rs"]
+mod pointer;
+pub use pointer::scenario_sidebar_tree_pointer_motion;
+
 struct MotionGuard(bool);
 impl Drop for MotionGuard {
     fn drop(&mut self) {

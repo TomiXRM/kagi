@@ -21,6 +21,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "editor_tree_motion/pointer.rs"]
+mod pointer;
+pub use pointer::scenario_editor_tree_pointer_motion;
+
 struct MotionRestore(bool);
 impl Drop for MotionRestore {
     fn drop(&mut self) {

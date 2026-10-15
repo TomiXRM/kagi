@@ -1565,6 +1565,10 @@ fn render_result_pane(
             .font_family(terminal::pick_font_family())
             .child(
                 Input::new(&inputs.result)
+                    .context_menu(kagi_ui_core::input::context_menu(
+                        &inputs.result,
+                        chrome.writer_busy,
+                    ))
                     .aria_label(Msg::A11yConflictResult.t())
                     .disabled(chrome.writer_busy)
                     .appearance(false)

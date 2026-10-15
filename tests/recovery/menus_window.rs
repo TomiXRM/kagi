@@ -1,11 +1,27 @@
 //! Native window identity, stateful menus and the About task boundary.
 use crate::macos::{build_fixture, git, unmount};
-use crate::platform_menu_scroll::mount_short;
 use gpui::Action as _;
 use gpui::{AnyWindowHandle, Entity, MenuItem, Role, VisualTestAppContext};
 use kagi::ui::{commands, dialog_a11y, e2e, window_menu, KagiApp};
 use kagi_ui_core::i18n::{self, Lang};
 
+fn mount_short(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+) -> (Entity<KagiApp>, AnyWindowHandle) {
+    let state = e2e::app_state(repo).unwrap();
+    let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let out = captured.clone();
+    let window = crate::macos::open_offscreen(
+        cx,
+        gpui::size(gpui::px(1000.), gpui::px(720.)),
+        move |window, cx| e2e::mount_root(state, window, cx, &out),
+    );
+    let app = captured.borrow().clone().unwrap();
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    cx.run_until_parked();
+    (app, window.into())
+}
 fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     cx.update_window(win, |_, w, cx| {
         w.refresh();
@@ -93,6 +109,51 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
     let other = build_fixture();
     let (app, win) = mount_short(cx, fixture.path());
     let (other_app, other_win) = mount_short(cx, other.path());
+    let menus = cx.read(commands::build_menus);
+    let view = menus
+        .iter()
+        .find(|menu| menu.name.as_ref() == "View")
+        .unwrap();
+    for submenu in view.items.iter().filter_map(|item| match item {
+        MenuItem::Submenu(menu) => Some(menu),
+        _ => None,
+    }) {
+        let mut selected = 0;
+        for item in &submenu.items {
+            if let MenuItem::Action { name, checked, .. } = item {
+                assert!(
+                    !name.starts_with('✓') && !name.starts_with(' '),
+                    "menu names must not encode selection: {name:?}"
+                );
+                selected += usize::from(*checked);
+            }
+        }
+        assert_eq!(selected, 1, "native selection for {}", submenu.name);
+    }
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(kagi::ui::FocusSidebarFilter), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, win);
+    let menus = cx.read(commands::build_menus);
+    let find = menus
+        .iter()
+        .flat_map(|menu| &menu.items)
+        .find_map(|item| match item {
+            MenuItem::Submenu(menu) if menu.name.as_ref() == "Find" => Some(menu),
+            _ => None,
+        })
+        .unwrap();
+    let MenuItem::Action { action, .. } = &find.items[0] else {
+        panic!("Find action")
+    };
+    assert!(
+        !cx.update_window(win, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "Find must be unavailable in the non-searchable sidebar Input"
+    );
     for (lang, hide, show, enter, exit) in [
         (
             Lang::En,
@@ -115,6 +176,34 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
             a.set_window_active_for_e2e(true, cx);
         });
         draw(cx, win);
+        let [graph, prs, editor] = match lang {
+            Lang::En => ["Graph", "Pull Requests", "Editor"],
+            Lang::Ja => ["グラフ", "Pull Request", "エディター"],
+        };
+        for (id, label) in [
+            ("view.showGraph", graph),
+            ("view.togglePrMode", prs),
+            ("view.toggleEditorWorkspace", editor),
+            ("view.showGraph", graph),
+        ] {
+            invoke(cx, &app, win, id);
+            let menus = cx.read(commands::build_menus);
+            let view = menus
+                .iter()
+                .find(|menu| menu.name.as_ref() == i18n::menu_heading("View", lang))
+                .unwrap();
+            assert!(
+                view.items.iter().any(|item| matches!(
+                    item, MenuItem::Action { name, checked: true, .. } if name.as_ref() == label
+                )),
+                "active workspace {id} is checked"
+            );
+            assert_eq!(
+                view.items.iter().filter(|item| item.is_checked()).count(),
+                1,
+                "workspace selection is exclusive"
+            );
+        }
         assert!(
             labels(cx, "View").contains(&hide.to_string()),
             "visible sidebar offers {hide}"
@@ -164,8 +253,21 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
 }
 pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang", "window_frame"]);
+    kagi_ui_core::settings::write_setting("recent_repos", None);
     let fixture = build_fixture();
     let (app, win) = mount_short(cx, fixture.path());
+    let menus = cx.read(commands::build_menus);
+    let file = menus
+        .iter()
+        .find(|menu| menu.name.as_ref() == "File")
+        .unwrap();
+    assert!(
+        file.items.iter().any(|item| matches!(
+            item, MenuItem::Submenu(menu) if menu.name.as_ref() == "Open Recent"
+        )),
+        "File menu must expose recently opened repositories"
+    );
     assert_eq!(
         labels(cx, "Window"),
         [
@@ -214,6 +316,19 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     assert!(!cx.read(|cx| app.read(cx).home_in_front()));
     invoke(cx, &app, win, "window.nextTab");
     assert!(cx.read(|cx| app.read(cx).home_in_front()));
+    let menus = cx.read(commands::build_menus);
+    let find = menus
+        .iter()
+        .flat_map(|menu| &menu.items)
+        .find_map(|item| match item {
+            MenuItem::Submenu(menu) if menu.name.as_ref() == "Find" => Some(menu),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        matches!(&find.items[0], MenuItem::Action { disabled: true, .. }),
+        "Home has no Find target"
+    );
     assert_eq!(
         commands::effective_keystroke("window.previousTab").as_deref(),
         Some("secondary-shift-[")
@@ -224,7 +339,291 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(cx.read(window_menu::main_window_targets), vec![win]);
     check_window_owners(cx, &app, win);
+    for lang in [Lang::En, Lang::Ja] {
+        let old = i18n::lang();
+        i18n::set_lang(lang);
+        let recent = commands::recent_menu();
+        let paths: Vec<_> = recent
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action { name, action, .. }
+                    if action.as_any().is::<commands::OpenRecentRepository>() =>
+                {
+                    Some(name.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                third.path().canonicalize().unwrap(),
+                second.path().canonicalize().unwrap()
+            ]
+            .map(|path| path.to_string_lossy().into_owned())
+        );
+        i18n::set_lang(old);
+    }
+    // The portable dropdown belongs to the repository workspace, not Home.
+    invoke(cx, &app, win, "window.previousTab");
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("File", cx))
+    });
+    for width in [1000., 940.] {
+        cx.update_window(win, |_, window, cx| {
+            window.resize(gpui::size(gpui::px(width), gpui::px(720.)));
+            window.bounds_changed(cx);
+        })
+        .unwrap();
+        draw(cx, win);
+        let bounds = |name| {
+            e2e::control_bounds(win.window_id(), name)
+                .unwrap_or_else(|| panic!("visible recent menu group: {name}"))
+        };
+        let heading = bounds("platform-menu-recent-heading");
+        let first = bounds("platform-menu-recent-0");
+        let clear = bounds("platform-menu-recent-3");
+        let open = bounds("platform-menu-cmd-file.openRepository-primary");
+        let next = bounds("platform-menu-cmd-file.openInTerminal");
+        assert!(heading.bottom() <= first.top());
+        assert!(first.bottom() < bounds("platform-menu-recent-separator").top());
+        assert!(bounds("platform-menu-recent-separator").bottom() < clear.top());
+        assert!(clear.bottom() < next.top());
+        assert_eq!(
+            first.left(),
+            open.left(),
+            "recent labels use the command check column"
+        );
+        assert_eq!(
+            clear.left(),
+            open.left(),
+            "Clear Menu uses the command check column"
+        );
+    }
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
+    let recent = commands::recent_menu();
+    let MenuItem::Action { action, .. } = &recent.items[1] else {
+        panic!("second recent repository")
+    };
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, win);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).repo_path.clone()),
+        Some(second.path().canonicalize().unwrap())
+    );
+    let tabs = cx.read(|cx| app.read(cx).tabs.len());
+    let recent = commands::recent_menu();
+    let MenuItem::Action { action, .. } = recent.items.last().unwrap() else {
+        panic!("Clear Menu")
+    };
+    assert!(
+        cx.update_window(win, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "Clear Menu is available with recent repositories"
+    );
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let empty = commands::recent_menu();
+    assert_eq!(empty.items.len(), 1);
+    assert!(matches!(
+        &empty.items[0],
+        MenuItem::Action { disabled: true, .. }
+    ));
+    draw(cx, win);
+    assert!(
+        !cx.update(|cx| cx.is_action_available(&commands::ClearRecentRepositories)),
+        "Clear Menu must be unavailable with empty history"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| window
+            .is_action_available(&commands::ClearRecentRepositories, cx))
+            .unwrap(),
+        "empty history removes the window's Clear Menu handler"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs.len()),
+        tabs,
+        "Clear Menu leaves open tabs intact"
+    );
+    assert!(second.path().join(".git").is_dir());
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx))
+    });
+    cx.run_until_parked();
+    check_recent_settings_activation(cx, &app, win, second.path());
+    let dock = commands::dock_menu_items();
+    assert_eq!(
+        dock.len(),
+        1,
+        "Dock lists repository entries only, never Clear Menu or separators"
+    );
+    let MenuItem::Action { action, name, .. } = &dock[0] else {
+        panic!("Dock repository action")
+    };
+    assert!(action.as_any().is::<commands::OpenRecentRepository>());
+    assert_eq!(
+        name.as_ref(),
+        second.path().canonicalize().unwrap().to_string_lossy()
+    );
     unmount(cx, app, win);
+    for deleted in [false, true] {
+        let action = if deleted {
+            deleted_recent_action()
+        } else {
+            action.boxed_clone()
+        };
+        // Unlike VisualTestAppContext::update, AsyncApp::update flushes deferred
+        // effects even when no window exists, matching a native menu event.
+        cx.read(|cx| cx.to_async()).update(|cx| {
+            assert!(cx.windows().is_empty(), "last repository window is closed");
+            assert!(
+                cx.is_action_available(action.as_ref()),
+                "Dock recent remains available without windows"
+            );
+            cx.dispatch_action(action.as_ref());
+        });
+        cx.run_until_parked();
+        let reopened = cx.read(|cx| {
+            let windows = cx.windows();
+            assert_eq!(
+                windows.len(),
+                1,
+                "Dock recent creates one repository window"
+            );
+            windows[0]
+        });
+        let host = cx
+            .update_window(reopened, |_, window, cx| {
+                let root = window.root::<gpui_component::Root>().flatten().unwrap();
+                root.read(cx).view().clone().downcast::<KagiApp>().unwrap()
+            })
+            .unwrap();
+        draw(cx, reopened);
+        if deleted {
+            assert_recent_open_error(cx, &host, reopened);
+            assert!(cx.read(|cx| host.read(cx).tabs.is_empty()));
+        } else {
+            assert_eq!(
+                cx.read(|cx| host.read(cx).repo_path.clone()),
+                Some(second.path().canonicalize().unwrap())
+            );
+            assert_eq!(cx.read(|cx| host.read(cx).tabs.len()), 1);
+        }
+        assert_eq!(
+            cx.read(window_menu::recent_activation_target),
+            Some(reopened),
+            "Dock recent requests activation of its new repository host"
+        );
+        unmount(cx, host, reopened);
+    }
+}
+
+fn check_recent_settings_activation(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    recent: &std::path::Path,
+) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_window_frame", "settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::native(cx);
+    let fixture = build_fixture();
+    let (other_app, other_win) = mount_short(cx, fixture.path());
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    draw(cx, other_win);
+    invoke(cx, &other_app, other_win, "app.settings");
+    let settings = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|handle| *handle != win && *handle != other_win)
+            .unwrap()
+    });
+    draw(cx, settings);
+    let original_tabs = cx.read(|cx| app.read(cx).tabs.len());
+    let dock = commands::dock_menu_items();
+    let MenuItem::Action { action, .. } = &dock[0] else {
+        panic!("recent action")
+    };
+    let deleted = deleted_recent_action();
+    cx.update_window(settings, |_, window, cx| {
+        window.dispatch_action(deleted, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, other_win);
+    assert_recent_open_error(cx, &other_app, other_win);
+    assert_eq!(
+        cx.read(|cx| other_app.read(cx).tabs.len()),
+        1,
+        "failed open creates no tab"
+    );
+    cx.update_window(settings, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, other_win);
+    assert_eq!(
+        cx.read(|cx| other_app.read(cx).repo_path.clone()),
+        Some(recent.canonicalize().unwrap()),
+        "Open Recent from Settings uses the last active repository window"
+    );
+    assert_eq!(cx.read(|cx| app.read(cx).tabs.len()), original_tabs);
+    assert_eq!(
+        cx.read(window_menu::recent_activation_target),
+        Some(other_win),
+        "Open Recent raises its repository host, not Settings"
+    );
+    cx.simulate_keystrokes(settings, "cmd-w");
+    cx.run_until_parked();
+    unmount(cx, other_app, other_win);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    draw(cx, win);
+}
+
+fn deleted_recent_action() -> Box<dyn gpui::Action> {
+    let fixture = build_fixture();
+    kagi::ui::tabs::record_recent_repo(&fixture.path().canonicalize().unwrap());
+    let items = commands::dock_menu_items();
+    let MenuItem::Action { action, .. } = &items[0] else {
+        panic!("recent repository")
+    };
+    let action = action.boxed_clone();
+    fixture.close().unwrap();
+    action
+}
+
+fn assert_recent_open_error(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+) {
+    let message = cx.read(|cx| {
+        let app = app.read(cx);
+        let toast = app.toast_stack.as_ref().unwrap().read(cx).toasts().last().expect("open error toast");
+        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+        assert!(matches!(&app.status_footer, kagi::ui::FooterStatus::Failed(text) if text == &toast.message));
+        toast.message.clone()
+    });
+    let status = kagi::ui::toast_stack::status_for_e2e().expect("rendered failure notice");
+    assert!(status
+        .label
+        .as_ref()
+        .is_some_and(|label| label.contains(message.as_ref())));
+    assert_eq!(
+        cx.read(window_menu::recent_activation_target),
+        Some(win),
+        "failed Open Recent raises the host containing its error"
+    );
 }
 
 fn check_window_owners(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {

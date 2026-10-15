@@ -17,6 +17,8 @@ Kagi: `https://github.com/TomiXRM/kagi/blob/c0a4ea3ab6b3dc6aa68c2fdb2c379a4eefd5
 Kit: `https://github.com/longbridge/gpui-component/blob/1188c11003b5cb5b83bc07d3fb9112e7674fbfa7/<path>#L<line>`。
 ローカルの全 `file:line` は上記 SHA に対応する。調査後 dev が進んだら、実装開始時に line mapping と衝突箇所のみ再確認し、既存の新しい変更を上書きしない。
 
+- Upstream API candidate (#1606): let `SearchPanel` forward a host-supplied context-menu builder or locale to its internal Find/Replace `Input`s; until a public API exists, those fields retain gpui-kit’s default English menu while Kagi-rendered fields use the shared localized builder (no fork/pin changes).
+
 ### 全 slice 共通の merge 規則
 
 1. regression は **同じ PR 内で先に書く**（必要なら手元で red→green）。失敗するテストだけを dev に merge しない。挙動変更・テスト oracle・ADR/changelog を一つの green merge unit にする。
@@ -51,6 +53,8 @@ KAGI_LOG_DIR="$(mktemp -d)" cargo test -j 8 --workspace
 
 現 `commit_panel_composer_render.rs:28–35,79–91` のpreferred3–12行と低windowでのshrink/internal-scrollは引き続き維持する。Textareaのauto_growはleaf min-heightも増やす (`base/input/base/element.rs:2518–2524`) ので、単にauto_grow+外側min_h0では同じでない。**Kagi側の高さ設定＋plain Textareaの内部scrollという公開API構成を先に検討し、必要がある場合だけ公式cached-row getterをprerequisiteにする**。最終判断と具体的構成は#1479-S6に記す。不要なEditorState偽装・別shaper・forkを先に選ばない。
 
+- Upstream candidate (#1607, unpublished): expose public `SearchNext` / `SearchPrevious` actions (and selection-to-query support) in official gpui-kit. The pinned `7a116a2` exports only `input::Search`; its `SearchPanel`, navigation methods and owning field are private. Until public actions exist, Kagi offers working Find… only, not disabled placeholders for Next/Previous/Use Selection, and does not change dependency pins.
+
 <a id="native-termination-u2"></a>
 
 ### U2 candidate — macOS native application termination admission（#1614）
@@ -70,7 +74,6 @@ KAGI_LOG_DIR="$(mktemp -d)" cargo test -j 8 --workspace
 **Unpublished owner proposal (English):** “Expose application termination admission before shutdown. On macOS, route `applicationShouldTerminate:` through a public application callback that can allow, cancel, or defer termination, and expose completion of a deferred request through `replyToApplicationShouldTerminate:`. Keep this distinct from non-cancellable `on_app_quit` cleanup. Kagi needs to run its existing aggregate unsaved-buffer guard, respect active write/clone admission, and cancel when saving fails or the user chooses Cancel, including Dock Quit and normal logout/shutdown requests. Please document repeated-request/reply lifetime and platform behavior; forced process termination is outside this guarantee.”
 
 Kagi が所有する menu/shortcut/Settings Quit・host/window close の共有 guard 修正とは分離する。**その実装の受入後も #1614 は U2 のみで open のまま**とし、上記 source audit を native runtime の再現・受入成功とは呼ばない。
-
 
 
 ## #1479-S0 — 方針と出自を固定する（最初に merge）

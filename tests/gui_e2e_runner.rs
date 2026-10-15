@@ -251,6 +251,10 @@ mod graph_focus;
 mod input_names;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/input_context_menus.rs"]
+mod input_context_menus;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/rename_form_state.rs"]
 mod rename_form_state;
 
@@ -1957,6 +1961,34 @@ mod macos {
             (
                 "dialog_a11y_roles",
                 Box::new(crate::recovery_operations::scenario_dialog_a11y_roles),
+            ),
+            (
+                "input_code_context_menus",
+                Box::new(crate::input_context_menus::scenario_input_code_context_menus),
+            ),
+            (
+                "input_context_menu_locale",
+                Box::new(crate::destructive_modal_return::scenario_input_context_menu_locale),
+            ),
+            (
+                "command_period_overflow",
+                Box::new(crate::input_context_menus::scenario_command_period_overflow),
+            ),
+            (
+                "command_period_settings_select",
+                Box::new(crate::input_context_menus::scenario_command_period_settings_select),
+            ),
+            (
+                "compact_input_escape",
+                Box::new(crate::input_context_menus::scenario_compact_input_escape),
+            ),
+            (
+                "compact_input_command_period",
+                Box::new(crate::input_context_menus::scenario_compact_input_command_period),
+            ),
+            (
+                "modal_command_period",
+                Box::new(crate::destructive_modal_return::scenario_modal_command_period),
             ),
             (
                 "destructive_modal_return",

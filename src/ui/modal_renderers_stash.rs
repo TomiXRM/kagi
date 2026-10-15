@@ -162,6 +162,7 @@ pub(crate) fn render_stash_push_modal(
                 .id("stash-push-message")
                 .children(modal.input_state.as_ref().map(|state| {
                     gpui_component::input::Input::new(state)
+                        .context_menu(kagi_ui_core::input::context_menu(state, false))
                         .aria_label(Msg::A11yStashMessage.t())
                         .h(theme::scaled_px(32.))
                         .rounded(theme::scaled_px(8.))

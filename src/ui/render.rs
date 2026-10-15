@@ -760,6 +760,24 @@ impl Render for KagiApp {
                     this.focus_sidebar_filter(window, cx);
                 }),
             )
+            .when(
+                {
+                    let (input, sidebar) = self.find_menu_targets(window, cx);
+                    input || sidebar
+                },
+                |el| {
+                    el.on_action(cx.listener(
+                        |this, _: &commands::FindInFocusedView, window, cx| {
+                            let (input, sidebar) = this.find_menu_targets(window, cx);
+                            if input {
+                                window.dispatch_action(Box::new(gpui_component::input::Search), cx);
+                            } else if sidebar {
+                                window.dispatch_action(Box::new(super::FocusSidebarFilter), cx);
+                            }
+                        },
+                    ))
+                },
+            )
             .on_action(copy_diff_selection)
             .on_action(diff_selection_copied)
             .when(self.editor_save_dispatch_available(cx), |el| {

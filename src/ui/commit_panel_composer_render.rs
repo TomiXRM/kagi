@@ -44,6 +44,7 @@ impl CommitPanelView {
                 .gap_2()
                 .child(
                     Input::new(title)
+                        .context_menu(kagi_ui_core::input::context_menu(title, false))
                         .aria_label(Msg::A11yCommitSummary.t())
                         .appearance(true)
                         .bordered(true),
@@ -85,6 +86,9 @@ impl CommitPanelView {
                                 .child(super::e2e::measure_inside("cp-body-input"))
                                 .child(
                                     Input::new(body)
+                                        .context_menu(kagi_ui_core::input::context_menu(
+                                            body, false,
+                                        ))
                                         .aria_label(Msg::A11yCommitDescription.t())
                                         .h_full()
                                         .appearance(false)

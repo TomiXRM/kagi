@@ -39,6 +39,11 @@ pub fn options(cx: &App) -> gpui::WindowOptions {
         window_decorations: super::main_window_decorations(),
         // Wayland app_id / X11 WM_CLASS binds the shell to our desktop entry.
         app_id: Some(crate::APP_ID.to_string()),
+        // Exercise the real Dock/reopen path without foregrounding native E2E windows.
+        #[cfg(feature = "gui-e2e")]
+        show: std::env::var_os("KAGI_GUI_E2E").is_none(),
+        #[cfg(feature = "gui-e2e")]
+        focus: std::env::var_os("KAGI_GUI_E2E").is_none(),
         ..Default::default()
     }
 }

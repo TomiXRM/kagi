@@ -486,6 +486,7 @@ impl KagiApp {
                     .map(|input| super::e2e::probe_chrome_border("palette-divider", input))
                     .child(
                         Input::new(input)
+                            .context_menu(kagi_ui_core::input::context_menu(input, false))
                             .aria_label(i18n::Msg::A11yCommandPaletteQuery.t())
                             .appearance(true),
                     ),

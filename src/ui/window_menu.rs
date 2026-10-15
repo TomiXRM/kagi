@@ -11,6 +11,9 @@ pub struct ViewMenuState {
     pub sidebar_visible: bool,
     pub fullscreen: bool,
     pub input_focused: bool,
+    pub workspace_mode: Option<super::workspace_mode::WorkspaceMode>,
+    pub find_input: bool,
+    pub find_sidebar: bool,
     pub undo_summary: Option<gpui::SharedString>,
     pub redo_summary: Option<gpui::SharedString>,
 }
@@ -20,6 +23,9 @@ impl Default for ViewMenuState {
             sidebar_visible: true,
             fullscreen: false,
             input_focused: false,
+            workspace_mode: None,
+            find_input: false,
+            find_sidebar: false,
             undo_summary: None,
             redo_summary: None,
         }
@@ -29,6 +35,9 @@ impl Default for ViewMenuState {
 pub(crate) struct WindowMenus {
     main_windows: Vec<AnyWindowHandle>,
     owner: Option<AnyWindowHandle>,
+    last_main: Option<AnyWindowHandle>,
+    #[cfg(feature = "gui-e2e")]
+    recent_activation_target: Option<AnyWindowHandle>,
     state: ViewMenuState,
     language: Option<Lang>,
 }
@@ -42,6 +51,12 @@ pub(crate) fn register_main_window(window: &Window, cx: &mut App) {
             menus.main_windows.retain(|window| window.window_id() != id);
             if menus.owner.is_some_and(|window| window.window_id() == id) {
                 menus.owner = None;
+            }
+            if menus
+                .last_main
+                .is_some_and(|window| window.window_id() == id)
+            {
+                menus.last_main = None;
             }
         })
         .detach();
@@ -72,6 +87,8 @@ pub(super) fn publish_settings_edit_state(window: &mut Window, cx: &mut App) {
     }
     menus.owner = Some(window.window_handle());
     menus.state.input_focused = input_focused;
+    menus.state.find_input = false;
+    menus.state.find_sidebar = false;
     menus.state.undo_summary = None;
     menus.state.redo_summary = None;
     commands::publish_menus(cx);
@@ -84,6 +101,9 @@ pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
         "view.toggleSidebar" => Msg::MenuShowSidebar,
         "view.fullScreen" if state.fullscreen => Msg::MenuExitFullScreen,
         "view.fullScreen" => Msg::MenuEnterFullScreen,
+        "view.showGraph" => Msg::MenuWorkspaceGraph,
+        "view.togglePrMode" => Msg::MenuWorkspacePrs,
+        "view.toggleEditorWorkspace" => Msg::MenuWorkspaceEditor,
         "window.previousTab" => Msg::MenuPreviousTab,
         "window.nextTab" => Msg::MenuNextTab,
         "window.bringAllToFront" => Msg::MenuBringAllToFront,
@@ -91,6 +111,17 @@ pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
         _ => return None,
     };
     Some(msg.t())
+}
+
+pub fn checked(id: &str, state: &ViewMenuState) -> bool {
+    use super::workspace_mode::WorkspaceMode;
+    let mode = match id {
+        "view.showGraph" => WorkspaceMode::Graph,
+        "view.togglePrMode" => WorkspaceMode::Prs,
+        "view.toggleEditorWorkspace" => WorkspaceMode::Editor,
+        _ => return commands::lang_for_command(id).is_some_and(|lang| lang == i18n::lang()),
+    };
+    state.workspace_mode == Some(mode)
 }
 impl KagiApp {
     pub(super) fn sync_window_presentation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -198,6 +229,9 @@ impl KagiApp {
             sidebar_visible: self.sidebar.visible,
             fullscreen,
             input_focused,
+            workspace_mode: (!self.home_in_front()).then(|| self.workspace_mode()),
+            find_input: false,
+            find_sidebar: false,
             undo_summary: history
                 .map(|history| {
                     summary(
@@ -216,18 +250,69 @@ impl KagiApp {
                 .unwrap_or(previous.redo_summary),
         }
     }
+    pub(super) fn find_menu_targets(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (bool, bool) {
+        use gpui::Focusable as _;
+        use gpui_component::WindowExt as _;
+        if self.home_in_front() {
+            return (false, false);
+        }
+        if let Some(input) = window
+            .focused_input(cx)
+            .filter(|input| input.read(cx).focus_handle(cx).is_focused(window))
+        {
+            // Kit exposes no searchable getter; use the actual Kagi-owned
+            // code Inputs, not every text field's unconditional Search handler.
+            let editor = self
+                .ui()
+                .editor_workspace
+                .as_ref()
+                .is_some_and(|view| view.read(cx).editor.as_ref() == Some(&input));
+            let conflict = self.ui().conflict.as_ref().is_some_and(|view| {
+                view.read(cx)
+                    .editor_inputs
+                    .as_ref()
+                    .is_some_and(|inputs| inputs.result == input)
+            });
+            let issue = self
+                .ui()
+                .issue_composer
+                .editors
+                .values()
+                .any(|editor| editor.body_input.as_ref() == Some(&input));
+            return (editor || conflict || issue, false);
+        }
+        let terminal = self
+            .ui()
+            .terminal_session
+            .as_ref()
+            .and_then(|session| session.view.as_ref())
+            .is_some_and(|view| view.read(cx).focus_handle().is_focused(window));
+        (
+            false,
+            !terminal
+                && !self.conflict_body_visible()
+                && self.front_layer(cx) == super::front_layer::FrontLayer::None
+                && self.workspace_mode() == super::workspace_mode::WorkspaceMode::Graph,
+        )
+    }
     pub(super) fn publish_window_menu_state(&self, window: &mut Window, cx: &mut Context<Self>) {
         let input = self.menu_input_focused(window, cx);
         let history_target = self.history_menu_target(input, window, cx);
-        let state = self.menu_state(
+        let mut state = self.menu_state(
             current_state(cx),
             window.is_fullscreen(),
             input,
             history_target,
         );
+        (state.find_input, state.find_sidebar) = self.find_menu_targets(window, cx);
         let handle = window.window_handle();
         let language = i18n::lang();
         let menus = cx.global_mut::<WindowMenus>();
+        menus.last_main = Some(handle);
         if menus.owner == Some(handle) && menus.state == state && menus.language == Some(language) {
             return;
         }
@@ -305,6 +390,38 @@ pub fn main_window_targets(cx: &App) -> Vec<AnyWindowHandle> {
     cx.global::<WindowMenus>().main_windows.clone()
 }
 
+pub(super) fn preferred_repository_window(cx: &App) -> Option<AnyWindowHandle> {
+    let menus = cx.try_global::<WindowMenus>()?;
+    cx.active_window()
+        .filter(|window| menus.main_windows.contains(window))
+        .or(menus.last_main)
+        .or_else(|| {
+            activation_order(cx)
+                .into_iter()
+                .rev()
+                .find(|window| menus.main_windows.contains(window))
+        })
+}
+
+pub(super) fn activate_recent_repository(window: &mut Window, cx: &mut App) {
+    cx.global_mut::<WindowMenus>().last_main = Some(window.window_handle());
+    // Match Settings' hidden-native convention: record the requested target
+    // without makeKeyAndOrderFront taking the user's foreground.
+    #[cfg(feature = "gui-e2e")]
+    if std::env::var_os("KAGI_GUI_E2E").is_some() {
+        cx.global_mut::<WindowMenus>().recent_activation_target = Some(window.window_handle());
+        window.refresh();
+        return;
+    }
+    window.activate_window();
+    cx.activate(true);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn recent_activation_target(cx: &App) -> Option<AnyWindowHandle> {
+    cx.global::<WindowMenus>().recent_activation_target
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,7 +474,10 @@ mod tests {
             assert_eq!(app.menu_state(state.clone(), false, false, true), state);
             let tab = app.tabs.pop().unwrap();
             assert!(app.home_in_front());
-            assert_eq!(app.menu_state(state.clone(), false, false, true), state);
+            let home = app.menu_state(state.clone(), false, false, true);
+            assert_eq!(home.workspace_mode, None, "Home has no active workspace");
+            assert_eq!(home.undo_summary, state.undo_summary);
+            assert_eq!(home.redo_summary, state.redo_summary);
             app.tabs.push(tab);
             if !redo {
                 app.ui_mut().unwrap().operation_history.undo();

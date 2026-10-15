@@ -35,6 +35,9 @@ impl Default for ViewMenuState {
 pub(crate) struct WindowMenus {
     main_windows: Vec<AnyWindowHandle>,
     owner: Option<AnyWindowHandle>,
+    last_main: Option<AnyWindowHandle>,
+    #[cfg(feature = "gui-e2e")]
+    recent_activation_target: Option<AnyWindowHandle>,
     state: ViewMenuState,
     language: Option<Lang>,
 }
@@ -48,6 +51,12 @@ pub(crate) fn register_main_window(window: &Window, cx: &mut App) {
             menus.main_windows.retain(|window| window.window_id() != id);
             if menus.owner.is_some_and(|window| window.window_id() == id) {
                 menus.owner = None;
+            }
+            if menus
+                .last_main
+                .is_some_and(|window| window.window_id() == id)
+            {
+                menus.last_main = None;
             }
         })
         .detach();
@@ -303,6 +312,7 @@ impl KagiApp {
         let handle = window.window_handle();
         let language = i18n::lang();
         let menus = cx.global_mut::<WindowMenus>();
+        menus.last_main = Some(handle);
         if menus.owner == Some(handle) && menus.state == state && menus.language == Some(language) {
             return;
         }
@@ -378,6 +388,38 @@ pub fn bring_all_activation_order(cx: &App) -> Vec<AnyWindowHandle> {
 #[cfg(feature = "gui-e2e")]
 pub fn main_window_targets(cx: &App) -> Vec<AnyWindowHandle> {
     cx.global::<WindowMenus>().main_windows.clone()
+}
+
+pub(super) fn preferred_repository_window(cx: &App) -> Option<AnyWindowHandle> {
+    let menus = cx.try_global::<WindowMenus>()?;
+    cx.active_window()
+        .filter(|window| menus.main_windows.contains(window))
+        .or(menus.last_main)
+        .or_else(|| {
+            activation_order(cx)
+                .into_iter()
+                .rev()
+                .find(|window| menus.main_windows.contains(window))
+        })
+}
+
+pub(super) fn activate_recent_repository(window: &mut Window, cx: &mut App) {
+    cx.global_mut::<WindowMenus>().last_main = Some(window.window_handle());
+    // Match Settings' hidden-native convention: record the requested target
+    // without makeKeyAndOrderFront taking the user's foreground.
+    #[cfg(feature = "gui-e2e")]
+    if std::env::var_os("KAGI_GUI_E2E").is_some() {
+        cx.global_mut::<WindowMenus>().recent_activation_target = Some(window.window_handle());
+        window.refresh();
+        return;
+    }
+    window.activate_window();
+    cx.activate(true);
+}
+
+#[cfg(feature = "gui-e2e")]
+pub fn recent_activation_target(cx: &App) -> Option<AnyWindowHandle> {
+    cx.global::<WindowMenus>().recent_activation_target
 }
 
 #[cfg(test)]

@@ -460,6 +460,7 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         assert!(app.open_repository(second.path().to_path_buf(), cx))
     });
     cx.run_until_parked();
+    check_recent_settings_activation(cx, &app, win, second.path());
     let dock = commands::dock_menu_items();
     assert_eq!(
         dock.len(),
@@ -507,7 +508,61 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         Some(second.path().canonicalize().unwrap())
     );
     assert_eq!(cx.read(|cx| host.read(cx).tabs.len()), 1);
+    assert_eq!(
+        cx.read(window_menu::recent_activation_target),
+        Some(reopened),
+        "Dock recent requests activation of its new repository host"
+    );
     unmount(cx, host, reopened);
+}
+
+fn check_recent_settings_activation(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    win: AnyWindowHandle,
+    recent: &std::path::Path,
+) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_window_frame", "settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::native(cx);
+    let fixture = build_fixture();
+    let (other_app, other_win) = mount_short(cx, fixture.path());
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    draw(cx, other_win);
+    invoke(cx, &other_app, other_win, "app.settings");
+    let settings = cx.read(|cx| {
+        cx.windows()
+            .into_iter()
+            .find(|handle| *handle != win && *handle != other_win)
+            .unwrap()
+    });
+    draw(cx, settings);
+    let original_tabs = cx.read(|cx| app.read(cx).tabs.len());
+    let dock = commands::dock_menu_items();
+    let MenuItem::Action { action, .. } = &dock[0] else {
+        panic!("recent action")
+    };
+    cx.update_window(settings, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, other_win);
+    assert_eq!(
+        cx.read(|cx| other_app.read(cx).repo_path.clone()),
+        Some(recent.canonicalize().unwrap()),
+        "Open Recent from Settings uses the last active repository window"
+    );
+    assert_eq!(cx.read(|cx| app.read(cx).tabs.len()), original_tabs);
+    assert_eq!(
+        cx.read(window_menu::recent_activation_target),
+        Some(other_win),
+        "Open Recent raises its repository host, not Settings"
+    );
+    cx.simulate_keystrokes(settings, "cmd-w");
+    cx.run_until_parked();
+    unmount(cx, other_app, other_win);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    draw(cx, win);
 }
 
 fn check_window_owners(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {

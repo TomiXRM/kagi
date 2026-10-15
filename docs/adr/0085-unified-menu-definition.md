@@ -229,6 +229,11 @@ no unconditional global Clear handler bypasses AppKit validation.
 Clear Menu belongs only to File > Open Recent, not the Dock. Dock entries are
 repository actions only, with no separators; their global dispatch remains
 available without an active window and creates a repository host when needed.
+The target is the active repository window or the last main host, preserved
+independently of Settings' menu ownership, with native ordering as a fallback.
+After a successful open, activate the repository window and application,
+including newly created hosts. Hidden native tests check repository routing and
+the activation request; actual OS foreground behavior remains Tier B coverage.
 
 
 Edit > Find exposes a Kagi action only when the focused target can find: its

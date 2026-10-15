@@ -1077,8 +1077,7 @@ pub fn clear_recent_repos() {
 /// Dock and utility-window dispatch need a repository host even after the last
 /// repository window closes. Opening still belongs to the normal tab path.
 pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
-    let host = cx
-        .active_window()
+    let host = super::window_menu::preferred_repository_window(cx)
         .into_iter()
         .chain(cx.windows())
         .find_map(|handle| {
@@ -1086,11 +1085,14 @@ pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
                 .update(cx, |_, window, cx| super::repository_window(window, cx))
                 .ok()
                 .flatten()
+                .map(|host| (handle, host))
         });
-    if let Some(host) = host {
-        host.update(cx, |app, cx| {
-            app.open_repository(path.to_path_buf(), cx);
-        });
+    if let Some((handle, host)) = host {
+        if host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx)) {
+            let _ = handle.update(cx, |_, window, cx| {
+                super::window_menu::activate_recent_repository(window, cx);
+            });
+        }
         return;
     }
     super::open_main_window(KagiApp::with_error(""), cx);
@@ -1100,10 +1102,11 @@ pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
                 let Some(host) = super::repository_window(window, cx) else {
                     return false;
                 };
-                host.update(cx, |app, cx| {
-                    app.open_repository(path.to_path_buf(), cx);
-                });
-                true
+                let opened = host.update(cx, |app, cx| app.open_repository(path.to_path_buf(), cx));
+                if opened {
+                    super::window_menu::activate_recent_repository(window, cx);
+                }
+                opened
             })
             .unwrap_or(false);
         if opened {

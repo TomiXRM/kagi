@@ -390,34 +390,47 @@ pub(crate) fn render(
     let render_rows = ref_rows.clone();
     let snapshot = modal.clone();
     let head = head.map(str::to_owned);
-    let content = gpui::list(
-        inspection.refs.scroll.clone(),
-        move |index, _window, _cx| {
-            let row = &snapshot.restores[index];
-            let focus = render_rows.clone();
-            render_rows
-                .row(
-                    index,
-                    crate::ui::list_a11y::list_item(
-                        "restore-refs",
-                        ref_row(row, head.as_deref(), index),
-                        index,
-                        snapshot.restores.len(),
-                        crate::ui::render_helpers::safe_text(&format!(
-                            "{}: {} → {}",
-                            row.refname,
-                            ref_short(row.expect.as_deref()),
-                            row.restore_to
-                                .as_deref()
-                                .unwrap_or(text(OplogPanelMsg::RestoreDelete)),
-                        ))
-                        .to_string(),
-                    ),
-                )
-                .on_click(move |_, window, cx| focus.focus_row(index, window, cx))
-                .into_any_element()
+    let drawn = inspection.refs.drawn.clone();
+    let content = gpui::uniform_list(
+        "restore-ref-rows",
+        modal.restores.len(),
+        move |range, _window, _cx| {
+            *drawn.borrow_mut() = range.clone();
+            let render_rows = Rc::new(render_rows.as_drawn(&range));
+            range
+                .map(|index| {
+                    let row = &snapshot.restores[index];
+                    let focus = render_rows.clone();
+                    render_rows
+                        .row(
+                            index,
+                            crate::ui::list_a11y::list_item(
+                                "restore-refs",
+                                ref_row(row, head.as_deref(), index),
+                                index,
+                                snapshot.restores.len(),
+                                crate::ui::render_helpers::safe_text(&format!(
+                                    "{}: {} → {}",
+                                    row.refname,
+                                    ref_short(row.expect.as_deref()),
+                                    row.restore_to
+                                        .as_deref()
+                                        .unwrap_or(text(OplogPanelMsg::RestoreDelete)),
+                                ))
+                                .to_string(),
+                            ),
+                        )
+                        .on_click(move |_, window, cx| focus.focus_row(index, window, cx))
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>()
         },
     )
+    .track_scroll(&inspection.refs.scroll)
+    .map(|mut list| {
+        list.style().restrict_scroll_to_axis = Some(true);
+        list
+    })
     .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
     .w_full();
     let refs = ref_rows
@@ -429,6 +442,7 @@ pub(crate) fn render(
                 .h(theme::scaled_px(modal.restores.len().max(1) as f32 * 31.).min(refs_h))
                 .flex_shrink_0()
                 .on_scroll_wheel(inspection.refs.wheel_handler())
+                .child(inspection.refs.wheel_capture())
                 .child(crate::ui::e2e::measure_inside("restore-refs")),
             text(OplogPanelMsg::RestoreRefs),
         ))

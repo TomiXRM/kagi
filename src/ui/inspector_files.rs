@@ -5,8 +5,8 @@ use super::{
     KagiApp,
 };
 use gpui::{
-    actions, div, prelude::*, px, relative, rgb, App, Context, KeyBinding, ListState, MouseButton,
-    SharedString, Window,
+    actions, div, prelude::*, px, relative, rgb, App, Context, KeyBinding, MouseButton,
+    SharedString, UniformListScrollHandle, Window,
 };
 use kagi_ui_core::{
     file_tree::{status_badge, TreeRow},
@@ -23,6 +23,9 @@ const ROW_HEIGHT: f32 = super::sidebar::SIDEBAR_ROW_H;
 impl KagiApp {
     pub fn inspector_row_height_for_e2e() -> gpui::Pixels {
         theme::scaled_px(ROW_HEIGHT)
+    }
+    pub fn inspector_scroll_for_e2e(&self) -> UniformListScrollHandle {
+        self.ui().inspector_model.keyboard.0.borrow().scroll.clone()
     }
 }
 actions!(kagi_inspector_files, [ExpandGenerated, CollapseGenerated]);
@@ -59,7 +62,8 @@ struct State {
     entries: Rc<[Entry]>,
     keys: RowKeys,
     focus: RowFocus,
-    scroll: ListState,
+    scroll: UniformListScrollHandle,
+    drawn: Rc<RefCell<std::ops::Range<usize>>>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -68,7 +72,8 @@ impl Default for State {
             entries: Rc::from([]),
             keys: Rc::from([]),
             focus: RowFocus::default(),
-            scroll: ListState::new(0, gpui::ListAlignment::Top, px(0.)),
+            scroll: UniformListScrollHandle::new(),
+            drawn: Rc::new(RefCell::new(0..0)),
         }
     }
 }
@@ -85,14 +90,10 @@ impl State {
                     .position(|entry| matches!(entry, Entry::Generated { .. }))
             })
             .map(|at| at + 1);
-        if let Some(start) = splice_start {
-            let old_end = self.entries.len()
-                - usize::from(matches!(self.entries.last(), Some(Entry::More(_))));
-            let new_end =
-                entries.len() - usize::from(matches!(entries.last(), Some(Entry::More(_))));
-            self.scroll.splice(start..old_end, new_end - start);
-        } else {
-            self.scroll.reset(entries.len());
+        if splice_start.is_none() {
+            self.scroll
+                .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+            *self.drawn.borrow_mut() = 0..0;
         }
         self.entries = entries.into();
         self.keys = keys.into();
@@ -133,16 +134,18 @@ impl InspectorKeyboard {
         if state.layout != Some((tree, expanded, i18n::lang())) {
             state.rebuild(files.as_ref(), tree, expanded);
         }
-        // Unmeasured rows need an extent so wheel/scrollbar input can reach the tail.
-        let scroll = state
-            .scroll
-            .clone()
-            .with_uniform_item_height(theme::scaled_px(ROW_HEIGHT));
+        let scroll = state.scroll.clone();
         let keys = state.keys.clone();
+        let drawn = state.drawn.clone();
         let row_scroll = if matches!(state.entries.last(), Some(Entry::More(_))) {
-            RowScroll::ListWithTail(scroll.clone(), keys.last().unwrap().1)
+            RowScroll::UniformWithTail {
+                handle: scroll.clone(),
+                drawn: drawn.borrow().clone(),
+                last_row: keys.last().unwrap().1,
+                tail: state.entries.len() - 1,
+            }
         } else {
-            RowScroll::List(scroll.clone())
+            RowScroll::Uniform(scroll.clone(), drawn.borrow().clone())
         };
         let rows = Rc::new(state.focus.rows(keys, &row_scroll, fallback, window, cx));
         let entries = state.entries.clone();
@@ -153,12 +156,26 @@ impl InspectorKeyboard {
             selected,
             active,
         };
-        let render = cx.processor(move |_: &mut KagiApp, ix: usize, _, cx| {
-            render_entry(ix, &entries[ix], &rows, presentation, cx)
-        });
-        let body = gpui::list(scroll.clone(), move |ix, window, cx| render(ix, window, cx))
-            .flex_1()
-            .min_h(px(0.));
+        let count = entries.len();
+        let render = cx.processor(
+            move |_: &mut KagiApp, range: std::ops::Range<usize>, _, cx| {
+                *drawn.borrow_mut() = range.clone();
+                let rows = Rc::new(rows.as_drawn(&range));
+                range
+                    .map(|ix| render_entry(ix, &entries[ix], &rows, presentation, cx))
+                    .collect::<Vec<_>>()
+            },
+        );
+        let body = gpui::uniform_list("inspector-file-rows", count, move |range, window, cx| {
+            render(range, window, cx)
+        })
+        .track_scroll(&scroll)
+        .map(|mut list| {
+            list.style().restrict_scroll_to_axis = Some(true);
+            list
+        })
+        .flex_1()
+        .min_h(px(0.));
         let frame = div()
             .id(LIST)
             .relative()
@@ -304,6 +321,9 @@ fn render_entry(
                 .child(i18n::and_n_more(*count)),
         ),
         Entry::Unavailable => div()
+            .h(theme::scaled_px(ROW_HEIGHT))
+            .flex()
+            .items_center()
             .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
             .text_color(rgb(theme().text_muted))
             .child(Msg::DiffUnavailable.t())

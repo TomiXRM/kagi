@@ -277,13 +277,21 @@ impl KagiApp {
             && self.front_layer(cx) == FrontLayer::Modal
             && self.active_modal_needs_alert_trap()
         {
+            // Uniform rows reveal during the next layout. A retained handle
+            // owned by this restore card is valid before it mounts there.
+            let inspection_owns_focus = self
+                .oplog_restore_modal()
+                .is_some_and(|modal| modal.inspection.owns_row_focus(window));
             let focus = self.modal_focus.get_or_insert_with(|| cx.focus_handle());
             if let Some(saved) = self.alert_return_focus.as_mut() {
                 if saved.trap != *focus {
                     saved.trap = focus.clone();
                 }
             }
-            if !focus.is_focused(window) && !focus.contains_focused(window, cx) {
+            if !inspection_owns_focus
+                && !focus.is_focused(window)
+                && !focus.contains_focused(window, cx)
+            {
                 window.focus(focus, cx);
             }
         }

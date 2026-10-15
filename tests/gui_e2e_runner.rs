@@ -3167,6 +3167,14 @@ mod macos {
                 Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_reflow),
             ),
             (
+                "pr_diff_extent_conflict_end_fill",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_conflict_end_fill),
+            ),
+            (
+                "pr_diff_extent_tail_collapse",
+                Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_tail_collapse),
+            ),
+            (
                 "pr_diff_extent_threads",
                 Box::new(crate::pr_diff_extent_invalidation::scenario_pr_diff_extent_threads),
             ),

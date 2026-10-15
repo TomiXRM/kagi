@@ -217,9 +217,11 @@ pub(super) fn diagnostic(value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::tests::LOCK;
 
     #[test]
     fn restore_decode_diagnostic_preserves_the_presented_reason() {
+        let _guard = LOCK.lock();
         for reason in [
             "invalid ref row at byte 42",
             "git error: index.write() failed: denied",
@@ -235,6 +237,7 @@ mod tests {
 
     #[test]
     fn unconfirmed_termination_diagnostic_preserves_the_presented_reason() {
+        let _guard = LOCK.lock();
         let reason = "git update-ref: child 42 did not terminate";
         let shown = diagnostic(&format!(
             "{reason}; process termination is unconfirmed — do not retry this operation"

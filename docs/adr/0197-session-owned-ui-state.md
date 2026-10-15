@@ -264,3 +264,21 @@ Wave 4 は #703（abandoned executor の supervisor）より先に開始・land 
 
 共有 hotspot は `Sessions` と `release_session` 周辺なので、同時に実装する場合は
 #703 が `src/app/session.rs`、Wave 4 が UI 側 store / tabs を owner とし、schema 変更は直列に統合する。
+
+## Host-close amendment (#1603)
+
+Quit, Close Window, and the native window-close callback destroy all retained
+editors, so they share one guard after the existing lease/clone hold. Settings
+Quit routes to its repository owner and reveals that window's confirmation.
+The confirmation counts dirty files across every session, including cached file
+tabs, and offers Save All / Discard / Cancel rather than silently dropping hidden
+buffers or asking only about the selected repository.
+
+Save All uses the existing conflict-aware editor save and writer admission,
+one file at a time, attributed to the retained pane's owning session. Only a
+successful save completion advances the sequence. A disk conflict or write
+failure stops it with the guard open; Cancel retires the exit intent without
+discarding any remaining buffers. An already admitted write may finish after
+Cancel but cannot close the host. Discard writes nothing and resumes the original
+exit only if the lease/clone hold still permits it. Existing repository-tab
+close and editor-close confirmations retain their current behavior.

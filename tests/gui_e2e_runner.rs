@@ -759,6 +759,10 @@ mod tab_ui_state;
 mod pane_resources;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/host_dirty_guard.rs"]
+mod host_dirty_guard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cache_history_owner.rs"]
 mod cache_history_owner;
 
@@ -3739,6 +3743,14 @@ mod macos {
             (
                 "close_tab_editor_dirty_owner",
                 Box::new(crate::pane_resources::scenario_close_tab_editor_dirty_owner),
+            ),
+            (
+                "host_dirty_guard",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard),
+            ),
+            (
+                "host_dirty_guard_save",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save),
             ),
             (
                 "welcome_startup_renders",

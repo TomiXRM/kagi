@@ -223,10 +223,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(i18n::op::op_failed_contract(
-                        i18n::Op::RepoOpen,
-                        e,
-                    )));
+                    m.error = Some(SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)));
                 }
                 return false;
             }
@@ -236,10 +233,7 @@ impl KagiApp {
             Ok(p) => p,
             Err(e) => {
                 if let Some(m) = self.plan_modal_mut() {
-                    m.error = Some(SharedString::from(i18n::op::op_plan_failed_contract(
-                        i18n::Op::Stash,
-                        e,
-                    )));
+                    m.error = Some(SharedString::from(i18n::op_plan_failed(i18n::Op::Stash, e)));
                 }
                 return false;
             }
@@ -281,7 +275,7 @@ impl KagiApp {
                 true
             }
             Err(e) => {
-                let err = i18n::op::op_failed_contract(i18n::Op::Stash, e);
+                let err = i18n::op_failed(i18n::Op::Stash, e);
                 self.present_report("stash-push", &report, &repo_path, cx);
                 if let Some(m) = self.plan_modal_mut() {
                     m.error = Some(SharedString::from(err));

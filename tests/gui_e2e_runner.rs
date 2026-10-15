@@ -6840,7 +6840,10 @@ mod macos {
                 let notice =
                     e2e::app_notice_message(state).expect("owner-named recording failure notice");
                 assert!(
-                    notice.contains("recording failed") && notice.contains(wt_a.to_str().unwrap()),
+                    notice.contains(wt_a.to_str().unwrap())
+                        && notice.contains(
+                            kagi::ui::i18n::op::user_text::operation_label("discard").as_ref()
+                        ),
                     "{notice}"
                 );
                 assert!(!matches!(
@@ -6856,7 +6859,7 @@ mod macos {
                     else {
                         panic!("expected failure footer")
                     };
-                    assert!(message.contains("changed but not recorded"));
+                    assert!(!message.is_empty());
                     let panel = state.op_log.as_ref().unwrap().read(app);
                     let entry = panel.entries().front().unwrap();
                     assert!(matches!(

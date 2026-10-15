@@ -445,13 +445,11 @@ impl KagiApp {
             }
             PlanState::Error { error, blocker, .. } => {
                 let reason = blocker.as_ref().map(i18n::plan_note_text);
-                let message = i18n::op::op_plan_failed_contract(
+                let message = i18n::op_plan_failed(
                     i18n::Op::RemoveWorktree,
                     reason.as_deref().unwrap_or(error),
                 );
-                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
-                    SharedString::from(message.clone()),
-                ));
+                self.status_footer = FooterStatus::Failed(message.clone().into());
                 self.app_notices.push_back(message.into());
             }
             _ => {}

@@ -75,12 +75,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                let error = SharedString::from(i18n::op::op_plan_failed_contract(
-                    i18n::Op::LockWorktree,
-                    e,
-                ));
-                self.status_footer =
-                    FooterStatus::Failed(crate::ui::operations::display_text(error.clone()));
+                let error = SharedString::from(i18n::op_plan_failed(i18n::Op::LockWorktree, e));
+                self.status_footer = FooterStatus::Failed(error.clone());
                 if let Some(modal) = self.worktree_lock_reason_modal_mut() {
                     modal.error = Some(error);
                 }
@@ -297,10 +293,7 @@ impl KagiApp {
             Ok(r) => r,
             Err(e) => {
                 if let Some(m) = self.unlock_worktree_modal_mut() {
-                    m.error = Some(SharedString::from(i18n::op::op_failed_contract(
-                        i18n::Op::RepoOpen,
-                        e,
-                    )));
+                    m.error = Some(SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)));
                 }
                 return;
             }

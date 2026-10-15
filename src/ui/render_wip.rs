@@ -105,6 +105,7 @@ impl KagiApp {
                 // committed mid-run just from looking at it).
                 let peek = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
                     this.open_stash_peek(index, cx);
+                    cx.stop_propagation();
                     cx.notify();
                 });
                 let menu = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -398,12 +399,17 @@ impl KagiApp {
         // against that worktree (#473 — read-only, no tab, no snapshot). The
         // closures are distinct types, so wire `on_click` inside each match arm.
         row = if ghost {
-            row
+            // A closing first-prefix ghost can paint over a real commit.
+            // Consume only its context press, without occluding ancestor input.
+            row.on_mouse_down(gpui::MouseButton::Right, |_, _, cx| {
+                cx.stop_propagation();
+            })
         } else {
             match click {
                 WipRowClick::CommitPanel => {
                     row.on_click(cx.listener(move |this, _e: &gpui::ClickEvent, window, cx| {
                         this.open_commit_panel(window, cx);
+                        cx.stop_propagation();
                         cx.notify();
                     }))
                 }
@@ -418,6 +424,7 @@ impl KagiApp {
                             window,
                             cx,
                         );
+                        cx.stop_propagation();
                         cx.notify();
                     }))
                     // #473: the WIP row had no context menu at all (the one on the

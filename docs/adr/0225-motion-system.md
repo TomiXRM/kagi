@@ -293,8 +293,9 @@ clips overflowing presentation rather than changing row heights.
 Because the pinned public `uniform_list` realizes only final-index visible rows,
 expand the presentation range only for edge content displaced into the viewport,
 including visible ghosts whose anchor scrolled out. Mount these real rows once as
-out-of-flow children of the first realized slot, retaining their true final index
-for hit testing and AX. Expansion is capped at `MAX_ANIMATED_ROWS` additional
+out-of-flow children before the first and after the last realized slot, preserving
+logical paint order and retaining their true final index for hit testing and AX.
+Expansion is capped at `MAX_ANIMATED_ROWS` additional
 slots; fixed list length and geometry never change to accommodate animation.
 
 When a splice occurs above a scrolled viewport, preserve the first visible
@@ -314,3 +315,48 @@ oracles. The empty/unborn-list case retains its final disappearing WIP ghost
 over the empty-state page until settlement. Tier B uses an isolated,
 PID-targeted application; foreground access is owner-authorized but serialized
 with the other motion slices. The owner's screen is not locked.
+
+### Graph overlap hit ownership
+
+New rows in a small multi-commit batch temporarily have less than one full row
+of visual spacing. GPUI's normal hitboxes can dispatch the same click to each
+overlapping row, letting an older handler overwrite the visible row's selection.
+Real commit, stash and WIP click handlers therefore stop propagation after
+performing their existing action. Hitboxes remain normal: ancestor hover,
+external folder drops and mouse-down focus still work, as does wheel chaining.
+Ghosts and fixed slot shells remain inert; only the winning real click is consumed.
+Leading fringe paints before the first requested row and trailing fringe after
+the last, matching logical row order rather than mounting both at the first slot.
+Native coverage clicks both the actual displaced tail and the visible strip of
+a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
+Native controls also drop external folders onto occupied commit/WIP/stash rows
+and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
+
+A closing first-prefix WIP ghost paints after the surviving commit and can cover
+its context-menu hitbox. Consume only Right MouseDown on that inert ghost, so
+the covered commit cannot open its menu or become selected. Do not occlude
+other input: a real external folder drop through the same ghost still reaches
+the ancestor. The genuinely visible leading strip of an arriving current WIP
+has no underlying row and needs no context handler. At 37ms and both zooms,
+native right-button controls exercise these negative targets and the actual
+commit, stash and linked-worktree menu owners in compressed geometry.
+
+### Graph retained visibility boundary
+
+Graph joins the root's existing actual-center visibility edge, not a second
+workspace-mode routing table. Leaving a visible CommitList marks that session's
+existing presentation reset flag. Only an actually visible Graph CommitList
+consumes selection/splice synchronization: hidden frames neither schedule Graph
+motion nor repeatedly rebuild its identity caches.
+
+The reset survives full reads and cheap WIP updates while hidden, so the first
+returning frame settles old washes, displacement and retained ghosts, including
+newly accepted hidden arrivals. It then clears normally; later visible arrivals
+still animate. The root's cached owner/center edge also covers Home, conflict
+takeovers and repository ownership changes without scanning sessions per frame.
+
+`graph_mode_motion_reset` starts with real partial wash/displacement at 37ms,
+hides Graph behind PRs, Issues or Editor, accepts a real commit read while hidden,
+and returns without advancing the clock. It requires no ghost and exact endpoint
+wash/geometry on the first visible frame, then proves fresh WIP motion still runs.
+

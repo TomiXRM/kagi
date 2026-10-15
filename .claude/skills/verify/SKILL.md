@@ -698,8 +698,11 @@ the runner's `macos::open_offscreen` helper, which panics past a budget of 8
 live windows and opens them hidden — set `KAGI_GUI_E2E_VISIBLE=1` to see them
 for triage.
 
-For Graph motion (#1617), scope `graph_selection_crossfade,graph_commit_insert_motion,graph_wip_insert_motion,graph_target_crossfade,graph_unborn_wip_motion,graph_activation_motion_reset`.
+For Graph motion (#1617), scope `graph_selection_crossfade,graph_commit_insert_motion,graph_wip_insert_motion,graph_target_crossfade,graph_unborn_wip_motion,graph_activation_motion_reset,graph_mode_motion_reset,graph_insert_motion_hit_targets`.
 These opt into the frozen motion clock; ordinary GUI scenarios remain instant.
+Also run `graph_over_row_folder_drop,graph_stash_pointer_focus`: clicks must not suppress ancestor external drops or focus-on-mouse-down.
+`graph_insert_motion_hit_targets` also right-clicks genuinely visible current-WIP/closing-ghost strips, checks real commit/stash/linked-worktree menus in compressed geometry, and drops a real external folder through the ghost at 100% and 167% zoom.
+`graph_mode_motion_reset` hides genuinely mid-flight Graph behind PRs/Issues/Editor, accepts a hidden commit read, and returns at the same frozen time; the first visible frame must already be settled, while subsequent live WIP changes still animate.
 The existing `KagiApp::hold_next_snapshot_for_e2e` seam holds the next reload
 or tab activation/initial snapshot before backend work, only under `gui-e2e`.
 `graph_activation_motion_reset` draws the cached/empty view while that real

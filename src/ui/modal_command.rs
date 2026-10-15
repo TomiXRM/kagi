@@ -163,27 +163,39 @@ fn render_command_disclosure(
         .text_color(rgb(current_theme().text_main))
         .child(header)
         .when(retain_content, |section| {
+            let scroll = overrides.scroll_handle(id);
+            let offset = scroll.offset();
+            let content = div()
+                .when(!open, |content| {
+                    content.relative().left(offset.x).top(offset.y)
+                })
+                .child(SharedString::from(text.to_owned()));
+            let body = div()
+                .relative()
+                .max_h(theme::scaled_px(120.))
+                .overflow_hidden()
+                .rounded_sm()
+                .bg(gpui::rgba(theme::panel_style().0))
+                .p_1()
+                .font_family(MONO_FONT)
+                .text_color(rgb(current_theme().text_main))
+                .child(content);
+            // Closing retains the same clipped drawing and scroll position,
+            // but no identified scroll container or input handlers.
+            let body = if open {
+                body.id(body_id)
+                    .overflow_y_scroll()
+                    .overflow_x_scroll()
+                    .track_scroll(&scroll)
+                    .child(super::e2e::measure_inside(body_id))
+                    .into_any_element()
+            } else {
+                body.into_any_element()
+            };
             section.child(modal_reveal(
                 id,
                 presentation,
-                div()
-                    .pt_1()
-                    .child(
-                        div()
-                            .id(body_id)
-                            .relative()
-                            .max_h(theme::scaled_px(120.))
-                            .overflow_y_scroll()
-                            .overflow_x_scroll()
-                            .rounded_sm()
-                            .bg(gpui::rgba(theme::panel_style().0))
-                            .p_1()
-                            .font_family(MONO_FONT)
-                            .text_color(rgb(current_theme().text_main))
-                            .child(SharedString::from(text.to_owned()))
-                            .child(super::e2e::measure_inside(body_id)),
-                    )
-                    .into_any_element(),
+                div().pt_1().child(body).into_any_element(),
             ))
         })
         .into_any_element()

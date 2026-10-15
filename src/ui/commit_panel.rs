@@ -576,7 +576,13 @@ impl CommitPanelView {
     /// background read constructed its state with a fresh revision counter.
     pub(crate) fn replace_state(&mut self, mut state: CommitPanelState) {
         self.invalidate_status_read();
-        state.tree_revision = self.state.tree_revision.wrapping_add(1);
+        if state.tree_revision == 0 {
+            // Reopening reuses this entity with an empty loading placeholder.
+            // Neither it nor its first completed status read is a list edit.
+            self.settle_file_motion();
+        } else {
+            state.tree_revision = self.state.tree_revision.wrapping_add(1);
+        }
         self.state = state;
     }
 

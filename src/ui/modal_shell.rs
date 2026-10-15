@@ -32,6 +32,7 @@ pub struct ModalSections {
 struct SectionPresentation {
     reveal: Reveal,
     natural_size: Rc<Cell<gpui::Size<gpui::Pixels>>>,
+    scroll: Option<gpui::ScrollHandle>,
 }
 
 impl std::ops::Deref for ModalSections {
@@ -52,6 +53,25 @@ impl ModalSections {
     pub fn clear(&mut self) {
         self.choices.clear();
         self.presentation.get_mut().clear();
+    }
+
+    /// Keep the last drawn scroll position when a disclosure becomes paint-only.
+    pub(crate) fn scroll_handle(&self, id: &'static str) -> gpui::ScrollHandle {
+        self.presentation
+            .borrow_mut()
+            .entry(id)
+            .or_default()
+            .scroll
+            .get_or_insert_with(gpui::ScrollHandle::new)
+            .clone()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn scroll_for_e2e(&self, id: &str) -> Option<gpui::ScrollHandle> {
+        self.presentation
+            .borrow()
+            .get(id)
+            .and_then(|state| state.scroll.clone())
     }
 
     /// Called from the owning app render, independently of scrolling layout.
@@ -345,6 +365,7 @@ impl SectionOpen {
 }
 
 /// Shared measured body for supporting detail and command disclosures.
+/// Callers must assemble closing content without semantics, IDs or handlers.
 #[derive(IntoElement)]
 pub(crate) struct ModalReveal {
     id: &'static str,
@@ -515,10 +536,11 @@ pub(crate) fn modal_chip(text: impl Into<SharedString>, color: u32) -> gpui::Div
 /// chip) and, while open, its body.
 ///
 /// Clicking the header flips the section via `KagiApp::toggle_modal_section`.
-/// `body` is built by the caller while open or closing; presentation retains it
-/// until the measured reveal settles. The count chip stays visible when closed,
-/// so the size of what is hidden is never lost. Choices, measurements and motion
-/// are reset together for the next confirmation.
+/// `body` is built by the caller while open or closing; closing bodies must be
+/// drawing-only (no roles, IDs, focus, scroll or other input handlers). The reveal
+/// retains their geometry, not their interactivity, until it settles. The count
+/// chip stays visible when closed. Choices, measurements, scroll and motion are
+/// reset together for the next confirmation.
 ///
 /// `count == 0` renders no chip (the recovery section has instructions, not a
 /// count); pass a chip label through `chip` instead when the section wants a

@@ -148,14 +148,26 @@ Initial loads, display-mode changes and status changes larger than the viewport
 settle immediately. Generated and Agent-artifacts child rows use the same splice
 path, so closing retains presentation without retaining selectable children.
 
+Displaced edge rows outside `uniform_list`'s final-slot viewport are mounted once
+as out-of-flow children of its first visible slot, with real final-index input
+and AX identity. Overflow expansion is bounded by the shared active-splice cap.
+Motion offsets and ghost placement use the list's measured pixel-snapped pitch,
+not the configured height. Reopening loading placeholders and their first real
+status publication settle without replaying a previous visit.
+
 Inspector extends its existing session-owned file-row presentation rather than
 creating another selection model. Its single historical/compare file list uses
 stable path identity; Generated fold children use fixed-height splice motion.
 Selection intent, focus reconciliation, AX selection and chevrons remain
 authoritative immediately, independently of the painted selection wash.
+On-accent filename, status and diffstat foregrounds follow the same wash progress
+as the background; logical selection still changes immediately. Inactive-window
+foreground policy remains unchanged.
 
 Supporting modal sections and equivalent/recovery commands share measured
-`Reveal` clipping and retain their closing content. Their presentation lifetime
+`Reveal` clipping and retain only drawing while closing: Note semantics, identified
+input containers and scroll handlers disappear with logical intent. Existing
+scroll displacement survives visually and resumes on reversal. Presentation lifetime
 is reset with each modal generation, preventing content/state leaking into a new
 confirmation. `modal_list_panel` is unchanged: destructive-operation targets are
 never hidden behind disclosure.
@@ -164,4 +176,10 @@ All surfaces use the shared clock, cubic timing, Reduce Motion policy and
 view-owned frame demand. Frozen-clock native regressions distinguish intermediate
 presentation, continuous reversal and settled/instant endpoints. Native Tier A
 does not substitute for isolated, PID-targeted Tier B visual review.
+
+The unchanged `commit_panel_file_middle_ellipsis` scenario also reproduced its
+missing painted tooltip on base `9d15fce6`: its hidden window had not adopted
+the existing activation-input seam after #1591. Its isolated oracle repair
+marks that window active for tooltip lifetime only; the full-path and painted
+tooltip assertions and production cancellation behavior remain unchanged.
 

@@ -2,6 +2,7 @@ use super::commit_panel::CommitPanelView;
 use super::commit_panel_rows::*;
 use super::render_helpers::*;
 use super::*;
+use gpui::Pixels;
 use kagi_ui_core::motion::{self, Easing, KeyedTransition, RowSplice};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -39,6 +40,7 @@ pub(super) struct FileListMotion {
     rank: HashMap<FileKey, usize>,
     removed: Vec<RemovedRow>,
     splice: RowSplice<FileKey>,
+    pitch: Pixels,
     selection: HashMap<PathBuf, KeyedTransition<bool>>,
 }
 
@@ -194,17 +196,17 @@ impl FileListMotion {
                 .any(|transition| !transition.sample(now).done)
     }
 
-    fn sample(&self, key: &FileKey, now: Instant) -> motion::RowSample {
-        self.splice.row(
-            key,
-            theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)),
-            now,
-            |other| self.rank.get(other) < self.rank.get(key),
-        )
+    fn sample(&self, key: &FileKey, now: Instant, height: Pixels) -> motion::RowSample {
+        self.splice.row(key, height, now, |other| {
+            self.rank.get(other) < self.rank.get(key)
+        })
     }
 
-    fn wrap(&self, i: usize, row: gpui::AnyElement) -> gpui::AnyElement {
-        let sample = self.sample(&self.rows[i].key, motion::now());
+    fn wrap(&self, i: usize, row: gpui::AnyElement, height: Pixels) -> gpui::AnyElement {
+        let sample = self.sample(&self.rows[i].key, motion::now(), height);
+        if sample.offset == px(0.) && sample.opacity == 1. {
+            return row;
+        }
         div()
             .w_full()
             .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
@@ -224,11 +226,85 @@ impl FileListMotion {
             .map_or(0., |transition| transition.sample(motion::now()).value)
     }
 
+    /// Mount the displaced edge rows that uniform_list's final-slot viewport
+    /// would otherwise omit. Expansion stays bounded by the active splice cap.
+    fn presentation_range(
+        &self,
+        requested: std::ops::Range<usize>,
+        height: Pixels,
+    ) -> std::ops::Range<usize> {
+        let mut visible = requested.clone();
+        if visible.is_empty() {
+            return visible;
+        }
+        let now = motion::now();
+        let mut remaining = motion::MAX_ANIMATED_ROWS;
+        while visible.start > 0 && remaining > 0 {
+            let i = visible.start - 1;
+            if height * (i + 1) as f32 + self.sample(&self.rows[i].key, now, height).offset
+                <= height * requested.start as f32
+            {
+                break;
+            }
+            visible.start = i;
+            remaining -= 1;
+        }
+        while visible.end < self.rows.len() && remaining > 0 {
+            let i = visible.end;
+            if height * i as f32 + self.sample(&self.rows[i].key, now, height).offset
+                >= height * requested.end as f32
+            {
+                break;
+            }
+            visible.end += 1;
+            remaining -= 1;
+        }
+        visible
+    }
+
+    fn mount_rows(
+        &self,
+        requested: std::ops::Range<usize>,
+        range: std::ops::Range<usize>,
+        height: Pixels,
+        mut render: impl FnMut(usize) -> Option<gpui::AnyElement>,
+    ) -> Vec<gpui::AnyElement> {
+        let mut slots = Vec::with_capacity(requested.len());
+        let mut overflow = Vec::new();
+        for i in range {
+            let Some(row) = render(i) else { continue };
+            let row = self.wrap(i, row, height);
+            if requested.contains(&i) {
+                slots.push(row);
+            } else {
+                overflow.push(
+                    div()
+                        .absolute()
+                        .w_full()
+                        .top(height * (i as f32 - requested.start as f32))
+                        .child(row),
+                );
+            }
+        }
+        if !overflow.is_empty() {
+            if let Some(first) = slots.first_mut() {
+                *first = div()
+                    .relative()
+                    .w_full()
+                    .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
+                    .child(std::mem::replace(first, div().into_any_element()))
+                    .children(overflow)
+                    .into_any_element();
+            }
+        }
+        slots
+    }
+
     fn ghosts(&self, staged: bool, scroll: &UniformListScrollHandle) -> gpui::Div {
         let state = scroll.0.borrow();
         let offset = state.base_handle.offset().y;
         let viewport = state.base_handle.bounds().size.height;
-        let height = theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.));
+        let height = self.pitch;
         let now = motion::now();
         let mut layer = div().absolute().inset_0().overflow_hidden();
         for row in &self.removed {
@@ -242,7 +318,7 @@ impl FileListMotion {
                 continue;
             };
             let anchor = row.after.as_ref().map_or(px(0.), |key| {
-                height * self.slots[key] as f32 + self.sample(key, now).offset
+                height * self.slots[key] as f32 + self.sample(key, now, height).offset
             });
             let top = offset + anchor + sample.offset;
             if top + height < px(0.) || top > viewport {
@@ -261,6 +337,17 @@ impl FileListMotion {
         }
         layer
     }
+}
+
+fn list_pitch(scroll: &UniformListScrollHandle, count: usize) -> Pixels {
+    scroll
+        .0
+        .borrow()
+        .last_item_size
+        .filter(|_| count > 0)
+        .map_or(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)), |size| {
+            size.contents.height / count as f32
+        })
 }
 
 fn motion_rows(panel: &super::commit_panel::CommitPanelState, staged: bool) -> Vec<RowVisual> {
@@ -370,6 +457,10 @@ fn ghost_content(row: &RowVisual, staged: bool) -> gpui::Div {
     let mut content = div()
         .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
         .w_full()
+        // Reserve the same transparent focus-ring inset as the live RowList
+        // row, without retaining a focus handle or a keyboard listener.
+        .border_2()
+        .border_color(gpui::transparent_black())
         .flex()
         .items_center()
         .pl(theme::scaled_px(8. + row.indent))
@@ -449,6 +540,18 @@ impl CommitPanelView {
                 &self.unstaged_scroll_handle
             };
             let height = scroll.0.borrow().base_handle.bounds().size.height;
+            // ItemSize.item is the viewport, not one row. Recover the actual
+            // pixel-snapped pitch from the last completed list layout before
+            // replacing its logical rows with the next status/fold generation.
+            let previous_count = self.file_motion[staged as usize].rows.len();
+            self.file_motion[staged as usize].pitch = scroll
+                .0
+                .borrow()
+                .last_item_size
+                .filter(|_| previous_count > 0)
+                .map_or(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)), |size| {
+                    size.contents.height / previous_count as f32
+                });
             let viewport_rows = (f32::from(height)
                 / f32::from(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.))))
             .ceil() as usize;
@@ -501,33 +604,38 @@ impl CommitPanelView {
                         "cp-unstaged-list",
                         unstaged_row_count,
                         cx.processor(move |view, range: std::ops::Range<usize>, _window, cx| {
+                            let height =
+                                list_pitch(&view.unstaged_scroll_handle, unstaged_row_count);
+                            let requested = range;
+                            let range =
+                                view.file_motion[0].presentation_range(requested.clone(), height);
                             let rows = view.unstaged_navigation.drawn(&range, _window, cx);
                             let layout = view
                                 .state
                                 .tree_view
                                 .then_some(view.unstaged_tree_layout.as_slice());
-                            range
-                                .filter_map(|i| {
-                                    let row = match &layout {
-                                        Some(layout) => render_unstaged_tree_row(
-                                            view,
-                                            &rows,
-                                            i,
-                                            cp_tree_slot(layout, "cp-unstaged-tree", i),
-                                            cx,
-                                        ),
-                                        None => render_unstaged_flat_row(view, &rows, i, cx),
-                                    }?;
-                                    Some(view.file_motion[0].wrap(i, row))
-                                })
-                                .collect::<Vec<_>>()
+                            view.file_motion[0].mount_rows(requested, range, height, |i| {
+                                match &layout {
+                                    Some(layout) => render_unstaged_tree_row(
+                                        view,
+                                        &rows,
+                                        i,
+                                        cp_tree_slot(layout, "cp-unstaged-tree", i),
+                                        cx,
+                                    ),
+                                    None => render_unstaged_flat_row(view, &rows, i, cx),
+                                }
+                            })
                         }),
                     )
                     .track_scroll(&unstaged_scroll_handle)
                     .flex_1()
                     .min_h(px(0.)),
                     false,
-                );
+                )
+                .when(!self.file_motion[0].removed.is_empty(), |list| {
+                    list.child(self.file_motion[0].ghosts(false, &self.unstaged_scroll_handle))
+                });
                 if tree_view {
                     kagi_ui_core::tree_a11y::tree(
                         "cp-unstaged-tree",
@@ -538,7 +646,6 @@ impl CommitPanelView {
                     list
                 }
             })
-            .child(self.file_motion[0].ghosts(false, &self.unstaged_scroll_handle))
     }
     pub(super) fn render_staged_list(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let panel = &self.state;
@@ -579,39 +686,42 @@ impl CommitPanelView {
                         "cp-staged-list",
                         staged_row_count,
                         cx.processor(move |view, range: std::ops::Range<usize>, _window, cx| {
+                            let height = list_pitch(&view.staged_scroll_handle, staged_row_count);
+                            let requested = range;
+                            let range =
+                                view.file_motion[1].presentation_range(requested.clone(), height);
                             let rows = view.staged_navigation.drawn(&range, _window, cx);
                             let layout = view
                                 .state
                                 .tree_view
                                 .then_some(view.staged_tree_layout.as_slice());
-                            range
-                                .filter_map(|i| {
-                                    let row = match &layout {
-                                        Some(layout) => render_staged_tree_row(
-                                            view,
-                                            &rows,
-                                            i,
-                                            cp_tree_slot(layout, "cp-staged-tree", i),
-                                            cx,
-                                        ),
-                                        None => render_staged_flat_row(view, &rows, i, cx),
-                                    }?;
-                                    Some(view.file_motion[1].wrap(i, row))
-                                })
-                                .collect::<Vec<_>>()
+                            view.file_motion[1].mount_rows(requested, range, height, |i| {
+                                match &layout {
+                                    Some(layout) => render_staged_tree_row(
+                                        view,
+                                        &rows,
+                                        i,
+                                        cp_tree_slot(layout, "cp-staged-tree", i),
+                                        cx,
+                                    ),
+                                    None => render_staged_flat_row(view, &rows, i, cx),
+                                }
+                            })
                         }),
                     )
                     .track_scroll(&staged_scroll_handle)
                     .flex_1()
                     .min_h(px(0.)),
                     false,
-                );
+                )
+                .when(!self.file_motion[1].removed.is_empty(), |list| {
+                    list.child(self.file_motion[1].ghosts(true, &self.staged_scroll_handle))
+                });
                 if tree_view {
                     kagi_ui_core::tree_a11y::tree("cp-staged-tree", list, Msg::A11yStagedTree.t())
                 } else {
                     list
                 }
             })
-            .child(self.file_motion[1].ghosts(true, &self.staged_scroll_handle))
     }
 }

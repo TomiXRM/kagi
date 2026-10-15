@@ -139,7 +139,9 @@ fn fold_motion(
     frame(cx, window, at + Duration::from_millis(320));
     assert!(
         (top() - f32::from(ghost.top())).abs() <= 1.,
-        "fold reversal preserves current painted position"
+        "fold reversal preserves current painted position: reopened={}, ghost={}, full={full}",
+        top(),
+        f32::from(ghost.top())
     );
     frame(cx, window, at + Duration::from_millis(600));
     assert!((top() - full).abs() <= 1.);
@@ -164,8 +166,204 @@ fn fold_motion(
     );
 }
 
+fn viewport_edges(
+    cx: &mut VisualTestAppContext,
+    panel: &Entity<CommitPanelView>,
+    window: AnyWindowHandle,
+    repo: &std::path::Path,
+    at: Instant,
+) {
+    theme::set_reduce_motion(false);
+    theme::set_zoom(1.3);
+    panel.update(cx, |panel, cx| {
+        panel.state.tree_view = false;
+        panel
+            .unstaged_scroll_handle
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    frame(cx, window, at);
+    frame(cx, window, at + Duration::from_millis(250));
+    let normal = cx.read(|cx| panel.read(cx).state.unstaged_normal_files.clone());
+    let pitch = y(window, normal[1]) - y(window, normal[0]);
+    let geometry = || {
+        cx.read(|cx| {
+            let scroll = panel.read(cx).unstaged_scroll_handle.0.borrow();
+            (scroll.base_handle.bounds(), scroll.base_handle.offset())
+        })
+    };
+    let (viewport, _) = geometry();
+    let tail = (f32::from(viewport.size.height) / pitch).ceil() as usize;
+    motion::set_clock_for_e2e(Some(at + Duration::from_millis(300)));
+    std::fs::write(repo.join("aaa-motion.txt"), "insert above viewport\n").unwrap();
+    reload(cx, panel, repo);
+    let tail_file = cx.read(|cx| panel.read(cx).state.unstaged_normal_files[tail]);
+    let tail_id = format!("cp-us-density-file-{tail_file}");
+    e2e::clear_control_bounds(window.window_id(), &tail_id);
+    frame(cx, window, at + Duration::from_millis(300));
+    let painted = e2e::control_bounds(window.window_id(), &tail_id)
+        .expect("displaced tail outside final uniform_list range is mounted");
+    assert!(painted.top() < viewport.bottom() && painted.bottom() > viewport.top(),
+        "tail content fills the viewport during insertion: {painted:?}, {viewport:?}, pitch={pitch}");
+    frame(cx, window, at + Duration::from_millis(550));
+
+    panel.update(cx, |panel, cx| {
+        panel
+            .unstaged_scroll_handle
+            .scroll_to_item(8, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    frame(cx, window, at + Duration::from_millis(600));
+    motion::set_clock_for_e2e(Some(at + Duration::from_millis(650)));
+    std::fs::remove_file(repo.join("aaa-motion.txt")).unwrap();
+    reload(cx, panel, repo);
+    for i in 0..40 {
+        e2e::clear_control_bounds(window.window_id(), &format!("cp-us-density-file-{i}"));
+    }
+    frame(cx, window, at + Duration::from_millis(650));
+    let (viewport, offset) = cx.read(|cx| {
+        let scroll = panel.read(cx).unstaged_scroll_handle.0.borrow();
+        (scroll.base_handle.bounds(), scroll.base_handle.offset())
+    });
+    let first = (-f32::from(offset.y) / pitch).floor() as usize;
+    assert!(first > 0);
+    let top_file = cx.read(|cx| panel.read(cx).state.unstaged_normal_files[first - 1]);
+    let top = e2e::control_bounds(
+        window.window_id(),
+        &format!("cp-us-density-file-{top_file}"),
+    )
+    .expect("displaced top outside final uniform_list range is mounted");
+    let visible = top.intersect(&viewport);
+    assert!(
+        visible.size.height > gpui::px(0.),
+        "top content fills deletion gap"
+    );
+    let expected_path = cx.read(|cx| panel.read(cx).state.unstaged[top_file].path.clone());
+    cx.simulate_click(window, visible.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    frame(cx, window, at + Duration::from_millis(650));
+    assert_eq!(
+        cx.read(|cx| panel.read(cx).active_wip.clone()),
+        Some((false, expected_path)),
+        "overflow row keeps its real final-index click target"
+    );
+    frame(cx, window, at + Duration::from_millis(900));
+}
+
+fn reopening(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<kagi::ui::KagiApp>,
+    panel: &Entity<CommitPanelView>,
+    window: AnyWindowHandle,
+    at: Instant,
+) {
+    let paths = cx.read(|cx| {
+        panel
+            .read(cx)
+            .state
+            .unstaged
+            .iter()
+            .map(|f| f.path.clone())
+            .collect::<Vec<_>>()
+    });
+    let (hold, release) = crate::evidence_support::deferred::<()>(cx);
+    kagi::ui::KagiApp::hold_next_commit_panel_read_for_e2e(hold);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+    })
+    .unwrap();
+    for path in &paths {
+        e2e::clear_control_bounds(
+            window.window_id(),
+            &format!("cp-us-ghost:{}", path.display()),
+        );
+    }
+    frame(cx, window, at);
+    assert!(
+        paths.iter().all(|path| e2e::control_bounds(
+            window.window_id(),
+            &format!("cp-us-ghost:{}", path.display())
+        )
+        .is_none()),
+        "loading placeholder does not animate the previous visit out"
+    );
+    release.send(());
+    cx.run_until_parked();
+    frame(cx, window, at);
+    let fi = cx.read(|cx| panel.read(cx).state.unstaged_normal_files[0]);
+    let first = file_ink(cx, window, "us", fi);
+    frame(cx, window, at + Duration::from_millis(250));
+    assert_eq!(
+        file_ink(cx, window, "us", fi),
+        first,
+        "the first real status after reopening is already fully painted"
+    );
+}
+
+fn foreground_motion(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<kagi::ui::KagiApp>,
+    panel: &Entity<CommitPanelView>,
+    window: AnyWindowHandle,
+    at: Instant,
+) {
+    let normal_files = cx.read(|cx| panel.read(cx).state.unstaged_normal_files.clone());
+    let (fi, other) = (normal_files[0], normal_files[1]);
+    for (i, preset) in ["apple-light", "apple-dark"].into_iter().enumerate() {
+        assert!(theme::set_active(preset));
+        theme::set_zoom(1.);
+        theme::set_reduce_motion(false);
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+        panel.update(cx, |panel, cx| {
+            panel.state.selected_file = None;
+            panel
+                .unstaged_scroll_handle
+                .scroll_to_item(0, gpui::ScrollStrategy::Top);
+            cx.notify();
+        });
+        let at = at + Duration::from_secs(i as u64 * 2);
+        frame(cx, window, at);
+        frame(cx, window, at + Duration::from_millis(250));
+        let color = || {
+            e2e::control_paint(window.window_id(), &format!("cp-us-file-label-{fi}"))
+                .expect("fresh filename foreground paint")
+                .text_color
+        };
+        let normal = color();
+        select(cx, panel, fi);
+        frame(cx, window, at + Duration::from_millis(250));
+        assert_eq!(
+            color(),
+            normal,
+            "logical selection does not switch ink early"
+        );
+        frame(cx, window, at + Duration::from_millis(340));
+        let mid = color();
+        let expected = normal.blend(theme::theme().selection_foreground(true).alpha(0.875));
+        let actual = mid.to_rgb();
+        let expected = expected.to_rgb();
+        assert!(
+            (actual.r - expected.r).abs() < 0.002
+                && (actual.g - expected.g).abs() < 0.002
+                && (actual.b - expected.b).abs() < 0.002
+        );
+        frame(cx, window, at + Duration::from_millis(500));
+        assert_eq!(color(), theme::theme().selection_foreground(true));
+        select(cx, panel, other);
+        frame(cx, window, at + Duration::from_millis(500));
+        frame(cx, window, at + Duration::from_millis(560));
+        let leaving = color();
+        select(cx, panel, fi);
+        frame(cx, window, at + Duration::from_millis(560));
+        assert_eq!(color(), leaving, "foreground reversal remains continuous");
+        theme::set_reduce_motion(true);
+        frame(cx, window, at + Duration::from_millis(560));
+        assert_eq!(color(), theme::theme().selection_foreground(true));
+    }
+}
+
 pub fn scenario(cx: &mut VisualTestAppContext) {
-    let _settings = crate::recovery_layout::GlobalSettings::capture();
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
     let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
     theme::set_reduce_motion(false);
     let fixture = build_fixture();
@@ -369,6 +567,15 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         bulk_top,
         "large status batches immediately occupy final slots"
     );
+    viewport_edges(
+        cx,
+        &panel,
+        window,
+        fixture.path(),
+        bulk + Duration::from_secs(1),
+    );
+    reopening(cx, &app, &panel, window, bulk + Duration::from_secs(3));
+    foreground_motion(cx, &app, &panel, window, bulk + Duration::from_secs(5));
     drop(panel);
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);

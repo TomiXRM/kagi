@@ -33,6 +33,9 @@ fn fixture() -> tempfile::TempDir {
 fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     cx.run_until_parked();
     for _ in 0..3 {
+        // The recorder intentionally retains offscreen rows across frames.
+        // This oracle needs only the semantic rows emitted in this frame.
+        list_a11y::clear_recorded_lists();
         cx.update_window(window, |_, window, cx| {
             window.refresh();
             window.draw(cx).clear();
@@ -68,6 +71,58 @@ fn fill(cx: &mut VisualTestAppContext, window: AnyWindowHandle, index: usize) ->
 }
 fn distance(a: [u8; 4], b: [u8; 4]) -> u32 {
     (0..3).map(|i| a[i].abs_diff(b[i]) as u32).sum()
+}
+// Clear each paint observation before drawing: an old label sample must never
+// satisfy an intermediate-frame assertion if virtualized content stops painting.
+fn inks(cx: &mut VisualTestAppContext, window: AnyWindowHandle, index: usize) -> [gpui::Hsla; 3] {
+    let ids = [
+        format!("inspector-file-name-{index}"),
+        format!("inspector-file-badge-{index}"),
+        format!("diffstat-additions-{index}"),
+    ];
+    for id in &ids {
+        e2e::clear_control_bounds(window.window_id(), id);
+    }
+    draw(cx, window);
+    ids.map(|id| {
+        e2e::control_paint(window.window_id(), &id)
+            .unwrap_or_else(|| panic!("missing fresh {id} paint"))
+            .text_color
+    })
+}
+fn assert_inks(actual: [gpui::Hsla; 3], wash: f32, active: bool) {
+    let palette = theme::theme();
+    let normal = [
+        palette.text_main,
+        palette.change_added,
+        palette.change_added,
+    ];
+    for (index, (actual, normal)) in actual.into_iter().zip(normal).enumerate() {
+        let normal = gpui::Hsla::from(gpui::rgb(normal)).to_rgb();
+        let selected = if index == 2 {
+            palette.selection_secondary_foreground(true)
+        } else {
+            palette.selection_foreground(true)
+        }
+        .to_rgb();
+        let wash = if active { wash } else { 0. };
+        let expected = [
+            normal.r + (selected.r - normal.r) * wash,
+            normal.g + (selected.g - normal.g) * wash,
+            normal.b + (selected.b - normal.b) * wash,
+            normal.a + (selected.a - normal.a) * wash,
+        ];
+        let actual = actual.to_rgb();
+        for (actual, expected) in [actual.r, actual.g, actual.b, actual.a]
+            .into_iter()
+            .zip(expected)
+        {
+            assert!(
+                (actual - expected).abs() < 0.002,
+                "foreground {index}, wash={wash}: {actual} != {expected}"
+            );
+        }
+    }
 }
 fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     let row = bounds(window, id);
@@ -114,6 +169,7 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         app.panel_width = 360.;
         app.bottom_panel_open = false;
         app.select(0);
+        app.set_window_active_for_e2e(true, cx);
         app.close_main_diff();
         cx.notify();
     });
@@ -125,6 +181,7 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
     let t = Instant::now();
     frame(cx, window, t);
     let empty = fill(cx, window, a);
+    assert_inks(inks(cx, window, a), 0., true);
     click(cx, window, &format!("inspector-file-{a}"));
     frame(cx, window, t);
     selected("a.txt");
@@ -132,10 +189,14 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         distance(fill(cx, window, a), empty) <= 3,
         "wash starts continuously"
     );
+    assert_inks(inks(cx, window, a), 0., true);
     frame(cx, window, t + Duration::from_millis(60));
     let mid = fill(cx, window, a);
+    // 60ms of the shared 180ms OutCubic wash is 1 - (2/3)^3.
+    assert_inks(inks(cx, window, a), 19. / 27., true);
     frame(cx, window, t + Duration::from_millis(300));
     let full = fill(cx, window, a);
+    assert_inks(inks(cx, window, a), 1., true);
     assert!(
         distance(mid, empty) > 3 && distance(mid, full) > 3,
         "native pixels must show a genuine intermediate selection opacity"
@@ -143,8 +204,11 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
     click(cx, window, &format!("inspector-file-{b}"));
     frame(cx, window, t + Duration::from_millis(300));
     selected("b.txt");
+    assert_inks(inks(cx, window, a), 1., true);
     frame(cx, window, t + Duration::from_millis(360));
     let turning = fill(cx, window, a);
+    let turning_inks = inks(cx, window, a);
+    assert_inks(turning_inks, 8. / 27., true);
     click(cx, window, &format!("inspector-file-{a}"));
     frame(cx, window, t + Duration::from_millis(360));
     selected("a.txt");
@@ -152,11 +216,23 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         distance(turning, fill(cx, window, a)) <= 3,
         "selection reversal has no jump"
     );
+    assert_eq!(
+        inks(cx, window, a),
+        turning_inks,
+        "foreground reverses from its current paint, not semantic selection"
+    );
     frame(cx, window, t + Duration::from_millis(660));
     assert!(
         distance(full, fill(cx, window, a)) <= 3,
         "selection settles exactly"
     );
+    assert_inks(inks(cx, window, a), 1., true);
+    assert_inks(inks(cx, window, b), 0., true);
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(false, cx));
+    assert_inks(inks(cx, window, a), 1., false);
+    selected("a.txt");
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    assert_inks(inks(cx, window, a), 1., true);
 
     frame(cx, window, t + Duration::from_millis(700));
     click(cx, window, "generated-fold-header");
@@ -276,6 +352,7 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         distance(fill(cx, window, b), full) <= 3,
         "reduced selection paints its endpoint immediately"
     );
+    assert_inks(inks(cx, window, b), 1., true);
     theme::set_reduce_motion(false);
     frame(cx, window, t + Duration::from_millis(2200));
     assert!(

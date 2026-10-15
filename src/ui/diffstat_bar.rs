@@ -20,7 +20,7 @@
 //! [`Tooltip`] (which requires the element carry an `.id`) shows
 //! `"N additions, M deletions"`.
 
-use gpui::{rgb, InteractiveElement, IntoElement, ParentElement, SharedString, Styled};
+use gpui::{prelude::*, rgb, SharedString};
 use gpui_component::tooltip::Tooltip;
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
@@ -39,8 +39,8 @@ const SEG_GAP: f32 = 1.0;
 ///
 /// `id_seed` must be unique within the parent list (e.g. the file index) so the
 /// tooltip's stateful element id does not collide.
-/// `selected_foreground` overrides only labels on a selected row; the bar
-/// segments retain their Git semantic fills.
+/// `selected_foreground` blends labels from their normal colour toward the
+/// selected colour by its wash fraction; bar segments retain their Git fills.
 ///
 /// Returns a right-aligned, `flex_shrink_0` row element.  When `stat` is `None`
 /// (diffstat unavailable for this file), an empty spacer of the same width is
@@ -48,7 +48,7 @@ const SEG_GAP: f32 = 1.0;
 pub fn diffstat_unit(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<gpui::Hsla>,
+    selected_foreground: Option<(gpui::Hsla, f32)>,
 ) -> gpui::AnyElement {
     render_diffstat(id_seed, stat, selected_foreground, true)
 }
@@ -56,7 +56,7 @@ pub fn diffstat_unit(
 /// The same retained paint, without tooltip identities or input handlers.
 pub fn diffstat_unit_inert(
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<gpui::Hsla>,
+    selected_foreground: Option<(gpui::Hsla, f32)>,
 ) -> gpui::AnyElement {
     render_diffstat(0, stat, selected_foreground, false)
 }
@@ -64,10 +64,20 @@ pub fn diffstat_unit_inert(
 fn render_diffstat(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
-    selected_foreground: Option<gpui::Hsla>,
+    selected_foreground: Option<(gpui::Hsla, f32)>,
     interactive: bool,
 ) -> gpui::AnyElement {
     let t = theme();
+    let foreground = |normal| {
+        let normal = gpui::Hsla::from(rgb(normal));
+        selected_foreground.map_or(normal, |(selected, wash)| {
+            // Blend RGB and opacity separately so the selected secondary label
+            // still reaches its original translucent endpoint exactly.
+            normal
+                .blend(selected.alpha(wash))
+                .alpha(1. + (selected.a - 1.) * wash)
+        })
+    };
     let base = gpui::div()
         .flex()
         .flex_row()
@@ -91,7 +101,7 @@ fn render_diffstat(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.text_muted).into()))
+                    .text_color(foreground(t.text_muted))
                     .child(SharedString::from("BIN")),
             )
             .into_any_element();
@@ -115,8 +125,13 @@ fn render_diffstat(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_added).into()))
-                    .child(SharedString::from(format!("+{additions}"))),
+                    .text_color(foreground(t.change_added))
+                    .child(SharedString::from(format!("+{additions}")))
+                    .when(cfg!(feature = "gui-e2e") && interactive, |label| {
+                        label.relative().child(super::e2e::measure_inside(format!(
+                            "diffstat-additions-{id_seed}"
+                        )))
+                    }),
             );
         }
         if deletions > 0 {
@@ -124,8 +139,13 @@ fn render_diffstat(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_deleted).into()))
-                    .child(SharedString::from(format!("-{deletions}"))),
+                    .text_color(foreground(t.change_deleted))
+                    .child(SharedString::from(format!("-{deletions}")))
+                    .when(cfg!(feature = "gui-e2e") && interactive, |label| {
+                        label.relative().child(super::e2e::measure_inside(format!(
+                            "diffstat-deletions-{id_seed}"
+                        )))
+                    }),
             );
         }
     }

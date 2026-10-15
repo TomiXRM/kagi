@@ -157,7 +157,19 @@ fn render_cp_file_row(
     } else {
         view.file_motion[staged as usize].selection(&file.path)
     };
-    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
+    let selection_on_accent = theme().selection_uses_on_accent(true, window_active);
+    let foreground = |normal| {
+        let base: gpui::Hsla = rgb(normal).into();
+        if selection_on_accent {
+            base.blend(
+                theme()
+                    .selection_foreground(window_active)
+                    .alpha(selection_wash),
+            )
+        } else {
+            base
+        }
+    };
     let row_bg: gpui::Hsla = if is_conflicted {
         rgb(theme().diff_removed_bg).into()
     } else {
@@ -217,11 +229,7 @@ fn render_cp_file_row(
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
-                .text_color(if selection_on_accent {
-                    theme().selection_foreground(window_active)
-                } else {
-                    rgb(badge_color).into()
-                })
+                .text_color(foreground(badge_color))
                 .child(SharedString::from(badge)),
         )
         .child(
@@ -239,11 +247,7 @@ fn render_cp_file_row(
                         "cp-selected-unstaged-label"
                     }))
                 })
-                .text_color(if selection_on_accent {
-                    theme().selection_foreground(window_active)
-                } else {
-                    rgb(theme().text_main).into()
-                })
+                .text_color(foreground(theme().text_main))
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_middle()
@@ -289,7 +293,12 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
-            selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
+            selection_on_accent.then(|| {
+                (
+                    theme().selection_secondary_foreground(window_active),
+                    selection_wash,
+                )
+            }),
         ));
     file_row = super::commit_panel_navigation::file_row(
         view,

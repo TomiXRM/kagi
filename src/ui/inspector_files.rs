@@ -645,10 +645,20 @@ fn file_content(
     let index = row.index;
     let file = &row.source.files[index];
     let (badge, color, _) = status_badge(Some(&file.change), false);
-    let selected = presentation.selected == Some(index);
-    let selection_on_accent = theme().selection_uses_on_accent(selected, presentation.active);
-    let foreground =
-        selection_on_accent.then(|| theme().selection_secondary_foreground(presentation.active));
+    // Intent/AX changes immediately; every painted foreground follows the same
+    // reversible wash, including a row that is already semantically deselected.
+    let selection_on_accent = theme().selection_uses_on_accent(true, presentation.active);
+    let foreground = selection_on_accent.then(|| {
+        (
+            theme().selection_secondary_foreground(presentation.active),
+            wash,
+        )
+    });
+    let primary = theme()
+        .selection_foreground(presentation.active)
+        .alpha(wash);
+    let label = gpui::Hsla::from(rgb(theme().text_main));
+    let badge_color = gpui::Hsla::from(rgb(color));
     let stat = if probes {
         super::diffstat_bar::diffstat_unit(index, file.stat.as_ref(), foreground)
     } else {
@@ -679,9 +689,9 @@ fn file_content(
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .text_color(if selection_on_accent {
-                    theme().selection_foreground(presentation.active)
+                    badge_color.blend(primary)
                 } else {
-                    rgb(color).into()
+                    badge_color
                 })
                 .child(SharedString::from(badge))
                 .when(cfg!(feature = "gui-e2e") && probes, |badge| {
@@ -696,9 +706,9 @@ fn file_content(
                 .min_w(px(0.))
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .text_color(if selection_on_accent {
-                    theme().selection_foreground(presentation.active)
+                    label.blend(primary)
                 } else {
-                    rgb(theme().text_main).into()
+                    label
                 })
                 .truncate()
                 .child(row.name.clone())

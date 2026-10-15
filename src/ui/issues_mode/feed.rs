@@ -74,7 +74,7 @@ pub(super) fn render_main_issue_list(
     let keys = ui.issue_view(app.issue_host_login()).row_keys.clone();
     let rows = ui.issue_rows.rows(
         keys.iter().map(|(key, index)| (key.as_str(), *index)),
-        &state,
+        &crate::ui::keyboard_nav::RowScroll::List(state.clone()),
         app.root_focus.as_ref(),
         window,
         cx,

@@ -1,6 +1,6 @@
 //! Retained row focus for small choosers and the session-owned Issue feed.
 use super::keyboard_nav::{RowFocus, RowKeys, RowList, RowScroll};
-use gpui::{App, FocusHandle, ListState, Window};
+use gpui::{App, FocusHandle, Window};
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
@@ -19,7 +19,7 @@ impl ListKeyboard {
     pub(super) fn rows<'a>(
         &self,
         keys: impl ExactSizeIterator<Item = (&'a str, usize)> + Clone,
-        scroll: &ListState,
+        scroll: &RowScroll,
         fallback: Option<&FocusHandle>,
         window: &mut Window,
         cx: &mut App,
@@ -35,24 +35,16 @@ impl ListKeyboard {
         }
         self.focus
             .borrow_mut()
-            .rows(
-                retained.clone(),
-                &RowScroll::List(scroll.clone()),
-                fallback,
-                window,
-                cx,
-            )
+            .rows(retained.clone(), scroll, fallback, window, cx)
             .into()
     }
     pub(super) fn focus_first(
         &self,
-        scroll: &ListState,
+        scroll: &RowScroll,
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        self.focus
-            .borrow()
-            .focus_first(&RowScroll::List(scroll.clone()), window, cx)
+        self.focus.borrow().focus_first(scroll, window, cx)
     }
     pub(super) fn yield_focus(
         &self,

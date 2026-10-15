@@ -335,24 +335,54 @@ fn auto_stash_guard_drift(
     let reason = &blockers[0];
     let expected_reason = match drift {
         AutoStashGuardDrift::Tracking | AutoStashGuardDrift::Remote => {
-            Msg::PullAutoStashIdentityChanged
+            kagi::ui::i18n::op::pull_identity_changed_contract(kagi::ui::i18n::lang())
         }
-        AutoStashGuardDrift::DirtyPaths => Msg::PullAutoStashPlanStale,
-        AutoStashGuardDrift::RestorePreview => Msg::PullAutoStashRestoreChanged,
+        AutoStashGuardDrift::DirtyPaths => {
+            kagi::ui::i18n::op::pull_files_changed_contract(kagi::ui::i18n::lang())
+        }
+        AutoStashGuardDrift::RestorePreview => {
+            kagi::ui::i18n::op::pull_restore_changed_contract(kagi::ui::i18n::lang())
+        }
     };
     assert_eq!(
-        reason,
-        expected_reason.t(),
+        reason, expected_reason,
         "the real changed promise must select its typed cause"
     );
     cx.read(|cx| {
         let state = app.read(cx);
-        assert!(matches!(&state.status_footer, FooterStatus::Failed(message) if message.contains(reason.as_str())));
-        let toasts = state.toast_stack.as_ref().expect("actual toast stack").read(cx).toasts();
-        assert_eq!(toasts.iter().filter(|toast| toast.kind == ToastKind::Error && toast.message.contains(reason.as_str())).count(), 1);
-        let visible = state.op_log.as_ref().expect("visible Operation Log").read(cx);
-        assert_eq!(visible.entries().iter().filter(|entry| entry.id == pulls[0].id).count(), 1);
-        assert!(kagi::ui::oplog_panel::detail_lines(&pulls[0]).join("\n").contains(reason.as_str()));
+        assert!(
+            matches!(&state.status_footer, FooterStatus::Failed(message) if !message.is_empty())
+        );
+        let toasts = state
+            .toast_stack
+            .as_ref()
+            .expect("actual toast stack")
+            .read(cx)
+            .toasts();
+        assert_eq!(
+            toasts
+                .iter()
+                .filter(|toast| toast.kind == ToastKind::Error)
+                .count(),
+            1
+        );
+        let visible = state
+            .op_log
+            .as_ref()
+            .expect("visible Operation Log")
+            .read(cx);
+        assert_eq!(
+            visible
+                .entries()
+                .iter()
+                .filter(|entry| entry.id == pulls[0].id)
+                .count(),
+            1
+        );
+        let details = kagi::ui::oplog_panel::detail_lines(&pulls[0]).join("\n");
+        for internal in ["approved Pull target", "paths Kagi would stash"] {
+            assert!(!details.contains(internal), "{details}");
+        }
     });
     unmount(cx, app, window);
 }

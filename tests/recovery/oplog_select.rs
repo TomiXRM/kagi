@@ -126,13 +126,14 @@ pub fn scenario_oplog_detail_select_copy(cx: &mut VisualTestAppContext) {
         .and_then(|item| item.text())
         .expect("clipboard text");
     assert_ne!(copied, "before-copy", "⌘C copies the selection");
+    assert_eq!(copied, selected, "⌘C preserves the selected text verbatim");
     let entry = cx.read(|cx| panel.read(cx).entries()[row].clone());
     let command = entry.recovery_plan.as_ref().unwrap().commands[0].clone();
+    let head_oid = git_output(&repo, &["rev-parse", "HEAD"]);
     for part in [
-        "before:",
-        "after:",
         command.as_str(),
         "refs/heads/select-demo",
+        head_oid.as_str(),
     ] {
         assert!(
             copied.contains(part),

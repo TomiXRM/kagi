@@ -347,9 +347,16 @@ pub fn scenario_remote_stash_drop(cx: &mut VisualTestAppContext) {
         });
         if mode == RemoteStashE2eMode::Unknown {
             assert!(cx.read(|cx| matches!(
-                &app.read(cx).status_footer,
-                FooterStatus::Failed(message)
-                    if message.contains(i18n::Msg::RemoteOpAwaitingCompletion.t())
+                app.read(cx)
+                    .op_log
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .entries()
+                    .front()
+                    .unwrap()
+                    .outcome,
+                OpOutcome::Unknown { .. }
             )));
         }
         unmount(cx, app, window);

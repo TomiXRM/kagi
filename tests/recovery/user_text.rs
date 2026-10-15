@@ -87,7 +87,7 @@ pub fn scenario_user_text_native(cx: &mut VisualTestAppContext) {
             details.contains("feature_session-name.rs"),
             "user path must be verbatim"
         );
-        user_text(&oplog_panel::outcome_summary(&receipt.outcome));
+        user_text(&oplog_panel::outcome_summary(&receipt));
         panel.update(cx, |panel, cx| panel.copy_entry(0, cx));
         let copied = cx
             .read_from_clipboard()

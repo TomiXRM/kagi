@@ -3551,7 +3551,8 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last();
                 assert!(
                     toast.is_some_and(|t| t.kind == ToastKind::Error
-                        && t.message.starts_with(&format!("{op}: failed"))),
+                        && t.message.contains("f.txt")
+                        && !t.message.contains("index.write")),
                     "stage-failure-toasts: {op} via {entry} must toast its failure, got {toast:?}"
                 );
                 assert!(

@@ -197,7 +197,7 @@ fn render_summary(
     rows: &std::rc::Rc<super::keyboard_nav::RowList>,
     stable_key: SharedString,
 ) -> gpui::AnyElement {
-    let outcome = SharedString::from(oplog_panel::outcome_summary(&entry.outcome));
+    let outcome = SharedString::from(oplog_panel::outcome_summary(entry));
     let operation = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
         &kagi_ui_core::i18n::op::user_text::operation_label(&entry.op),
     ));

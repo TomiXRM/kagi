@@ -111,8 +111,7 @@ fn inspect(cx: &mut VisualTestAppContext, log: bool) {
                                         0,
                                         1,
                                         true,
-                                    )
-                                    .outcome,
+                                    ),
                                 ),
                                 "issue-number-1" => "#1".into(),
                                 _ => format!("{age} · {}", kagi::ui::i18n::issue_comments(42)),

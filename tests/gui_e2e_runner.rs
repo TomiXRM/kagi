@@ -5646,9 +5646,9 @@ mod macos {
         // Independent of the formatter itself: the clipboard must carry the
         // header AND every detail line, 200-char error included — the tail the
         // truncated summary row never shows.
-        assert!(copied.contains("checkout"), "no op name: {copied:?}");
+        cx.read(|cx| assert_eq!(panel.read(cx).entries()[0].op, "checkout"));
         assert!(
-            copied.contains(&format!("  error:   {long_error}")),
+            copied.contains(&long_error),
             "the copied entry must carry the full 200-char error detail line"
         );
         assert!(

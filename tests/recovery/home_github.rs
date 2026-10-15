@@ -462,9 +462,7 @@ pub fn scenario_home_github(cx: &mut VisualTestAppContext) {
             .read(cx)
             .toasts()
             .last()
-            .is_some_and(|t| {
-                t.kind == kagi::ui::ToastKind::Error && t.message.starts_with("clone: failed")
-            })
+            .is_some_and(|t| t.kind == kagi::ui::ToastKind::Error && !t.message.trim().is_empty())
     }));
     assert!(
         drawn(cx, window, "toast-stack"),

@@ -38,7 +38,6 @@ struct StageFailure {
     recording: Recording,
     footer: String,
     needs_notice: bool,
-    typed_refusal: bool,
 }
 impl StageFailure {
     fn record(
@@ -91,7 +90,6 @@ impl StageFailure {
             recording,
             footer,
             needs_notice,
-            typed_refusal: matches!(error, GitError::Blocked(_)),
         }
     }
 }
@@ -120,8 +118,7 @@ impl KagiApp {
         // The synchronous lease has ended and the receipt has settled before
         // presentation. Never append a second time or turn this into success.
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
-        let display = failure.typed_refusal.then(|| failure.footer.clone());
-        self.record_op_impl(entry, cx, false, display);
+        self.record_op_impl(entry, cx, false, Some(failure.footer.clone()));
         self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
             failure.footer.clone().into(),
         ));

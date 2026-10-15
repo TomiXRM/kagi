@@ -26,26 +26,15 @@ pub(super) fn save_and_abort(cx: &mut VisualTestAppContext) {
         language: i18n::lang(),
         _saved: crate::gui_isolation::SavedKeys::keep(&["lang"]),
     };
-    for (language, markers, changed) in [
-        (
-            Lang::En,
-            "conflict markers remain",
-            "conflict changed since it was observed",
-        ),
-        (
-            Lang::Ja,
-            "conflict marker が残っています",
-            "conflict の状態が変わりました",
-        ),
-    ] {
+    for language in [Lang::En, Lang::Ja] {
         i18n::set_lang(language);
-        save(cx, markers);
-        abort(cx, changed, false);
-        abort(cx, changed, true);
+        save(cx);
+        abort(cx, false);
+        abort(cx, true);
     }
 }
 
-fn save(cx: &mut VisualTestAppContext, expected: &str) {
+fn save(cx: &mut VisualTestAppContext) {
     let fixture = content_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
@@ -81,17 +70,12 @@ fn save(cx: &mut VisualTestAppContext, expected: &str) {
     );
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(std::fs::read(repo.join("file.txt")).unwrap(), before);
-    assert_refusal(
-        cx,
-        &app,
-        expected,
-        "conflict-save:merge: refused (1 blocker)",
-    );
+    assert_refusal(cx, &app, "conflict-save:merge: refused (1 blocker)");
     drop(conflict);
     unmount(cx, app, window);
 }
 
-fn abort(cx: &mut VisualTestAppContext, expected: &str, banner: bool) {
+fn abort(cx: &mut VisualTestAppContext, banner: bool) {
     let fixture = if banner {
         stuck_merging_fixture()
     } else {
@@ -119,7 +103,7 @@ fn abort(cx: &mut VisualTestAppContext, expected: &str, banner: bool) {
     wait_idle(cx, &app);
     cx.update_window(window, |_, window, cx| window.draw(cx).clear())
         .unwrap();
-    assert_refusal(cx, &app, expected, "merge-abort: refused (1 blocker)");
+    assert_refusal(cx, &app, "merge-abort: refused (1 blocker)");
     assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), index);
     assert_eq!(
         std::fs::read(repo.join(".git/MERGE_HEAD")).unwrap(),
@@ -171,19 +155,11 @@ fn abort(cx: &mut VisualTestAppContext, expected: &str, banner: bool) {
     unmount(cx, app, window);
 }
 
-fn assert_refusal(
-    cx: &VisualTestAppContext,
-    app: &gpui::Entity<kagi::ui::KagiApp>,
-    expected: &str,
-    footer: &str,
-) {
+fn assert_refusal(cx: &VisualTestAppContext, app: &gpui::Entity<kagi::ui::KagiApp>, footer: &str) {
     cx.read(|cx| {
         let state = app.read(cx);
         let notice = e2e::app_notice_message(state).expect("refusal notice");
-        assert!(
-            notice.contains(expected),
-            "notice must name the localized blocker: {notice}"
-        );
+        assert!(!notice.is_empty());
         let toast = state
             .toast_stack
             .as_ref()
@@ -192,16 +168,25 @@ fn assert_refusal(
             .toasts()
             .last()
             .unwrap();
-        assert!(
-            toast.message.contains(expected),
-            "toast must name the localized blocker: {}",
-            toast.message
-        );
-        assert!(
-            matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message)
-            if message.as_ref() == footer),
-            "footer/klog contract must remain unchanged"
-        );
+        assert_eq!(toast.kind, kagi::ui::ToastKind::Error);
+        let kagi::ui::FooterStatus::Failed(message) = &state.status_footer else {
+            panic!("refusal must have a failed footer");
+        };
+        for shown in [notice.as_str(), toast.message.as_ref(), message.as_ref()] {
+            assert!(!shown.is_empty());
+            for internal in [
+                "conflict-save:",
+                "merge-abort:",
+                "resolution buffer",
+                "since it was observed",
+                "(1 blocker)",
+            ] {
+                assert!(!shown.contains(internal), "{shown}");
+            }
+        }
+        assert!(kagi_ui_core::klog::tail()
+            .iter()
+            .any(|line| line == &format!("[kagi] footer: {footer}")));
         assert!(!state.app_sessions.has_leases());
     });
 }

@@ -13,6 +13,7 @@
 //! `KagiApp::op_log_seed` until `open_main_window` can create the entity (the
 //! pure constructors have no `cx`). The data methods stay `cx`-free for tests.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -383,24 +384,48 @@ pub fn outcome_summary_contract(outcome: &OpOutcome) -> String {
     }
 }
 
+// A stage receipt prefixes its diagnostic with the exact recorded owner and
+// paths. Use those fields rather than splitting arbitrary user paths on ':'.
+fn entry_diagnostic<'a>(entry: &OpLogEntry, value: &'a str) -> Cow<'a, str> {
+    if let Some(paths) = entry.before.dirty.strip_prefix("paths: ") {
+        if let Some(cause) = value
+            .strip_prefix(&entry.repo)
+            .and_then(|rest| rest.strip_prefix(": "))
+            .and_then(|rest| rest.strip_prefix(paths))
+            .and_then(|rest| rest.strip_prefix(": "))
+        {
+            return match diagnostic(cause) {
+                Cow::Borrowed(_) => Cow::Borrowed(value),
+                Cow::Owned(mut shown) => {
+                    shown.insert_str(0, &value[..value.len() - cause.len()]);
+                    Cow::Owned(shown)
+                }
+            };
+        }
+    }
+    diagnostic(value)
+}
+
 /// Display-only summary shared by the row, accessibility label and clipboard.
-pub fn outcome_summary(outcome: &OpOutcome) -> String {
-    let status = outcome_status(outcome);
-    match outcome {
+pub fn outcome_summary(entry: &OpLogEntry) -> String {
+    let status = outcome_status(&entry.outcome);
+    match &entry.outcome {
         OpOutcome::Success { after } => format!("{status} → {}", state_text(&after.head)),
         OpOutcome::Partial { after, error } => {
             format!(
                 "{status} → {}: {}",
                 state_text(&after.head),
-                diagnostic(error)
+                entry_diagnostic(entry, error)
             )
         }
-        OpOutcome::Unknown { evidence, .. } => format!("{status}: {}", diagnostic(evidence)),
-        OpOutcome::Failed { error } => format!("{status}: {}", diagnostic(error)),
+        OpOutcome::Unknown { evidence, .. } => {
+            format!("{status}: {}", entry_diagnostic(entry, evidence))
+        }
+        OpOutcome::Failed { error } => format!("{status}: {}", entry_diagnostic(entry, error)),
         OpOutcome::Refused { blockers } => {
             let reasons = blockers
                 .iter()
-                .map(|reason| diagnostic(reason))
+                .map(|reason| entry_diagnostic(entry, reason))
                 .collect::<Vec<_>>();
             format!("{status}: {}", reasons.join("; "))
         }
@@ -461,12 +486,14 @@ pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
         | OpOutcome::Partial { after, error } => {
             lines.push(detail_line(P::DetailAfter, &state_text(&after.head)));
             lines.push(detail_line(P::DetailChanges, &state_text(&after.dirty)));
-            lines.push(detail_line(P::DetailError, &diagnostic(error)));
+            lines.push(detail_line(P::DetailError, &entry_diagnostic(entry, error)));
         }
-        OpOutcome::Failed { error } => lines.push(detail_line(P::DetailError, &diagnostic(error))),
+        OpOutcome::Failed { error } => {
+            lines.push(detail_line(P::DetailError, &entry_diagnostic(entry, error)))
+        }
         OpOutcome::Refused { blockers } => {
             for b in blockers {
-                lines.push(detail_line(P::DetailBlocker, &diagnostic(b)));
+                lines.push(detail_line(P::DetailBlocker, &entry_diagnostic(entry, b)));
             }
         }
     }
@@ -536,7 +563,7 @@ pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
         "{}  {}  {}\n",
         super::format_hms(entry.timestamp),
         operation_label(&entry.op),
-        outcome_summary(&entry.outcome)
+        outcome_summary(entry)
     );
     for line in detail_lines(entry) {
         out.push_str(&line);
@@ -606,6 +633,28 @@ mod tests {
             outcome_summary_contract(&entry.outcome),
             "Success → staged (stage 0) before=abc123 after=def456"
         );
+        assert_eq!(kagi_git::oplog::entry_to_json(&entry), persisted);
+    }
+
+    #[test]
+    fn stage_diagnostics_use_recorded_paths_without_rewriting_receipts() {
+        let mut entry = dummy_entry("stage");
+        entry.repo = "/tmp/work: tree".into();
+        let path = "dir/name: before=abc.rs";
+        entry.before.dirty = format!("paths: {path}");
+        entry.outcome = OpOutcome::Failed {
+            error: format!(
+                "{}: {path}: git error: index.write() failed: Permission denied",
+                entry.repo
+            ),
+        };
+        let persisted = kagi_git::oplog::entry_to_json(&entry);
+        for shown in [outcome_summary(&entry), entry_clipboard_text(&entry)] {
+            assert!(shown.contains(&entry.repo));
+            assert!(shown.contains(path));
+            assert!(shown.contains("Permission denied"));
+            assert!(!shown.contains("index.write"));
+        }
         assert_eq!(kagi_git::oplog::entry_to_json(&entry), persisted);
     }
 

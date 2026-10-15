@@ -763,6 +763,10 @@ mod tab_ui_state;
 mod pane_resources;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/host_dirty_guard.rs"]
+mod host_dirty_guard;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cache_history_owner.rs"]
 mod cache_history_owner;
 
@@ -853,6 +857,14 @@ mod squash_publish_owner;
 #[cfg(target_os = "macos")]
 #[path = "recovery/worktree_graph.rs"]
 mod worktree_graph;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/folder_drop.rs"]
+mod folder_drop;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/folder_urls.rs"]
+mod folder_urls;
 
 #[cfg(target_os = "macos")]
 #[path = "recovery/workspace_mode_toolbar.rs"]
@@ -3765,6 +3777,14 @@ mod macos {
                 Box::new(crate::pane_resources::scenario_close_tab_editor_dirty_owner),
             ),
             (
+                "host_dirty_guard",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard),
+            ),
+            (
+                "host_dirty_guard_save",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save),
+            ),
+            (
                 "welcome_startup_renders",
                 Box::new(crate::pane_resources::scenario_welcome_startup_renders),
             ),
@@ -4045,6 +4065,30 @@ mod macos {
             (
                 "ecosystem_evidence_detached_samepath",
                 Box::new(crate::ecosystem_evidence_owner::scenario_ecosystem_evidence_detached_samepath),
+            ),
+            (
+                "folder_drop_open",
+                Box::new(crate::folder_drop::scenario_folder_drop_open),
+            ),
+            (
+                "folder_drop_exit",
+                Box::new(crate::folder_drop::scenario_folder_drop_exit),
+            ),
+            (
+                "folder_drop_occluded",
+                Box::new(crate::folder_drop::scenario_folder_drop_occluded),
+            ),
+            (
+                "folder_urls_existing_root",
+                Box::new(crate::folder_urls::scenario_folder_urls_existing_root),
+            ),
+            (
+                "folder_urls_without_root",
+                Box::new(crate::folder_urls::scenario_folder_urls_without_root),
+            ),
+            (
+                "folder_urls_settings_only",
+                Box::new(crate::folder_urls::scenario_folder_urls_settings_only),
             ),
             (
                 "remote_source_merge_into",

@@ -20,6 +20,12 @@ impl KagiApp {
             _ => None,
         }
     }
+    pub(crate) fn editor_dirty_guard_modal_mut(&mut self) -> Option<&mut EditorDirtyGuardModal> {
+        match &mut self.active_modal {
+            Some(ActiveModal::EditorDirtyGuard(modal)) => Some(modal),
+            _ => None,
+        }
+    }
     #[inline]
     pub fn set_editor_dirty_guard_modal(&mut self, m: EditorDirtyGuardModal) {
         self.replace_modal_from_user(ActiveModal::EditorDirtyGuard(m));

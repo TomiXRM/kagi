@@ -31,6 +31,8 @@ use super::{
     MainDiffSource, MainDiffView, ToastKind,
 };
 
+mod host_close;
+
 #[cfg(feature = "gui-e2e")]
 static PANIC_NEXT_EDITOR_SAVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -172,8 +174,16 @@ impl KagiApp {
                     .editor_workspace
                     .as_ref()
                     .is_some_and(|current| current.entity_id() == pane_id);
-            if is_read || is_current {
-                app.on_editor_workspace_event(view, event, cx);
+            let guarded_save = app
+                .editor_dirty_guard_modal()
+                .is_some_and(|modal| modal.saving == Some(pane_id))
+                && app
+                    .ui
+                    .get(&owner)
+                    .and_then(|ui| ui.editor_workspace.as_ref())
+                    .is_some_and(|current| current.entity_id() == pane_id);
+            if is_read || is_current || guarded_save {
+                app.on_editor_workspace_event(owner, view, event, cx);
             }
         })
         .detach();
@@ -202,6 +212,7 @@ impl KagiApp {
     /// Map the crate's outward events onto app state (ADR-0121 C4).
     fn on_editor_workspace_event(
         &mut self,
+        owner: crate::app::SessionId,
         view: Entity<EditorWorkspaceView>,
         event: &EditorWorkspaceEvent,
         cx: &mut Context<Self>,
@@ -209,7 +220,10 @@ impl KagiApp {
         match event {
             EditorWorkspaceEvent::SaveRequested(request) => {
                 let repo_path = view.read(cx).repo_path.clone();
-                let Some(guard) = self.reserve_write("editor-save", &repo_path, cx) else {
+                let Some(guard) =
+                    self.reserve_write_for("editor-save", &repo_path, Some(owner), cx)
+                else {
+                    self.stop_editor_guard_save();
                     return;
                 };
                 let record_path = repo_path.clone();
@@ -310,10 +324,12 @@ impl KagiApp {
                 self.open_editor_dirty_guard(intent, cx);
             }
             EditorWorkspaceEvent::SaveBlocked => {
+                self.stop_editor_guard_save();
                 self.push_toast(ToastKind::Error, Msg::EditorWorkspaceSaveBlocked.t(), cx);
                 cx.notify();
             }
             EditorWorkspaceEvent::SaveFailed { path, error } => {
+                self.stop_editor_guard_save();
                 // Non-git file error: surface via toast + footer (the
                 // established precedent for a background op outside the
                 // plan pipeline — e.g. `repo.fetch`'s failure path,
@@ -326,6 +342,15 @@ impl KagiApp {
                 self.push_toast(ToastKind::Error, msg.clone(), cx);
                 self.status_footer = FooterStatus::Failed(SharedString::from(msg));
                 cx.notify();
+            }
+            EditorWorkspaceEvent::Saved => {
+                if self
+                    .editor_dirty_guard_modal()
+                    .is_some_and(|modal| modal.saving == Some(view.entity_id()))
+                {
+                    self.stop_editor_guard_save();
+                    self.save_host_dirty_guard(cx);
+                }
             }
             EditorWorkspaceEvent::FilesRequested { generation, source } => {
                 self.start_editor_files_load(view, *generation, *source, cx);
@@ -725,7 +750,10 @@ impl KagiApp {
     /// `KagiApp` per the CLAUDE.md state-update rules; `intent` is what to do
     /// once the user confirms Discard.
     pub fn open_editor_dirty_guard(&mut self, intent: EditorPendingIntent, cx: &mut Context<Self>) {
-        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal { intent });
+        self.set_editor_dirty_guard_modal(EditorDirtyGuardModal {
+            intent,
+            saving: None,
+        });
         klog!("editor-ws: dirty-guard");
         cx.notify();
     }
@@ -740,10 +768,19 @@ impl KagiApp {
     /// reset `dirty` as part of navigating/reloading, so no separate
     /// "discard" step is needed here.
     pub fn confirm_editor_dirty_guard(&mut self, cx: &mut Context<Self>) {
+        if self
+            .editor_dirty_guard_modal()
+            .is_some_and(|modal| modal.saving.is_some())
+        {
+            return;
+        }
         let Some(modal) = self.take_editor_dirty_guard_modal() else {
             return;
         };
         match modal.intent {
+            intent @ (EditorPendingIntent::Quit | EditorPendingIntent::CloseWindow(_)) => {
+                self.finish_host_close(intent, cx);
+            }
             EditorPendingIntent::Reload => {
                 if let Some(ev) = self.ui().editor_workspace.clone() {
                     ev.update(cx, |v, cx| v.reload_from_disk(cx));

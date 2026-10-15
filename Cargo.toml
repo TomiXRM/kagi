@@ -169,14 +169,9 @@ assets = [
 
 # ── Dependency patches ─────────────────────────────────────────────────────
 # Slice definitions: docs/rearch/upstream-migration-1479.md (#1479 namespace).
-# Transitional patch: normalize Han-unification locales (ja-JP/ko-KR and locale
-# suffixes) instead of falling back to SC glyph forms on Unix.
-# Upstream: pop-os/cosmic-text#522 remains open; official main is still unfixed
-# at the #1479 review. Remove in #1479-S1 after explicit bundled JP fallback reaches
-# terminal glyphs/metrics, status and test probes, with Linux shape/native evidence;
-# alternatively an upstream release consumed by GPUI must provide the fix.
-[patch.crates-io]
-cosmic-text = { git = "https://github.com/TomiXRM/cosmic-text", branch = "fix-han-unification-0.19" }
+# #1479-S1b removed the cosmic-text patch after the Linux JA/EN ×
+# minimal/system-Noto × X11/Wayland native matrix passed on registry 0.19.0.
+# Explicit bundled JP fallback covers native shaping and detached tooltip/drag roots (ADR-0130).
 # Retired cosmetic highlight/heading-gap patches must not be reintroduced.
 #
 # Transitional list fix: retain estimates across layout/reset/splice, preserve

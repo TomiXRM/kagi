@@ -2026,7 +2026,7 @@ impl KagiApp {
             // Settings uses the platform's non-modal window or portable overlay.
             "app.settings" => self.open_settings(window, cx),
             "app.quit" => {
-                if !self.hold_host_close(cx) {
+                if !self.hold_host_close(super::EditorPendingIntent::Quit, cx) {
                     quit_app(cx);
                 }
             }
@@ -2040,7 +2040,10 @@ impl KagiApp {
                     self.close_home_tab(cx);
                 } else if !self.tabs.is_empty() {
                     self.close_tab(self.active_tab, cx);
-                } else if !self.hold_host_close(cx) {
+                } else if !self.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                ) {
                     window.remove_window();
                 }
             }
@@ -2162,7 +2165,10 @@ impl KagiApp {
             "window.nextTab" => self.show_adjacent_tab(true, window, cx),
             "window.bringAllToFront" => super::window_menu::bring_all_to_front(cx),
             "window.close" => {
-                if !self.hold_host_close(cx) {
+                if !self.hold_host_close(
+                    super::EditorPendingIntent::CloseWindow(window.window_handle()),
+                    cx,
+                ) {
                     window.remove_window();
                 }
             }

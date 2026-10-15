@@ -349,6 +349,42 @@ instantly through `show_tree`. Frozen native coverage returns from PRs/Issues
 at the same clock tick during selection and collapse, checks first-frame settled
 presentation in both sources, and verifies ordinary new motion after return.
 
+### Pointer ownership during row compression (#1621)
+
+Translated real rows can overlap their siblings while fixed list slots already
+have their final positions. Consuming only the visible paint is insufficient:
+GPUI can dispatch the same click to the covered sibling and replace the first
+callback's selection. Editor file and directory callbacks consume their existing
+Click event. The Navigator claims Click and otherwise-unhandled right-button
+presses at its existing translated real-content boundary, after child callbacks.
+This includes Tag/Stash/Worktree and no-action Remote/Tag rows, not just branches.
+It does not stop left MouseDown, introduce generic occlusion, or change the
+existing `under_ring` focus/default-prevention route.
+
+Compact pointer worktree selection and successful-leaf dismissal move with that
+same real boundary; fixed-slot keyboard activation/dismissal remains unchanged.
+Disabled rows keep their existing feedback without dismissing the popup. Child
+localhost links consume first, open exactly their own URL, and neither select a
+repository nor dismiss the pane. The native-test URL recorder follows the
+existing isolated-link convention; ordinary builds still dispatch the browser.
+Motion and focus remain keyed by their existing semantic identities.
+
+A retained top-removal ghost paints after its real anchor inside the slot, so a
+handler-free ghost can still expose the covered row's context menu. Claim only
+Right MouseDown on that ghost with a normal nonoccluding hitbox. Left remains
+transparent, no keyboard/AX row is restored, and ancestor external-path drop
+remains reachable in the normal Navigator. Viewport fringes retain inert
+rendering: native geometry establishes their visible clip-edge pixels do not
+overlap later real rows, rather than adding a speculative event blocker.
+
+Frozen-clock native input at 37ms verifies actual selection/peek/repository and
+context-menu targets, focus, disabled-target feedback, compact dismissal and
+child links in normal and compact panes. Separate top-removal and clipped-fringe
+controls exercise right/left/drop dispatch, not just hit rectangles; Editor
+coverage uses both Changes and All files, including File-over-File and
+Directory-over-File compression. Existing keyboard and external-drop scenarios
+remain controls.
+
 ## Graph surface amendment (#1617)
 
 The dense Graph retains its existing stripes, lane tints, fixed row height and
@@ -412,6 +448,15 @@ Native coverage clicks both the actual displaced tail and the visible strip of
 a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
 Native controls also drop external folders onto occupied commit/WIP/stash rows
 and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
+
+A closing first-prefix WIP ghost paints after the surviving commit and can cover
+its context-menu hitbox. Consume only Right MouseDown on that inert ghost, so
+the covered commit cannot open its menu or become selected. Do not occlude
+other input: a real external folder drop through the same ghost still reaches
+the ancestor. The genuinely visible leading strip of an arriving current WIP
+has no underlying row and needs no context handler. At 37ms and both zooms,
+native right-button controls exercise these negative targets and the actual
+commit, stash and linked-worktree menu owners in compressed geometry.
 
 ### Graph retained visibility boundary
 

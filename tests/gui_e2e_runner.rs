@@ -1730,6 +1730,10 @@ mod macos {
                 Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_subgroup_motion),
             ),
             (
+                "sidebar_tree_pointer_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_pointer_motion),
+            ),
+            (
                 "sidebar_tree_selection_motion",
                 Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_selection_motion),
             ),
@@ -1752,6 +1756,10 @@ mod macos {
             (
                 "editor_directory_motion",
                 Box::new(crate::recovery_editor_tree_motion::scenario_editor_directory_motion),
+            ),
+            (
+                "editor_tree_pointer_motion",
+                Box::new(crate::recovery_editor_tree_motion::scenario_editor_tree_pointer_motion),
             ),
             (
                 "sidebar_search_escape",

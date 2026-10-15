@@ -3317,6 +3317,8 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let is_collapsed = view.collapsed.contains(&index);
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                // The translated row can overlap a sibling's final slot.
+                cx.stop_propagation();
                 this.toggle_dir(index, cx);
             });
             let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {
@@ -3459,6 +3461,7 @@ fn render_tree_row(
                 label.push_str(Msg::A11yFileTreeUnsaved.t());
             }
             let click = cx.listener(move |this, _e: &gpui::ClickEvent, _w, cx| {
+                cx.stop_propagation();
                 this.select(file_index, cx);
             });
             let right_click = cx.listener(move |this, e: &gpui::MouseDownEvent, _w, cx| {

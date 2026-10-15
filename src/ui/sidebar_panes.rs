@@ -304,6 +304,25 @@ pub(super) fn render_pane(
                             index,
                             "row",
                         )
+                        // Claim only this real translated body's semantic
+                        // events, after its child callbacks. Fixed slots must
+                        // not activate covered siblings or inert edge content.
+                        .id(("sidebar-real-content", absolute))
+                        .on_click(
+                            cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                                if event.is_keyboard() {
+                                    return;
+                                }
+                                if compact && leaf {
+                                    if let Some(row) = &worktree {
+                                        super::compact_sidebar::select_worktree(this, row, cx);
+                                    }
+                                    super::compact_sidebar::dismiss_selection(window, cx);
+                                }
+                                cx.stop_propagation();
+                            }),
+                        )
+                        .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .into_any_element();
                         // Both real and ghost content share under_ring's origin;
                         // the fixed focus border must not shift a retained row.
@@ -335,6 +354,11 @@ pub(super) fn render_pane(
                                             .w_full()
                                             .h(row_h)
                                             .opacity(ghost_sample.opacity)
+                                            // Painted after the real anchor:
+                                            // a ghost must not borrow its menu.
+                                            .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| {
+                                                cx.stop_propagation();
+                                            })
                                             .child(content),
                                         &ghost.row,
                                         index,
@@ -431,13 +455,10 @@ pub(super) fn render_pane(
                         };
                         let slot = if compact && leaf {
                             slot.on_click(cx.listener(
-                                move |this, event: &gpui::ClickEvent, window, cx| {
-                                    if !event.is_keyboard() {
-                                        if let Some(row) = &worktree {
-                                            super::compact_sidebar::select_worktree(this, row, cx);
-                                        }
+                                move |_this, event: &gpui::ClickEvent, window, cx| {
+                                    if event.is_keyboard() {
+                                        super::compact_sidebar::dismiss_selection(window, cx);
                                     }
-                                    super::compact_sidebar::dismiss_selection(window, cx);
                                 },
                             ))
                         } else {

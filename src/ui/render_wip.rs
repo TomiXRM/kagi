@@ -399,7 +399,11 @@ impl KagiApp {
         // against that worktree (#473 — read-only, no tab, no snapshot). The
         // closures are distinct types, so wire `on_click` inside each match arm.
         row = if ghost {
-            row
+            // A closing first-prefix ghost can paint over a real commit.
+            // Consume only its context press, without occluding ancestor input.
+            row.on_mouse_down(gpui::MouseButton::Right, |_, _, cx| {
+                cx.stop_propagation();
+            })
         } else {
             match click {
                 WipRowClick::CommitPanel => {

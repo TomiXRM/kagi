@@ -276,7 +276,7 @@ impl InspectorKeyboard {
         let count = entries.len();
         let render_scroll = scroll.clone();
         let render = cx.processor(
-            move |_: &mut KagiApp, requested: std::ops::Range<usize>, _, cx| {
+            move |this: &mut KagiApp, requested: std::ops::Range<usize>, _, cx| {
                 let pitch = render_scroll
                     .0
                     .borrow()
@@ -309,6 +309,7 @@ impl InspectorKeyboard {
                         Entry::More(_) => "\0more".into(),
                         Entry::Unavailable => "\0unavailable".into(),
                     };
+                    let root = this.root_focus.clone();
                     let mut slot = div()
                         .relative()
                         .h(theme::scaled_px(ROW_HEIGHT))
@@ -319,6 +320,15 @@ impl InspectorKeyboard {
                                 .relative()
                                 .top(sample.offset)
                                 .opacity(sample.opacity)
+                                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                    if !window.default_prevented() {
+                                        if let Some(root) = &root {
+                                            root.focus(window, cx);
+                                        }
+                                        window.prevent_default();
+                                    }
+                                })
+                                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(content),
                         );

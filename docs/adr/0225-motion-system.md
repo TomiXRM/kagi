@@ -211,14 +211,36 @@ measured pixel-snapped pitch, not the unsnapped configured height. Closing
 ghosts remain presentation-only and the shared splice cap bounds extra work.
 
 Changes uses the same leading-before-first/trailing-after-last placement order.
-Both lists give every real row kind a role-less parent click boundary, including
-fold headers, non-collapsible directories and overflow notes. It runs after the
-row's own child actions, then consumes only click propagation: compressed
-incoming contents overlap, so otherwise multiple normal hitboxes receive the
-same click. The top painted logical row owns that click. Mouse-down focus,
-ancestor folder-drop/hover handling, wheel input and child accessibility roles
-remain unchanged; broad hitbox occlusion would break those existing routes.
+Both lists give every real row kind a role-less parent boundary, including fold
+headers, non-collapsible directories and overflow notes. It consumes clicks after
+the row's own child actions, so compressed overlapping rows cannot both activate.
+Left mouse-down retains propagation and uses GPUI's default-focus convention:
+the winning file/control claims focus once; an otherwise nonfocusable winning
+row uses the already-supplied ancestor root target and prevents covered files
+from taking focus. Changes' explicit file focus also respects default prevention.
+The parent consumes right-button presses only after a child's own context-menu
+handler has had its turn, preventing headers/More from opening a covered file's
+menu while preserving real-file menus. No broad hitbox occlusion masks ancestor
+folder drops, hover, drag, wheel input or the existing child accessibility roles.
+Native overlap controls assert actual focus handles, keyboard and right-menu
+path identity, non-file ancestor focus, unchanged selection and real folder drops.
 Presentation-only removal ghosts never acquire actions or accessibility rows.
+
+Changes removal overlays paint after live rows. Their visible exit-row host
+consumes only right-button context presses, preventing a covered live file's
+menu from opening; left input, focus, accessibility and ancestor drops remain
+unchanged. Native top-file removal coverage proves actual ghost filename ink,
+paint order and the clipped intersection before testing the menu no-op and a real
+repository-folder drop at that same point. Inspector generated ghosts follow
+the normal file rows and live fold header; the native topmost exit-only-area
+control remains a no-op without adding a ghost handler.
+
+External-drop controls establish the pointer-modality precondition with MouseMove
+after keyboard dismissal, verify a freshly painted closed-menu surface and the
+actual visible target, and require the repository to open. GPUI classifies
+FileDrop before converting it into mouse events, so Entered alone retains the
+preceding keyboard modality. This harness precondition is not an OS-level
+keyboard-to-Finder drag claim.
 
 The root's existing actual-center visibility edge retires retained Changes and
 Inspector presentation for the departing session on center/owner changes,

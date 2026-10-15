@@ -250,7 +250,10 @@ pub(crate) fn file_row(
         .aria_label(row_name(view, staged, fi))
         .aria_selected(selected)
         .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            rows_click.focus_row(at, window, cx)
+            if !window.default_prevented() {
+                rows_click.focus_row(at, window, cx);
+                window.prevent_default();
+            }
         });
     if drawn.focused_row == Some(at) {
         el = el.child(nav.anchor.probe());

@@ -290,6 +290,46 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
     cx.simulate_click(window, ghost.center(), gpui::Modifiers::none());
     draw(cx, window);
     selected("a.txt");
+    // Inspector's first ghost starts below the last live fold header.
+    // Exercise its visible exit-only area, before the next ghost can cover it.
+    let first_ghost =
+        e2e::control_paint(window.window_id(), &format!("inspector-file-ghost-{first}")).unwrap();
+    let next_ghost = e2e::control_paint(
+        window.window_id(),
+        &format!("inspector-file-ghost-{second}"),
+    )
+    .unwrap();
+    let header = e2e::control_paint(window.window_id(), "generated-fold-header").unwrap();
+    let position = point(
+        first_ghost.bounds.left() + px(80.),
+        first_ghost.bounds.top() + px(1.),
+    );
+    assert!(
+        first_ghost.order > header.order
+            && first_ghost.bounds.contains(&position)
+            && first_ghost.mask.contains(&position)
+            && position.y >= header.bounds.bottom()
+            && !paint(window, a).contains(&position)
+            && !paint(window, b).contains(&position)
+            && position.y < next_ghost.bounds.top() - px(2.),
+        "Inspector context target is a topmost exit ghost after all live file/header rows: first={first_ghost:?}, next={next_ghost:?}, header={header:?}, point={position:?}"
+    );
+    cx.simulate_mouse_move(window, position, None, gpui::Modifiers::none());
+    cx.simulate_mouse_down(
+        window,
+        position,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        window,
+        position,
+        gpui::MouseButton::Right,
+        gpui::Modifiers::none(),
+    );
+    draw(cx, window);
+    assert!(cx.read(|cx| app.read(cx).inspector_file_menu.is_none()));
+    selected("a.txt");
     click(cx, window, "generated-fold-header");
     frame(cx, window, t + Duration::from_millis(1160));
     generated_semantics(true);

@@ -1,7 +1,7 @@
 //! #1617: Changes retains fixed slots while file content eases between them.
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{AnyWindowHandle, Entity, VisualTestAppContext};
-use kagi::ui::{commit_panel::CommitPanelView, e2e};
+use kagi::ui::{commit_panel::CommitPanelView, e2e, KagiApp};
 use kagi_ui_core::{motion, theme};
 use std::time::{Duration, Instant};
 
@@ -137,6 +137,7 @@ fn file_ink(
 
 fn fold_motion(
     cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
     panel: &Entity<CommitPanelView>,
     window: AnyWindowHandle,
     at: Instant,
@@ -191,9 +192,18 @@ fn fold_motion(
         Some((false, std::path::PathBuf::from(path))),
         "overlapping incoming fold row, not its predecessor, owns the click",
     );
+    crate::file_row_input::focused_file_menu(
+        cx,
+        app,
+        window,
+        fi,
+        path,
+        at + Duration::from_millis(37),
+    );
     if !agent {
         crate::file_row_input::following_fold(
             cx,
+            app,
             panel,
             window,
             at + Duration::from_millis(37),
@@ -630,6 +640,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     frame(cx, window, folds);
     fold_motion(
         cx,
+        &app,
         &panel,
         window,
         folds + Duration::from_millis(10),
@@ -638,6 +649,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     );
     fold_motion(
         cx,
+        &app,
         &panel,
         window,
         folds + Duration::from_secs(2),
@@ -687,6 +699,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     foreground_motion(cx, &app, &panel, window, bulk + Duration::from_secs(5));
     crate::file_row_input::directory(
         cx,
+        &app,
         &panel,
         window,
         fixture.path(),
@@ -707,10 +720,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         cx.notify();
     });
     frame(cx, window, motion::now());
-    let first = cx.read(|cx| panel.read(cx).state.unstaged_normal_files[0]);
-    let row =
-        e2e::control_bounds(window.window_id(), &format!("cp-us-density-file-{first}")).unwrap();
-    let _drop_target = crate::file_row_input::assert_repo_drop_on_row(cx, &app, window, row);
+    let _drop_target =
+        crate::file_row_input::top_file_ghost(cx, &app, &panel, window, fixture.path());
     drop(panel);
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);

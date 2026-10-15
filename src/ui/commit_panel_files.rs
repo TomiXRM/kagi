@@ -210,7 +210,13 @@ impl FileListMotion {
         })
     }
 
-    fn wrap(&self, i: usize, row: gpui::AnyElement, height: Pixels) -> gpui::AnyElement {
+    fn wrap(
+        &self,
+        i: usize,
+        row: gpui::AnyElement,
+        height: Pixels,
+        root: Option<gpui::FocusHandle>,
+    ) -> gpui::AnyElement {
         let sample = self.sample(&self.rows[i].key, motion::now(), height);
         div()
             .w_full()
@@ -221,6 +227,15 @@ impl FileListMotion {
                     .relative()
                     .top(sample.offset)
                     .opacity(sample.opacity)
+                    .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                        if !window.default_prevented() {
+                            if let Some(root) = &root {
+                                root.focus(window, cx);
+                            }
+                            window.prevent_default();
+                        }
+                    })
+                    .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .on_click(|_, _, cx| cx.stop_propagation())
                     .child(row),
             )
@@ -274,6 +289,7 @@ impl FileListMotion {
         requested: std::ops::Range<usize>,
         range: std::ops::Range<usize>,
         height: Pixels,
+        root: Option<&gpui::FocusHandle>,
         mut render: impl FnMut(usize) -> Option<gpui::AnyElement>,
     ) -> Vec<gpui::AnyElement> {
         let mut slots = Vec::with_capacity(requested.len());
@@ -281,7 +297,7 @@ impl FileListMotion {
         let mut leading = 0;
         for i in range {
             let Some(row) = render(i) else { continue };
-            let row = self.wrap(i, row, height);
+            let row = self.wrap(i, row, height, root.cloned());
             if requested.contains(&i) {
                 slots.push(row);
             } else {
@@ -361,6 +377,7 @@ impl FileListMotion {
                     .top(top)
                     .h(height)
                     .opacity(sample.opacity)
+                    .on_mouse_down(gpui::MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .child(ghost_content(&row.visual, staged)),
             );
         }
@@ -481,7 +498,7 @@ fn motion_rows(panel: &super::commit_panel::CommitPanelState, staged: bool) -> V
     rows
 }
 
-/// No listeners, focus, IDs, accessibility roles or tooltips on exit-only content.
+/// Exit-only label body: no actions, focus, IDs, accessibility roles or tooltips.
 fn ghost_content(row: &RowVisual, staged: bool) -> gpui::Div {
     let mut content = div()
         .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
@@ -643,8 +660,12 @@ impl CommitPanelView {
                                 .state
                                 .tree_view
                                 .then_some(view.unstaged_tree_layout.as_slice());
-                            view.file_motion[0].mount_rows(requested, range, height, |i| {
-                                match &layout {
+                            view.file_motion[0].mount_rows(
+                                requested,
+                                range,
+                                height,
+                                view.pointer_root_focus.as_ref(),
+                                |i| match &layout {
                                     Some(layout) => render_unstaged_tree_row(
                                         view,
                                         &rows,
@@ -653,8 +674,8 @@ impl CommitPanelView {
                                         cx,
                                     ),
                                     None => render_unstaged_flat_row(view, &rows, i, cx),
-                                }
-                            })
+                                },
+                            )
                         }),
                     )
                     .track_scroll(&unstaged_scroll_handle)
@@ -724,8 +745,12 @@ impl CommitPanelView {
                                 .state
                                 .tree_view
                                 .then_some(view.staged_tree_layout.as_slice());
-                            view.file_motion[1].mount_rows(requested, range, height, |i| {
-                                match &layout {
+                            view.file_motion[1].mount_rows(
+                                requested,
+                                range,
+                                height,
+                                view.pointer_root_focus.as_ref(),
+                                |i| match &layout {
                                     Some(layout) => render_staged_tree_row(
                                         view,
                                         &rows,
@@ -734,8 +759,8 @@ impl CommitPanelView {
                                         cx,
                                     ),
                                     None => render_staged_flat_row(view, &rows, i, cx),
-                                }
-                            })
+                                },
+                            )
                         }),
                     )
                     .track_scroll(&staged_scroll_handle)

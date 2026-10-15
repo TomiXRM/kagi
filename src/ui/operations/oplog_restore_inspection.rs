@@ -1,7 +1,10 @@
 //! Read-only keyboard ownership for one restore card; never owns approval.
 use crate::ui::{keyboard_nav::RowList, list_keyboard::ListKeyboard};
-use gpui::{actions, App, FocusHandle, KeyBinding, ListState, ScrollHandle, Window};
-use std::{cell::Cell, rc::Rc};
+use gpui::{actions, App, FocusHandle, KeyBinding, ScrollHandle, UniformListScrollHandle, Window};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 actions!(
     kagi_restore_body,
@@ -57,16 +60,20 @@ fn body_action<A: gpui::Action>(
 
 pub(crate) struct InspectionList {
     keyboard: ListKeyboard,
-    pub(crate) scroll: ListState,
-    row_height: f32,
+    pub(crate) scroll: UniformListScrollHandle,
+    pub(crate) drawn: Rc<RefCell<std::ops::Range<usize>>>,
+    count: Cell<usize>,
+    wheel_start: Rc<Cell<gpui::Pixels>>,
     revealed_entry: Cell<Option<usize>>,
 }
 impl InspectionList {
-    pub(crate) fn new(count: usize, row_height: f32) -> Self {
+    fn new() -> Self {
         Self {
             keyboard: Default::default(),
-            scroll: ListState::new(count, gpui::ListAlignment::Top, gpui::px(0.)),
-            row_height,
+            scroll: UniformListScrollHandle::new(),
+            drawn: Rc::new(RefCell::new(0..0)),
+            count: Cell::new(0),
+            wheel_start: Rc::new(Cell::new(gpui::px(0.))),
             revealed_entry: Cell::new(None),
         }
     }
@@ -77,32 +84,45 @@ impl InspectionList {
         window: &mut Window,
         cx: &mut App,
     ) -> Rc<RowList> {
-        self.scroll
-            .clone()
-            .with_uniform_item_height(crate::ui::theme::scaled_px(self.row_height));
+        self.count.set(keys.len());
         self.keyboard.rows(
             keys,
-            &crate::ui::keyboard_nav::RowScroll::List(self.scroll.clone()),
+            &crate::ui::keyboard_nav::RowScroll::Uniform(
+                self.scroll.clone(),
+                self.drawn.borrow().clone(),
+            ),
             fallback,
             window,
             cx,
         )
     }
+    pub(crate) fn wheel_capture(&self) -> impl gpui::IntoElement {
+        use gpui::prelude::*;
+        let scroll = self.scroll.0.borrow().base_handle.clone();
+        let start = self.wheel_start.clone();
+        gpui::canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                window.on_mouse_event(move |_: &gpui::ScrollWheelEvent, phase, _, _| {
+                    if phase.capture() {
+                        start.set(scroll.offset().y);
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size(gpui::px(0.))
+    }
     pub(crate) fn wheel_handler(
         &self,
     ) -> impl Fn(&gpui::ScrollWheelEvent, &mut Window, &mut App) + 'static {
-        let scroll = self.scroll.clone();
-        let previous = Cell::new(scroll.scroll_px_offset_for_scrollbar().y);
+        let scroll = self.scroll.0.borrow().base_handle.clone();
+        let previous = self.wheel_start.clone();
         move |event, _, cx| {
-            let max = scroll.max_offset_for_scrollbar().y;
-            let offset = scroll
-                .scroll_px_offset_for_scrollbar()
-                .y
-                .clamp(-max, gpui::px(0.));
-            // The inner List already handled Bubble. Use its prior offset so
-            // the event reaching an edge does not also move the parent.
-            // Pixels uses total ordering (-0 < 0); numerically, both mean top.
-            let before = previous.replace(offset).clamp(-max, gpui::px(0.)).as_f32();
+            let max = scroll.max_offset().y;
+            // Capture reads the actual event-start offset, after deferred
+            // keyboard reveal/layout; Bubble runs after the uniform list.
+            let before = previous.get().clamp(-max, gpui::px(0.)).as_f32();
             let delta = event.delta.pixel_delta(gpui::px(20.)).y.as_f32();
             let max = max.as_f32();
             if max > 0. && ((delta < 0. && before > -max) || (delta > 0. && before < 0.)) {
@@ -118,12 +138,27 @@ impl InspectionList {
         if self.revealed_entry.get() == Some(index) {
             return;
         }
-        let Some(row) = self.scroll.bounds_for_item(index) else {
+        if !self.drawn.borrow().contains(&index) {
+            return;
+        }
+        let state = self.scroll.0.borrow();
+        let Some(size) = state.last_item_size else {
             return;
         };
-        // RowList updates its scroll before the following layout. Keep this
-        // reveal pending until that layout places the row in its inner pane.
-        let inner = self.scroll.viewport_bounds();
+        let count = self.count.get();
+        if count == 0 {
+            return;
+        }
+        // UniformList uses its pixel-rounded measured row, not the unrounded
+        // zoom token. Dividing its live content extent retains that geometry.
+        let height = size.contents.height / count as f32;
+        let scroll = &state.base_handle;
+        let inner = scroll.bounds();
+        let top = inner.top() + scroll.offset().y + height * index as f32;
+        let row = gpui::Bounds::new(
+            gpui::point(inner.left(), top),
+            gpui::size(inner.size.width, height),
+        );
         if row.top() < inner.top() - gpui::px(1.) || row.bottom() > inner.bottom() + gpui::px(1.) {
             return;
         }
@@ -153,13 +188,17 @@ pub(crate) struct RestoreInspection {
     pub(crate) body_focus: FocusHandle,
 }
 impl RestoreInspection {
-    pub(crate) fn new(refs: usize, preview: usize, cx: &App) -> Self {
+    pub(crate) fn new(cx: &App) -> Self {
         Self {
-            refs: InspectionList::new(refs, 31.),
-            preview: InspectionList::new(preview, crate::ui::graph_view::ROW_H),
+            refs: InspectionList::new(),
+            preview: InspectionList::new(),
             body_scroll: Default::default(),
             body_focus: cx.focus_handle(),
         }
+    }
+    pub(crate) fn owns_row_focus(&self, window: &Window) -> bool {
+        self.refs.keyboard.focused_entry(window).is_some()
+            || self.preview.keyboard.focused_entry(window).is_some()
     }
 }
 
@@ -185,6 +224,10 @@ pub(crate) fn read_only_scroll_body(
             .key_context(BODY_CONTEXT)
             .track_focus(&focus.clone().tab_index(0).tab_stop(true))
             .track_scroll(scroll)
+            .map(|mut body| {
+                body.style().restrict_scroll_to_axis = Some(true);
+                body
+            })
             .on_action(body_action::<RestoreBodyPrev>(scroll, Line(1.)))
             .on_action(body_action::<RestoreBodyNext>(scroll, Line(-1.)))
             .on_action(body_action::<RestoreBodyFirst>(scroll, First))
@@ -196,7 +239,7 @@ pub(crate) fn read_only_scroll_body(
 
 #[cfg(feature = "gui-e2e")]
 impl crate::ui::KagiApp {
-    pub fn oplog_restore_scroll_for_e2e(&self, list: &str) -> Option<ListState> {
+    pub fn oplog_restore_scroll_for_e2e(&self, list: &str) -> Option<UniformListScrollHandle> {
         let modal = self.oplog_restore_modal()?;
         match list {
             "restore-refs" => Some(modal.inspection.refs.scroll.clone()),

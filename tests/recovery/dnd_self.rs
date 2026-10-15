@@ -176,7 +176,7 @@ pub fn scenario_branch_drag_self_target(cx: &mut VisualTestAppContext) {
             i18n::set_lang(language);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
-                for (width, height) in [(940., 660.), (1392., 883.)] {
+                for (width, height) in [(1000., 720.), (1392., 883.)] {
                     let (app, window) = mount_at(cx, fixture.path(), width, height);
                     for (target_id, operand, valid) in [
                         ("sidebar-local-source", "source", false),
@@ -193,6 +193,33 @@ pub fn scenario_branch_drag_self_target(cx: &mut VisualTestAppContext) {
             }
         }
     }
+    // At the minimum window, drag the same real rows inside their rail Popover.
+    theme::set_active("apple-light");
+    theme::set_zoom(1.);
+    i18n::set_lang(Lang::En);
+    let (app, window) = mount_at(cx, fixture.path(), 940., 660.);
+    paint(cx, window);
+    let trigger = e2e::control_bounds(window.window_id(), "compact-rail-local").unwrap();
+    assert!(e2e::control_bounds(window.window_id(), "sidebar-local-source").is_none());
+    cx.simulate_click(window, trigger.center(), Modifiers::none());
+    cx.run_until_parked();
+    paint(cx, window);
+    let popup = e2e::control_bounds(window.window_id(), "compact-sidebar-popover").unwrap();
+    for (id, operand, valid) in [
+        ("sidebar-local-source", "source", false),
+        ("sidebar-local-target", "target", true),
+    ] {
+        crate::recovery_layout::contained(
+            popup,
+            e2e::control_bounds(window.window_id(), id).unwrap(),
+            "compact drag target is in the real Local navigator",
+        );
+        check_feedback(cx, window, id, valid, (940., 660.));
+        wait_idle(cx, &app);
+        check_outcome(cx, &app, operand, valid);
+        assert_eq!(repo_fingerprint(fixture.path()), before);
+    }
+    unmount(cx, app, window);
     theme::set_active(&previous_theme);
     theme::set_zoom(previous_zoom);
     i18n::set_lang(previous_lang);
@@ -204,7 +231,7 @@ pub fn scenario_branch_drag_detached_target(cx: &mut VisualTestAppContext) {
     git(fixture.path(), &["branch", "source", "HEAD~1"]);
     git(fixture.path(), &["checkout", "--detach", "-q", "HEAD"]);
     let before = repo_fingerprint(fixture.path());
-    let (app, window) = mount_at(cx, fixture.path(), 940., 660.);
+    let (app, window) = mount_at(cx, fixture.path(), 1000., 720.);
     paint(cx, window);
     let neutral = fill(cx, window, "graph-head-HEAD");
     let target = drag_over(cx, window, "sidebar-local-source", "graph-head-HEAD");

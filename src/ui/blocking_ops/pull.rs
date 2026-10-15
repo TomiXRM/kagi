@@ -79,13 +79,13 @@ fn classify_stash_push(push: &RunReport) -> (Option<PullPresentation>, Option<St
     let presentation = match &push.result {
         Ok(OperationOutcome::StashPush { .. }) => None,
         Ok(_) | Err(GitError::StashIdentityUnverified(_)) => Some(PullPresentation::Partial {
-            error: i18n::auto_stash_identity_unverified().to_string(),
+            error: i18n::op::auto_stash_identity_unverified_contract().to_string(),
         }),
         Err(error @ GitError::TerminationUnknown(_)) => Some(PullPresentation::Partial {
-            error: i18n::op_failed(i18n::Op::Stash, error),
+            error: i18n::op::op_failed_contract(i18n::Op::Stash, error),
         }),
         Err(error) => Some(PullPresentation::Failed {
-            error: i18n::op_failed(i18n::Op::Stash, error),
+            error: i18n::op::op_failed_contract(i18n::Op::Stash, error),
         }),
     };
     let outstanding = push
@@ -141,8 +141,8 @@ pub(crate) fn pull_blocking(
     auto_stash: bool,
     promised_dirty: Option<kagi_domain::status::WorktreeDigest>,
 ) -> Result<PullReport, String> {
-    let mut repo =
-        open_backend(repo_path).map_err(|error| i18n::op_failed(i18n::Op::RepoOpen, error))?;
+    let mut repo = open_backend(repo_path)
+        .map_err(|error| i18n::op::op_failed_contract(i18n::Op::RepoOpen, error))?;
 
     let mut steps: Vec<RunReport> = Vec::new();
     let mut stashed: Option<kagi_git::backend::stash::StashEvidence> = None;
@@ -153,7 +153,7 @@ pub(crate) fn pull_blocking(
                 return Ok(failed_to_start(
                     repo_path,
                     plan,
-                    i18n::op_failed(i18n::Op::Stash, error),
+                    i18n::op::op_failed_contract(i18n::Op::Stash, error),
                 ))
             }
         };
@@ -176,7 +176,7 @@ pub(crate) fn pull_blocking(
                     return Ok(failed_to_start(
                         repo_path,
                         plan,
-                        i18n::op_failed(i18n::Op::Stash, error),
+                        i18n::op::op_failed_contract(i18n::Op::Stash, error),
                     ))
                 }
             };
@@ -186,21 +186,21 @@ pub(crate) fn pull_blocking(
                     return Ok(failed_to_start(
                         repo_path,
                         plan,
-                        i18n::op_plan_failed(i18n::Op::Pull, error),
+                        i18n::op::op_plan_failed_contract(i18n::Op::Pull, error),
                     ))
                 }
             };
             let stale_reason = if fresh.pull_identity != plan.pull_identity {
-                Some(i18n::Msg::PullAutoStashIdentityChanged)
+                Some(i18n::op::pull_identity_changed_contract(i18n::lang()))
             } else if promised_dirty != Some(now) {
-                Some(i18n::Msg::PullAutoStashPlanStale)
+                Some(i18n::op::pull_files_changed_contract(i18n::lang()))
             } else if restore_notes(&fresh) != restore_notes(plan) {
-                Some(i18n::Msg::PullAutoStashRestoreChanged)
+                Some(i18n::op::pull_restore_changed_contract(i18n::lang()))
             } else {
                 None
             };
             if let Some(reason) = stale_reason {
-                let refusal = reason.t().to_string();
+                let refusal = reason.to_string();
                 return Ok(not_started(
                     repo_path,
                     plan,
@@ -220,7 +220,7 @@ pub(crate) fn pull_blocking(
                     return Ok(failed_to_start(
                         repo_path,
                         plan,
-                        i18n::op_plan_failed(i18n::Op::Stash, error),
+                        i18n::op::op_plan_failed_contract(i18n::Op::Stash, error),
                     ))
                 }
             };
@@ -252,7 +252,7 @@ pub(crate) fn pull_blocking(
             })
         }
         Ok(_) => failure = Some("pull: unexpected outcome".to_string()),
-        Err(error) => failure = Some(i18n::op_failed(i18n::Op::Pull, error)),
+        Err(error) => failure = Some(i18n::op::op_failed_contract(i18n::Op::Pull, error)),
     }
     // The pull's own place in the workflow: it decides when it fails and the
     // restore then puts the work back.
@@ -381,18 +381,18 @@ fn pop_auto_stash(
     let index = match kagi_git::Backend::unique_stash_index(repo_path, stash_oid) {
         Ok(Some(index)) => index,
         Ok(None) => return refused(i18n::auto_stash_missing().to_string()),
-        Err(error) => return refused(i18n::op_failed(i18n::Op::Stash, error)),
+        Err(error) => return refused(i18n::op::op_failed_contract(i18n::Op::Stash, error)),
     };
     let pop_op = kagi_git::Operation::StashPop { index };
     let pop_plan = match repo.plan(&pop_op) {
         Ok(pop_plan) => pop_plan,
-        Err(error) => return refused(i18n::op_plan_failed(i18n::Op::Stash, error)),
+        Err(error) => return refused(i18n::op::op_plan_failed_contract(i18n::Op::Stash, error)),
     };
     let report = repo.run_recorded(&pop_op, &pop_plan);
     let restored = match &report.result {
         Ok(OperationOutcome::StashPop(outcome)) => Ok(outcome.clone()),
         Ok(_) => Err("stash pop: unexpected outcome".to_string()),
-        Err(error) => Err(i18n::op_failed(i18n::Op::Stash, error)),
+        Err(error) => Err(i18n::op::op_failed_contract(i18n::Op::Stash, error)),
     };
     (report, restored)
 }

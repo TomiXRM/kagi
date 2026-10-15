@@ -134,6 +134,16 @@ impl RulesetNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            RulesetNote::ConstraintsUnknown => {
+                crate::advice_template_display_en!(RulesetConstraintsUnknown).to_string()
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 #[cfg(test)]

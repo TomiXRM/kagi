@@ -13,6 +13,7 @@
 //! `KagiApp::op_log_seed` until `open_main_window` can create the entity (the
 //! pure constructors have no `cx`). The data methods stay `cx`-free for tests.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -20,6 +21,8 @@ use gpui::AppContext as _;
 use kagi_domain::oplog_reflog::{Attribution, ReflogLine, ReflogWindow};
 use kagi_domain::plan_note::ShellKind;
 use kagi_git::oplog::{OpLogEntry, OpOutcome};
+use kagi_ui_core::i18n::op::user_text::{diagnostic, operation_label, state_text};
+use kagi_ui_core::i18n::oplog_panel::OplogPanelMsg as P;
 use kagi_ui_core::i18n::{plan::plan_recovery_sentences, Msg};
 
 /// Maximum entries kept in the in-memory ring buffer.
@@ -364,9 +367,8 @@ impl OpLogPanel {
     }
 }
 
-/// One-line outcome summary shown on the (truncated) summary row. Pure so the
-/// clipboard text and the rendered row cannot drift apart.
-pub fn outcome_summary(outcome: &OpOutcome) -> String {
+/// Historical summary used by contract logs. Keep its bytes independent of locale.
+pub fn outcome_summary_contract(outcome: &OpOutcome) -> String {
     match outcome {
         OpOutcome::Success { after } => format!("Success \u{2192} {}", after.head),
         OpOutcome::Partial { after, error } => {
@@ -382,6 +384,69 @@ pub fn outcome_summary(outcome: &OpOutcome) -> String {
     }
 }
 
+// A stage receipt prefixes its diagnostic with the exact recorded owner and
+// paths. Use those fields rather than splitting arbitrary user paths on ':'.
+fn entry_diagnostic<'a>(entry: &OpLogEntry, value: &'a str) -> Cow<'a, str> {
+    if let Some(paths) = entry.before.dirty.strip_prefix("paths: ") {
+        if let Some(cause) = value
+            .strip_prefix(&entry.repo)
+            .and_then(|rest| rest.strip_prefix(": "))
+            .and_then(|rest| rest.strip_prefix(paths))
+            .and_then(|rest| rest.strip_prefix(": "))
+        {
+            return match diagnostic(cause) {
+                Cow::Borrowed(_) => Cow::Borrowed(value),
+                Cow::Owned(mut shown) => {
+                    shown.insert_str(0, &value[..value.len() - cause.len()]);
+                    Cow::Owned(shown)
+                }
+            };
+        }
+    }
+    diagnostic(value)
+}
+
+/// Display-only summary shared by the row, accessibility label and clipboard.
+pub fn outcome_summary(entry: &OpLogEntry) -> String {
+    let status = outcome_status(&entry.outcome);
+    match &entry.outcome {
+        OpOutcome::Success { after } => format!("{status} → {}", state_text(&after.head)),
+        OpOutcome::Partial { after, error } => {
+            format!(
+                "{status} → {}: {}",
+                state_text(&after.head),
+                entry_diagnostic(entry, error)
+            )
+        }
+        OpOutcome::Unknown { evidence, .. } => {
+            format!("{status}: {}", entry_diagnostic(entry, evidence))
+        }
+        OpOutcome::Failed { error } => format!("{status}: {}", entry_diagnostic(entry, error)),
+        OpOutcome::Refused { blockers } => {
+            let reasons = blockers
+                .iter()
+                .map(|reason| entry_diagnostic(entry, reason))
+                .collect::<Vec<_>>();
+            format!("{status}: {}", reasons.join("; "))
+        }
+    }
+}
+
+pub(crate) fn outcome_status(outcome: &OpOutcome) -> &'static str {
+    Msg::OplogPanel(match outcome {
+        OpOutcome::Success { .. } => P::StatusSuccess,
+        OpOutcome::Partial { .. } => P::StatusPartial,
+        OpOutcome::Unknown { .. } => P::StatusUnknown,
+        OpOutcome::Failed { .. } => P::StatusFailed,
+        OpOutcome::Refused { .. } => P::StatusRefused,
+    })
+    .t()
+}
+
+fn detail_line(label: P, value: &str) -> String {
+    format!("  {}: {value}", Msg::OplogPanel(label).t())
+}
+
 /// The expanded-row detail lines (before/after state, error/blockers, recovery).
 pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
     let mut lines = base_detail_lines(entry);
@@ -391,44 +456,77 @@ pub fn detail_lines(entry: &OpLogEntry) -> Vec<String> {
     lines
 }
 
-/// The existing receipt facts; recovery is drawn as its own AX-labelled group.
+fn append_recorded_diagnostic(lines: &mut Vec<String>, entry: &OpLogEntry, label: P, raw: &str) {
+    let shown = entry_diagnostic(entry, raw);
+    lines.push(detail_line(label, &shown));
+    if shown.as_ref() != raw {
+        lines.push(detail_line(P::DetailTechnical, raw));
+    }
+}
+
+/// Localize explanations while retaining their complete recorded causes.
 pub(crate) fn base_detail_lines(entry: &OpLogEntry) -> Vec<String> {
     let mut lines = vec![
-        format!("  before:  {}", entry.before.head),
-        format!("  dirty:   {}", entry.before.dirty),
+        detail_line(P::DetailBefore, &state_text(&entry.before.head)),
+        detail_line(P::DetailChanges, &state_text(&entry.before.dirty)),
     ];
     // What an issue-create asked for, whatever came of it (#904 review).
     if let Some(fields) = &entry.issue_fields {
         if !fields.labels.is_empty() {
-            lines.push(format!("  labels:  {}", fields.labels.join(", ")));
+            lines.push(detail_line(P::DetailLabels, &fields.labels.join(", ")));
         }
         if !fields.assignees.is_empty() {
-            lines.push(format!("  assignee: {}", fields.assignees.join(", ")));
+            lines.push(detail_line(
+                P::DetailAssignees,
+                &fields.assignees.join(", "),
+            ));
         }
     }
     match &entry.outcome {
         OpOutcome::Success { after } => {
-            lines.push(format!("  after:   {}", after.head));
-            lines.push(format!("  dirty:   {}", after.dirty));
+            lines.push(detail_line(P::DetailAfter, &state_text(&after.head)));
+            lines.push(detail_line(P::DetailChanges, &state_text(&after.dirty)));
         }
         OpOutcome::Unknown {
             after,
             evidence: error,
         }
         | OpOutcome::Partial { after, error } => {
-            lines.push(format!("  after:   {}", after.head));
-            lines.push(format!("  dirty:   {}", after.dirty));
-            lines.push(format!("  error:   {}", error));
+            lines.push(detail_line(P::DetailAfter, &state_text(&after.head)));
+            lines.push(detail_line(P::DetailChanges, &state_text(&after.dirty)));
+            append_recorded_diagnostic(&mut lines, entry, P::DetailError, error);
         }
-        OpOutcome::Failed { error } => lines.push(format!("  error:   {}", error)),
+        OpOutcome::Failed { error } => {
+            append_recorded_diagnostic(&mut lines, entry, P::DetailError, error)
+        }
         OpOutcome::Refused { blockers } => {
             for b in blockers {
-                lines.push(format!("  blocker: {}", b));
+                append_recorded_diagnostic(&mut lines, entry, P::DetailBlocker, b);
             }
         }
     }
     if let Some(detail) = &entry.technical_detail {
-        lines.push(format!("  detail:  {detail}"));
+        lines.push(detail_line(P::DetailTechnical, detail));
+    }
+    // Keep full backup identifiers and path associations for command-line recovery.
+    for reference in &entry.backup_refs {
+        lines.push(detail_line(P::DetailBackup, reference));
+    }
+    for handle in &entry.recovery {
+        let mut line = detail_line(P::DetailBackup, &handle.oid);
+        if let Some(path) = &handle.path {
+            line.push_str("; ");
+            line.push_str(Msg::OplogPanel(P::DetailFile).t());
+            line.push_str(": ");
+            line.push_str(path);
+        }
+        if let Some(reference) = &handle.reference {
+            line.push_str("; ");
+            line.push_str(Msg::OplogPanel(P::DetailReference).t());
+            line.push_str(": ");
+            line.push_str(reference);
+        }
+        lines.push(line);
     }
     lines
 }
@@ -492,8 +590,8 @@ pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
     let mut out = format!(
         "{}  {}  {}\n",
         super::format_hms(entry.timestamp),
-        entry.op,
-        outcome_summary(&entry.outcome)
+        operation_label(&entry.op),
+        outcome_summary(entry)
     );
     for line in detail_lines(entry) {
         out.push_str(&line);
@@ -501,7 +599,7 @@ pub fn entry_clipboard_text(entry: &OpLogEntry) -> String {
     }
     match entry.ref_moves.as_deref() {
         None => {}
-        Some([]) => out.push_str("  ref:     none moved\n"),
+        Some([]) => out.push_str(&format!("  {}\n", Msg::OplogPanel(P::RecordedNone).t())),
         Some(moves) => {
             for m in moves {
                 out.push_str(&format!("  ref:     {}\n", ref_move_text(m, true, "-")));
@@ -537,6 +635,138 @@ mod tests {
                 },
             },
         )
+    }
+
+    #[test]
+    fn display_and_copy_localize_without_rewriting_receipt_or_contract_summary() {
+        let mut entry = dummy_entry("conflict-save:merge");
+        entry.before.head = "session=merge file=src/my_file.rs".into();
+        entry.before.dirty = "hunks=[0:current] before=abc123".into();
+        entry.outcome = OpOutcome::Success {
+            after: kagi_git::ops::StateSummary {
+                head: "staged (stage 0) before=abc123 after=def456".into(),
+                dirty: "staged (stage 0)".into(),
+            },
+        };
+        let persisted = kagi_git::oplog::entry_to_json(&entry);
+        let shown = entry_clipboard_text(&entry);
+        assert!(shown.contains(operation_label(&entry.op).as_ref()));
+        assert!(shown.contains("src/my_file.rs"));
+        assert!(!shown.contains("abc123"));
+        assert!(!shown.contains("def456"));
+        for internal in ["conflict-save:", "session=merge", "hunks=[", "stage 0"] {
+            assert!(!shown.contains(internal), "{shown}");
+        }
+        assert_eq!(
+            outcome_summary_contract(&entry.outcome),
+            "Success → staged (stage 0) before=abc123 after=def456"
+        );
+        assert_eq!(kagi_git::oplog::entry_to_json(&entry), persisted);
+    }
+
+    #[test]
+    fn stage_diagnostics_use_recorded_paths_without_rewriting_receipts() {
+        let mut entry = dummy_entry("stage");
+        entry.repo = "/tmp/work: tree".into();
+        let path = "dir/name: before=abc.rs";
+        entry.before.dirty = format!("paths: {path}");
+        entry.outcome = OpOutcome::Failed {
+            error: format!(
+                "{}: {path}: git error: index.write() failed: Permission denied",
+                entry.repo
+            ),
+        };
+        let persisted = kagi_git::oplog::entry_to_json(&entry);
+        let summary = outcome_summary(&entry);
+        assert!(summary.contains(&entry.repo));
+        assert!(summary.contains(path));
+        assert!(summary.contains("Permission denied"));
+        assert!(!summary.contains("index.write"));
+        for shown in [
+            detail_lines(&entry).join("\n"),
+            entry_clipboard_text(&entry),
+        ] {
+            assert!(shown.contains(&entry.repo));
+            assert!(shown.contains(path));
+            assert!(shown.contains("git error: index.write() failed: Permission denied"));
+        }
+        assert_eq!(kagi_git::oplog::entry_to_json(&entry), persisted);
+    }
+
+    #[test]
+    fn details_and_copy_preserve_raw_recorded_causes() {
+        let error = "Restore plan ref rows could not be decoded: invalid OID at row 42";
+        let evidence =
+            "git update-ref child 42; process termination is unconfirmed — do not retry this operation";
+        let technical = "git error: index.write() failed: Permission denied";
+        let mut entry = dummy_entry("restore-to-point");
+        entry.technical_detail = Some(technical.into());
+        for (outcome, cause) in [
+            (
+                OpOutcome::Failed {
+                    error: error.into(),
+                },
+                error,
+            ),
+            (
+                OpOutcome::Partial {
+                    after: entry.before.clone(),
+                    error: error.into(),
+                },
+                error,
+            ),
+            (
+                OpOutcome::Unknown {
+                    after: entry.before.clone(),
+                    evidence: evidence.into(),
+                },
+                evidence,
+            ),
+            (
+                OpOutcome::Refused {
+                    blockers: vec![error.into()],
+                },
+                error,
+            ),
+        ] {
+            entry.outcome = outcome;
+            let receipt = kagi_git::oplog::entry_to_json(&entry);
+            for shown in [
+                detail_lines(&entry).join("\n"),
+                entry_clipboard_text(&entry),
+            ] {
+                assert!(shown.contains(cause), "{shown}");
+                assert!(shown.contains(technical), "{shown}");
+            }
+            assert_eq!(kagi_git::oplog::entry_to_json(&entry), receipt);
+        }
+    }
+
+    #[test]
+    fn details_and_copy_expose_recorded_backup_identifiers_without_rewriting_receipt() {
+        use kagi_git::oplog::recovery::RecoveryHandle;
+
+        let oid = "1234567890abcdef1234567890abcdef12345678";
+        let reference = "refs/kagi/backups/receipt-42/file-1";
+        let path = "dir/my file;before=abc.rs";
+        for op in ["discard", "apply-suggestion"] {
+            let mut entry = dummy_entry(op);
+            entry.backup_refs = vec![reference.into()];
+            entry.recovery = vec![RecoveryHandle::file(path, oid, Some(reference.into()))];
+            let receipt = kagi_git::oplog::entry_to_json(&entry);
+            for shown in [
+                detail_lines(&entry).join("\n"),
+                entry_clipboard_text(&entry),
+            ] {
+                for data in [reference, oid, path] {
+                    assert!(shown.contains(data), "{shown}");
+                }
+                for internal in ["backup_refs:", "kind=file-backup", "oid="] {
+                    assert!(!shown.contains(internal), "{shown}");
+                }
+            }
+            assert_eq!(kagi_git::oplog::entry_to_json(&entry), receipt);
+        }
     }
 
     #[test]
@@ -605,17 +835,20 @@ mod tests {
         );
         let lines = detail_lines(&entry);
         assert!(
-            lines.contains(&"  labels:  bug, docs".to_string()),
+            lines.contains(&detail_line(P::DetailLabels, "bug, docs")),
             "{lines:?}"
         );
         assert!(
-            lines.contains(&"  assignee: hubot".to_string()),
+            lines.contains(&detail_line(P::DetailAssignees, "hubot")),
             "{lines:?}"
         );
-        assert!(entry_clipboard_text(&entry).contains("  labels:  bug, docs\n"));
+        assert!(entry_clipboard_text(&entry).contains(&detail_line(P::DetailLabels, "bug, docs")));
         assert!(!detail_lines(&dummy_entry("issue-create"))
             .iter()
-            .any(|line| line.starts_with("  labels:") || line.starts_with("  assignee:")));
+            .any(
+                |line| line.starts_with(&format!("  {}:", Msg::OplogPanel(P::DetailLabels).t()))
+                    || line.starts_with(&format!("  {}:", Msg::OplogPanel(P::DetailAssignees).t()))
+            ));
     }
 
     #[test]
@@ -652,8 +885,12 @@ mod tests {
         );
 
         entry.ref_moves = Some(Vec::new());
-        assert!(entry_clipboard_text(&entry).contains("  ref:     none moved\n"));
+        let no_moves_line_count = entry_clipboard_text(&entry).lines().count();
         entry.ref_moves = None;
+        assert_eq!(
+            no_moves_line_count,
+            entry_clipboard_text(&entry).lines().count() + 1
+        );
         assert!(
             !entry_clipboard_text(&entry).contains("ref:"),
             "not recorded: no line"
@@ -699,10 +936,17 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         // header + before + dirty + error
         assert_eq!(lines.len(), 4, "unexpected shape: {text:?}");
-        assert!(lines[0].ends_with(&format!("  checkout  Failed: {long_error}")));
-        assert_eq!(lines[1], "  before:  HEAD → main");
-        assert_eq!(lines[2], "  dirty:   clean");
-        assert_eq!(lines[3], format!("  error:   {long_error}"));
+        assert!(lines[0].ends_with(&format!(
+            "  {}  {}: {long_error}",
+            operation_label("checkout"),
+            Msg::OplogPanel(P::StatusFailed).t()
+        )));
+        assert_eq!(lines[1], detail_line(P::DetailBefore, "HEAD → main"));
+        assert_eq!(
+            lines[2],
+            detail_line(P::DetailChanges, &state_text("clean"))
+        );
+        assert_eq!(lines[3], detail_line(P::DetailError, &long_error));
     }
 
     #[test]
@@ -719,9 +963,18 @@ mod tests {
             },
         );
         let text = entry_clipboard_text(&entry);
-        assert!(text.contains("Refused (2 blockers)"), "{text}");
-        assert!(text.contains("  blocker: uncommitted changes"), "{text}");
-        assert!(text.contains("  blocker: detached HEAD"), "{text}");
+        assert!(
+            text.contains(Msg::OplogPanel(P::StatusRefused).t()),
+            "{text}"
+        );
+        assert!(
+            text.contains(&detail_line(P::DetailBlocker, "uncommitted changes")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&detail_line(P::DetailBlocker, "detached HEAD")),
+            "{text}"
+        );
     }
 
     #[test]

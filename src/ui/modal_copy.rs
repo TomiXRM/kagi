@@ -12,6 +12,7 @@ use super::types::ToastKind;
 use super::KagiApp;
 use gpui::{div, prelude::*, rgb, Context, SharedString};
 use kagi_domain::plan::OperationPlan;
+use kagi_ui_core::i18n::op::user_text::state_text;
 use kagi_ui_core::i18n::plan;
 use kagi_ui_core::i18n::{plan_note_text, plan_recovery_text, plan_title_text};
 use kagi_ui_core::tooltip::HoverTooltip as _;
@@ -136,8 +137,13 @@ pub(crate) fn plan_clipboard_text(
         out.push('\n');
     } else {
         out.push_str(&format!(
-            "\ncurrent:   {} [{}]\npredicted: {} [{}]\n",
-            current_head, plan.current.dirty, predicted_head, predicted_dirty
+            "\n{}: {} [{}]\n{}: {} [{}]\n",
+            Msg::InputStashCurrent.t(),
+            state_text(&current_head),
+            state_text(&plan.current.dirty),
+            Msg::InputStashAfter.t(),
+            state_text(&predicted_head),
+            state_text(&predicted_dirty)
         ));
     }
     for w in &plan.warnings {
@@ -272,7 +278,7 @@ pub(crate) fn plan_clipboard_text(
 
 #[cfg(test)]
 mod tests {
-    use super::plan_clipboard_text;
+    use super::{plan_clipboard_text, Msg};
 
     /// The copy button's payload must carry the **full** rows, not what the
     /// card shows: the list truncates a deep path visually (leading ellipsis),
@@ -364,7 +370,10 @@ mod tests {
             "clipboard must not carry the display ellipsis"
         );
         assert!(text.contains("a.txt"));
-        assert!(text.contains("current:"), "state summary missing:\n{text}");
+        assert!(
+            text.contains(Msg::InputStashCurrent.t()),
+            "state summary missing:\n{text}"
+        );
         assert!(
             text.contains("git cat-file -p <blob-sha>"),
             "the structured recovery command must appear verbatim:\n{text}"
@@ -413,6 +422,22 @@ mod tests {
             !text.contains("\nequivalent command:\n"),
             "a recovery command must not acquire a duplicate equivalent block: {text}"
         );
+
+        plan.current.head = "session=merge file=src/user_file.rs".into();
+        plan.current.dirty = "hunks=[] before=abc123".into();
+        plan.predicted.head = "staged (stage 0) before=abc123 after=def456".into();
+        plan.predicted.dirty = "staged (stage 0)".into();
+        let before = plan.current.clone();
+        let after = plan.predicted.clone();
+        let copied = plan_clipboard_text(&plan, &[], kagi_domain::plan_note::ShellKind::Posix);
+        assert!(copied.contains("src/user_file.rs"), "{copied}");
+        for internal in ["session=merge", "hunks=[", "stage 0"] {
+            assert!(!copied.contains(internal), "{copied}");
+        }
+        assert_eq!(plan.current.head, before.head);
+        assert_eq!(plan.current.dirty, before.dirty);
+        assert_eq!(plan.predicted.head, after.head);
+        assert_eq!(plan.predicted.dirty, after.dirty);
     }
 
     /// A no-op without blockers must not expose a stale structured command.

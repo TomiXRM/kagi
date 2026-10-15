@@ -309,7 +309,11 @@ impl KagiApp {
                 let message = Msg::HomeWorkOpenFailed
                     .t()
                     .replacen("{}", &key.1.to_string(), 1)
-                    .replacen("{}", &error.to_string(), 1);
+                    .replacen(
+                        "{}",
+                        &crate::ui::i18n::op::user_text::diagnostic(&error.to_string()),
+                        1,
+                    );
                 self.push_toast(super::ToastKind::Error, message, cx);
             }
         }
@@ -339,6 +343,9 @@ impl KagiApp {
                 app.home_github.work.opening = None;
                 app.home_github.work.version += 1;
                 cx.notify();
+                let display_reason = addressed.as_ref().err().map(|error| {
+                    crate::ui::i18n::op::user_text::diagnostic(&error.to_string()).into_owned()
+                });
                 let error = match addressed {
                     Ok(id) if id.eq_ignore_ascii_case(&key.0) => {
                         if !app.home_in_front() {
@@ -367,7 +374,13 @@ impl KagiApp {
                         .replacen("{}", &error.to_string(), 1),
                 };
                 klog!("home: open issue {}#{} refused: {error}", key.0, key.1);
-                app.push_toast(super::ToastKind::Error, error, cx);
+                let message = display_reason.map_or(error, |reason| {
+                    Msg::HomeWorkOpenFailed
+                        .t()
+                        .replacen("{}", &key.1.to_string(), 1)
+                        .replacen("{}", &reason, 1)
+                });
+                app.push_toast(super::ToastKind::Error, message, cx);
             });
         })
         .detach();

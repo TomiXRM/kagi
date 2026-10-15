@@ -607,7 +607,7 @@ pub(super) fn render_composer(
                 .flex_none()
                 .text_xs()
                 .text_color(rgb(theme().color_blocker))
-                .child(error.clone()),
+                .child(crate::ui::i18n::op::user_text::diagnostic(error).into_owned()),
         );
     }
     if let Some(error) = state.repo_error.as_ref() {
@@ -622,7 +622,7 @@ pub(super) fn render_composer(
                         .flex_1()
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
-                        .child(error.clone()),
+                        .child(crate::ui::i18n::op::user_text::diagnostic(error).into_owned()),
                 )
                 .child(
                     Button::new(SharedString::from(format!("{id}-retry-repo")))

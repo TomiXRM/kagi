@@ -8,23 +8,23 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_CONFLICTS_OBSERVATION_CHANGED: &str =
     "表示後に conflict の状態が変わりました。conflict を開き直して、操作をやり直してください。";
 pub(crate) const ADVICE_CONFLICTS_PLAN_CHANGED: &str =
-    "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。";
+    "conflict の状態が変わりました。ファイルは変更していません。もう一度操作してください。";
 pub(crate) const ADVICE_CONFLICTS_REPOSITORY_IDENTITY_CHANGED: &str =
-    "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。";
+    "別のリポジトリに切り替わりました。開き直してからやり直してください。";
 pub(crate) const ADVICE_CONFLICTS_CONFLICT_GONE: &str =
     "conflict は既に終了しています。リポジトリを再読み込みしてください。";
 pub(crate) const ADVICE_CONFLICTS_ABORT_START_UNAVAILABLE: &str =
-    "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。";
+    "中止できませんでした(何も変更していません)。この操作の開始地点が分かりません。手動で直す前にターミナルで `git status` を確認してください。";
 pub(crate) const ADVICE_CONFLICTS_ABORT_HEAD_MOVED: &str =
-    "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。";
+    "中止できませんでした: 操作開始後に HEAD が移動したため、戻すと作業が失われる可能性があります。何も変更していません。";
 pub(crate) const ADVICE_CONFLICTS_RESOLUTION_MARKERS: &str =
-    "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。";
+    "解決結果に conflict marker が残っています。削除してから保存してください。";
 pub(crate) const ADVICE_CONFLICTS_UNRESOLVED_FILES: &str =
     "{} 件が未解決です。続行前にすべて解決してください。\nfiles {}";
 pub(crate) const ADVICE_CONFLICTS_MARKER_RESIDUE: &str =
     "conflict marker が残っています。続行前にすべて削除してください。\nfiles {}";
 pub(crate) const ADVICE_CONFLICTS_INDEX_UNMERGED: &str =
-    "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}";
+    "ここに表示されていない未 merge のファイルがあります: {}。リポジトリを再読み込みしてください。";
 pub(crate) const ADVICE_CONFLICTS_BINARY_UNRESOLVED: &str =
     "バイナリ conflict の採用側が未選択です。\nfiles {}";
 pub(crate) const ADVICE_CONFLICTS_DELETION_UNDECIDED: &str = "保持か削除かが未決定です。\nfiles {}";
@@ -33,9 +33,9 @@ pub(crate) const ADVICE_CONFLICTS_EMPTY_MERGE_MESSAGE: &str =
 pub(crate) const ADVICE_CONFLICTS_NO_CONFLICTING_FILES_DETECTED: &str =
     "conflict ファイルはありません。続行すると操作はそのまま完了します。";
 pub(crate) const ADVICE_CONFLICTS_PARTIAL_RESOLUTIONS_PRESERVED: &str =
-    "部分的な解決内容は autosave と oplog に保存されます。破棄されません。";
+    "途中までの解決内容は保持され、破棄されません。";
 pub(crate) const ADVICE_CONFLICTS_SKIP_DISCARDS_STEP: &str =
-    "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。";
+    "Skip するとこの commit の変更は適用されません。途中までの解決内容は保持されます。";
 
 /// Japanese rendering of one conflicts note.
 pub fn note_ja(note: &ConflictsNote) -> String {
@@ -87,6 +87,72 @@ pub fn note_ja(note: &ConflictsNote) -> String {
         }
         ConflictsNote::SkipDiscardsStep => {
             super::advice_text(Msg::AdviceConflictsSkipDiscardsStep, &[])
+        }
+    }
+}
+
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &ConflictsNote) -> String {
+    match note {
+        ConflictsNote::PlanChanged => "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。".to_string(),
+        ConflictsNote::RepositoryIdentityChanged => "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。".to_string(),
+        ConflictsNote::AbortStartUnavailable => "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。".to_string(),
+        ConflictsNote::AbortHeadMoved => "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。".to_string(),
+        ConflictsNote::ResolutionMarkers => "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。".to_string(),
+        ConflictsNote::IndexUnmerged { files } => format!(
+            "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles {}",
+            files.join(", ")
+        ),
+        ConflictsNote::PartialResolutionsPreserved => "部分的な解決内容は autosave と oplog に保存されます。破棄されません。".to_string(),
+        ConflictsNote::SkipDiscardsStep => "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn changed_notes_preserve_legacy_bytes_and_raw_payloads() {
+        let cases = [
+            (
+                ConflictsNote::PlanChanged,
+                "計画後に conflict の状態が変わりました。ファイルは変更していません。操作を選び直して、最新の計画を確認してください。",
+            ),
+            (
+                ConflictsNote::RepositoryIdentityChanged,
+                "計画後にリポジトリの識別情報が変わりました。リポジトリを開き直して、操作をやり直してください。",
+            ),
+            (
+                ConflictsNote::AbortStartUnavailable,
+                "中止を拒否しました。操作の開始記録から sequence 開始前の HEAD を確認できません。リポジトリは変更していません。手動で復旧する前に sequencer の状態を確認してください。",
+            ),
+            (
+                ConflictsNote::AbortHeadMoved,
+                "中止を拒否しました。sequence 開始後に HEAD が移動したため、巻き戻しません。現在の HEAD は sequencer の安全な復元基準と一致しません。リポジトリは変更していません。",
+            ),
+            (
+                ConflictsNote::ResolutionMarkers,
+                "解決用バッファーに conflict marker が残っています。すべて削除してから保存してください。",
+            ),
+            (
+                ConflictsNote::IndexUnmerged {
+                    files: vec!["日本語/{}".into(), "raw\npath".into()],
+                },
+                "index にこのセッションが把握していない未 merge エントリがあります。リポジトリを再スキャンしてください。\nfiles 日本語/{}, raw\npath",
+            ),
+            (
+                ConflictsNote::PartialResolutionsPreserved,
+                "部分的な解決内容は autosave と oplog に保存されます。破棄されません。",
+            ),
+            (
+                ConflictsNote::SkipDiscardsStep,
+                "Skip は現在ステップの変更を破棄します。conflict を起こした commit は適用されません。部分的な解決内容は autosave に保存されます。",
+            ),
+        ];
+        for (note, expected) in cases {
+            assert_eq!(note_ja_contract(&note), expected);
         }
     }
 }

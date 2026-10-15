@@ -151,8 +151,42 @@ pub fn scenario_remove_public_boundary(cx: &mut VisualTestAppContext) {
         refuse_remove_from_own_tab(cx);
         refused_locked_remove(cx);
         partial_submodule_refusal_toast(cx);
+        remove_planning_error_is_localized(cx);
     }
     i18n::set_lang(previous);
+}
+
+fn remove_planning_error_is_localized(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    let index_path = fixture.path().join(".git/index");
+    let index = std::fs::read(&index_path).unwrap();
+    std::fs::write(&index_path, b"invalid index for planning error").unwrap();
+    app.update(cx, |app, cx| {
+        app.open_remove_worktree_modal("main".into(), false, cx)
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        cx.run_until_parked();
+        if cx.read(|cx| e2e::app_notice_message(app.read(cx)).is_some()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "planning error did not reach its notice"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    std::fs::write(&index_path, index).unwrap();
+    cx.read(|cx| {
+        let state = app.read(cx);
+        let notice = e2e::app_notice_message(state).unwrap();
+        for internal in [" plan failed:", " の plan に失敗しました:", "session unavailable"] {
+            assert!(!notice.contains(internal), "{notice}");
+        }
+        assert!(matches!(&state.status_footer, kagi::ui::FooterStatus::Failed(message) if message.as_ref() == notice));
+    });
+    unmount(cx, app, window);
 }
 
 fn wait_idle(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {

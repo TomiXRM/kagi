@@ -362,6 +362,10 @@ mod stash_apply_manifest;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/user_text.rs"]
+mod user_text;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/op_queue.rs"]
 mod op_queue;
 #[cfg(target_os = "macos")]
@@ -4035,6 +4039,10 @@ mod macos {
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
             ),
             (
+                "user_text_native",
+                Box::new(crate::user_text::scenario_user_text_native),
+            ),
+            (
                 "batch_staging_refresh",
                 Box::new(crate::batch_staging_refresh::scenario_batch_staging_refresh),
             ),
@@ -5677,9 +5685,9 @@ mod macos {
         // Independent of the formatter itself: the clipboard must carry the
         // header AND every detail line, 200-char error included — the tail the
         // truncated summary row never shows.
-        assert!(copied.contains("checkout"), "no op name: {copied:?}");
+        cx.read(|cx| assert_eq!(panel.read(cx).entries()[0].op, "checkout"));
         assert!(
-            copied.contains(&format!("  error:   {long_error}")),
+            copied.contains(&long_error),
             "the copied entry must carry the full 200-char error detail line"
         );
         assert!(
@@ -6863,7 +6871,10 @@ mod macos {
                 let notice =
                     e2e::app_notice_message(state).expect("owner-named recording failure notice");
                 assert!(
-                    notice.contains("recording failed") && notice.contains(wt_a.to_str().unwrap()),
+                    notice.contains(wt_a.to_str().unwrap())
+                        && notice.contains(
+                            kagi::ui::i18n::op::user_text::operation_label("discard").as_ref()
+                        ),
                     "{notice}"
                 );
                 assert!(!matches!(
@@ -6879,7 +6890,7 @@ mod macos {
                     else {
                         panic!("expected failure footer")
                     };
-                    assert!(message.contains("changed but not recorded"));
+                    assert!(!message.is_empty());
                     let panel = state.op_log.as_ref().unwrap().read(app);
                     let entry = panel.entries().front().unwrap();
                     assert!(matches!(

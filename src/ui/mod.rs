@@ -1726,6 +1726,11 @@ impl KagiApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(stack) = self.toast_stack.clone() {
+            let message = message.into();
+            let message = match i18n::op::user_text::diagnostic(&message) {
+                std::borrow::Cow::Borrowed(_) => message,
+                std::borrow::Cow::Owned(display) => display.into(),
+            };
             stack.update(cx, |stack, cx| stack.push_notify(kind, message, cx));
         }
     }
@@ -2774,10 +2779,9 @@ impl KagiApp {
                     branch_name,
                     target.short()
                 );
-                self.status_footer = FooterStatus::Idle(SharedString::from(format!(
-                    "Cannot jump to '{}': commit is outside the loaded window",
-                    branch_name
-                )));
+                self.status_footer = FooterStatus::Idle(
+                    i18n::op::user_text::branch_tip_not_loaded(branch_name).into(),
+                );
                 return;
             }
         };
@@ -2808,10 +2812,9 @@ impl KagiApp {
                     "[kagi] jump: commit {} is outside the 10k window — cannot jump",
                     target.short()
                 );
-                self.status_footer = FooterStatus::Idle(SharedString::from(format!(
-                    "Cannot jump: commit {} is outside the loaded window",
-                    target.short()
-                )));
+                self.status_footer = FooterStatus::Idle(
+                    i18n::op::user_text::commit_not_loaded(target.short()).into(),
+                );
                 return;
             }
         };

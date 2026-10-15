@@ -173,9 +173,9 @@ impl KagiApp {
                             // and that holds for a *child*'s receipt too: the
                             // success footer must not paper over any of them.
                             if !recording_failed {
-                                app.status_footer = FooterStatus::Success(SharedString::from(
-                                    format!("pull: {summary}"),
-                                ));
+                                app.status_footer = FooterStatus::Success(
+                                    i18n::op::user_text::operations::pull_summary(summary).into(),
+                                );
                             }
                         }
                         PullPresentation::Failed { error }
@@ -242,10 +242,7 @@ impl KagiApp {
         if !matches!(entry.outcome, kagi_git::oplog::OpOutcome::Success { .. }) {
             // #353: a refusal names its first blocker, not a count.
             let shown = crate::ui::operations::record::refused_display(&entry.op, &entry.outcome)
-                .unwrap_or_else(|| {
-                    let summary = crate::ui::oplog_panel::outcome_summary(&entry.outcome);
-                    format!("{}: {}", entry.op, summary)
-                });
+                .unwrap_or_else(|| crate::ui::operations::outcome_text(&entry.op, &entry.outcome));
             self.push_toast(ToastKind::Error, format!("{} — {}", entry.repo, shown), cx);
         }
         self.insert_recorded_row(recording, cx);

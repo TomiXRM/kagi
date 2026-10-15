@@ -1272,7 +1272,9 @@ pub fn scenario_conflict_merge_failure_contract(cx: &mut VisualTestAppContext) {
                 assert!(matches!(state.status_footer, kagi::ui::FooterStatus::Failed(_)));
                 assert!(state.bottom_panel_open);
                 assert!(state.toast_stack.as_ref().unwrap().read(cx).toasts()
-                    .iter().any(|toast| toast.message.as_ref().contains("merge-continue")));
+                    .iter().any(|toast| toast.kind == kagi::ui::ToastKind::Error
+                        && !toast.message.is_empty()
+                        && !toast.message.contains("merge-continue")));
             }
         });
         assert_eq!(

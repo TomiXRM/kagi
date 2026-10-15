@@ -51,7 +51,7 @@ fn detail_status(app: &KagiApp) -> Option<AnyElement> {
     if let Some(message) = ui.github_issue_detail_error.as_deref() {
         Some(status(
             "issue-mode-detail-error",
-            safe_text(message),
+            safe_text(&crate::ui::i18n::op::user_text::diagnostic(message)),
             theme().color_blocker,
         ))
     } else if ui.github_issue_detail_loading == ui.selected_github_issue {

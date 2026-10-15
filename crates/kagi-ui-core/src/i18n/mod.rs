@@ -346,9 +346,6 @@ pub enum Msg {
     BusyDeleteBranch,
     BusyDeleteBranchPlan,
     BusyDiscard,
-    /// Footer label when a discard mutated the working tree but did not finish
-    /// (issue #281). The backup blob SHAs are in the oplog entry.
-    DiscardPartial,
     BusyCommit,
     BusyCreateWorktree,
     /// Footer label while a worktree removal runs off the main thread (issue
@@ -1931,7 +1928,7 @@ impl Msg {
     }
 
     pub(crate) fn t_for(self, language: Lang) -> &'static str {
-        use kagi_domain::advice_template_en as advice_en;
+        use kagi_domain::advice_template_display_en as advice_en;
         use kagi_domain::plan_note::{push::PushPunct, UntrackedCtx};
         use Lang::{En, Ja};
         use Msg::*;
@@ -2021,19 +2018,19 @@ impl Msg {
             (En, NothingToSave) => "No editable unsaved file",
             (Ja, NothingToSave) => "保存できる未保存のファイルがありません",
             (language, OplogPanel(key)) => key.t_for(language),
-            (En, RestoreRepoSessionUnavailable) => "repo session unavailable",
-            (Ja, RestoreRepoSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, RestoreRepoSessionUnavailable) => "The repository is no longer open. Reopen it and try again.",
+            (Ja, RestoreRepoSessionUnavailable) => "リポジトリが開かれていません。開き直してからやり直してください。",
             (En, RestorePlanRowsInvalidSeeLog) => {
-                "Restore plan ref rows are invalid; see the Operation Log"
+                "Can't restore: this Operation Log entry is damaged. See the Operation Log for details."
             }
             (Ja, RestorePlanRowsInvalidSeeLog) => {
-                "復元計画の ref 行が不正です。詳細は Operation Log を確認してください"
+                "復元できません: この操作記録が破損しています。詳細は操作ログを確認してください。"
             }
             (En, RestorePlanRowsInvalidNoRepository) => {
-                "Restore plan ref rows are invalid; no repository is open"
+                "Can't restore: this Operation Log entry is damaged. No repository is open."
             }
             (Ja, RestorePlanRowsInvalidNoRepository) => {
-                "復元計画の ref 行が不正です。リポジトリは開かれていません"
+                "復元できません: この操作記録が破損しています。リポジトリが開かれていません。"
             }
             (En, AdviceUntrackedRemain(ctx)) => match ctx {
                 UntrackedCtx::AfterCheckout => advice_en!(UntrackedAfterCheckout),
@@ -2450,8 +2447,8 @@ impl Msg {
             (En, RulesetBadgeTooltip) => "This may violate the branch ruleset:",
             (Ja, RulesetBadgeTooltip) => "branch の ruleset に違反する可能性があります:",
 
-            (En, ShortcutsRemapHelp) => "Remap in ~/.kagi/settings.json: \"keybinding.<command id>\": \"secondary-shift-b\" (\"\" = unbind); restart to apply.",
-            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\": \"secondary-shift-b\" で変更できます（\"\" は割り当て解除）。再起動すると反映されます。",
+            (En, ShortcutsRemapHelp) => "In ~/.kagi/settings.json, set \"keybinding.<command id>\" to a key combination; for example, \"keybinding.view.toggleSidebar\": \"secondary-shift-b\". Separate modifiers and the key with hyphens (secondary = ⌘ on macOS, Ctrl elsewhere). Use \"\" to unbind, then restart Kagi.",
+            (Ja, ShortcutsRemapHelp) => "~/.kagi/settings.json の \"keybinding.<command id>\" にキーの組み合わせを設定します。例: \"keybinding.view.toggleSidebar\": \"secondary-shift-b\"。修飾キーとキーはハイフンで区切ります(secondary は macOS では ⌘、その他では Ctrl)。\"\" で割り当てを解除できます。変更後は Kagi を再起動してください。",
             // ── Generic guards ──────────────────────────────────────
             (En, AppNoticeDismiss) => "Dismiss",
             (En, ToastDismiss) => "Dismiss notification",
@@ -2467,26 +2464,26 @@ impl Msg {
             (En, AppNoticeTitle) => "Operation notice",
             (Ja, AppNoticeTitle) => "操作に関する通知",
             (En, AppNoticeDetailsInOpLog) => "View and copy operation details in Operation Log.",
-            (Ja, AppNoticeDetailsInOpLog) => "Operation Log で操作の詳細を確認・コピーできます。",
+            (Ja, AppNoticeDetailsInOpLog) => "操作ログで操作の詳細を確認・コピーできます。",
             (En, AppReconcileInspect) => "Inspect current state",
             (Ja, AppReconcileInspect) => "現在の状態を照会",
-            (En, AppReconcileConfirm) => "Acknowledge observation",
-            (Ja, AppReconcileConfirm) => "照会結果を確認",
-            (En, AppReconcileAcknowledge) => "Execution stopped. Acknowledge this read-only observation to allow a new plan (no operation is retried).",
-            (Ja, AppReconcileAcknowledge) => "実行は停止済みです。この照会結果を確認すると新しい計画を作成できます（操作は再実行しません）。",
-            (En, AppReconcileUnobservable) => "Execution stopped, but Kagi has not verified the result on the remote. Releasing this block keeps the original outcome Unknown and allows a new plan; it does not retry the operation.",
-            (Ja, AppReconcileUnobservable) => "実行は停止済みですが、remote 側の結果を Kagi は確認していません。この制限を解放しても元の結果は Unknown のままで、新しい計画を作成できるだけです。操作は再実行しません。",
-            (En, AppReconcileArmRelease) => "Review release without verification",
-            (Ja, AppReconcileArmRelease) => "未確認のまま解放する内容を確認",
-            (En, AppReconcileReleaseUnobservable) => "Release without remote verification",
-            (Ja, AppReconcileReleaseUnobservable) => "remote 未確認のまま解放",
-            (En, AppReconcileReleaseArmed) => "Confirm again to record your acknowledgement and release the block. Kagi has not verified the result on the remote.",
-            (Ja, AppReconcileReleaseArmed) => "もう一度確定すると、了承を記録して制限を解放します。remote 側の結果を Kagi は確認していません。",
+            (En, AppReconcileConfirm) => "I've checked",
+            (Ja, AppReconcileConfirm) => "確認しました",
+            (En, AppReconcileAcknowledge) => "The operation stopped. Confirm you have checked the current state to continue. Nothing is retried.",
+            (Ja, AppReconcileAcknowledge) => "操作は停止しました。現在の状態を確認したら続行できます。再実行はしません。",
+            (En, AppReconcileUnobservable) => "The operation stopped, but Kagi couldn't confirm what happened on the remote. You can continue without checking; nothing is retried.",
+            (Ja, AppReconcileUnobservable) => "操作は停止しましたが、remote 側の結果を確認できていません。確認せずに続行できます。再実行はしません。",
+            (En, AppReconcileArmRelease) => "Review continuing without checking",
+            (Ja, AppReconcileArmRelease) => "未確認のまま続行する内容を確認",
+            (En, AppReconcileReleaseUnobservable) => "Continue without checking the remote",
+            (Ja, AppReconcileReleaseUnobservable) => "remote を確認せずに続行",
+            (En, AppReconcileReleaseArmed) => "Click again to continue without checking the remote. Nothing is retried.",
+            (Ja, AppReconcileReleaseArmed) => "もう一度押すと、remote を確認せずに続行します。再実行はしません。",
             (Ja, AppNoticeDismiss) => "閉じる",
             (En, OpInProgress) => "another operation is in progress",
             (Ja, OpInProgress) => "別の操作が実行中です",
-            (En, CheckoutStashCannotQueue) => "Cannot queue stash + checkout during another write: they require two writes. Try again when it finishes.",
-            (Ja, CheckoutStashCannotQueue) => "ほかの書き込み中は stash + checkout をキューに入れられません。2 回の書き込みが必要です。完了後にやり直してください。",
+            (En, CheckoutStashCannotQueue) => "Can't stash and switch while another operation is running. Try again when it finishes.",
+            (Ja, CheckoutStashCannotQueue) => "別の操作の実行中は stash して切り替えできません。完了後にやり直してください。",
             (En, SlowWriteNetwork) => "network: waiting for the remote",
             (Ja, SlowWriteNetwork) => "network: remote の応答を待っています",
             (En, SlowWriteRebase) => "rebase: replaying commits",
@@ -2509,10 +2506,10 @@ impl Msg {
             (Ja, SlowWriteLocal) => "ローカルの repository データを書き込み中",
             (En, SlowWriteGeneric) => "operation in progress",
             (Ja, SlowWriteGeneric) => "処理中",
-            (En, TransportRetryHeld) => "Retry is disabled because the operation may have changed remote state. Inspect it before restarting Kagi.",
-            (Ja, TransportRetryHeld) => "remote の状態が変わった可能性があるため、再実行を停止しています。状態を確認してから Kagi を再起動してください。",
-            (En, RemoteOpAwaitingCompletion) => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
-            (Ja, RemoteOpAwaitingCompletion) => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
+            (En, TransportRetryHeld) => "Retry is turned off because this may already have changed the remote. Check the remote before trying again.",
+            (Ja, TransportRetryHeld) => "remote が既に変わっている可能性があるため、再実行できません。remote を確認してからやり直してください。",
+            (En, RemoteOpAwaitingCompletion) => "Kagi can't confirm yet whether this remote operation finished. Don't retry it; check the remote first.",
+            (Ja, RemoteOpAwaitingCompletion) => "この remote 操作が完了したかまだ確認できていません。再実行せず、先に remote を確認してください。",
             (En, NoRepoOpen) => "no repository is open",
             (Ja, NoRepoOpen) => "リポジトリが開かれていません",
             (En, NoCommitSelected) => "no commit selected",
@@ -2561,8 +2558,8 @@ impl Msg {
             // ── Placeholders ────────────────────────────────────────
             (En, MultiWindowUnsupported) => "multiple windows are not supported",
             (Ja, MultiWindowUnsupported) => "複数ウィンドウは未対応です",
-            (En, ResetUnimplemented) => "reset is not implemented (ADR-0024)",
-            (Ja, ResetUnimplemented) => "reset は未実装です (ADR-0024)",
+            (En, ResetUnimplemented) => "Reset is not available yet",
+            (Ja, ResetUnimplemented) => "reset はまだ利用できません",
             (En, FinishDialogFirst) => "Finish or dismiss the open dialog first",
             (Ja, FinishDialogFirst) => "開いているダイアログを完了するか閉じてください",
 
@@ -2603,8 +2600,6 @@ impl Msg {
             (Ja, BusyDeleteBranchPlan) => "delete branch 計画中…",
             (En, BusyDiscard) => "discard in progress…",
             (Ja, BusyDiscard) => "discard 実行中…",
-            (En, DiscardPartial) => "discard only partially applied (backup blobs are in the oplog)",
-            (Ja, DiscardPartial) => "discard は一部しか適用されていません (backup blob は oplog に記録済み)",
             (En, BusyCommit) => "commit in progress…",
             (Ja, BusyCommit) => "commit 実行中…",
             (En, BusyCreateWorktree) => "create worktree in progress…",
@@ -2635,8 +2630,8 @@ impl Msg {
             (Ja, WorktreeUnborn) => "不明: HEAD に commit がありません",
             (En, WorktreeUpstreamUnavailable) => "Unknown: upstream has not been fetched",
             (Ja, WorktreeUpstreamUnavailable) => "不明: upstream が未取得です",
-            (En, WorktreeObservationFailed) => "Unknown: observation failed",
-            (Ja, WorktreeObservationFailed) => "不明: 観測に失敗しました",
+            (En, WorktreeObservationFailed) => "Unknown: couldn't read this worktree",
+            (Ja, WorktreeObservationFailed) => "不明: worktree の状態を読み取れませんでした",
             (En, WorktreeSafeShort) => "Git-safe",
             (Ja, WorktreeSafeShort) => "Git条件OK",
             (En, WorktreeKeepShort) => "Keep",
@@ -2688,8 +2683,8 @@ impl Msg {
             (Ja, WorktreeLockReview) => "ロック内容を確認…",
             (En, TerminalAutoLockPendingRelease) => "Confirm the terminal worktree unlock or unlock it manually before restarting the shell",
             (Ja, TerminalAutoLockPendingRelease) => "terminal の worktree ロック解除を確認するか、手動で解除してから shell を再起動してください",
-            (En, TerminalAutoLockStaleOwner) => "Terminal lock owner, shell, or repository changed; recover the lock manually",
-            (Ja, TerminalAutoLockStaleOwner) => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
+            (En, TerminalAutoLockStaleOwner) => "This lock no longer belongs to this terminal. Unlock it manually.",
+            (Ja, TerminalAutoLockStaleOwner) => "このロックはこの terminal のものではなくなりました。手動で解除してください。",
             (En, TerminalNotStartedTitle) => "Shell not started",
             (Ja, TerminalNotStartedTitle) => "shell は未起動です",
             (En, TerminalExitedTitle) => "Shell exited",
@@ -2728,10 +2723,10 @@ impl Msg {
             (Ja, AlreadyUpToDatePush) => "すでに最新です。push するものはありません",
             (En, PullUpstreamChangedDuringFetch) => "Pull upstream changed during fetch; request Pull again",
             (Ja, PullUpstreamChangedDuringFetch) => "fetch 中に Pull の upstream が変わりました。もう一度 Pull してください。",
-            (En, PullAutoStashIdentityChanged) => "The approved Pull target changed (branch, local tip, remote or upstream). Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
-            (Ja, PullAutoStashIdentityChanged) => "確認後に Pull の branch・先端・remote・upstream が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の内容を確認してください。",
-            (En, PullAutoStashPlanStale) => "The working tree changed after this confirmation was shown, so the paths Kagi would stash — and what restoring them would do — are no longer the ones you approved. Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
-            (Ja, PullAutoStashPlanStale) => "確認を表示した後に working tree が変わったため、stash 対象と復元結果が承認内容と一致しません。stash も pull も実行していません。Pull をもう一度押すと最新の確認を表示します。",
+            (En, PullAutoStashIdentityChanged) => "The branch or its remote changed after you confirmed. Nothing was stashed or pulled; press Pull again.",
+            (Ja, PullAutoStashIdentityChanged) => "確認後に branch または remote が変わりました。stash も pull もしていません。もう一度 Pull を押してください。",
+            (En, PullAutoStashPlanStale) => "Your files changed after you confirmed. Nothing was stashed or pulled; press Pull again.",
+            (Ja, PullAutoStashPlanStale) => "確認後にファイルが変わりました。stash も pull もしていません。もう一度 Pull を押してください。",
             (En, PullAutoStashRestoreChanged) => "The stash restore preview changed after confirmation. Nothing was stashed or pulled; press Pull again to review the new restore preview.",
             (Ja, PullAutoStashRestoreChanged) => "確認後に stash の復元予測が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の復元予測を確認してください。",
 
@@ -2742,9 +2737,9 @@ impl Msg {
             (Ja, PullDetached) => "Pull: detached HEAD です。branch に切り替えてください",
             (En, PullUnborn) => "Pull: no commits yet — no upstream",
             (Ja, PullUnborn) => "Pull: commit も upstream もまだありません",
-            (En, PullNoUpstream) => "Pull: no upstream is configured (no upstream)",
+            (En, PullNoUpstream) => "Pull: no upstream branch is set",
             (Ja, PullNoUpstream) => "Pull: upstream が設定されていません",
-            (En, PullNothing) => "Pull: nothing to pull (behind=0)",
+            (En, PullNothing) => "Pull: already up to date",
             (Ja, PullNothing) => "Pull: pull する変更がありません",
             (En, PushBusy) => "Push: another operation is in progress",
             (Ja, PushBusy) => "Push: 別の操作が実行中です",
@@ -2754,7 +2749,7 @@ impl Msg {
             (Ja, PushUnborn) => "Push: commit も upstream もまだありません",
             (En, PushNoRemote) => "Push: no upstream and no remote configured",
             (Ja, PushNoRemote) => "Push: upstream も remote も設定されていません",
-            (En, PushNothing) => "Push: nothing to push (ahead=0)",
+            (En, PushNothing) => "Push: nothing to push",
             (Ja, PushNothing) => "Push: push する変更がありません",
             (En, StashClean) => "Stash: working tree is clean — nothing to stash",
             (Ja, StashClean) => "working tree に stash する変更がありません",
@@ -2797,8 +2792,8 @@ impl Msg {
             (Ja, CmDetachedHead) => "detached HEAD",
             (En, CmSameAsHead) => "same as HEAD",
             (Ja, CmSameAsHead) => "HEAD と同一",
-            (En, CmMergeUnsupported) => "merge commit is out of MVP scope",
-            (Ja, CmMergeUnsupported) => "merge commit は MVP 対象外",
+            (En, CmMergeUnsupported) => "Not available for merge commits",
+            (Ja, CmMergeUnsupported) => "merge commit には使えません",
             (En, CmAlreadyInBranch) => "already in the current branch",
             (Ja, CmAlreadyInBranch) => "既に現在 branch に含まれています",
             (En, CmNotInBranch) => "not in the current branch",
@@ -2813,12 +2808,12 @@ impl Msg {
             (Ja, CmResetUnneeded) => "不要(HEAD と同一)",
             (En, CmNoCurrentBranch) => "no current branch",
             (Ja, CmNoCurrentBranch) => "現在 branch がありません",
-            (En, CmResetUnimplemented) => "reset is not implemented in MVP",
-            (Ja, CmResetUnimplemented) => "MVP では reset は未実装",
+            (En, CmResetUnimplemented) => "Reset is not available yet",
+            (Ja, CmResetUnimplemented) => "reset はまだ利用できません",
             (En, BcmBusy) => "another operation is in progress",
             (Ja, BcmBusy) => "別の操作が実行中です",
-            (En, BcmNotImplementedYet) => "not implemented yet",
-            (Ja, BcmNotImplementedYet) => "未実装です",
+            (En, BcmNotImplementedYet) => "Not available here yet",
+            (Ja, BcmNotImplementedYet) => "ここではまだ利用できません",
             (En, BcmCurrentBranch) => "current branch",
             (Ja, BcmCurrentBranch) => "現在 branch",
             (En, BcmLocalOnly) => "local branches only",
@@ -2985,8 +2980,8 @@ impl Msg {
             (Ja, EditorAllResolved) => "すべての hunk を解決しました",
             (En, EditorUnresolvedHunks) => "hunk(s) still unresolved",
             (Ja, EditorUnresolvedHunks) => "件の hunk が未解決です",
-            (En, EditorSavedResolved) => "Saved. File marked as a resolved candidate.",
-            (Ja, EditorSavedResolved) => "保存しました。ファイルを resolved candidate にしました。",
+            (En, EditorSavedResolved) => "Saved. File marked as resolved.",
+            (Ja, EditorSavedResolved) => "保存しました。ファイルを解決済みにしました。",
             (En, EditorNoTextMerge) => "No text merge is available for this file (binary or single-sided). Use the conflict list to choose a side.",
             (Ja, EditorNoTextMerge) => "このファイルはテキスト merge できません(binary / 片側のみ)。conflict 一覧で側を選択してください。",
             // ── T-CONFLICT-UI/UX: 3-pane editor controls ──
@@ -3024,8 +3019,8 @@ impl Msg {
             (Ja, ConflictRoleCurrent) => "現在の側",
             (En, ConflictRoleIncoming) => "Incoming",
             (Ja, ConflictRoleIncoming) => "取り込む側",
-            (En, ConflictGitTermHint) => "internal git stage",
-            (Ja, ConflictGitTermHint) => "内部 git stage",
+            (En, ConflictGitTermHint) => "Side of the conflict",
+            (Ja, ConflictGitTermHint) => "conflict の側",
             (En, ConflictConflictedCount) => "conflicted",
             (Ja, ConflictConflictedCount) => "conflicted",
             (En, ConflictResolvedCount) => "resolved",
@@ -3070,8 +3065,8 @@ impl Msg {
             (Ja, ConflictBlockerBinary) => "binary conflict の側が未選択です。",
             (En, ConflictBlockerDeletion) => "A keep-or-delete decision is still pending.",
             (Ja, ConflictBlockerDeletion) => "keep / delete の判断が未了です。",
-            (En, ConflictBlockerIndex) => "The index still has untracked unmerged entries.",
-            (Ja, ConflictBlockerIndex) => "index に未追跡の unmerged エントリが残っています。",
+            (En, ConflictBlockerIndex) => "Some unmerged files are not shown in this list. Refresh the repository.",
+            (Ja, ConflictBlockerIndex) => "一覧に表示されていない未 merge のファイルがあります。リポジトリを再読み込みしてください。",
             (En, ConflictBlockerMessage) => "The merge commit message is empty.",
             (Ja, ConflictBlockerMessage) => "merge commit のメッセージが空です。",
             (En, ConflictBlockerChecklist) => "A commit checklist rule is blocking continue.",
@@ -3337,10 +3332,10 @@ impl Msg {
                 "GitHub の一覧を更新できませんでした(前回の一覧を表示しています): {}"
             }
             (En, HomeGithubFailedHint) => {
-                "Kagi reads this list with the GitHub CLI. Check `gh auth status` in a terminal, then Refresh."
+                "Check that the GitHub CLI is signed in (`gh auth status`), then Refresh."
             }
             (Ja, HomeGithubFailedHint) => {
-                "この一覧は GitHub CLI で読み込みます。ターミナルで `gh auth status` を確認してから再読み込みしてください。"
+                "GitHub CLI にサインインしているか(`gh auth status`)確認してから再読み込みしてください。"
             }
             (En, HomeGithubSectionEmpty) => "No repositories to display for {owner} on {host}.",
             (Ja, HomeGithubSectionEmpty) => "{host} の {owner} には表示できるリポジトリがありません。",
@@ -3583,8 +3578,8 @@ impl Msg {
             (Ja, PrFetchStale) => "前回取得できた一覧を表示しています(最新の取得は失敗しました)。",
             (En, PrFetchAuth) => "GitHub authentication failed — run `gh auth login`.",
             (Ja, PrFetchAuth) => "GitHub の認証に失敗しました(`gh auth login` を実行してください)。",
-            (En, PrFetchNetwork) => "Couldn't reach GitHub — network or transport failure.",
-            (Ja, PrFetchNetwork) => "GitHub に接続できませんでした(ネットワーク/通信の失敗)。",
+            (En, PrFetchNetwork) => "Couldn't reach GitHub. Check your network connection.",
+            (Ja, PrFetchNetwork) => "GitHub に接続できませんでした。ネットワーク接続を確認してください。",
             (En, PrFetchInvalid) => "GitHub returned a response kagi could not read.",
             (Ja, PrFetchInvalid) => "GitHub の応答を解析できませんでした。",
             (En, PrFetchUnknown) => "The GitHub fetch failed for an unknown reason.",
@@ -3795,10 +3790,10 @@ impl Msg {
             (En, SettingsTerminalAutoLock) => "Lock worktree while the terminal is open",
             (Ja, SettingsTerminalAutoLock) => "terminal を開いている間 worktree をロック",
             (En, SettingsTerminalAutoLockDesc) => {
-                "When the embedded terminal starts in a linked worktree, offer to place a Kagi-owned `git worktree lock` (confirmed each time), and offer to release it when the shell exits. Locks placed by hand are never touched. macOS / Linux only."
+                "When the terminal opens in a linked worktree, offer to lock that worktree and to unlock it when the shell exits. Locks you added yourself are left alone. macOS / Linux only."
             }
             (Ja, SettingsTerminalAutoLockDesc) => {
-                "linked worktree で埋め込み terminal を起動したとき、Kagi 所有の `git worktree lock` を(毎回確認のうえ)提案し、shell 終了時に解除を提案します。手動のロックには触れません。macOS / Linux のみ。"
+                "linked worktree で terminal を開いたときにロックを提案し、shell 終了時に解除を提案します。自分で付けたロックはそのままです。macOS / Linux のみ。"
             }
             (En, SettingsInterfaceLang) => "Interface language",
             (Ja, SettingsInterfaceLang) => "表示言語",
@@ -3812,10 +3807,10 @@ impl Msg {
             // ── Analyze ignore section (ADR-0119) ────────────────────
             (En, SettingsAnalyzeIgnore) | (Ja, SettingsAnalyzeIgnore) => "Analyze ignore",
             (En, SettingsAnalyzeIgnoreDesc) => {
-                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Saved to the analyze_ignore file. Reload the repository to apply."
+                "Files matching these patterns are excluded from Analyze (Hotspots / Coupling / Ownership). One pattern per line, .gitignore syntax — wildcards (* ** ?) and negation (!) work. Reload the repository to apply."
             }
             (Ja, SettingsAnalyzeIgnoreDesc) => {
-                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。analyze_ignore ファイルに保存されます。反映にはリポジトリの再読み込みが必要です。"
+                "これらのパターンに一致するファイルは Analyze(Hotspots / Coupling / Ownership)から除外されます。1 行 1 パターン、.gitignore と同じ書式でワイルドカード(* ** ?)や否定(!)が使えます。反映にはリポジトリの再読み込みが必要です。"
             }
             (En, SettingsAnalyzeIgnoreSave) => "Save",
             (Ja, SettingsAnalyzeIgnoreSave) => "保存",
@@ -3831,8 +3826,8 @@ impl Msg {
             (Ja, SettingsAnalyzeIgnoreClean) => "保存済み",
             (En, SettingsAnalyzeResetTitle) => "Discard changes and reset Analyze ignore?",
             (Ja, SettingsAnalyzeResetTitle) => "変更を破棄して Analyze ignore をリセットしますか？",
-            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. The default patterns will replace the editor contents and the saved analyze_ignore file.",
-            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。編集内容と保存済みの analyze_ignore ファイルをデフォルトのパターンに置き換えます。",
+            (En, SettingsAnalyzeResetDetail) => "Your unsaved patterns will be discarded. Your Analyze ignore patterns will be replaced with the defaults.",
+            (Ja, SettingsAnalyzeResetDetail) => "未保存のパターンは破棄されます。Analyze ignore のパターンを既定値に置き換えます。",
 
             // ── Smart Commit section (ADR-0090 / ADR-0099) ───────────
             // "Smart Commit" is a product feature name and stays English.
@@ -3906,8 +3901,8 @@ impl Msg {
             (Ja, ModalCommitConfirm) => "commit",
             (En, ModalNoDiscardTargets) => "No files to discard",
             (Ja, ModalNoDiscardTargets) => "破棄するファイルがありません",
-            (En, ModalPlanNotReady) => "Plan is not ready",
-            (Ja, ModalPlanNotReady) => "plan の準備ができていません",
+            (En, ModalPlanNotReady) => "Still checking…",
+            (Ja, ModalPlanNotReady) => "確認中…",
             (En, MaintenanceCommitGraphAfter) => "commit-graph written",
             (Ja, MaintenanceCommitGraphAfter) => "commit-graph 書き込み済み",
             (En, MaintenanceFsmonitorAfter) => "fsmonitor enabled",
@@ -3951,9 +3946,9 @@ impl Msg {
             }
             (Ja, PlanOverlapSummary) => "切り替え先も変更する {} 件のファイルに変更があります。先に stash か commit してください。",
             (En, PlanRestoreConflictSummary) => {
-                "{} path(s) whose stash restore conflicts: Kagi merged your edit with the incoming change and it does not merge. The stash is kept."
+                "{} file(s) will conflict when your stashed changes are restored. The stash is kept."
             }
-            (Ja, PlanRestoreConflictSummary) => "stash 復元が conflict する {} 件のパスです。あなたの編集と incoming の変更は merge できません(stash は保持されます)。",
+            (Ja, PlanRestoreConflictSummary) => "stash を戻すときに {} 件のファイルが conflict します。stash は保持されます。",
             (En, PlanRestoreConflictMaybeSummary) => {
                 "{} path(s) changed on both sides that Kagi could not merge in advance — the stash restore may conflict. The stash is kept."
             }
@@ -4101,9 +4096,9 @@ impl Msg {
             (Ja, A11yStashRow) => "stash: {}",
             (En, ThemeColorVision) => "Color Vision (Blue/Orange)",
             (Ja, ThemeColorVision) => "色覚対応（青 / 橙）",
-            (En, A11yDialogTwoStage) => "This operation needs two confirmations. The first Confirm only arms it.",
+            (En, A11yDialogTwoStage) => "This operation needs two confirmations. Press Confirm twice to run it.",
             (Ja, A11yDialogTwoStage) => "この操作は 2 回の確認が必要です。1 回目の Confirm では実行されません。",
-            (En, A11yDialogArmed) => "Armed: the next Confirm runs this operation.",
+            (En, A11yDialogArmed) => "Ready: the next Confirm runs this operation.",
             (Ja, A11yDialogArmed) => "確認済み: 次の Confirm で実行されます。",
             (En, A11yDialogBlocked) => "This operation cannot run; see the blockers.",
             (Ja, A11yDialogBlocked) => "この操作は実行できません。blocker を確認してください。",
@@ -4186,8 +4181,8 @@ impl Msg {
             (Ja, InputSetUpstream) => "upstream を設定",
             (En, InputRename) => "Rename",
             (Ja, InputRename) => "リネーム",
-            (En, InputPlanPending) => "Checking plan…",
-            (Ja, InputPlanPending) => "plan を確認中…",
+            (En, InputPlanPending) => "Checking…",
+            (Ja, InputPlanPending) => "確認中…",
             (En, InputRenameEnterNewName) => "Enter a new name",
             (Ja, InputRenameEnterNewName) => "新しい名前を入力",
             (En, TagPushTo) => "Push tag to {}",
@@ -4323,8 +4318,8 @@ impl Msg {
             (Ja, TrustRepoConfirm) => "このリポジトリを信頼する",
             (En, TrustRepoSaveFailed) => "Could not save trust for repository {}.",
             (Ja, TrustRepoSaveFailed) => "リポジトリ {} の信頼設定を保存できませんでした。",
-            (En, TrustRepoReopenFailed) => "Trust was saved, but repository {} could not be reopened. The existing session was kept.",
-            (Ja, TrustRepoReopenFailed) => "信頼設定は保存されましたが、リポジトリ {} を開き直せませんでした。既存のセッションは保持しています。",
+            (En, TrustRepoReopenFailed) => "Trust was saved, but repository {} could not be reopened. It stays open as before.",
+            (Ja, TrustRepoReopenFailed) => "信頼設定は保存しましたが、リポジトリ {} を開き直せませんでした。表示は以前のままです。",
             (En, TrustRepoRetry) => "Retry",
             (Ja, TrustRepoRetry) => "再試行",
 
@@ -4580,8 +4575,8 @@ impl Msg {
             (Ja, EditorDeleteGitBlocked) => ".git は削除できません",
             (En, EditorTrashUnsupported) => "Trash is only supported on macOS",
             (Ja, EditorTrashUnsupported) => "ゴミ箱は macOS でのみ利用できます",
-            (En, EditorTrashHomeUnset) => "HOME is not set",
-            (Ja, EditorTrashHomeUnset) => "HOME が設定されていません",
+            (En, EditorTrashHomeUnset) => "Can't find your home folder, so the Trash is unavailable.",
+            (Ja, EditorTrashHomeUnset) => "ホームフォルダーが見つからないため、ゴミ箱を使えません。",
             (En, EditorTrashCreateDirFailed) => "cannot create ~/.Trash",
             (Ja, EditorTrashCreateDirFailed) => "~/.Trash を作成できません",
             (En, EditorTrashPathMissingName) => "path has no file name",
@@ -4596,8 +4591,8 @@ impl Msg {
             (Ja, PrMergeMethodSquash) => "squash して merge",
             (En, PrMergeMethodRebase) => "Rebase and merge",
             (Ja, PrMergeMethodRebase) => "rebase して merge",
-            (En, PrMergeSessionUnavailable) => "repository session unavailable",
-            (Ja, PrMergeSessionUnavailable) => "リポジトリのセッションを利用できません",
+            (En, PrMergeSessionUnavailable) => "The repository is no longer open. Reopen it and try again.",
+            (Ja, PrMergeSessionUnavailable) => "リポジトリが開かれていません。開き直してからやり直してください。",
             (En, AfterStashDrop) => "stash dropped",
             (Ja, AfterStashDrop) => "stash 削除",
             (En, AfterStashPop) => "restored, stash removed",
@@ -4686,7 +4681,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::En => vec![
             (
                 "What is Analyze?",
-                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Excluded files are fully configurable in the \"analyze_ignore\" file (gitignore syntax, next to settings.json) — it is seeded with sensible defaults (images, PDF, CAD, KiCad, fonts, archives); edit or clear it freely.",
+                "A read-only look at your Git history — no changes are made. Pick a time window (Day … All) top-right; every view re-ranks for that window. Set excluded files in Settings → Analyze ignore.",
             ),
             (
                 "Hotspots",
@@ -4708,7 +4703,7 @@ pub fn eco_help_sections() -> Vec<(&'static str, &'static str)> {
         Lang::Ja => vec![
             (
                 "Analyze とは",
-                "Git 履歴を読み取り専用で分析します(変更は加えません)。右上で期間(Day … All)を選ぶと、各ビューがその期間で再集計されます。除外対象は settings.json の隣の \"analyze_ignore\" ファイル(gitignore 形式)で完全に設定可能で、初回に既定値(画像・PDF・CAD・KiCad・フォント・アーカイブ)が書き込まれます。自由に編集・全削除できます。",
+                "Git 履歴を分析します(変更は加えません)。右上で期間(Day … All)を選ぶと、各ビューがその期間で再集計されます。除外ファイルは 設定 → Analyze ignore で指定します。",
             ),
             (
                 "Hotspots(ホットスポット)",
@@ -4847,7 +4842,7 @@ pub fn branch_rename_exists_fmt(name: &str) -> String {
 pub fn branch_invalid_ref_fmt(name: &str) -> String {
     match lang() {
         Lang::En => format!(
-            kagi_domain::advice_template_en!(CommonBranchInvalidRef),
+            kagi_domain::advice_template_display_en!(CommonBranchInvalidRef),
             name
         ),
         Lang::Ja => plan::advice_text(Msg::AdviceCommonBranchInvalidRef, &[&name]),
@@ -5023,27 +5018,27 @@ pub fn smart_cli_warning_lines(name: &str, bin: &str) -> [String; 4] {
     match lang() {
         Lang::En => [
             format!(
-                "Your staged diff is sent to the external `{}` CLI — it leaves kagi's local-Ollama sandbox.",
+                "Your staged diff is sent to the external `{}` CLI, which may send it outside this computer.",
                 bin
             ),
             format!(
                 "It uses YOUR {} account and consumes YOUR usage quota — each generation may incur cost.",
                 name
             ),
-            "kagi runs the CLI non-interactively in read-only mode; it can never modify your repository."
+            "The CLI can't change your repository."
                 .to_string(),
             format!("Requires the `{}` CLI to be installed and logged in.", bin),
         ],
         Lang::Ja => [
             format!(
-                "staged な diff は外部の `{}` CLI に送信され、kagi のローカル Ollama サンドボックスの外に出ます。",
+                "stage 済みの diff は外部の `{}` CLI に送られ、このコンピューターの外に送信される可能性があります。",
                 bin
             ),
             format!(
                 "あなたの {} アカウントを使い、利用量を消費します。生成ごとに費用が発生する場合があります。",
                 name
             ),
-            "kagi は CLI を非対話・読み取り専用で実行します。リポジトリを変更することはありません。"
+            "CLI がリポジトリを変更することはありません。"
                 .to_string(),
             format!("`{}` CLI のインストールとログインが必要です。", bin),
         ],

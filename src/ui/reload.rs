@@ -406,7 +406,7 @@ impl KagiApp {
             ReloadFeedback::External => {
                 klog!("refreshed (external change)");
                 self.status_footer =
-                    FooterStatus::Idle(SharedString::from("[kagi] refreshed (external change)"));
+                    FooterStatus::Idle(SharedString::from(super::i18n::Msg::Refreshed.t()));
             }
             ReloadFeedback::Manual => {
                 // W3-NOTIFY: an explicit refresh gets a completion toast (the
@@ -595,7 +595,8 @@ impl KagiApp {
                         match feedback {
                             ReloadFeedback::Manual => {
                                 klog!("reload: {}", msg);
-                                let msg = format!("Refresh failed: {msg}");
+                                let raw = format!("Refresh failed: {msg}");
+                                let msg = super::i18n::op::user_text::diagnostic(&raw).into_owned();
                                 app.status_footer =
                                     FooterStatus::Idle(SharedString::from(msg.clone()));
                                 app.push_toast(super::ToastKind::Error, msg, cx);
@@ -603,7 +604,10 @@ impl KagiApp {
                             ReloadFeedback::Quiet | ReloadFeedback::External => {
                                 klog!("reload_external: snapshot failed (non-fatal)");
                                 app.status_footer = FooterStatus::Idle(SharedString::from(
-                                    "[kagi] refresh skipped (snapshot failed)",
+                                    super::i18n::op::user_text::diagnostic(
+                                        "[kagi] refresh skipped (snapshot failed)",
+                                    )
+                                    .into_owned(),
                                 ));
                             }
                         }

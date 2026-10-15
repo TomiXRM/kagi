@@ -24,7 +24,7 @@ pub(crate) const ADVICE_BRANCH_RENAME_REMOTE_NOT_RENAMED: &str =
     "remote branch はリネームされません。local の設定だけ引き継ぎます。";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG: &str = "引き継ぐ local branch の設定キー: {}。";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CHANGED: &str =
-    "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。";
+    "確認後に branch の設定が変わりました。もう一度リネームして確認してください。";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_EXTERNAL: &str =
     "branch の設定が Git directory の外にあります。リネーム前に local Git config へ移してください。\n設定ファイル: {}";
 pub(crate) const ADVICE_BRANCH_RENAME_CONFIG_CONDITIONAL: &str =
@@ -109,6 +109,27 @@ pub fn note_ja(note: &BranchNote) -> String {
     }
 }
 
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &BranchNote) -> String {
+    match note {
+        BranchNote::RenameConfigChanged => "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。".to_string(),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    #[test]
+    fn rename_config_changed_preserves_legacy_bytes() {
+        assert_eq!(
+            note_ja_contract(&BranchNote::RenameConfigChanged),
+            "確認後に local branch の設定が変わりました。リネームの計画を作り直して確認してください。"
+        );
+    }
+}
+
 /// Japanese rendering of one branch title.
 pub fn title_ja(title: &BranchTitle) -> String {
     match title {
@@ -143,7 +164,7 @@ pub fn recovery_ja(recovery: &BranchRecovery) -> String {
             name,
             tip: Some(tip),
         } => format!(
-            "復元する:\n  git branch {} {}\n先端 commit `{}` は復元用 ref で保持します。GC 後は操作記録の backup ref から復元してください。",
+            "復元する:\n  git branch {} {}\n先端 commit `{}` はバックアップとして保持します。Git の GC 後は操作ログから復元してください。",
             name, tip, tip
         ),
         BranchRecovery::DeleteBranch { name, tip: None } => {

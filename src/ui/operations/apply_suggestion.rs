@@ -23,7 +23,8 @@ fn apply_suggestion_blocking(
     op: &Operation,
     plan: &kagi_git::OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     Ok(repo.run_recorded(op, plan))
 }
 
@@ -41,10 +42,12 @@ impl KagiApp {
             .map(|tab| tab.head.clone())
             .unwrap_or_else(|| kagi_git::CommitId(String::new()));
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
-                i18n::Op::ApplySuggestion,
-                "repo session unavailable",
-            )));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from(i18n::op::op_plan_failed_contract(
+                    i18n::Op::ApplySuggestion,
+                    "repo session unavailable",
+                )),
+            ));
             return;
         };
         let backend = session.backend();
@@ -69,9 +72,10 @@ impl KagiApp {
                 self.focus_root_for_modal();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::ApplySuggestion, e),
-                ));
+                self.status_footer =
+                    FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
+                        i18n::op::op_plan_failed_contract(i18n::Op::ApplySuggestion, e),
+                    )));
             }
         }
     }

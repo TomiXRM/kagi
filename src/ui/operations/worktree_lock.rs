@@ -24,7 +24,7 @@ impl KagiApp {
         offer: &terminal::AutoLockOffer,
         cx: &mut Context<Self>,
     ) {
-        let error = Msg::TerminalAutoLockStaleOwner.t();
+        let error = i18n::op::terminal_lock_changed_contract(i18n::lang());
         self.record_op_persist(
             op,
             plan.current.clone(),
@@ -34,7 +34,9 @@ impl KagiApp {
             &offer.path,
             cx,
         );
-        self.status_footer = FooterStatus::Failed(SharedString::from(error));
+        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+            SharedString::from(error),
+        ));
         self.push_toast(ToastKind::Error, error, cx);
     }
 
@@ -164,14 +166,13 @@ impl KagiApp {
                     cx,
                 );
                 self.clear_lock_worktree_modal();
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "locked worktree '{}'",
-                    modal.name
-                )));
+                self.status_footer = FooterStatus::Success(
+                    i18n::op::user_text::operations::worktree_lock(&modal.name, true).into(),
+                );
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::LockWorktree, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::LockWorktree, e);
                 self.record_op_persist_nothing_moved(
                     "lock-worktree",
                     modal.plan.current.clone(),
@@ -198,10 +199,9 @@ impl KagiApp {
         let repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "unlock-worktree: repo open error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("unlock-worktree: repo open error: {}", e)),
+                ));
                 return;
             }
         };
@@ -216,10 +216,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "unlock-worktree plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("unlock-worktree plan error: {}", e)),
+                ));
             }
         }
     }
@@ -363,14 +362,13 @@ impl KagiApp {
                     cx,
                 );
                 self.clear_unlock_worktree_modal();
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "unlocked worktree '{}'",
-                    modal.name
-                )));
+                self.status_footer = FooterStatus::Success(
+                    i18n::op::user_text::operations::worktree_lock(&modal.name, false).into(),
+                );
                 self.reload(cx);
             }
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::UnlockWorktree, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::UnlockWorktree, e);
                 self.record_op_persist_nothing_moved(
                     "unlock-worktree",
                     modal.plan.current.clone(),

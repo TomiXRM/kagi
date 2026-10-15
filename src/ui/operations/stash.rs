@@ -151,7 +151,8 @@ impl KagiApp {
             _ => return,
         };
         if let Some(error) = &error {
-            self.status_footer = FooterStatus::Failed(error.clone());
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(error.clone()));
             self.push_toast(ToastKind::Error, error.clone(), cx);
         }
         self.update_stash_drop_plan_from_async(StashDropModal {
@@ -216,8 +217,11 @@ impl KagiApp {
                                 error,
                             } = &completion.recording
                             {
-                                let message =
-                                    format!("{}: recording failed: {}", attempted.repo, error);
+                                let message = i18n::op::user_text::operations::recording_failed(
+                                    &attempted.repo,
+                                    &attempted.op,
+                                    &error.to_string(),
+                                );
                                 app.push_toast(ToastKind::Error, message.clone(), cx);
                                 app.app_notices.push_back(message.into());
                             }
@@ -332,7 +336,8 @@ impl KagiApp {
             }
         }
         if let Some(error) = &error {
-            self.status_footer = FooterStatus::Failed(error.clone());
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(error.clone()));
             self.push_toast(ToastKind::Error, error.clone(), cx);
         }
         match action {

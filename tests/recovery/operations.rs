@@ -3254,7 +3254,7 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
             "completed deletion cannot be retried"
         );
         let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
-        assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
+        assert!(notice.contains(repo.to_str().unwrap()));
         let panel = state.op_log.as_ref().unwrap().read(cx);
         let entry = panel
             .entries()
@@ -3551,7 +3551,8 @@ pub fn scenario_stage_failure_notice(cx: &mut VisualTestAppContext) {
                 let toast = state.toast_stack.as_ref().unwrap().read(cx).toasts().last();
                 assert!(
                     toast.is_some_and(|t| t.kind == ToastKind::Error
-                        && t.message.starts_with(&format!("{op}: failed"))),
+                        && t.message.contains("f.txt")
+                        && !t.message.contains("index.write")),
                     "stage-failure-toasts: {op} via {entry} must toast its failure, got {toast:?}"
                 );
                 assert!(

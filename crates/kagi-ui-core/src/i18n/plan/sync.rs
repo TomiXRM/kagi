@@ -77,7 +77,7 @@ pub fn recovery_ja(recovery: &SyncRecovery) -> String {
                     "\nindex と working tree（staged / unstaged / untracked）を復元:\n  git stash apply --index {work}"
                 ));
             }
-            s.push_str("\nどちらの ref も、この entry を forget するまで残ります。");
+            s.push_str("\nバックアップは自動では削除されません。");
             s
         }
     }

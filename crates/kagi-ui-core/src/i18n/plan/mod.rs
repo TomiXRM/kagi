@@ -1,8 +1,8 @@
 //! Plan-text localization (ADR-0129 §3).
 //!
 //! `plan_note_text` / `plan_title_text` / `plan_recovery_text` are the ONLY
-//! way the UI renders plan text. EN always delegates to the kagi-domain
-//! `message_en()` renderer (no double-maintenance); JA strings live in the
+//! way the UI renders plan text. EN delegates to the kagi-domain
+//! `message_display_en()` renderer; `message_en()` retains diagnostic contracts. JA strings live in the
 //! per-category submodules (`plan/discard.rs`, …), one per producer
 //! (ADR-0129 Phase 2/3 — every category is now fully typed).
 
@@ -104,9 +104,85 @@ pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
 
 /// Localized text for one plan note (blocker / warning).
 pub fn plan_note_text(note: &PlanNote) -> String {
+    let note = super::op::user_text::plan_note_payload(note);
+    let note = note.as_ref();
     match lang() {
-        Lang::En => note.message_en(),
+        Lang::En => note.message_display_en(),
         Lang::Ja => note_ja_any(note),
+    }
+}
+
+/// Historical plan-note text for contract logs, never display payload projection.
+pub fn plan_note_contract(note: &PlanNote) -> String {
+    plan_note_contract_for(note, lang())
+}
+
+fn plan_note_contract_for(note: &PlanNote, language: Lang) -> String {
+    match language {
+        Lang::En => note.message_en(),
+        Lang::Ja => note_ja_contract_any(note),
+    }
+}
+
+/// Legacy Japanese diagnostic wording, separate from display-only revisions.
+pub(crate) fn note_ja_contract_any(note: &PlanNote) -> String {
+    match note {
+        PlanNote::Branch(n) => branch::note_ja_contract(n),
+        PlanNote::CherryRevert(n) => cherry_revert::note_ja_contract(n),
+        PlanNote::Commit(n) => commit::note_ja_contract(n),
+        PlanNote::Common(n) => common::note_ja_contract(n),
+        PlanNote::Conflicts(n) => conflicts::note_ja_contract(n),
+        PlanNote::Discard(n) => discard::note_ja_contract(n),
+        PlanNote::Github(n) => github::note_ja_contract(n),
+        PlanNote::History(n) => history::note_ja_contract(n),
+        PlanNote::Merge(n) => merge::note_ja_contract(n),
+        PlanNote::OplogRestore(n) => oplog_restore::note_ja_contract(n),
+        PlanNote::Pull(n) => pull::note_ja_contract(n),
+        PlanNote::Rebase(n) => rebase::note_ja_contract(n),
+        PlanNote::Ruleset(n) => ruleset::note_ja_contract(n),
+        PlanNote::Stash(n) => stash::note_ja_contract(n),
+        PlanNote::Switch(n) => switch::note_ja_contract(n),
+        PlanNote::Tag(n) => tag::note_ja_contract(n),
+        PlanNote::Worktree(n) => worktree::note_ja_contract(n),
+        _ => note_ja_any(note),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn plan_note_contract_preserves_wording_and_raw_payloads_in_both_locales() {
+    use kagi_domain::plan_note::{CommitNote, CommonNote, WorktreeNote};
+
+    let staged = PlanNote::Commit(CommitNote::StagedContentChanged);
+    assert_ne!(staged.message_en(), staged.message_display_en());
+    for language in [Lang::En, Lang::Ja] {
+        let expected = match language {
+            Lang::En => staged.message_en(),
+            Lang::Ja => "確認後に stage 済みの内容が変わりました。commit は行っていません。stage 済みの変更を見直し、新しい計画を確認してください。".to_string(),
+        };
+        assert_eq!(plan_note_contract_for(&staged, language), expected);
+
+        for payload in [
+            "git error: index.write() failed: Permission denied",
+            "kagi:auto:terminal-owner",
+        ] {
+            for note in [
+                PlanNote::Common(CommonNote::GitErrorPassthrough {
+                    message: payload.into(),
+                }),
+                PlanNote::Worktree(WorktreeNote::LockedWithReason {
+                    reason: Some(payload.into()),
+                }),
+            ] {
+                let expected = match language {
+                    Lang::En => note.message_en(),
+                    Lang::Ja => note_ja_any(&note),
+                };
+                let actual = plan_note_contract_for(&note, language);
+                assert_eq!(actual, expected);
+                assert!(actual.contains(payload), "{actual}");
+            }
+        }
     }
 }
 
@@ -151,7 +227,7 @@ pub(crate) fn note_ja_any(note: &PlanNote) -> String {
 /// Localized text for the plan title.
 pub fn plan_title_text(title: &PlanTitle) -> String {
     match lang() {
-        Lang::En => title.message_en(),
+        Lang::En => title.message_display_en(),
         Lang::Ja => match title {
             PlanTitle::Branch(t) => branch::title_ja(t),
             PlanTitle::Stash(t) => stash::title_ja(t),
@@ -541,7 +617,7 @@ pub fn plan_recovery_text(recovery: Option<&PlanRecovery>) -> String {
         return String::new();
     };
     match lang() {
-        Lang::En => r.message_en(),
+        Lang::En => r.message_display_en(),
         Lang::Ja => match &r.kind {
             RecoveryKind::Branch(r) => branch::recovery_ja(r),
             RecoveryKind::Stash(r) => stash::recovery_ja(r),
@@ -595,26 +671,22 @@ fn recovery_sentences_exclude_display_commands_in_both_languages() {
     let branch = BranchRecovery::CreateBranch {
         name: "demo".into(),
     };
-    let en = branch.message_en();
-    let ja = branch::recovery_ja(&branch);
-    assert_eq!(
-        recovery_sentences_from_text(&en),
-        ["The new branch 'demo' can be removed without side effects:"]
-    );
-    assert_eq!(
-        recovery_sentences_from_text(&ja),
-        ["副作用なく削除できます:"]
-    );
+    for text in [branch.message_display_en(), branch::recovery_ja(&branch)] {
+        let sentences = recovery_sentences_from_text(&text);
+        assert!(!sentences.is_empty());
+        assert!(sentences.iter().all(|line| !line.starts_with("git ")));
+        assert!(text.lines().any(|line| line.trim().starts_with("git ")));
+    }
 
     let deleted = BranchRecovery::DeleteBranch {
         name: "demo".into(),
         tip: Some("abc123".into()),
     };
-    assert_eq!(
-        recovery_sentences_from_text(&deleted.message_en()),
-        [
-            "To restore the deleted branch:",
-            "The tip 'abc123' will be retained by a backup ref; use the receipt's backup ref to restore after GC.",
-        ]
-    );
+    for text in [deleted.message_display_en(), branch::recovery_ja(&deleted)] {
+        let sentences = recovery_sentences_from_text(&text);
+        assert!(!sentences.is_empty());
+        assert!(sentences.iter().all(|line| !line.starts_with("git ")));
+        assert!(!text.contains("receipt"));
+        assert!(!text.contains("操作記録の backup ref"));
+    }
 }

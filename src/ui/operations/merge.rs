@@ -37,7 +37,9 @@ impl KagiApp {
             return;
         };
         self.planning = Some("merge-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from("Planning merge…"),
+        ));
         klog!("async: merge plan started for {}", target);
         let bg_owner = owner.clone();
         let bg_target = target.clone();
@@ -165,7 +167,9 @@ impl KagiApp {
             return;
         };
         self.planning = Some("merge-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from("Planning merge…"));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from("Planning merge…"),
+        ));
         klog!(
             "async: merge-into plan started for {} -> {}",
             source,
@@ -360,7 +364,9 @@ impl KagiApp {
     ) {
         let repo_path = modal.owner.path.clone();
         self.clear_merge_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyMerge.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyMerge.t()),
+        ));
         klog!("async: merge started");
 
         let plan = modal.plan.clone();

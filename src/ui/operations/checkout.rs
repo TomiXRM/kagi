@@ -367,7 +367,9 @@ impl KagiApp {
         };
 
         self.clear_plan_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCheckout.t()),
+        ));
         klog!("async: checkout started");
 
         let plan = modal.plan.clone();

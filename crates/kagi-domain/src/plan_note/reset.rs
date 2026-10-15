@@ -50,6 +50,11 @@ impl ResetNote {
             }
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the reset-current-to-head op.
@@ -67,6 +72,11 @@ impl ResetTitle {
                 format!("Reset '{}' to {}", branch, to)
             }
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 
@@ -87,6 +97,11 @@ impl ResetRecovery {
                 branch, from
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

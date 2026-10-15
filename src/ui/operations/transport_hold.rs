@@ -89,8 +89,11 @@ impl KagiApp {
             self.report_unknown_notice(
                 repo,
                 format!(
-                    "{operation}: {}. {}",
-                    message.as_deref().unwrap_or(detail),
+                    "{} #{number}: {}. {}",
+                    crate::ui::i18n::op::user_text::operation_label(op),
+                    crate::ui::i18n::op::user_text::diagnostic(
+                        message.as_deref().unwrap_or(detail)
+                    ),
                     crate::ui::i18n::Msg::TransportRetryHeld.t()
                 ),
             );
@@ -106,7 +109,8 @@ impl KagiApp {
         self.report_unknown_notice(
             owner,
             format!(
-                "{operation}: {}",
+                "{}: {}",
+                crate::ui::i18n::op::user_text::operation_label(operation),
                 crate::ui::i18n::Msg::TransportRetryHeld.t()
             ),
         );

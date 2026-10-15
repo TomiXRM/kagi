@@ -190,6 +190,10 @@ def check_ja_git_terms() -> int:
     return _run_rule(_rule("ja-git-terms"))
 
 
+def check_ui_internal_jargon() -> int:
+    return _run_rule(_rule("ui-internal-jargon"))
+
+
 def check_recovery_safe_advice() -> int:
     return _run_rule(_rule("recovery-safe-advice"))
 

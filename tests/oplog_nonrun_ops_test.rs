@@ -1566,7 +1566,6 @@ fn current_pull_ff_checkout_ref_failure_records_partial_recovery() {
     let recovery = kagi::ui::oplog_panel::recovery_lines(entry)
         .expect("the actual durable Partial must expose its typed recovery");
     assert!(!recovery.is_empty());
-    assert!(recovery.join("\n").contains("Partial"));
     for command in plan
         .recovery
         .as_ref()
@@ -1579,9 +1578,10 @@ fn current_pull_ff_checkout_ref_failure_records_partial_recovery() {
         );
     }
     let details = kagi::ui::oplog_panel::detail_lines(entry).join("\n");
-    assert!(details.contains(error));
     assert!(details.contains(&after.head));
-    assert!(details.contains(&after.dirty));
+    assert!(details.contains(incoming.trim()));
+    assert!(!details.contains("checkout_target="));
+    assert!(!details.contains("checkout_changed="));
 }
 
 #[test]

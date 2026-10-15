@@ -185,6 +185,20 @@ impl PullNote {
             }
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            PullNote::MergePrediction => {
+                crate::advice_template_display_en!(PullMergePrediction).to_string()
+            }
+            PullNote::RestoreConflict { paths } => format!(
+                crate::advice_template_display_en!(PullRestoreConflict),
+                path_block_en(paths)
+            ),
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Plan titles for the pull op family (ADR-0129 appendix §C).
@@ -254,6 +268,36 @@ impl PullTitle {
             ),
         }
     }
+
+    /// English UI copy; never serialize this text or use it for contract logs.
+    pub fn message_display_en(&self) -> String {
+        match self {
+            PullTitle::PullRemote {
+                branch,
+                upstream,
+                behind,
+            } => {
+                if *behind == 0 {
+                    format!("Pull {branch} — up to date as of the last fetch")
+                } else {
+                    format!("Pull {branch} from {upstream} — {behind} commit(s) behind")
+                }
+            }
+            PullTitle::Pull {
+                branch,
+                remote,
+                behind,
+            } => {
+                let behind_label = if *behind == 0 {
+                    "up to date as of the last fetch".to_string()
+                } else {
+                    format!("{} behind upstream (as of the last fetch)", behind)
+                };
+                format!("Pull '{}' from '{}'  ({})", branch, remote, behind_label)
+            }
+            _ => self.message_en(),
+        }
+    }
 }
 
 /// Recovery kinds for the pull op family (ADR-0129 appendix §D).
@@ -307,6 +351,11 @@ impl PullRecovery {
                 branch, branch
             ),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }
 

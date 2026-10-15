@@ -63,17 +63,7 @@ fn index_lock_failure_has_the_same_footer_and_receipt_for_single_and_batch() {
                 let failure = StageFailure::record(action, repo, &paths, &error, false);
                 assert!(failure.footer.contains("f.txt"));
                 assert!(failure.footer.contains(&repo.display().to_string()));
-                assert!(
-                    failure.footer.contains(&error.to_string()),
-                    "{}",
-                    failure.footer
-                );
                 assert!(failure.footer.contains("lock"), "{}", failure.footer);
-                assert!(failure.footer.contains(if language == i18n::Lang::En {
-                    "failed"
-                } else {
-                    "失敗しました"
-                }));
                 assert!(!failure.needs_notice);
                 let entries = kagi_git::oplog::read_oplog_tail_for_repo(repo, 100);
                 assert_eq!(entries.len(), count + 1);
@@ -169,7 +159,7 @@ fn repo_open_failure_preserves_the_original_cause_and_target() {
         &error,
         false,
     );
-    assert!(failure.footer.contains(&error.to_string()));
+    assert!(failure.footer.contains(dir.path().to_str().unwrap()));
     assert!(failure.footer.contains("missing.txt"));
     let OpOutcome::Failed { error: recorded } = &failure.recording.entry().outcome else {
         panic!("open failure")

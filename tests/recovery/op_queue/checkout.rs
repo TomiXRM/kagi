@@ -1,5 +1,6 @@
 use super::*;
 use kagi_git::oplog::{read_oplog_tail_for_repo, FailureCode, OpOutcome};
+use kagi_ui_core::i18n::{queue_text, QueueText};
 /// A blocker derived from the tree during another checkout is not an
 /// enqueue-time veto. The fresh head plan still refuses it before any write.
 pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) {
@@ -22,7 +23,10 @@ pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) 
     assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("checkout blocked".into(), "waiting: write".into())]
+        vec![(
+            "checkout blocked".into(),
+            queue_text(QueueText::WaitWrite).into()
+        )]
     );
     assert!(drawn(cx, window, "queue-strip"));
     release.send(());
@@ -38,7 +42,10 @@ pub fn scenario_queue_refuses_a_blocked_checkout(cx: &mut VisualTestAppContext) 
     });
     assert_eq!(
         strip(cx, &app).unwrap().2,
-        vec![("checkout blocked".into(), "plan failed".into())]
+        vec![(
+            "checkout blocked".into(),
+            queue_text(QueueText::ReasonPlanError).into()
+        )]
     );
     assert!(klog_index("[kagi] refused: plan has blockers, not executing").is_some());
     assert_eq!(rev_parse(&repo, &["HEAD"]), before);
@@ -78,7 +85,7 @@ pub fn scenario_queue_checkout_transient_blocker_clears(cx: &mut VisualTestAppCo
     app.update(cx, |app, cx| app.open_plan_modal("b", cx));
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("checkout b".into(), "waiting: write".into())]
+        vec![("checkout b".into(), queue_text(QueueText::WaitWrite).into())]
     );
     assert!(drawn(cx, window, "queue-strip"));
     release.send(());
@@ -124,7 +131,7 @@ pub fn scenario_queue_busy_checkout_replans_warning(cx: &mut VisualTestAppContex
     assert!(cx.read(|cx| app.read(cx).plan_modal().is_none()));
     assert_eq!(
         rows(&strip(cx, &app)),
-        vec![("checkout b".into(), "waiting: write".into())]
+        vec![("checkout b".into(), queue_text(QueueText::WaitWrite).into())]
     );
     assert!(drawn(cx, window, "queue-strip"));
     release.send(());
@@ -290,7 +297,7 @@ pub fn scenario_queue_commit_checkout_busy_replans(cx: &mut VisualTestAppContext
         rows(&strip(cx, &app)),
         vec![(
             format!("checkout {}", target.short()),
-            "waiting: write".into()
+            queue_text(QueueText::WaitWrite).into()
         )]
     );
     app.update(cx, |app, _| app.select_headless(0));
@@ -360,11 +367,17 @@ pub fn scenario_queue_dirty_commit_enter_refuses(cx: &mut VisualTestAppContext) 
 
         let expected = Msg::CheckoutStashCannotQueue.t();
         assert_ne!(expected, Msg::OpInProgress.t());
-        assert!(expected.contains("stash + checkout"));
-        assert!(expected.contains(match language {
-            Lang::En => "two writes",
-            Lang::Ja => "2 回",
-        }));
+        for internal in [
+            "two writes",
+            "2 回",
+            "書き込み",
+            "queue",
+            "キュー",
+            "plan",
+            "preflight",
+        ] {
+            assert!(!expected.contains(internal), "{language:?}: {expected}");
+        }
         cx.read(|cx| {
             let state = app.read(cx);
             assert!(matches!(

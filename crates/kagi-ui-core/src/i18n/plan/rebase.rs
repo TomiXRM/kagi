@@ -46,7 +46,7 @@ pub fn note_ja(note: &RebaseNote) -> String {
                 list = format!("{}(+{} 件)", list, more);
             }
             format!(
-                "git replay が印字したとおりに {} 個の ref を更新します:\n  {}",
+                "{} 個の branch を更新します:\n  {}",
                 count, list
             )
         }
@@ -58,6 +58,35 @@ pub fn note_ja(note: &RebaseNote) -> String {
             "`{}` は {} で checkout 中です。HEAD は branch に追従しますが、その worktree の index と作業ファイルはこの操作では更新されません。後でそこで `git reset --keep` を実行するか、その worktree から rebase してください。",
             branch, path
         ),
+    }
+}
+
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &RebaseNote) -> String {
+    match note {
+        RebaseNote::ReplayUpdates {
+            count,
+            sample,
+            more,
+        } => {
+            use std::fmt::Write;
+
+            let mut text = format!(
+                "git replay が印字したとおりに {} 個の ref を更新します:\n  ",
+                count
+            );
+            for (index, name) in sample.iter().enumerate() {
+                if index > 0 {
+                    text.push_str("\n  ");
+                }
+                text.push_str(name);
+            }
+            if *more > 0 {
+                write!(text, "(+{} 件)", more).expect("writing to a String");
+            }
+            text
+        }
+        _ => note_ja(note),
     }
 }
 
@@ -80,7 +109,29 @@ pub fn recovery_ja(recovery: &RebaseRecovery) -> String {
             "rebase 中はconflict バナーから abort すれば `{branch}` を {from} へ戻せます。完了済みなら rebase 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}"
         ),
         RebaseRecovery::ReplayOnto { branch, from } => format!(
-            "replay は ref を動かすだけで checkout はしません。replay 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}\n(同じ先端は この entry を forget するまで refs/kagi/backups/ に保持されます)"
+            "replay は ref を動かすだけで checkout はしません。replay 前の先端を復元:\n  git update-ref refs/heads/{branch} {from}\nバックアップは自動では削除されません。"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_samples() {
+        for (more, expected) in [
+            (0, "git replay が印字したとおりに 2 個の ref を更新します:\n  refs/heads/raw{}\n\u{1b}\n  refs/heads/日本語"),
+            (3, "git replay が印字したとおりに 2 個の ref を更新します:\n  refs/heads/raw{}\n\u{1b}\n  refs/heads/日本語(+3 件)"),
+        ] {
+            assert_eq!(
+                note_ja_contract(&RebaseNote::ReplayUpdates {
+                    count: 2,
+                    sample: vec!["refs/heads/raw{}\n\u{1b}".into(), "refs/heads/日本語".into()],
+                    more,
+                }),
+                expected
+            );
+        }
     }
 }

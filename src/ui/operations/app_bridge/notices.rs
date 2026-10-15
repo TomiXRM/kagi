@@ -26,7 +26,11 @@ impl KagiApp {
             return;
         }
         self.app_notices.push_back(modals::AppNotice {
-            message: format!("{}: {op}", repo.display()),
+            message: format!(
+                "{}: {}",
+                repo.display(),
+                i18n::op::user_text::operation_label(op)
+            ),
             inspect: Some(id),
             acknowledge: None,
             release_armed: false,
@@ -43,9 +47,10 @@ impl KagiApp {
         let message = if error == app::AdmissionError::Busy {
             Msg::OpInProgress.t().to_string()
         } else {
-            error.to_string()
+            i18n::op::user_text::diagnostic(&error.to_string()).into_owned()
         };
-        self.status_footer = FooterStatus::Failed(message.clone().into());
+        self.status_footer =
+            FooterStatus::Failed(crate::ui::operations::display_text(message.clone().into()));
         self.push_toast(ToastKind::Error, message.clone(), cx);
         // A refusal made while a requirement is parked names it, so the user
         // can open it from the refusal instead of being told "no" with no way
@@ -109,13 +114,17 @@ impl KagiApp {
                         let mut notice = modals::AppNotice::from(format!(
                             "{}\n{}",
                             warning.t(),
-                            read.observation
+                            i18n::op::user_text::diagnostic(&read.observation)
                         ));
                         notice.acknowledge = Some(read);
                         notice
                     }
-                    Ok(read) => modals::AppNotice::from(read.observation),
-                    Err(error) => modals::AppNotice::from(error),
+                    Ok(read) => modals::AppNotice::from(
+                        i18n::op::user_text::diagnostic(&read.observation).into_owned(),
+                    ),
+                    Err(error) => modals::AppNotice::from(
+                        i18n::op::user_text::diagnostic(&error).into_owned(),
+                    ),
                 };
                 if notice.acknowledge.is_none() {
                     notice.inspect = Some(id);

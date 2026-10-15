@@ -16,13 +16,13 @@ pub(crate) const ADVICE_WORKTREE_INCLUDE_COPY: &str =
 pub(crate) const ADVICE_WORKTREE_INCLUDE_SKIPPED_SYMLINKS: &str =
     "一致した symlink {} 件はスキップします(symlink はコピーしません)。";
 pub(crate) const ADVICE_WORKTREE_INCLUDE_OVER_CAP: &str =
-    ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。";
+    ".worktreeinclude の一致が {} あります({} 超)。コピーは続行しますが時間がかかる可能性があります。";
 pub(crate) const ADVICE_WORKTREE_REMOVE_DIRTY: &str =
-    "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`";
+    "worktree に未 commit の変更があります({})。先に commit か stash してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LOCKED: &str =
-    "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`";
+    "worktree はロックされています({})。削除前にロックを解除してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LIVE_SHELL: &str =
-    "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `{}`";
+    "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_LEFTOVER_PROCESSES: &str =
     "この worktree の Kagi terminal から起動したプロセス {} 件が、shell の終了後も動いていて、このディレクトリを使っている可能性があります。kagi は停止しません。Kagi の外で起動したプロセスは確認していません。\nworktree `{}`";
 pub(crate) const ADVICE_WORKTREE_REMOVE_IGNORED_FILES: &str =
@@ -206,7 +206,7 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                     r
                 ),
                 R::NotAutoLock { reason: None } => {
-                    "Kagi の token が無いロックです。Kagi がこの terminal のために置いたロックだけを自動解除します"
+                    "手動で付けたロックです。Kagi がこの terminal 用に付けたロックだけを自動で解除します"
                         .to_string()
                 }
                 R::TokenMismatch { found } => {
@@ -264,6 +264,103 @@ pub fn note_ja(note: &WorktreeNote) -> String {
                 Msg::AdviceWorktreePreRemoveSteps
             };
             super::advice_text(msg, &[&steps.len(), &step_lines])
+        }
+    }
+}
+
+/// Legacy Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &WorktreeNote) -> String {
+    use kagi_domain::worktree_autolock::AutoUnlockRefusal;
+
+    match note {
+        WorktreeNote::IncludeOverCap {
+            total_bytes,
+            cap_bytes,
+        } => format!(
+            ".worktreeinclude の一致 {} がコピー上限 {} を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。",
+            kagi_domain::worktree_include::human_bytes(*total_bytes),
+            kagi_domain::worktree_include::human_bytes(*cap_bytes)
+        ),
+        WorktreeNote::RemoveDirty { path, summary } => format!(
+            "worktree に未 commit の変更があります({})。先に commit か stash してください(削除は force しません)。\nworktree `{}`",
+            summary, path
+        ),
+        WorktreeNote::RemoveLocked { path, reason } => {
+            let reason_display = match reason {
+                Some(r) => format!("「{}」", r),
+                None => "(理由の記録なし)".to_string(),
+            };
+            format!(
+                "worktree はロックされています({})。削除前にロックを解除してください(kagi は force しません)。\nworktree `{}`",
+                reason_display, path
+            )
+        }
+        WorktreeNote::RemoveLiveShell { path } => format!(
+            "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `{}`",
+            path
+        ),
+        WorktreeNote::AutoUnlockRefused {
+            name,
+            refusal: AutoUnlockRefusal::NotAutoLock { reason: None },
+        } => format!(
+            "worktree `{}` は自動解除しません: Kagi の token が無いロックです。Kagi がこの terminal のために置いたロックだけを自動解除します。",
+            name
+        ),
+        _ => note_ja(note),
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use kagi_domain::worktree_autolock::AutoUnlockRefusal;
+
+    #[test]
+    fn contract_preserves_legacy_bytes_and_raw_worktree_payloads() {
+        for (note, expected) in [
+            (
+                WorktreeNote::IncludeOverCap {
+                    total_bytes: 1536,
+                    cap_bytes: 512,
+                },
+                ".worktreeinclude の一致 1.5 KiB がコピー上限 512 B を超えています。コピーは続行しますが大きくなる可能性があります(例: node_modules)。",
+            ),
+            (
+                WorktreeNote::RemoveDirty {
+                    path: "/raw{}\n\u{1b}".into(),
+                    summary: "2 modified{}\n\u{1b}".into(),
+                },
+                "worktree に未 commit の変更があります(2 modified{}\n\u{1b})。先に commit か stash してください(削除は force しません)。\nworktree `/raw{}\n\u{1b}`",
+            ),
+            (
+                WorktreeNote::RemoveLocked {
+                    path: "/raw{}\n\u{1b}".into(),
+                    reason: Some("reason{}\n\u{1b}".into()),
+                },
+                "worktree はロックされています(「reason{}\n\u{1b}」)。削除前にロックを解除してください(kagi は force しません)。\nworktree `/raw{}\n\u{1b}`",
+            ),
+            (
+                WorktreeNote::RemoveLocked {
+                    path: "/wt".into(),
+                    reason: None,
+                },
+                "worktree はロックされています((理由の記録なし))。削除前にロックを解除してください(kagi は force しません)。\nworktree `/wt`",
+            ),
+            (
+                WorktreeNote::RemoveLiveShell {
+                    path: "/raw{}\n\u{1b}".into(),
+                },
+                "この worktree の terminal で Kagi が起動した shell がまだ動いています。先にその terminal で exit してください(kagi はプロセスを終了させません)。\nworktree `/raw{}\n\u{1b}`",
+            ),
+            (
+                WorktreeNote::AutoUnlockRefused {
+                    name: "raw{}\n\u{1b}".into(),
+                    refusal: AutoUnlockRefusal::NotAutoLock { reason: None },
+                },
+                "worktree `raw{}\n\u{1b}` は自動解除しません: Kagi の token が無いロックです。Kagi がこの terminal のために置いたロックだけを自動解除します。",
+            ),
+        ] {
+            assert_eq!(note_ja_contract(&note), expected);
         }
     }
 }

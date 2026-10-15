@@ -217,7 +217,8 @@ impl KagiApp {
         for error in errors {
             let detail = error.to_string();
             klog!("theme: load error {}", detail);
-            let message = i18n::theme_load_failed_fmt(&bounded(&detail));
+            let display = i18n::op::user_text::theme_load_error(&error);
+            let message = i18n::theme_load_failed_fmt(&bounded(&display));
             self.push_toast(ToastKind::Error, message, cx);
         }
     }

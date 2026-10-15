@@ -53,10 +53,14 @@ fn assert_block(
     assert_eq!(rendered.restart_name.as_ref(), Msg::TerminalRestart.t());
     assert!(!rendered.hint.is_empty());
     if let TerminalState::Failed { reason } = state {
+        let cause = reason
+            .split_once("': ")
+            .map_or(reason.as_str(), |(_, cause)| cause);
         assert!(
-            rendered.hint.contains(&reason),
+            rendered.hint.contains(cause),
             "failed hint must retain the OS reason"
         );
+        assert!(!rendered.hint.contains("spawn '"));
         assert!(!reason.is_empty());
     }
     let panel = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();

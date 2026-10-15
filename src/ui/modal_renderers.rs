@@ -193,8 +193,9 @@ pub mod status_chip_probe {
 
 /// The same quiet status pill used by Stash Push and every other plan card.
 fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
+    let text = kagi_ui_core::i18n::op::user_text::state_text(text);
     #[cfg(feature = "gui-e2e")]
-    status_chip_probe::record(text);
+    status_chip_probe::record(&text);
     let t = current_theme();
     let (color, fill_alpha, text_alpha) = match kind {
         "staged" | "clean" => (t.color_success, 0x33, 0xff),
@@ -213,7 +214,7 @@ fn plan_status_chip(text: &str, kind: &str) -> gpui::AnyElement {
         .font_family(MONO_FONT)
         .text_xs()
         .text_color(gpui::rgba((color << 8) | text_alpha))
-        .child(SharedString::from(text.to_owned()))
+        .child(SharedString::from(text.into_owned()))
         .into_any_element()
 }
 
@@ -247,10 +248,14 @@ fn plan_state(
     head_id: &'static str,
     display_dirty: Option<(&str, &str)>,
 ) -> gpui::AnyElement {
-    let full = SharedString::from(format!(
-        "{label}: {head} [{}]",
-        display_dirty.map_or(dirty, |(_, detail)| detail)
-    ));
+    let head = match kagi_ui_core::i18n::op::user_text::state_text(&head) {
+        std::borrow::Cow::Owned(text) => SharedString::from(text),
+        std::borrow::Cow::Borrowed(_) => head,
+    };
+    let detail = kagi_ui_core::i18n::op::user_text::state_text(
+        display_dirty.map_or(dirty, |(_, detail)| detail),
+    );
+    let full = SharedString::from(format!("{label}: {head} [{detail}]"));
     apply_group(id, div().id(id), full.clone())
         .relative()
         .flex_shrink_0()
@@ -718,6 +723,12 @@ fn render_plan_modal_card_styled(
     // `SharedString` (merge: `Merge <source> into <target>`, T-DNDMERGE-001).
     let confirm_label: SharedString = confirm_label.into();
     let has_blockers = !plan.blockers.is_empty();
+    let error = error.map(
+        |error| match kagi_ui_core::i18n::op::user_text::diagnostic(&error) {
+            std::borrow::Cow::Owned(text) => SharedString::from(text),
+            std::borrow::Cow::Borrowed(_) => error,
+        },
+    );
     let confirm_kind = plan_confirm_kind(
         plan.destructive,
         &plan.title,
@@ -750,6 +761,7 @@ fn render_plan_modal_card_styled(
     let on_confirm = (!has_blockers).then(|| confirm_handler.clone());
     let copy_plan = plan.clone();
     let copy_extra = extra.as_ref().map(|extra| extra.clipboard.clone());
+    let copy_error = error.clone();
     let card = apply_dialog(
         "plan-card",
         modal_card(MODAL_W_MD).id("plan-card"),
@@ -769,11 +781,15 @@ fn render_plan_modal_card_styled(
                 "plan-card-copy",
                 Msg::ModalCopyAll.t(),
                 move || {
-                    let text = plan_clipboard_text(
+                    let mut text = plan_clipboard_text(
                         &copy_plan,
                         &copy_plan.preview_commits,
                         ShellKind::current(),
                     );
+                    if let Some(error) = &copy_error {
+                        text.push('\n');
+                        text.push_str(error);
+                    }
                     match &copy_extra {
                         Some(extra) => format!("{text}\n{extra}"),
                         None => text,
@@ -1021,6 +1037,9 @@ fn render_plan_modal_card_styled(
     if let Some(err) = &error {
         body = body.child(
             div()
+                .id("plan-error")
+                .role(gpui::Role::Alert)
+                .aria_label(err.clone())
                 .flex_shrink_0()
                 .text_sm()
                 .text_color(rgb(current_theme().color_blocker))

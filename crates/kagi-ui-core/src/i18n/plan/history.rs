@@ -11,7 +11,7 @@ use crate::i18n::Msg;
 pub(crate) const ADVICE_HISTORY_PUSHED_HISTORY_REWRITE_UNDO: &str =
     "push 済みの commit です。公開履歴を書き換えるため undo はできません。`git revert` で打ち消し commit を作成してください。\ncommit `{}`";
 pub(crate) const ADVICE_HISTORY_PUSHED_HISTORY_REWRITE_AMEND: &str =
-    "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `{}`";
+    "push 済みで、他の人が使っている可能性がある commit のため amend できません。新しい commit で修正してください。\ncommit `{}`";
 pub(crate) const ADVICE_HISTORY_AMEND_DIVERGES_FROM_REMOTE: &str =
     "remote にある commit です。amend は新しい commit で置き換えるため `{}` は upstream から分岐し、通常の push は拒否されます。branch メニューの Force-with-lease push を使ってください。\ncommit `{}`";
 pub(crate) const ADVICE_HISTORY_NOTHING_STAGED_FOR_AMEND: &str =
@@ -21,9 +21,9 @@ pub(crate) const ADVICE_HISTORY_WRONG_BRANCH: &str =
 pub(crate) const ADVICE_HISTORY_HEAD_NOT_ON_BRANCH: &str =
     "HEAD が branch を指していません。{} には対象 branch を checkout している必要があります。";
 pub(crate) const ADVICE_HISTORY_ENTRY_STALE_BRANCH_MOVED: &str =
-    "branch `{}` は操作後に移動しています(現在 {}、想定 {})。古い履歴エントリのためスキップします。";
+    "branch `{}` は操作後に移動しています(現在 {}、操作直後 {})。この取り消し手順はスキップします。";
 pub(crate) const ADVICE_HISTORY_ENTRY_STALE_UNREACHABLE: &str =
-    "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`";
+    "commit が見つからないため、この取り消し手順はスキップします。\ncommit `{}`";
 pub(crate) const ADVICE_HISTORY_SOFT_MOVE_PRESERVES_CHANGES: &str =
     "未 commit の変更はそのまま保持されます。動かすのは branch の参照のみです(soft reset、index と working tree は変更なし)。";
 
@@ -103,6 +103,32 @@ pub fn note_ja(note: &HistoryNote) -> String {
         HistoryNote::SoftMovePreservesChanges => {
             super::advice_text(Msg::AdviceHistorySoftMovePreservesChanges, &[])
         }
+    }
+}
+
+/// Stable Japanese bytes for persisted notes, independent of display wording.
+pub(crate) fn note_ja_contract(note: &HistoryNote) -> String {
+    match note {
+        HistoryNote::PushedHistoryRewrite {
+            sha,
+            op: HistoryOp::Amend,
+        } => format!(
+            "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `{}`",
+            sha
+        ),
+        HistoryNote::EntryStaleBranchMoved {
+            branch,
+            now,
+            expected,
+        } => format!(
+            "branch `{}` は操作後に移動しています(現在 {}、想定 {})。古い履歴エントリのためスキップします。",
+            branch, now, expected
+        ),
+        HistoryNote::EntryStaleUnreachable { sha } => format!(
+            "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `{}`",
+            sha
+        ),
+        _ => note_ja(note),
     }
 }
 
@@ -207,6 +233,36 @@ pub fn recovery_ja(recovery: &HistoryRecovery) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changed_notes_preserve_legacy_bytes_and_raw_payloads() {
+        let cases = [
+            (
+                HistoryNote::PushedHistoryRewrite {
+                    sha: "abc{}\nraw".into(),
+                    op: HistoryOp::Amend,
+                },
+                "push 済みで、他の人が土台にしている branch です。履歴を書き換えると fetch 済みの clone が取り残されます。amend は拒否されます。修正は新しい commit で行ってください。\ncommit `abc{}\nraw`",
+            ),
+            (
+                HistoryNote::EntryStaleBranchMoved {
+                    branch: "日本語-{}".into(),
+                    now: "now{}".into(),
+                    expected: "expected{}\nraw".into(),
+                },
+                "branch `日本語-{}` は操作後に移動しています(現在 now{}、想定 expected{}\nraw)。古い履歴エントリのためスキップします。",
+            ),
+            (
+                HistoryNote::EntryStaleUnreachable {
+                    sha: "abc{}\nraw".into(),
+                },
+                "対象 commit に到達できません。古い履歴エントリのためスキップします。\ncommit `abc{}\nraw`",
+            ),
+        ];
+        for (note, expected) in cases {
+            assert_eq!(note_ja_contract(&note), expected);
+        }
+    }
 
     #[test]
     fn amend_recovery_keeps_the_working_tree() {

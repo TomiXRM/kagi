@@ -76,7 +76,7 @@ impl KagiApp {
                             } else {
                                 i18n::Op::Stage
                             };
-                            Some(i18n::op_failed(label, error))
+                            Some(i18n::op::op_failed_contract(label, error))
                         }
                         _ => None,
                     },

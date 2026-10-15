@@ -49,6 +49,17 @@ pub enum OplogPanelMsg {
     StatusUnknown,
     StatusPartial,
     StatusRefused,
+    DetailBefore,
+    DetailAfter,
+    DetailChanges,
+    DetailError,
+    DetailBlocker,
+    DetailLabels,
+    DetailAssignees,
+    DetailTechnical,
+    DetailBackup,
+    DetailFile,
+    DetailReference,
     /// First confirmation on the restore card.
     RestoreConfirm,
     CopyCommand,
@@ -114,6 +125,28 @@ impl OplogPanelMsg {
             (Lang::Ja, StatusPartial) => "一部完了",
             (Lang::En, StatusRefused) => "Refused",
             (Lang::Ja, StatusRefused) => "拒否",
+            (Lang::En, DetailBefore) => "Before",
+            (Lang::Ja, DetailBefore) => "操作前",
+            (Lang::En, DetailAfter) => "After",
+            (Lang::Ja, DetailAfter) => "操作後",
+            (Lang::En, DetailChanges) => "Changes",
+            (Lang::Ja, DetailChanges) => "変更",
+            (Lang::En, DetailError) => "Error",
+            (Lang::Ja, DetailError) => "エラー",
+            (Lang::En, DetailBlocker) => "Cannot continue",
+            (Lang::Ja, DetailBlocker) => "続行できない理由",
+            (Lang::En, DetailLabels) => "Labels",
+            (Lang::Ja, DetailLabels) => "ラベル",
+            (Lang::En, DetailAssignees) => "Assignees",
+            (Lang::Ja, DetailAssignees) => "担当者",
+            (Lang::En, DetailTechnical) => "Details",
+            (Lang::Ja, DetailTechnical) => "詳細",
+            (Lang::En, DetailBackup) => "Backup",
+            (Lang::Ja, DetailBackup) => "バックアップ",
+            (Lang::En, DetailFile) => "File",
+            (Lang::Ja, DetailFile) => "ファイル",
+            (Lang::En, DetailReference) => "Reference",
+            (Lang::Ja, DetailReference) => "参照",
             (Lang::En, RestoreConfirm) => "Restore",
             (Lang::Ja, RestoreConfirm) => "戻す",
             (Lang::En, CopyCommand) => "Copy command",
@@ -156,20 +189,17 @@ impl OplogPanelMsg {
 /// that carries no recorded ref moves (#334 slice 1).
 pub fn reflog_heading(open_start: bool, lookback_secs: i64) -> String {
     match (lang(), open_start) {
-        (Lang::En, false) => {
-            "Estimated — reflog since this worktree's previous operation".into()
+        (Lang::En, false) => "Estimated — reflog since this worktree's previous operation".into(),
+        (Lang::En, true) => {
+            format!("Estimated — reflog of the last {lookback_secs} s before this operation")
         }
-        (Lang::En, true) => format!(
-            "Estimated — reflog of the last {lookback_secs} s before this operation (its previous operation is not loaded)"
-        ),
         (Lang::Ja, false) => "推定 — この worktree の前の操作以降の reflog".into(),
-        (Lang::Ja, true) => format!(
-            "推定 — この操作までの {lookback_secs} 秒間の reflog(前の操作は読み込まれていません)"
-        ),
+        (Lang::Ja, true) => format!("推定 — この操作までの {lookback_secs} 秒間の reflog"),
     }
 }
 
 pub fn reflog_unavailable(error: &str) -> String {
+    let error = super::op::user_text::diagnostic(error);
     match lang() {
         Lang::En => format!("Reflog unavailable: {error}"),
         Lang::Ja => format!("reflog を読めません: {error}"),
@@ -227,7 +257,7 @@ pub fn preview_more(n: usize) -> String {
 /// Keep the card to one neutral line; the warnings name the ref and target.
 pub fn preview_not_loaded() -> &'static str {
     match lang() {
-        Lang::En => "No preview: target commit is outside loaded history",
-        Lang::Ja => "プレビューなし: 戻し先の commit は読み込み済みの履歴外",
+        Lang::En => "No preview: load more history to show the target commit",
+        Lang::Ja => "プレビューなし: 戻し先の commit を表示するには履歴を追加で読み込んでください",
     }
 }

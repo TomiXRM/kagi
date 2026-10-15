@@ -71,6 +71,11 @@ impl CloneNote {
                 .to_string(),
         }
     }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
+    }
 }
 
 /// Plan titles for the clone op.
@@ -86,5 +91,10 @@ impl CloneTitle {
         match self {
             CloneTitle::Clone { source } => format!("Clone {source}"),
         }
+    }
+
+    /// English UI copy; legacy output is unchanged for this category.
+    pub fn message_display_en(&self) -> String {
+        self.message_en()
     }
 }

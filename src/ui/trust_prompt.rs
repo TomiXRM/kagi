@@ -135,6 +135,7 @@ pub(crate) fn render_trust_repo_modal(
             modal.repo_path.display().to_string(),
         )))
         .when_some(modal.error.clone(), |card, error| {
+            let error = super::i18n::op::user_text::diagnostic(&error).into_owned();
             card.child(
                 div()
                     .flex()

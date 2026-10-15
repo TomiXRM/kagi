@@ -320,10 +320,9 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "auto-lock-worktree plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(SharedString::from(
+                    crate::ui::i18n::op_plan_failed(crate::ui::i18n::Op::LockWorktree, e),
+                ));
             }
         }
     }

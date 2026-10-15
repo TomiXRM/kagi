@@ -17,8 +17,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "force-with-lease-push: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("force-with-lease-push: repo session unavailable"),
                 ));
                 return;
             }
@@ -36,10 +36,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "force-with-lease-push plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("force-with-lease-push plan error: {}", e)),
+                ));
             }
         }
     }
@@ -93,7 +92,9 @@ impl KagiApp {
         }
 
         self.clear_force_lease_push_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from("Force-with-lease pushing…"));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from("Force-with-lease pushing…"),
+        ));
         klog!("async: force-with-lease-push started");
 
         let plan = modal.plan.clone();
@@ -108,9 +109,9 @@ impl KagiApp {
             move || force_lease_push_blocking(&bg_path, &bg_plan),
             |_| None,
             move |done| match done {
-                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    "force-with-lease-push: done",
-                ))),
+                Ok(_) => RunPresentation::status(FooterStatus::Success(
+                    i18n::op::user_text::operations::completed("force-with-lease-push").into(),
+                )),
                 Err(_) => RunPresentation::none(),
             },
         );
@@ -124,7 +125,7 @@ fn force_lease_push_blocking(
     plan: &kagi_git::ops::OperationPlan,
 ) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
-        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ForceWithLeasePush;
     let report = repo.run_recorded(&op, plan);
     if report.result.is_ok() {

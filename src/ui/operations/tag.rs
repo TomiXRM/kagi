@@ -96,7 +96,7 @@ impl KagiApp {
         let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "create-tag",
                     plan.current.clone(),
@@ -121,7 +121,7 @@ impl KagiApp {
         };
         let report = repo.run_recorded(&op, &plan);
         if let Err(e) = &report.result {
-            let err_msg = i18n::op_failed(i18n::Op::CreateTag, e);
+            let err_msg = i18n::op::op_failed_contract(i18n::Op::CreateTag, e);
             self.present_report("create-tag", &report, &repo_path, cx);
             if let Some(m) = self.create_tag_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
@@ -185,8 +185,9 @@ impl KagiApp {
     /// one (`plan_push_tag` never forces), so it is Guarded, not Destructive.
     pub fn open_push_tag_modal(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer =
-                FooterStatus::Failed(SharedString::from("push-tag: repo session unavailable"));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from("push-tag: repo session unavailable"),
+            ));
             return;
         };
         let repo = session.backend();
@@ -202,8 +203,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::PushTag, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::PushTag, e)),
                 ));
             }
         }
@@ -245,7 +246,9 @@ impl KagiApp {
         }
 
         self.clear_push_tag_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPushTag.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyPushTag.t()),
+        ));
         klog!("async: push-tag started");
 
         let plan = modal.plan.clone();
@@ -260,7 +263,7 @@ impl KagiApp {
             move || {
                 let run = || -> Result<kagi_git::backend::recording::RunReport, String> {
                     let mut repo = crate::ui::blocking_ops::open_backend(&bg_path)
-                        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+                        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
                     let op = kagi_git::Operation::PushTag {
                         name: name.clone(),
                         remote: remote.clone(),
@@ -275,9 +278,9 @@ impl KagiApp {
             },
             |_| None,
             move |done| match done {
-                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    Msg::PushTagDone.t(),
-                ))),
+                Ok(_) => RunPresentation::status(FooterStatus::Success(
+                    crate::ui::operations::display_text(SharedString::from(Msg::PushTagDone.t())),
+                )),
                 Err(_) => RunPresentation::none(),
             },
         );

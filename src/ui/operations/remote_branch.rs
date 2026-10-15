@@ -51,8 +51,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "delete-remote-branch: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("delete-remote-branch: repo session unavailable"),
                 ));
                 return;
             }
@@ -72,10 +72,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "delete-remote-branch plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("delete-remote-branch plan error: {}", e)),
+                ));
             }
         }
     }
@@ -129,10 +128,9 @@ impl KagiApp {
         }
 
         self.clear_delete_remote_branch_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(format!(
-            "Deleting remote branch '{}'…",
-            modal.remote_branch
-        )));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(format!("Deleting remote branch '{}'…", modal.remote_branch)),
+        ));
         klog!("async: delete-remote-branch started");
 
         let plan = modal.plan.clone();
@@ -149,9 +147,9 @@ impl KagiApp {
             move || delete_remote_branch_blocking(&bg_path, &bg_plan, &bg_remote_branch),
             |_| None,
             move |done| match done {
-                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    format!("delete-remote-branch: '{}' deleted", remote_branch),
-                ))),
+                Ok(_) => RunPresentation::status(FooterStatus::Success(
+                    i18n::op::user_text::operations::deleted_branch(&remote_branch, true).into(),
+                )),
                 Err(_) => RunPresentation::none(),
             },
         );
@@ -223,7 +221,7 @@ impl KagiApp {
                         let detail = if let Some(summary) = &auth_summary {
                             summary.clone()
                         } else if open_failed {
-                            i18n::op_failed(i18n::Op::RepoOpen, error)
+                            i18n::op::op_failed_contract(i18n::Op::RepoOpen, error)
                         } else {
                             error.to_string()
                         };
@@ -250,7 +248,7 @@ impl KagiApp {
                 app.present_app_notice();
                 let result = result.map_err(|e| {
                     if open_failed {
-                        i18n::op_failed(i18n::Op::RepoOpen, e)
+                        i18n::op::op_failed_contract(i18n::Op::RepoOpen, e)
                     } else {
                         e.to_string()
                     }
@@ -268,10 +266,10 @@ impl KagiApp {
                         if outcome.changed {
                             app.reload(cx);
                         }
-                        app.status_footer = FooterStatus::Success(SharedString::from(format!(
-                            "Fetched {}",
-                            remote_branch
-                        )));
+                        app.status_footer =
+                            FooterStatus::Success(crate::ui::operations::display_text(
+                                SharedString::from(format!("Fetched {}", remote_branch)),
+                            ));
                         app.push_toast(
                             ToastKind::Success,
                             format!("Fetched {}", remote_branch),
@@ -279,9 +277,11 @@ impl KagiApp {
                         );
                     }
                     Err(e) => {
-                        let msg =
-                            auth_summary.unwrap_or_else(|| i18n::op_failed(i18n::Op::Fetch, e));
-                        app.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
+                        let msg = auth_summary
+                            .unwrap_or_else(|| i18n::op::op_failed_contract(i18n::Op::Fetch, e));
+                        app.status_footer = FooterStatus::Failed(
+                            crate::ui::operations::display_text(SharedString::from(msg.clone())),
+                        );
                         app.push_toast(ToastKind::Error, msg, cx);
                     }
                 }
@@ -693,8 +693,9 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("create-pr: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("create-pr: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -726,12 +727,14 @@ impl KagiApp {
                 cx.open_url(&url);
             }
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
                     "create-pr: remote host not recognized (github.com / gitlab.com / bitbucket.org only)",
-                ));
+                )));
                 self.push_toast(
                     ToastKind::Error,
-                    "Create PR: remote host not recognized",
+                    i18n::op::user_text::diagnostic(
+                        "create-pr: remote host not recognized (github.com / gitlab.com / bitbucket.org only)",
+                    ).into_owned(),
                     cx,
                 );
             }

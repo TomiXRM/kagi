@@ -996,10 +996,12 @@ impl KagiApp {
                     .blocker()
                     .map(i18n::plan_note_text)
                     .unwrap_or_else(|| e.to_string());
-                let message = i18n::op_plan_failed(i18n::Op::Commit, detail);
+                let message = i18n::op::op_plan_failed_contract(i18n::Op::Commit, detail);
                 // Failed planning cannot leave a previous approval executable.
                 self.cancel_commit_plan_modal(cx);
-                self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(message.clone()),
+                ));
                 self.push_toast(ToastKind::Error, SharedString::from(message), cx);
                 cx.notify();
             }
@@ -1099,7 +1101,9 @@ impl KagiApp {
         intent: Option<crate::app::IntentId>,
         cx: &mut Context<Self>,
     ) {
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCommit.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCommit.t()),
+        ));
         klog!("async: commit started");
 
         let bg_path = repo_path.clone();
@@ -1148,14 +1152,13 @@ impl KagiApp {
                     }
                 }
                 Err(failure) => {
-                    let presentation = RunPresentation::status(FooterStatus::Failed(
-                        SharedString::from(failure.message.clone()),
+                    let message = crate::ui::operations::display_text(SharedString::from(
+                        failure.display_message().to_owned(),
                     ));
+                    let presentation =
+                        RunPresentation::status(FooterStatus::Failed(message.clone()));
                     if let Some(expected) = expected_panel {
-                        presentation.update_commit_panel(CommitPanelFailure {
-                            expected,
-                            message: SharedString::from(failure.message.clone()),
-                        })
+                        presentation.update_commit_panel(CommitPanelFailure { expected, message })
                     } else {
                         presentation
                     }
@@ -1178,7 +1181,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, e)),
+                    SharedString::from(i18n::op::op_failed_contract(i18n::Op::RepoOpen, e)),
                     cx,
                 );
                 return;
@@ -1196,7 +1199,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_plan_failed(i18n::Op::MergeCommit, e)),
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::MergeCommit, e)),
                     cx,
                 );
                 return;

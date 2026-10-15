@@ -27,7 +27,9 @@ pub(crate) fn plan_or_exec_error(
     plan: &ModalPlan,
     error: Option<SharedString>,
 ) -> Option<SharedString> {
-    plan.error().map(SharedString::from).or(error)
+    plan.error()
+        .map(|text| SharedString::from(i18n::op::user_text::diagnostic(text).into_owned()))
+        .or_else(|| error.map(crate::ui::operations::display_text))
 }
 
 /// One `plan_*` result in the shape [`ModalPlan::replan`] takes: the plan behind
@@ -48,8 +50,7 @@ pub(crate) fn session_unavailable<T>(op: i18n::Op) -> Result<T, String> {
     Err(i18n::op_plan_failed(op, SESSION_UNAVAILABLE))
 }
 
-/// Diagnostic half of a session-acquisition failure. Untranslated, like every
-/// other backend diagnostic; `op_plan_failed` supplies the localized frame.
+/// Stable diagnostic used by session acquisition; localized only for display.
 pub(crate) const SESSION_UNAVAILABLE: &str = "repository session unavailable";
 
 #[cfg(test)]

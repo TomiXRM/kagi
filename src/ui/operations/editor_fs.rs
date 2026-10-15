@@ -284,7 +284,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    i18n::op_failed(i18n::Op::GitignoreWrite, e),
+                    i18n::op::op_failed_contract(i18n::Op::GitignoreWrite, e),
                     cx,
                 );
             }
@@ -348,8 +348,9 @@ impl KagiApp {
                 true
             }
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(i18n::op_failed(i18n::Op::Reveal, e)));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_failed_contract(i18n::Op::Reveal, e)),
+                ));
                 false
             }
         }

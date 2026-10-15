@@ -98,7 +98,9 @@ impl KagiApp {
         };
 
         self.clear_cherry_pick_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCherryPick.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCherryPick.t()),
+        ));
         klog!("async: cherry-pick started");
 
         let plan = modal.plan.clone();
@@ -206,7 +208,9 @@ impl KagiApp {
         };
 
         self.clear_revert_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyRevert.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyRevert.t()),
+        ));
         klog!("async: revert started");
 
         let plan = modal.plan.clone();

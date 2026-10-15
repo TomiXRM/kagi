@@ -10,7 +10,7 @@
 //! `cx.background_spawn`. None of them touch `&self`, `cx`, or `window`.
 
 use kagi_git::backend::recording::RunReport;
-use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, PullOutcome, StateSummary};
+use kagi_git::{AmendMode, CommitId, Head, MergeKind, OperationPlan, StateSummary};
 
 use crate::ui::i18n;
 use crate::ui::settings::Settings;
@@ -43,7 +43,8 @@ pub(crate) fn push_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let report = repo.run_recorded(&kagi_git::Operation::Push, plan);
     if let Ok(outcome) = &report.result {
         klog!("executed: push — {}", push_summary(outcome));
@@ -102,7 +103,8 @@ pub(crate) fn checkout_blocking(
     target: &CheckoutPlanTarget,
     verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     // ADR-0104 Phase 2: route through the run pipeline so preflight is enforced
     // in one place. `run_recorded`, not `run`: `run` drops the receipt, and the
     // UI then had to invent one.
@@ -162,7 +164,8 @@ pub(crate) fn checkout_blocking(
 pub(crate) fn open_merge_backend(
     owner: &crate::app::Attachment,
 ) -> Result<kagi_git::Backend, String> {
-    let repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let repo = open_backend(&owner.path)
+        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     if owner.worktree.is_none() || repo.write_worktree_id().ok() != owner.worktree {
         return Err(i18n::Msg::MergeDestinationChanged.t().to_string());
     }
@@ -262,7 +265,8 @@ pub(crate) fn checkout_tracking_blocking(
     remote_branch: &str,
     local_branch: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::CheckoutTrackingBranch {
         remote_branch: remote_branch.to_string(),
         local_branch: local_branch.to_string(),
@@ -285,7 +289,8 @@ pub(crate) fn switch_to_latest_blocking(
     branch_name: &str,
     remote_branch: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::SwitchToLatestBranch {
         branch_name: branch_name.to_string(),
         remote_branch: remote_branch.to_string(),
@@ -310,7 +315,8 @@ pub(crate) fn cherry_pick_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::CherryPick {
         id: commit_id.clone(),
     };
@@ -334,7 +340,8 @@ pub(crate) fn revert_blocking(
     plan: &OperationPlan,
     commit_id: &CommitId,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::Revert {
         id: commit_id.clone(),
     };
@@ -358,7 +365,8 @@ pub(crate) fn commit_blocking(
     message: &str,
     verified: &std::sync::atomic::AtomicBool,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     // Approval binds HEAD and index content; same-path staged blob/mode drift
     // is a preflight refusal, not permission to commit the replacement.
     let op = kagi_git::Operation::Commit {
@@ -418,7 +426,8 @@ pub(crate) fn amend_blocking(
     mode: AmendMode,
     message: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::Amend {
         mode,
         message: if message.trim().is_empty() {
@@ -445,7 +454,8 @@ pub(crate) fn delete_branch_blocking(
     plan: &OperationPlan,
     branch_name: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(&owner.path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo = open_backend(&owner.path)
+        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     if repo.write_worktree_id().ok().as_ref() != owner.worktree.as_ref() || owner.worktree.is_none()
     {
         return Err("worktree identity changed; reopen the repository".into());
@@ -465,7 +475,8 @@ pub(crate) fn delete_remote_branch_blocking(
     plan: &OperationPlan,
     remote_branch: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::DeleteRemoteBranch {
         remote_branch: remote_branch.to_string(),
     };
@@ -480,7 +491,8 @@ pub(crate) fn branch_plan_blocking(
     repo_path: &std::path::Path,
     modal: &BranchPlanModal,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = match modal.kind {
         BranchPlanKind::SyncToRemote => kagi_git::Operation::SyncToRemote {
             branch: modal.branch_name.clone(),
@@ -513,60 +525,14 @@ pub(crate) fn branch_plan_blocking(
     Ok(report)
 }
 
-/// The footer line for a branch-plan outcome (pull-ff / push / push-set-upstream).
-pub(crate) fn branch_plan_summary(
-    branch_name: &str,
-    outcome: &kagi_git::OperationOutcome,
-) -> String {
-    match outcome {
-        kagi_git::OperationOutcome::Pull(PullOutcome::UpToDate) => {
-            format!("branch '{}' already up to date", branch_name)
-        }
-        kagi_git::OperationOutcome::Pull(PullOutcome::FastForward { to }) => {
-            format!("branch '{}' fast-forwarded to {}", branch_name, to.short())
-        }
-        kagi_git::OperationOutcome::Pull(PullOutcome::Merged { .. }) => {
-            "unexpected merge outcome".to_string()
-        }
-        kagi_git::OperationOutcome::Push(o) => format!(
-            "branch '{}' pushed {} commit(s){}",
-            branch_name,
-            o.pushed,
-            if o.set_upstream {
-                " and upstream set"
-            } else {
-                ""
-            }
-        ),
-        kagi_git::OperationOutcome::SyncToRemote {
-            to,
-            work_backup,
-            removed_untracked,
-            ..
-        } => format!(
-            "branch '{}' synced to {}{}",
-            branch_name,
-            &to[..7.min(to.len())],
-            if work_backup.is_some() {
-                format!(
-                    "; local changes kept in backups ({} untracked removed)",
-                    removed_untracked
-                )
-            } else {
-                String::new()
-            }
-        ),
-        _ => "unexpected outcome".to_string(),
-    }
-}
-
 pub(crate) fn set_upstream_blocking(
     repo_path: &std::path::Path,
     plan: &OperationPlan,
     branch_name: &str,
     upstream: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::SetUpstream {
         branch_name: branch_name.to_string(),
         upstream: upstream.to_string(),
@@ -580,7 +546,8 @@ pub(crate) fn rename_branch_blocking(
     old_name: &str,
     new_name: &str,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::RenameBranch {
         old_name: old_name.to_string(),
         new_name: new_name.to_string(),
@@ -598,7 +565,8 @@ pub(crate) fn create_worktree_blocking(
     at: &CommitId,
     allow_existing_branch: bool,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = if allow_existing_branch {
         kagi_git::Operation::OpenWorktreeForBranch {
             branch: branch_input.to_string(),

@@ -56,7 +56,10 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                    SharedString::from(i18n::op::op_failed_contract(
+                        i18n::Op::RepoOpen,
+                        "session unavailable",
+                    )),
                     cx,
                 );
                 return;
@@ -67,7 +70,7 @@ impl KagiApp {
             Err(e) => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_plan_failed(i18n::Op::Skip, e)),
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Skip, e)),
                     cx,
                 );
                 return;

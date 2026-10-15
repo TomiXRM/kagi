@@ -650,11 +650,23 @@ pub fn render_sidebar(app: &KagiApp, cx: &mut Context<KagiApp>) -> gpui::AnyElem
             .into_any_element()
     };
 
+    let viewport_height = app.sidebar.pane_viewport_height.clone();
+    let measure_viewport = canvas(
+        |_, _, _| {},
+        move |bounds: Bounds<Pixels>, (), _, _| {
+            viewport_height.set(f32::from(bounds.size.height));
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
     let panes = (0..SECTIONS.len()).fold(
         div()
             .id("sidebar-panes")
             .relative()
             .child(super::e2e::measure_inside("sidebar-panes"))
+            .child(measure_viewport)
             .flex()
             .flex_col()
             .flex_1()

@@ -413,7 +413,7 @@ pub(crate) fn render_plan_modal_wrapper_styled(
     // #462: the user's section open/closed choices, borrowed from `KagiApp`
     // for this frame. Borrowed rather than read back through `cx`: the app is
     // already mutably borrowed while it renders.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let stage = ConfirmStage::Single;
@@ -443,7 +443,7 @@ pub(crate) fn render_plan_modal_wrapper_staged(
     stage: ConfirmStage,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_extra(
@@ -480,7 +480,7 @@ pub(crate) fn render_plan_modal_wrapper_extra(
     extra: Option<PlanCardExtra>,
     cancel_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
     confirm_action: impl Fn(&mut KagiApp, &mut Context<KagiApp>) + 'static,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let cancel = cx.listener(move |this, _: &(), window, cx| {
@@ -716,7 +716,7 @@ fn render_plan_modal_card_styled(
     // #334: a card-specific element after the warnings (display only).
     extra: Option<PlanCardExtra>,
     // #462: see [`render_plan_modal_wrapper_styled`].
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> impl IntoElement {
     // Accept either a `&'static str` (most modals) or a dynamic `String`/

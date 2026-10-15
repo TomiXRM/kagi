@@ -42,42 +42,8 @@ fn cp_tree_item(
     }
 }
 
-/// Level and sibling position/size of every tree-view row of a section, in
-/// display order (#354): the pruned file tree at depth + 1, then each
-/// non-empty fold ("Generated", "Agent artifacts") as a top-level item with
-/// its expanded files one level below. Linear; rebuilt on status changes or
-/// fold toggles, never by the virtual list's per-scroll processor.
-pub(super) fn cp_tree_layout(
-    panel: &crate::ui::commit_panel::CommitPanelState,
-    staged: bool,
-) -> Vec<(usize, (usize, usize))> {
-    let tree = if staged {
-        &panel.staged_tree
-    } else {
-        &panel.unstaged_tree
-    };
-    let mut levels: Vec<usize> = tree
-        .iter()
-        .map(|row| match row {
-            file_tree::TreeRow::Dir { depth, .. } | file_tree::TreeRow::File { depth, .. } => {
-                depth + 1
-            }
-        })
-        .collect();
-    for extra in [
-        panel.generated_extra_rows(staged),
-        panel.agent_extra_rows(staged),
-    ] {
-        if extra > 0 {
-            levels.push(1);
-            levels.extend(std::iter::repeat_n(2, extra - 1));
-        }
-    }
-    let positions = kagi_ui_core::tree_a11y::sibling_positions(&levels);
-    levels.into_iter().zip(positions).collect()
-}
-
-/// The slot of display row `index` in a section laid out by [`cp_tree_layout`].
+/// The slot of display row `index` in a section laid out by
+/// [`super::commit_panel_files::cp_tree_layout`].
 pub(super) fn cp_tree_slot(
     layout: &[(usize, (usize, usize))],
     tree: &'static str,
@@ -152,14 +118,21 @@ fn render_cp_file_row(
     });
     // Row background: conflicted files get red tint
     let selected = (is_sel || wip_hit) && !is_conflicted;
-    let selection_on_accent = theme().selection_uses_on_accent(selected, window_active);
-    let row_bg = if is_conflicted {
-        rgb(theme().diff_removed_bg).into()
-    } else if is_sel || wip_hit {
-        theme().selected_for_window(window_active)
+    let selection_wash = if is_conflicted {
+        0.
     } else {
-        rgb(theme().panel).into()
+        view.file_motion[staged as usize].selection(&file.path)
     };
+    let row_bg: gpui::Hsla = if is_conflicted {
+        rgb(theme().diff_removed_bg).into()
+    } else {
+        let base: gpui::Hsla = rgb(theme().panel).into();
+        let mut wash = theme().selected_for_window(window_active);
+        wash.a *= selection_wash;
+        base.blend(wash)
+    };
+    let ink = diffstat_bar::file_selection_ink(selection_wash, window_active, row_bg);
+    let foreground = |normal| ink.map_or_else(|| rgb(normal).into(), |(primary, _)| primary);
     let mut file_row = div()
         .id((row_id, fi))
         .map(|el| {
@@ -200,9 +173,10 @@ fn render_cp_file_row(
                 if staged { "st" } else { "us" }
             )))
         })
-        .when(!is_sel && !wip_hit && !is_conflicted, |el| {
-            el.hover(|s| s.bg(rgb(theme().surface)))
-        })
+        .when(
+            !is_sel && !wip_hit && !is_conflicted && selection_wash == 0.,
+            |el| el.hover(|s| s.bg(rgb(theme().surface))),
+        )
         .on_click(file_click)
         .child(
             div()
@@ -210,12 +184,14 @@ fn render_cp_file_row(
                 .flex_shrink_0()
                 .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                 .line_height(theme::scaled_px(16.))
-                .text_color(if selection_on_accent {
-                    theme().selection_foreground(window_active)
-                } else {
-                    rgb(badge_color).into()
-                })
-                .child(SharedString::from(badge)),
+                .text_color(foreground(badge_color))
+                .child(SharedString::from(badge))
+                .when(cfg!(feature = "gui-e2e"), |badge| {
+                    badge.relative().child(super::e2e::measure_inside(format!(
+                        "cp-{}-file-badge-{fi}",
+                        if staged { "st" } else { "us" }
+                    )))
+                }),
         )
         .child(
             div()
@@ -232,11 +208,7 @@ fn render_cp_file_row(
                         "cp-selected-unstaged-label"
                     }))
                 })
-                .text_color(if selection_on_accent {
-                    theme().selection_foreground(window_active)
-                } else {
-                    rgb(theme().text_main).into()
-                })
+                .text_color(foreground(theme().text_main))
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis_middle()
@@ -282,7 +254,7 @@ fn render_cp_file_row(
         .child(diffstat_bar::diffstat_unit(
             if staged { fi + 100_000 } else { fi },
             stat,
-            selection_on_accent.then(|| theme().selection_secondary_foreground(window_active)),
+            ink.map(|(_, secondary)| secondary),
         ));
     file_row = super::commit_panel_navigation::file_row(
         view,
@@ -449,7 +421,7 @@ fn render_cp_fold_header(
             cx.notify();
         },
     );
-    div()
+    let row = div()
         .id(id)
         .map(|el| {
             cp_tree_item(
@@ -480,7 +452,8 @@ fn render_cp_fold_header(
                 .truncate()
                 .child(SharedString::from(label)),
         )
-        .into_any_element()
+        .into_any_element();
+    super::e2e::measure_leaf(id, row)
 }
 
 /// issue #338: whether `path` is an agent convention body (badge, never folded).

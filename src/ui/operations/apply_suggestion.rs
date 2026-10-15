@@ -137,7 +137,7 @@ impl KagiApp {
 /// blockers, and how to read the old content back from its backup ref.
 pub(crate) fn render_apply_suggestion_modal(
     modal: ApplySuggestionModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_styled(

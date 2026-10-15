@@ -56,7 +56,7 @@ pub(crate) fn render_amend_modal(
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). The folded-file list is NOT collapsible;
     // the warnings and recovery panels are.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     // #454: scroll handle for the folded-file `uniform_list` (owned by
     // `KagiApp` so the position survives re-renders while the modal is open).
     list_scroll: gpui::UniformListScrollHandle,
@@ -244,36 +244,37 @@ pub(crate) fn render_amend_modal(
         ));
     }
 
-    // Warnings get the mock's section treatment (title + count chip) but stay
-    // **open**: in a destructive card they explain what will NOT be touched,
-    // which is safety-relevant (issue #454 advisory). The mock collapses them;
-    // hiding "these files will not be discarded" behind a caret on a confirm
-    // dialog is the one place that trade goes the other way.
+    // Supporting warnings default open; closing keeps only their drawing, not
+    // live Note semantics, while destructive targets remain non-collapsible.
     if !plan.warnings.is_empty() {
+        let open = section_open(overrides, SECTION_AMEND_WARNINGS, true);
         let mut warn_col = div().flex().flex_col().gap_1();
         for (wi, w) in plan.warnings.iter().enumerate() {
             let text = plan_note_text(w);
-            let id: SharedString = format!("amend-warning-{wi}").into();
-            warn_col = warn_col.child(
-                apply_note(id.clone(), div().id(id), false, &text)
-                    .flex_shrink_0()
-                    .text_sm()
-                    .text_color(rgb(current_theme().color_warning))
-                    .child(SharedString::from(format!("\u{26a0} {text}"))),
-            );
+            let row = div()
+                .flex_shrink_0()
+                .text_sm()
+                .text_color(rgb(current_theme().color_warning))
+                .child(SharedString::from(format!("\u{26a0} {text}")));
+            let row = if open.is_open() {
+                let id: SharedString = format!("amend-warning-{wi}").into();
+                apply_note(id.clone(), row.id(id), false, &text).into_any_element()
+            } else {
+                row.into_any_element()
+            };
+            warn_col = warn_col.child(row);
         }
         #[cfg(feature = "gui-e2e")]
         let warn_col = warn_col
             .relative()
             .child(super::modal_shell::modal_probe("modal-warning-content"));
-        let open = section_open(overrides, SECTION_AMEND_WARNINGS, true);
         body = body.child(
             modal_section(
                 SECTION_AMEND_WARNINGS,
                 Msg::ModalWarningsSection.t(),
                 plan.warnings.len(),
                 open,
-                open.is_open().then(|| warn_col.into_any_element()),
+                Some(warn_col.into_any_element()),
                 cx,
             )
             .flex_shrink_0(),
@@ -399,7 +400,7 @@ pub(crate) fn render_discard_modal(
     modal: DiscardModal,
     // #454: user's section open/closed overrides (`KagiApp` owns them; the
     // renderer owns the defaults). Only the skipped list is collapsible here.
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     // #454: scroll handle for the target-file `uniform_list` ("Discard all" is
     // the biggest list in the app, so it is virtualized like amend's).
     list_scroll: gpui::UniformListScrollHandle,
@@ -612,19 +613,18 @@ pub(crate) fn render_discard_modal(
     // hidden — only the paths are, and the section lists all of them.
     if !modal.skipped.is_empty() {
         let open = section_open(overrides, SECTION_SKIPPED, false);
-        let section_body = open.is_open().then(|| {
+        let section_body = open.retain_content().then(|| {
             // Cap the opened section too: the body does not scroll, so without
             // its own box hundreds of skipped paths would push the blockers
             // and the recovery note out of the card — the two things a user
             // needs next to the Discard button. Same shape as the target list.
+            let scroll = overrides.scroll_handle(SECTION_SKIPPED);
+            let offset = scroll.offset();
             let mut skip_col = div()
-                .id("discard-skipped-list")
                 .flex()
                 .flex_col()
                 .gap_px()
-                .min_h(gpui::px(0.))
-                .max_h(modal_list_max_h(modal.skipped.len()))
-                .overflow_y_scroll();
+                .when(!open.is_open(), |col| col.relative().top(offset.y));
             // No `chars().take(80)`: cutting the head keeps the least
             // identifying part of a deep path, and `overflow_hidden` below
             // already clips whatever does not fit the card (#454 review).
@@ -649,7 +649,20 @@ pub(crate) fn render_discard_modal(
                         ),
                 );
             }
-            skip_col.into_any_element()
+            let list = div()
+                .min_h(gpui::px(0.))
+                .max_h(modal_list_max_h(modal.skipped.len()))
+                .overflow_hidden()
+                .child(skip_col);
+            if open.is_open() {
+                list.id("discard-skipped-list")
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
+                    .child(super::e2e::measure_inside("discard-skipped-list"))
+                    .into_any_element()
+            } else {
+                list.into_any_element()
+            }
         });
         body = body.child(modal_section(
             SECTION_SKIPPED,
@@ -662,35 +675,37 @@ pub(crate) fn render_discard_modal(
     }
 
     // ── Warnings / Blockers ─────────────────────────────────
-    // Warnings become the mock's titled panel with a count chip, but stay
-    // **open**: here they say which files will NOT be discarded, and hiding
-    // that behind a caret on a destructive confirm is the wrong trade.
+    // Supporting warnings default open; their closing presentation is inert.
     if !plan.warnings.is_empty() {
+        let open = section_open(overrides, SECTION_DISCARD_WARNINGS, true);
         let mut warn_col = div().flex().flex_col().gap_px();
         for (wi, w) in plan.warnings.iter().enumerate() {
             let text = plan_note_text(w);
-            let id: SharedString = format!("discard-warning-{wi}").into();
-            warn_col = warn_col.child(
-                apply_note(id.clone(), div().id(id), false, &text)
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(rgb(current_theme().color_warning))
-                    .overflow_hidden()
-                    .child(SharedString::from(format!("\u{26a0} {text}"))),
-            );
+            let row = div()
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(rgb(current_theme().color_warning))
+                .overflow_hidden()
+                .child(SharedString::from(format!("\u{26a0} {text}")));
+            let row = if open.is_open() {
+                let id: SharedString = format!("discard-warning-{wi}").into();
+                apply_note(id.clone(), row.id(id), false, &text).into_any_element()
+            } else {
+                row.into_any_element()
+            };
+            warn_col = warn_col.child(row);
         }
         #[cfg(feature = "gui-e2e")]
         let warn_col = warn_col
             .relative()
             .child(super::modal_shell::modal_probe("modal-warning-content"));
-        let open = section_open(overrides, SECTION_DISCARD_WARNINGS, true);
         body = body.child(
             modal_section(
                 SECTION_DISCARD_WARNINGS,
                 Msg::ModalWarningsSection.t(),
                 plan.warnings.len(),
                 open,
-                open.is_open().then(|| warn_col.into_any_element()),
+                Some(warn_col.into_any_element()),
                 cx,
             )
             .flex_shrink_0(),

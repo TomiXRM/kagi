@@ -214,7 +214,7 @@ impl KagiApp {
 /// REFS-first restore card; render from canonical typed ref moves.
 pub(crate) fn render_oplog_restore_modal(
     modal: OplogRestoreModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {

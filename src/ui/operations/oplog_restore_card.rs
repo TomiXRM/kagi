@@ -18,7 +18,6 @@ use kagi_domain::plan_note::{OplogRestoreNote, OplogRestoreTitle, PlanNote, Plan
 use kagi_domain::ref_restore::RefRestore;
 use kagi_ui_core::i18n::{self, oplog_panel::OplogPanelMsg, plan_note_text, Msg};
 use kagi_ui_core::tooltip::HoverTooltip as _;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 fn text(msg: OplogPanelMsg) -> &'static str {
@@ -305,7 +304,7 @@ fn unchanged_items() -> [OplogPanelMsg; 6] {
 
 pub(crate) fn render(
     modal: OplogRestoreModal,
-    overrides: &HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
     window: &mut gpui::Window,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {

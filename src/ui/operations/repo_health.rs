@@ -129,7 +129,7 @@ impl KagiApp {
 /// command, and how to undo it.
 pub(crate) fn render_repo_health_modal(
     modal: RepoHealthModal,
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &crate::ui::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let confirm_title = match modal.fix {

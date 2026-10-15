@@ -20,7 +20,7 @@
 //! [`Tooltip`] (which requires the element carry an `.id`) shows
 //! `"N additions, M deletions"`.
 
-use gpui::{rgb, InteractiveElement, IntoElement, ParentElement, SharedString, Styled};
+use gpui::{prelude::*, rgb, SharedString};
 use gpui_component::tooltip::Tooltip;
 use kagi_ui_core::tooltip::HoverTooltip as _;
 
@@ -35,12 +35,35 @@ const SEG_W: f32 = 4.0;
 const SEG_H: f32 = 9.0;
 const SEG_GAP: f32 = 1.0;
 
+/// File-row ink keeps its settled styles; in flight, choose one opaque ink
+/// against the composited wash using the existing on-accent contrast policy.
+pub(super) fn file_selection_ink(
+    wash: f32,
+    window_active: bool,
+    background: gpui::Hsla,
+) -> Option<(gpui::Hsla, gpui::Hsla)> {
+    let palette = theme();
+    if wash <= 0. || !palette.selection_uses_on_accent(true, window_active) {
+        return None;
+    }
+    if wash >= 1. {
+        return Some((
+            palette.selection_foreground(window_active),
+            palette.selection_secondary_foreground(window_active),
+        ));
+    }
+    let ink = rgb(theme::on_accent_foreground(
+        u32::from(background.to_rgb()) >> 8,
+    ))
+    .into();
+    Some((ink, ink))
+}
+
 /// Build the trailing diffstat unit for one file row.
 ///
 /// `id_seed` must be unique within the parent list (e.g. the file index) so the
 /// tooltip's stateful element id does not collide.
-/// `selected_foreground` overrides only labels on a selected row; the bar
-/// segments retain their Git semantic fills.
+/// `selected_foreground` overrides label ink; bar segments retain their Git fills.
 ///
 /// Returns a right-aligned, `flex_shrink_0` row element.  When `stat` is `None`
 /// (diffstat unavailable for this file), an empty spacer of the same width is
@@ -49,8 +72,26 @@ pub fn diffstat_unit(
     id_seed: usize,
     stat: Option<&FileDiffStat>,
     selected_foreground: Option<gpui::Hsla>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
+    render_diffstat(id_seed, stat, selected_foreground, true)
+}
+
+/// The same retained paint, without tooltip identities or input handlers.
+pub fn diffstat_unit_inert(
+    stat: Option<&FileDiffStat>,
+    selected_foreground: Option<gpui::Hsla>,
+) -> gpui::AnyElement {
+    render_diffstat(0, stat, selected_foreground, false)
+}
+
+fn render_diffstat(
+    id_seed: usize,
+    stat: Option<&FileDiffStat>,
+    selected_foreground: Option<gpui::Hsla>,
+    interactive: bool,
+) -> gpui::AnyElement {
     let t = theme();
+    let foreground = |normal| selected_foreground.unwrap_or_else(|| gpui::Hsla::from(rgb(normal)));
     let base = gpui::div()
         .flex()
         .flex_row()
@@ -74,7 +115,7 @@ pub fn diffstat_unit(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.text_muted).into()))
+                    .text_color(foreground(t.text_muted))
                     .child(SharedString::from("BIN")),
             )
             .into_any_element();
@@ -98,8 +139,13 @@ pub fn diffstat_unit(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_added).into()))
-                    .child(SharedString::from(format!("+{additions}"))),
+                    .text_color(foreground(t.change_added))
+                    .child(SharedString::from(format!("+{additions}")))
+                    .when(cfg!(feature = "gui-e2e") && interactive, |label| {
+                        label.relative().child(super::e2e::measure_inside(format!(
+                            "diffstat-additions-{id_seed}"
+                        )))
+                    }),
             );
         }
         if deletions > 0 {
@@ -107,8 +153,13 @@ pub fn diffstat_unit(
                 gpui::div()
                     .text_size(theme::scaled_px(theme::FILE_TREE_FONT_PX))
                     .line_height(theme::scaled_px(16.))
-                    .text_color(selected_foreground.unwrap_or_else(|| rgb(t.change_deleted).into()))
-                    .child(SharedString::from(format!("-{deletions}"))),
+                    .text_color(foreground(t.change_deleted))
+                    .child(SharedString::from(format!("-{deletions}")))
+                    .when(cfg!(feature = "gui-e2e") && interactive, |label| {
+                        label.relative().child(super::e2e::measure_inside(format!(
+                            "diffstat-deletions-{id_seed}"
+                        )))
+                    }),
             );
         }
     }
@@ -163,6 +214,10 @@ pub fn diffstat_unit(
             );
         }
     }
+    let content = base.child(numbers).child(bar);
+    if !interactive {
+        return content.into_any_element();
+    }
 
     // ── Tooltip text ──────────────────────────────────────────────────────
     let tip = if total == 0 {
@@ -171,9 +226,8 @@ pub fn diffstat_unit(
         SharedString::from(format!("{additions} additions, {deletions} deletions"))
     };
 
-    base.id(("diffstat-unit", id_seed))
-        .child(numbers)
-        .child(bar)
+    content
+        .id(("diffstat-unit", id_seed))
         .hover_tooltip_builder(("diffstat-unit-help", id_seed), move |window, cx| {
             Tooltip::new(tip.clone()).build(window, cx)
         })

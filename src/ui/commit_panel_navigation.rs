@@ -5,7 +5,7 @@ use super::menu_keys::RowAnchor;
 use gpui::{
     prelude::*, Context, Div, Role, SharedString, Stateful, UniformListScrollHandle, Window,
 };
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
 
 #[derive(Default)]
@@ -16,6 +16,8 @@ pub(crate) struct ChangesNavigation {
     focus: RowFocus,
     drawn: std::ops::Range<usize>,
     pub(crate) rows: Option<Rc<RowList>>,
+    // Reset in list capture, independently of child Button default prevention.
+    pub(super) pointer_claim: Rc<Cell<bool>>,
     anchor: RowAnchor,
     names: Vec<OnceCell<SharedString>>,
 }
@@ -225,6 +227,7 @@ pub(crate) fn file_row(
     };
     let opener = nav.anchor.clone();
     let rows_click = rows.clone();
+    let pointer_claim = nav.pointer_claim.clone();
     let rows_menu = rows.clone();
     let panel = cx.entity().downgrade();
     let mut el = rows
@@ -250,7 +253,10 @@ pub(crate) fn file_row(
         .aria_label(row_name(view, staged, fi))
         .aria_selected(selected)
         .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            rows_click.focus_row(at, window, cx)
+            if !pointer_claim.replace(true) {
+                rows_click.focus_row(at, window, cx);
+                window.prevent_default();
+            }
         });
     if drawn.focused_row == Some(at) {
         el = el.child(nav.anchor.probe());

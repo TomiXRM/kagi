@@ -650,6 +650,22 @@ mod inspector_history_keyboard;
 mod commit_panel_density;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/changes_motion.rs"]
+mod changes_motion;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/inspector_motion.rs"]
+mod inspector_motion;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/file_row_input.rs"]
+mod file_row_input;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/modal_motion.rs"]
+mod modal_motion;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/editor_snapshot_readonly.rs"]
 mod editor_snapshot_readonly;
 
@@ -3602,6 +3618,12 @@ mod macos {
                 Box::new(crate::file_history_open::scenario),
             ),
             ("commit_panel_density", Box::new(crate::commit_panel_density::scenario)),
+            ("changes_file_motion", Box::new(crate::changes_motion::scenario)),
+            ("changes_inline_pointer_focus", Box::new(crate::file_row_input::inline_pointer_focus)),
+            ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
+            ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
+            ("inspector_more_motion", Box::new(crate::file_row_input::inspector_more)),
+            ("modal_disclosure_motion", Box::new(crate::modal_motion::scenario_modal_disclosure_motion)),
             (
                 "inspector_files_keyboard",
                 Box::new(crate::inspector_history_keyboard::inspector),

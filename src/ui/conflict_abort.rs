@@ -169,7 +169,7 @@ pub(crate) fn render_conflict_abort_modal(
     modal: ConflictAbortModal,
     // #462: the user's modal-section disclosure choices, borrowed for this
     // frame (see `modal_renderers_plan`'s module doc).
-    overrides: &std::collections::HashMap<&'static str, bool>,
+    overrides: &super::modal_shell::ModalSections,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     render_plan_modal_wrapper_staged(

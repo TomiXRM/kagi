@@ -348,6 +348,7 @@ impl KagiApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        self.modal_section_overrides.request_frame(window);
         let (commit_panel_open, commit_panel, file_menu) = if repo_popovers {
             (
                 self.commit_panel_surface_open(),

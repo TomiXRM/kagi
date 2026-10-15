@@ -137,6 +137,129 @@ of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
 behavior gate. Math tests and hidden native windows do not establish Tier B
 visual comparison; completed real-window evidence is recorded per surface.
 
+## Changes, Inspector and operation-disclosure amendment (#1617)
+
+Changes keeps presentation on `CommitPanelView`, scoped separately to each staged
+side. Stable file paths identify selection and splice transitions; cached logical
+ordering is rebuilt with status/tree/fold changes, never on animation frames.
+`uniform_list` publishes its final row count immediately. Only visible live row
+content and a bounded set of retained, noninteractive removal ghosts are sampled.
+Initial loads, display-mode changes and status changes larger than the viewport
+settle immediately. Generated and Agent-artifacts child rows use the same splice
+path, so closing retains presentation without retaining selectable children.
+
+Displaced edge rows outside `uniform_list`'s final-slot viewport are mounted once
+as out-of-flow children of its first visible slot, with real final-index input
+and AX identity. Overflow expansion is bounded by the shared active-splice cap.
+Motion offsets and ghost placement use the list's measured pixel-snapped pitch,
+not the configured height. Reopening loading placeholders and their first real
+status publication settle without replaying a previous visit.
+
+Inspector extends its existing session-owned file-row presentation rather than
+creating another selection model. Its single historical/compare file list uses
+stable path identity; Generated fold children use fixed-height splice motion.
+Selection intent, focus reconciliation, AX selection and chevrons remain
+authoritative immediately, independently of the painted selection wash.
+On-accent filename, status and diffstat foregrounds follow the same wash progress
+as the background; logical selection still changes immediately. Inactive-window
+foreground policy remains unchanged.
+
+Supporting modal sections and equivalent/recovery commands share measured
+`Reveal` clipping and retain only drawing while closing: Note semantics, identified
+input containers and scroll handlers disappear with logical intent. Existing
+scroll displacement survives visually and resumes on reversal. Presentation lifetime
+is reset with each modal generation, preventing content/state leaking into a new
+confirmation. `modal_list_panel` is unchanged: destructive-operation targets are
+never hidden behind disclosure.
+
+All surfaces use the shared clock, cubic timing, Reduce Motion policy and
+view-owned frame demand. Frozen-clock native regressions distinguish intermediate
+presentation, continuous reversal and settled/instant endpoints. Native Tier A
+does not substitute for isolated, PID-targeted Tier B visual review.
+
+The unchanged `commit_panel_file_middle_ellipsis` scenario also reproduced its
+missing painted tooltip on base `9d15fce6`: its hidden window had not adopted
+the existing activation-input seam after #1591. Its isolated oracle repair
+marks that window active for tooltip lifetime only; the full-path and painted
+tooltip assertions and production cancellation behavior remain unchanged.
+
+
+### In-flight file-row contrast correction
+
+Actual key-window Tier B showed that linearly interpolating normal and on-accent
+ink creates unreadable gray glyphs on the partially composited blue wash.
+Changes and Inspector therefore keep their exact normal and selected endpoint
+styles, but choose one opaque primary/status/diffstat ink during the transition
+using the existing on-accent 3:1 policy against the composited row background.
+This is a presentation-only colour decision; the wash and semantic selection
+continue unchanged. Diffstat bars keep their existing Git encoding.
+
+The native frozen-clock regression samples rasterized glyph cores and real
+row-fill pixels around the half-wash frame; renderer colour metadata and an echo
+of the interpolation formula are not contrast evidence. Both old surfaces
+failed that oracle at 1.943:1 before this correction. The original active-window
+frame38 contact sheet is retained as the visual before-failure.
+
+### Inspector generated viewport realization
+
+Generated expansion retains the final fixed-height list count immediately, but
+realizes the bounded neighbouring rows whose displaced content intersects the
+requested viewport. Inspector mounts those rows once as out-of-flow children
+at the appropriate requested edge, preserving logical paint/hit order, real
+indices, input handlers and accessibility identity. Placement uses the list's
+measured pixel-snapped pitch, not the unsnapped configured height. Closing
+ghosts remain presentation-only and the shared splice cap bounds extra work.
+
+Changes uses the same leading-before-first/trailing-after-last placement order.
+Both lists give every real row kind a role-less parent boundary, including fold
+headers, non-collapsible directories and overflow notes. It consumes clicks after
+the row's own child actions, so compressed overlapping rows cannot both activate.
+Left mouse-down retains propagation. Changes resets a navigation-owner-local
+row claim in list capture, distinct from GPUI default prevention: an inline
+Stage/Unstage Button prevents its own focus, not the existing file-row focus.
+The first real row claims the event; covered rows cannot take keyboard origin.
+An otherwise nonfocusable winning row retains its child's focus policy or uses
+the already-supplied ancestor root target. Inspector retains its existing
+default-focus convention.
+The parent consumes right-button presses only after a child's own context-menu
+handler has had its turn, preventing headers/More from opening a covered file's
+menu while preserving real-file menus. No broad hitbox occlusion masks ancestor
+folder drops, hover, drag, wheel input or the existing child accessibility roles.
+Native overlap controls assert actual focus handles, keyboard and right-menu
+path identity, non-file ancestor focus, unchanged selection and real folder drops.
+Inline Stage/Unstage controls additionally assert actual pointer-down focus,
+the rendered AX row role/name, subsequent keyboard-menu/arrow target identity,
+and real Git index changes using complete pointer gestures.
+Presentation-only removal ghosts never acquire actions or accessibility rows.
+
+Changes removal overlays paint after live rows. Their visible exit-row host
+consumes only right-button context presses, preventing a covered live file's
+menu from opening; left input, focus, accessibility and ancestor drops remain
+unchanged. Native top-file removal coverage proves actual ghost filename ink,
+paint order and the clipped intersection before testing the menu no-op and a real
+repository-folder drop at that same point. Inspector generated ghosts follow
+the normal file rows and live fold header; the native topmost exit-only-area
+control remains a no-op without adding a ghost handler.
+
+External-drop controls establish the pointer-modality precondition with MouseMove
+after keyboard dismissal, verify a freshly painted closed-menu surface and the
+actual visible target, and require the repository to open. GPUI classifies
+FileDrop before converting it into mouse events, so Entered alone retains the
+preceding keyboard modality. This harness precondition is not an OS-level
+keyboard-to-Finder drag claim.
+
+The root's existing actual-center visibility edge retires retained Changes and
+Inspector presentation for the departing session on center/owner changes,
+without changing logical rows, selection or scroll. The sole continuity exception
+is Graph ↔ Diff inside the same owner: opening a file's central diff must preserve
+its already-visible file-row fade, as the native first-file selection test checks.
+The checked departing-owner lookup also permits last-tab → Home after that owner
+has been removed. Returning inside the old transition duration presents settled
+endpoints; unchanged hidden frames neither notify nor rebuild file models.
+Frozen-clock native regressions leave at a genuine 37ms displacement/wash/closing
+ghost and return at the same instant; the existing startup and last-tab Home
+scenarios remain unchanged.
+
 ## Sidebar and editor tree amendment (#1617)
 
 The dense Repository Navigator and Editor file tree retain their existing row

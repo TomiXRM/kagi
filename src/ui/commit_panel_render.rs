@@ -16,7 +16,7 @@
 
 use super::commit_panel::CommitPanelView;
 use super::commit_panel_controls as controls;
-use super::commit_panel_rows::*;
+use super::commit_panel_files::cp_tree_layout;
 use super::*;
 
 /// The co-author popover, or `None` when the picker is closed.
@@ -268,6 +268,7 @@ impl CommitPanelView {
 
     /// Reconcile only from the surface that actually draws these lazy lists.
     pub(super) fn reconcile_file_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_file_motion(window);
         self.refresh_tree_layout();
         self.unstaged_navigation.reconcile(
             &self.state,

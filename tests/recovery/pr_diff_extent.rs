@@ -113,6 +113,7 @@ struct Observation {
     tail: Option<Bounds<Pixels>>,
     top: usize,
     extent: f32,
+    measured: usize,
 }
 
 // Read only the live consumer's native state, after a fresh native draw.
@@ -127,7 +128,10 @@ fn observe(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> Observation 
             first: scroll.bounds_for_item(1),
             tail: scroll.bounds_for_item(LINES),
             top: scroll.logical_scroll_top().item_ix,
-            extent: f32::from(scroll.max_offset_for_scrollbar().y + viewport.size.height),
+            extent: f32::from(scroll.max_offset() + viewport.size.height),
+            measured: (0..scroll.item_count())
+                .filter(|ix| scroll.measured_height(*ix).is_some())
+                .count(),
         }
     })
 }
@@ -156,6 +160,85 @@ fn wheel(
         },
     );
     paint(cx, window);
+}
+
+// Drive the real kit scrollbar; never call the handle's drag/set-offset APIs.
+// With 20,005 rows its thumb uses the kit's 48px minimum. Both hover styles
+// include this centre point in their painted thumb and hitbox.
+fn thumb_interior_and_end(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    let initial = observe(cx, app);
+    let viewport = initial.viewport;
+    let start = gpui::point(
+        viewport.right() - gpui::px(8.),
+        viewport.top() + gpui::px(24.),
+    );
+    cx.simulate_mouse_move(window, start, None, gpui::Modifiers::none());
+    paint(cx, window);
+    cx.simulate_mouse_down(
+        window,
+        start,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    let interior = gpui::point(start.x, viewport.center().y);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    cx.simulate_mouse_move(
+        window,
+        interior,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    paint(cx, window);
+    let middle = observe(cx, app);
+    assert!(
+        (LINES * 35 / 100..LINES * 65 / 100).contains(&middle.top),
+        "physical thumb interior must invert the global extent, not a measured prefix: {middle:?}"
+    );
+    // Layout can discover new actual heights during a held drag. Replaying the
+    // identical pointer must not remap it against a newly changing extent.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    cx.simulate_mouse_move(
+        window,
+        interior,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    paint(cx, window);
+    let held = observe(cx, app);
+    assert!(
+        held.top.abs_diff(middle.top) <= 1,
+        "stationary held thumb drifted: {middle:?} -> {held:?}"
+    );
+    let end = gpui::point(start.x, viewport.bottom() + gpui::px(24.));
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    cx.simulate_mouse_move(
+        window,
+        end,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    paint(cx, window);
+    let dragged_end = observe(cx, app);
+    assert!(
+        inside(dragged_end.tail, dragged_end.viewport),
+        "held thumb end must reach the actual tail: {dragged_end:?}"
+    );
+    cx.simulate_mouse_up(
+        window,
+        end,
+        gpui::MouseButton::Left,
+        gpui::Modifiers::none(),
+    );
+    paint(cx, window);
+    let released = observe(cx, app);
+    assert!(
+        inside(released.tail, released.viewport),
+        "releasing thumb must retain true tail: {released:?}"
+    );
 }
 
 fn assert_data(
@@ -246,6 +329,10 @@ fn run(cx: &mut VisualTestAppContext, split: bool) {
             "the fixture must require scrolling"
         );
         let row_height = f32::from(initial.first.unwrap().size.height);
+        assert!(
+            initial.measured < 100,
+            "cold layout must measure viewport + overdraw, not all {LINES} rows: {initial:?}"
+        );
 
         // A small ordinary wheel proves that the event reaches this consumer.
         wheel(cx, window, initial.viewport, -100.);
@@ -258,10 +345,16 @@ fn run(cx: &mut VisualTestAppContext, split: bool) {
         // It exceeds the entire file's plausible extent in either display mode.
         wheel(cx, window, small.viewport, -20_000_000.);
         let bottom = observe(cx, &app);
+        assert!(
+            bottom.measured < 200,
+            "one-shot End must measure backward from the tail, not the intervening source: {bottom:?}"
+        );
         assert_data(cx, &app, &repo, &base, &head);
         // Record both wheel directions before the shared retirement path.
         wheel(cx, window, bottom.viewport, 20_000_000.);
         let returned = observe(cx, &app);
+        thumb_interior_and_end(cx, &app, window);
+        assert_data(cx, &app, &repo, &base, &head);
         (initial, small, bottom, returned, row_height)
     }));
     // PR descendants include InputState text elements whose on_next_frame

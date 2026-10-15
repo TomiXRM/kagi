@@ -29,6 +29,8 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
 }
 
 fn open(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    // Panel file reads settle asynchronously; open only after the file exists.
+    cx.run_until_parked();
     app.update(cx, |app, cx| {
         app.open_main_diff_wip(CommitPanelFileRef::Unstaged { index: 0 }, cx)
     });

@@ -10,6 +10,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::*;
+use kagi_ui_core::variable_list::{variable_list, VariableListState};
 use std::rc::Rc;
 
 // T-SPLIT-HELPERS-001 / ADR-0116 Wave 3: the commit-panel, badge, and file-menu
@@ -531,14 +532,14 @@ pub(crate) fn render_load_more_row(
 // Note: render_loading_placeholder lives in render_body.rs (its only caller;
 // moved there under the ADR-0165 change to keep this file under 800 LOC).
 
-/// T-DIFF-WRAP-001: construct a fresh diff-list [`gpui::ListState`] (item count
-/// 0 — the caller syncs source/layout identity and count in `render_diff_list`).
-/// Each embedding retains its own native list and invalidation memo, so no
+/// Construct an owner-retained diff list (item count 0 — the caller syncs
+/// source/layout identity and count in `render_diff_list`).
+/// Each embedding retains its own geometry and invalidation memo, so no
 /// measurements or scroll positions cross owner boundaries. The overdraw tuning
 /// lives in one place. `px(1000.)` matches gpui-component's own `TextView` (a similarly
 /// line-oriented variable-height list).
-pub(crate) fn new_diff_list_state() -> gpui::ListState {
-    gpui::ListState::new(0, gpui::ListAlignment::Top, px(1000.))
+pub(crate) fn new_diff_list_state() -> VariableListState {
+    VariableListState::new(0, px(1000.))
 }
 
 /// ADR-0117 / T-DIFF-WRAP-001: the diff "list body" (header line + virtualized
@@ -550,12 +551,11 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 /// `cx` here — this runs during render (the rendering entity is already
 /// borrowed → panic).
 ///
-/// T-DIFF-WRAP-001: renders via `gpui::list` (variable row height) instead of
-/// `uniform_list` so a soft-wrapped diff line grows its row instead of being
-/// clipped to a fixed row height (user report). `scroll_handle` is a
-/// `gpui::ListState` — construct one per owner via [`new_diff_list_state`].
+/// Renders through Kagi's variable-height list so a soft-wrapped diff line
+/// grows its row instead of being clipped to a fixed row height.
+/// Construct one retained `VariableListState` per owner via [`new_diff_list_state`].
 ///
-/// Source/layout changes invalidate native measurements, including a different
+/// Source/layout changes invalidate measurements, including a different
 /// same-sized source. Highlight-only changes preserve the height-source identity.
 /// Offscreen heights are estimates; visible wrapped rows and expansions replace
 /// them with their actual sizes. Unchanged renders do not rebuild the height tree.
@@ -568,7 +568,7 @@ pub(crate) fn new_diff_list_state() -> gpui::ListState {
 pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost>(
     view: MainDiffView,
     mut header: DiffHeader,
-    scroll_handle: gpui::ListState,
+    scroll_handle: VariableListState,
     list_layout: &kagi_ui_core::diff_list::DiffListLayout,
     hunk: Option<super::diff_view::hunk_action::HunkAction>,
     owner: super::diff_selection::SelectionOwner,
@@ -640,10 +640,8 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
         .child(if let Some(pair) = images {
             diff_state::image_panel(pair)
         } else {
-            // W12-GCADOPT (§2.10): Scrollbar overlay on the diff list.
-            // gpui-component 0.5.1 implements `ScrollbarHandle` directly for
-            // `gpui::ListState` (src/scroll/scrollbar.rs) — no local newtype
-            // needed, unlike `UniformListScrollHandle`'s wrapper elsewhere.
+            // The owned geometry handle implements the public ScrollbarHandle
+            // contract used by the same scrollbar as the other list panes.
             let scrollbar_handle = scroll_handle.clone();
             let selection_scroll = scroll_handle.clone();
             let selection_projection = projection.clone();
@@ -674,7 +672,7 @@ pub(crate) fn render_diff_list<V: super::diff_view::highlight::DiffHighlightHost
                 .child(with_vertical_scrollbar(
                     "main-diff-list-scroll",
                     &scrollbar_handle,
-                    gpui::list(scroll_handle, move |ix, window, cx| {
+                    variable_list(scroll_handle, move |ix, window, cx| {
                         let base = match (&items, &overlay, &layout) {
                             (Some(items), Some(overlay), Some(layout)) => match items.get(ix) {
                                 Some(row_overlay::Item::Row(b)) => *b,
@@ -783,11 +781,8 @@ fn split_gutters(
 /// `true` the bar follows the theme default (`cx.theme().scrollbar_show`, which
 /// honours the macOS "show scroll bars" setting).
 ///
-/// T-DIFF-WRAP-001: generic over `H: ScrollbarHandle` (not just
-/// `UniformListScrollHandle`) so the same wrapper serves the diff panes'
-/// `gpui::ListState`-backed `list()` — gpui-component 0.5.1 implements
-/// `ScrollbarHandle` for both `UniformListScrollHandle` and `ListState`
-/// (`src/scroll/scrollbar.rs`), so no local newtype was needed.
+/// Generic over the public `ScrollbarHandle` contract so native lists and
+/// Kagi-owned variable-height diff lists use the same scrollbar chrome.
 pub(crate) fn with_vertical_scrollbar<H: gpui_component::scroll::ScrollbarHandle + Clone>(
     id: &'static str,
     handle: &H,

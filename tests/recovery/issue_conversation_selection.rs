@@ -1,5 +1,5 @@
-//! #1091 consumer regressions. These scenarios are intentionally identical on
-//! original pinned SDK / all-post Before and managed virtual-conversation After.
+//! #1091 consumer regressions, including #1479-S3 single-post preparation.
+//! Existing cross-post/offscreen guarantees remain until the #1479-S6 cutover.
 #[path = "issue_conversation_support.rs"]
 pub(crate) mod support;
 use gpui::{point, px, VisualTestAppContext};
@@ -67,14 +67,17 @@ pub fn scenario_issue_conversation_offscreen_copy(cx: &mut VisualTestAppContext)
 pub fn scenario_issue_conversation_giant_copy(cx: &mut VisualTestAppContext) {
     let _restore = Restore::capture();
     let producer = Producer::install();
-    // Independent rendered oracle: source carries bold syntax and blank source
-    // lines; canonical rendered paragraphs carry no syntax and one LF each.
+    // One fit-content TextView, not internal block virtualization: the outer
+    // viewport clips it while its complete rendered text remains selectable.
+    // The independent oracle includes multi-byte Unicode and literal inline-code
+    // thin spaces, strips emphasis syntax and joins rendered paragraphs with LF.
+    // No SDK text extraction API derives the expected clipboard bytes.
     let source = (0..180)
-        .map(|line| format!("**GIANT_{line:03}**"))
+        .map(|line| format!("**GIANT_{line:03} 日本語🙂** _café_ and `code🧭`."))
         .collect::<Vec<_>>()
         .join("\n\n");
     let expected = (0..180)
-        .map(|line| format!("GIANT_{line:03}"))
+        .map(|line| format!("GIANT_{line:03} 日本語🙂 café and \u{2009}code🧭\u{2009}."))
         .collect::<Vec<_>>()
         .join("\n");
     producer.publish("a", &source, &[]);
@@ -123,6 +126,7 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
     );
     let (fixture, app, win, before) = fixture(cx, BASE);
     load(cx, &app, win);
+    visible(cx, win, &comment(1)).expect("true B is mounted before initial selection");
     assert_eq!(select(cx, win, &comment(1)), "OLD_B");
     producer.publish(
         "a",
@@ -130,6 +134,9 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
         &[("IC_true_B", "**OLD_B**"), ("IC_true_A", "**OLD_A**")],
     );
     load(cx, &app, win);
+    // Do not seek or reselect before Copy: this is retention while B is actually
+    // mounted, not the old managed group's outer-unmount retention guarantee.
+    visible(cx, win, &comment(0)).expect("reordered true B is painted inside the viewport");
     assert_eq!(
         copy(cx, win),
         "OLD_B",
@@ -150,6 +157,7 @@ pub fn scenario_issue_conversation_accepted_identity(cx: &mut VisualTestAppConte
         ],
     );
     load(cx, &app, win);
+    visible(cx, win, &comment(1)).expect("prepended snapshot still paints selected true B");
     assert_eq!(
         copy(cx, win),
         "OLD_B",

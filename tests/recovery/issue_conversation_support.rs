@@ -165,14 +165,19 @@ pub fn finish(
     unmount(cx, app, win);
     drop(fixture);
 }
+/// Observe an actual fresh paint, not a retained entity or an earlier frame's
+/// bounds. Missing bounds witness outer-list unmount; clipped bounds alone do not.
 pub fn measure(
     cx: &mut VisualTestAppContext,
     win: AnyWindowHandle,
     id: &str,
 ) -> Option<Bounds<Pixels>> {
     e2e::clear_control_bounds(win.window_id(), id);
-    cx.update_window(win, |_, window, cx| window.draw(cx).clear())
-        .unwrap();
+    cx.update_window(win, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear();
+    })
+    .unwrap();
     e2e::control_bounds(win.window_id(), id)
 }
 pub fn pane(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> Bounds<Pixels> {
@@ -235,6 +240,17 @@ pub fn copy(cx: &mut VisualTestAppContext, win: AnyWindowHandle) -> String {
     cx.read_from_clipboard()
         .and_then(|item| item.text())
         .unwrap_or_default()
+}
+
+/// Select only a mounted post's first visual line through the existing native
+/// gesture path. Callers supply a multi-paragraph fixture and an exact oracle.
+pub fn select_first_line(cx: &mut VisualTestAppContext, win: AnyWindowHandle, id: &str) -> String {
+    let bounds = visible(cx, win, id).expect("partial selection needs a fully visible post");
+    let endpoint = point(bounds.right() - px(2.), bounds.top() + px(2.));
+    down(cx, win, start(bounds));
+    move_to(cx, win, endpoint);
+    up(cx, win, endpoint);
+    copy(cx, win)
 }
 
 /// Deliver a real transition and Copy in one window update using the current

@@ -38,6 +38,31 @@ fn selected(cx: &mut VisualTestAppContext, cell: &Cell) -> Option<String> {
         tab.selected_commit.map(|ix| tab.commits[ix].id.0.clone())
     })
 }
+fn wheel(cx: &mut VisualTestAppContext, cell: &Cell, dy: f32) {
+    cx.simulate_event(
+        cell.win,
+        gpui::ScrollWheelEvent {
+            position: cell.bounds("pr-lane-body").center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(dy))),
+            touch_phase: gpui::TouchPhase::Moved,
+            ..Default::default()
+        },
+    );
+    cell.paint(cx);
+}
+fn assert_extent(cx: &mut VisualTestAppContext, cell: &Cell, count: usize) {
+    let (viewport, maximum) = cx.read(|cx| {
+        cell.app
+            .read(cx)
+            .pr_lane_geometry_for_e2e()
+            .expect("painted uniform list")
+    });
+    let expected = (count as f32 * f32::from(theme::scaled_px(27.)) - viewport).max(0.);
+    assert!(
+        (maximum - expected).abs() <= 1.,
+        "live native extent {maximum} must account for all {count} slots, expected {expected}"
+    );
+}
 pub fn scenario_pr_lane_keyboard(cx: &mut VisualTestAppContext) {
     matrix_lane(cx, |cx, cell, _| {
         let list = lane(cx, cell);
@@ -57,6 +82,103 @@ pub fn scenario_pr_lane_keyboard(cx: &mut VisualTestAppContext) {
         cell.paint(cx);
         assert_ne!(focused(cx, cell), old, "Down moves to another PR commit");
         assert_eq!(selected(cx, cell), None, "focus movement does not activate");
+        let commits = cx.read(|cx| cell.app.read(cx).pr_mode().unwrap().tabs[0].commits.clone());
+        let history_rows = history(cx, cell);
+        let mut ordered: Vec<_> = commits
+            .iter()
+            .map(|commit| {
+                (
+                    history_rows
+                        .iter()
+                        .position(|row| row.id == commit.id)
+                        .unwrap(),
+                    commit.id.0.clone(),
+                )
+            })
+            .collect();
+        ordered.sort_by_key(|(index, _)| *index);
+        assert_extent(cx, cell, history_rows.len());
+        let mut wide = history_rows.clone();
+        for (index, row) in wide.iter_mut().enumerate() {
+            row.lane = index;
+        }
+        cell.app
+            .update(cx, |app, cx| app.set_pr_lane_history_for_e2e(wide, cx));
+        cell.paint(cx);
+        let vertical = cx.read(|cx| cell.app.read(cx).pr_lane_vertical_offset_for_e2e().unwrap());
+        for modifiers in [
+            gpui::Modifiers::none(),
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        ] {
+            cx.simulate_event(
+                cell.win,
+                gpui::ScrollWheelEvent {
+                    position: cell.bounds("pr-lane-body").center(),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(-100.), gpui::px(0.))),
+                    modifiers,
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            cell.paint(cx);
+            assert_eq!(
+                cx.read(|cx| cell.app.read(cx).pr_lane_vertical_offset_for_e2e().unwrap()),
+                vertical,
+                "horizontal wheel must not move the vertical PR list"
+            );
+            assert!(
+                cx.read(|cx| cell
+                    .app
+                    .read(cx)
+                    .pr_mode()
+                    .unwrap()
+                    .lane_scroll_x
+                    .unwrap_or(0.))
+                    > 0.,
+                "horizontal wheel still reaches the overflowing lane rail"
+            );
+        }
+        cell.app.update(cx, |app, cx| {
+            app.set_pr_lane_history_for_e2e(history_rows.clone(), cx)
+        });
+        cell.paint(cx);
+        wheel(cx, cell, -1_000_000.);
+        let viewport = cell.bounds("pr-lane-body");
+        let tail = cell.bounds(&format!("pr-lane-row-{}", history_rows.len() - 1));
+        assert!(
+            tail.top() >= viewport.top() && tail.bottom() <= viewport.bottom(),
+            "one wheel reaches the actual final context/base row"
+        );
+        wheel(cx, cell, 1_000_000.);
+        let first = cell.bounds("pr-lane-row-0");
+        assert!(
+            (f32::from(first.top() - viewport.top())).abs() <= 1.,
+            "reverse wheel reaches the first painted row"
+        );
+        for (key, expected) in [("end", &ordered.last().unwrap().1), ("home", &ordered[0].1)] {
+            crate::keyboard_nav::keys(cx, cell.win, key);
+            cell.paint(cx);
+            assert_eq!(focused(cx, cell).as_ref(), Some(expected));
+            let index = history_rows
+                .iter()
+                .position(|row| &row.id.0 == expected)
+                .unwrap();
+            let bounds = cell.bounds(&format!("pr-lane-row-{index}"));
+            let viewport = cell.bounds("pr-lane-body");
+            assert!(
+                bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom(),
+                "{key} reveals its actual painted row: {bounds:?} in {viewport:?}"
+            );
+        }
+        crate::keyboard_nav::keys(cx, cell.win, "pagedown");
+        cell.paint(cx);
+        assert_ne!(focused(cx, cell).as_ref(), Some(&ordered[0].1));
+        crate::keyboard_nav::keys(cx, cell.win, "pageup");
+        cell.paint(cx);
+        assert_eq!(focused(cx, cell).as_ref(), Some(&ordered[0].1));
         for key in ["home", "end", "up", "home", "enter"] {
             crate::keyboard_nav::keys(cx, cell.win, key);
             cell.paint(cx);
@@ -222,6 +344,8 @@ pub fn scenario_pr_lane_count(cx: &mut VisualTestAppContext) {
             app.set_pr_lane_history_for_e2e(partial, cx);
         });
         let partial_label = lane(cx, cell).label;
+        let partial_count = history(cx, cell).len();
+        assert_extent(cx, cell, partial_count);
         assert!(
             partial_label.contains("10"),
             "three loaded never masquerades as the PR total: {partial_label}"

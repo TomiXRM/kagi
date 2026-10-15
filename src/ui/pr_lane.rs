@@ -35,7 +35,8 @@ struct WindowKey {
 /// Session-owned vertical scroll and stable-key row focus for the companion.
 pub(super) struct Navigation {
     pub(super) keyboard: super::list_keyboard::ListKeyboard,
-    scroll: gpui::ListState,
+    scroll: gpui::UniformListScrollHandle,
+    drawn: std::cell::RefCell<std::ops::Range<usize>>,
     window: std::cell::RefCell<Option<WindowKey>>,
 }
 
@@ -43,7 +44,8 @@ impl Default for Navigation {
     fn default() -> Self {
         Self {
             keyboard: Default::default(),
-            scroll: gpui::ListState::new(0, gpui::ListAlignment::Top, px(0.)),
+            scroll: gpui::UniformListScrollHandle::new(),
+            drawn: Default::default(),
             window: Default::default(),
         }
     }
@@ -228,18 +230,17 @@ impl LaneBody {
         };
         if nav.window.borrow().as_ref() != Some(&signature) {
             nav.scroll
-                .reset(hi - lo + 1 + usize::from(self.root.is_some()) * 2);
+                .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+            *nav.drawn.borrow_mut() = 0..0;
             *nav.window.borrow_mut() = Some(signature);
         }
-        let scroll = nav
-            .scroll
-            .clone()
-            .with_uniform_item_height(theme::scaled_px(ROW_H));
+        let count = hi - lo + 1 + usize::from(self.root.is_some()) * 2;
+        let scroll = nav.scroll.clone();
         let rows = nav.keyboard.rows(
             self.hits
                 .iter()
                 .map(|ix| (app.view().rows[*ix].id.0.as_str(), ix - lo)),
-            &scroll,
+            &super::keyboard_nav::RowScroll::Uniform(scroll.clone(), nav.drawn.borrow().clone()),
             app.root_focus.as_ref(),
             window,
             cx,
@@ -257,38 +258,57 @@ impl LaneBody {
         let lanes = self.columns.len().max(1);
         let width = self.rail;
         let horizontal = self.scroll;
-        let render = cx.processor(move |app: &mut KagiApp, entry: usize, _, cx| {
-            let ix = if entry <= hi - lo {
-                lo + entry
-            } else if entry == hi - lo + 1 {
-                return render_elision_row(self.root.unwrap() - hi - 1, self.rail);
-            } else {
-                self.root.unwrap()
-            };
-            let row = &app.view().rows[ix];
-            let slot = self.hits.binary_search(&ix).ok();
-            let rail = Rail {
-                width: self.rail,
-                scroll: self.scroll,
-                columns: &self.columns,
-                avatars: theme::graph_lane_compact().then_some(app.avatars.images.as_ref()),
-            };
-            render_lane_row(
-                ix,
-                row,
-                &self.key,
-                (slot, self.selected.as_ref() == Some(&row.id), self.active),
-                &rows,
-                &rail,
-                cx,
-            )
-        });
+        let render = cx.processor(
+            move |app: &mut KagiApp, range: std::ops::Range<usize>, _, cx| {
+                if let Some(mode) = app.pr_mode() {
+                    *mode.lane_navigation.drawn.borrow_mut() = range.clone();
+                }
+                let rows = std::rc::Rc::new(rows.as_drawn(&range));
+                range
+                    .map(|entry| {
+                        let ix = if entry <= hi - lo {
+                            lo + entry
+                        } else if entry == hi - lo + 1 {
+                            return render_elision_row(self.root.unwrap() - hi - 1, self.rail);
+                        } else {
+                            self.root.unwrap()
+                        };
+                        let row = &app.view().rows[ix];
+                        let slot = self.hits.binary_search(&ix).ok();
+                        let rail = Rail {
+                            width: self.rail,
+                            scroll: self.scroll,
+                            columns: &self.columns,
+                            avatars: theme::graph_lane_compact()
+                                .then_some(app.avatars.images.as_ref()),
+                        };
+                        render_lane_row(
+                            ix,
+                            row,
+                            &self.key,
+                            (slot, self.selected.as_ref() == Some(&row.id), self.active),
+                            &rows,
+                            &rail,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            },
+        );
         Some(
             frame
                 .child(
-                    gpui::list(scroll, move |ix, window, cx| render(ix, window, cx))
-                        .flex_1()
-                        .min_h(px(0.)),
+                    gpui::uniform_list("pr-lane-rows", count, move |range, window, cx| {
+                        render(range, window, cx)
+                    })
+                    .track_scroll(&scroll)
+                    .map(|mut list| {
+                        // Horizontal wheel belongs to the lane rail, never the row list.
+                        list.style().restrict_scroll_to_axis = Some(true);
+                        list
+                    })
+                    .flex_1()
+                    .min_h(px(0.)),
                 )
                 .child(super::e2e::measure_inside("pr-lane-body"))
                 .on_scroll_wheel(cx.listener(
@@ -510,6 +530,28 @@ fn render_lane_row(
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn pr_lane_vertical_offset_for_e2e(&self) -> Option<f32> {
+        let mode = self.pr_mode()?;
+        Some(f32::from(
+            mode.lane_navigation
+                .scroll
+                .0
+                .borrow()
+                .base_handle
+                .offset()
+                .y,
+        ))
+    }
+    /// Live native geometry, not a second estimate of the list's extent.
+    pub fn pr_lane_geometry_for_e2e(&self) -> Option<(f32, f32)> {
+        let mode = self.pr_mode()?;
+        let state = mode.lane_navigation.scroll.0.borrow();
+        let size = state.last_item_size?;
+        Some((
+            f32::from(size.item.height),
+            f32::from(state.base_handle.max_offset().y),
+        ))
+    }
     pub fn pr_lane_history_for_e2e(&self) -> Vec<super::commit_list::CommitRow> {
         self.view().rows.clone()
     }

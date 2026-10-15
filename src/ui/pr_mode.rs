@@ -28,6 +28,7 @@ use kagi_domain::github::{
 use kagi_domain::pr_list::PrSection;
 use kagi_git::{Commit, CommitId, FileStatus, PrConflictFile};
 use kagi_ui_core::file_tree::status_badge;
+use kagi_ui_core::variable_list::VariableListState;
 
 use super::diff_view::{build_main_diff_view, MainDiffView};
 // issue #414: `gh`-sourced PR text (title, @login, ref names, check names) is the
@@ -68,7 +69,7 @@ pub struct PrTab {
     pub selected_commit: Option<usize>,
     pub selected_file: Option<usize>,
     pub diff: Option<MainDiffView>,
-    pub diff_scroll: ListState,
+    pub diff_scroll: VariableListState,
     pub(crate) diff_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// The 概要/レビュー page's virtualized list. The tabs are navigation:
     /// they reveal an item of this list instead of swapping the body
@@ -98,7 +99,7 @@ pub struct PrTab {
     /// them would point at the wrong row.
     pub conflict_selected: Option<usize>,
     /// Scroll state for the conflict diff, one per tab like `diff_scroll`.
-    pub conflict_scroll: ListState,
+    pub conflict_scroll: VariableListState,
     pub(crate) conflict_layout: kagi_ui_core::diff_list::DiffListLayout,
     /// Which conflict within the file the jump control is on (0-based).
     pub conflict_at: usize,
@@ -329,7 +330,7 @@ impl KagiApp {
             selected_commit: None,
             selected_file: None,
             diff: None,
-            diff_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            diff_scroll: VariableListState::new(0, px(200.)),
             diff_layout: Default::default(),
             // A fresh tab opens on the description — "what is this PR" first,
             // the diff once a file/commit is picked (user request).
@@ -342,7 +343,7 @@ impl KagiApp {
             feed_entries: std::rc::Rc::new(Vec::new()),
             conflicts: None,
             conflict_selected: None,
-            conflict_scroll: ListState::new(0, gpui::ListAlignment::Top, px(200.)),
+            conflict_scroll: VariableListState::new(0, px(200.)),
             conflict_layout: Default::default(),
             conflict_preview: None,
             conflict_at: 0,
@@ -2053,6 +2054,17 @@ mod pr_fixture_tests {
 
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
+    pub fn pr_mode_reload_conversation_for_e2e(&mut self, cx: &mut Context<Self>) {
+        let Some(pr) = self
+            .pr_mode()
+            .and_then(|mode| mode.active.and_then(|index| mode.tabs.get(index)))
+            .map(|tab| tab.pr.clone())
+        else {
+            return;
+        };
+        self.pr_mode_load_conversation(&pr, cx);
+    }
+
     pub fn pr_detail_tabs_for_e2e(
         &self,
     ) -> (Option<gpui::Role>, Vec<(gpui::Role, String, bool, bool)>) {

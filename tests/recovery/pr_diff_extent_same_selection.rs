@@ -74,7 +74,10 @@ fn fixture() -> (
     let head = push_pr_head(&repo, &remote, "main", &[(FILE, &text)]);
     (fixture, remote_dir, repo, base, head)
 }
-fn scroll(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> gpui::ListState {
+fn scroll(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+) -> kagi_ui_core::variable_list::VariableListState {
     cx.read(|cx| {
         let mode = app.read(cx).pr_mode().expect("PR mode");
         mode.tabs[mode.active.expect("active PR")]
@@ -192,8 +195,12 @@ pub fn scenario_pr_diff_extent_same_selection(cx: &mut VisualTestAppContext) {
                 .bounds_for_item(before.item_ix)
                 .expect("native reading row");
             let distant = native
-                .bounds_for_item(LINES)
-                .expect("known distant geometry");
+                .measured_height(LINES)
+                .expect("known distant measurement");
+            assert!(
+                native.bounds_for_item(LINES).is_none(),
+                "distant cache must not masquerade as a painted row"
+            );
             assert!(
                 before.item_ix > 1 && before.item_ix + 20 < LINES,
                 "wheel must establish interior reading intent"
@@ -232,9 +239,10 @@ pub fn scenario_pr_diff_extent_same_selection(cx: &mut VisualTestAppContext) {
             let geometry_retained = live.bounds_for_item(before.item_ix).is_some_and(|bounds| {
                 (bounds.top() - reading.top()).abs() < gpui::px(1.)
                     && (bounds.size.height - reading.size.height).abs() < gpui::px(1.)
-            }) && live.bounds_for_item(LINES).is_some_and(|bounds| {
-                (bounds.size.height - distant.size.height).abs() < gpui::px(1.)
-            });
+            }) && live
+                .measured_height(LINES)
+                .is_some_and(|height| (height - distant).abs() < gpui::px(1.))
+                && live.bounds_for_item(LINES).is_none();
             observations.push((entry, before, after, reading_retained, geometry_retained));
         }
         observations

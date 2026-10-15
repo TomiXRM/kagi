@@ -96,6 +96,12 @@ mod pr_lane_keys;
 #[path = "support/proc_identity.rs"]
 mod proc_identity;
 #[cfg(target_os = "macos")]
+#[path = "recovery/editor_tree_motion.rs"]
+mod recovery_editor_tree_motion;
+#[cfg(target_os = "macos")]
+#[path = "recovery/sidebar_tree_motion.rs"]
+mod recovery_sidebar_tree_motion;
+#[cfg(target_os = "macos")]
 #[path = "recovery/theme_custom.rs"]
 mod theme_custom;
 
@@ -1698,6 +1704,38 @@ mod macos {
             (
                 "sidebar_panes",
                 Box::new(crate::recovery_sidebar_panes::scenario_sidebar_panes),
+            ),
+            (
+                "sidebar_tree_pane_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_pane_motion),
+            ),
+            (
+                "sidebar_tree_subgroup_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_subgroup_motion),
+            ),
+            (
+                "sidebar_tree_selection_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_selection_motion),
+            ),
+            (
+                "sidebar_tree_focus_return_motion",
+                Box::new(
+                    crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_focus_return_motion,
+                ),
+            ),
+            (
+                "sidebar_tree_compact_focus_return_motion",
+                Box::new(
+                    crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_compact_focus_return_motion,
+                ),
+            ),
+            (
+                "sidebar_tree_refresh_motion",
+                Box::new(crate::recovery_sidebar_tree_motion::scenario_sidebar_tree_refresh_motion),
+            ),
+            (
+                "editor_directory_motion",
+                Box::new(crate::recovery_editor_tree_motion::scenario_editor_directory_motion),
             ),
             (
                 "sidebar_search_escape",

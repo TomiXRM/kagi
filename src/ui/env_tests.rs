@@ -122,4 +122,11 @@ fn record_recent_repo_child() {
     assert_eq!(list.len(), 12);
     assert_eq!(list[0], dir(20));
     assert_eq!(list[11], dir(9));
+    crate::ui::tabs::clear_recent_repos();
+    assert!(recent_repos().is_empty());
+    assert!(crate::ui::settings::read_setting("recent_repos").is_none());
+    assert!(
+        list.iter().all(|path| path.is_dir()),
+        "clearing history never removes repositories"
+    );
 }

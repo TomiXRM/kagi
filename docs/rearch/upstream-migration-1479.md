@@ -53,6 +53,8 @@ KAGI_LOG_DIR="$(mktemp -d)" cargo test -j 8 --workspace
 
 現 `commit_panel_composer_render.rs:28–35,79–91` のpreferred3–12行と低windowでのshrink/internal-scrollは引き続き維持する。Textareaのauto_growはleaf min-heightも増やす (`base/input/base/element.rs:2518–2524`) ので、単にauto_grow+外側min_h0では同じでない。**Kagi側の高さ設定＋plain Textareaの内部scrollという公開API構成を先に検討し、必要がある場合だけ公式cached-row getterをprerequisiteにする**。最終判断と具体的構成は#1479-S6に記す。不要なEditorState偽装・別shaper・forkを先に選ばない。
 
+- Upstream candidate (#1607, unpublished): expose public `SearchNext` / `SearchPrevious` actions (and selection-to-query support) in official gpui-kit. The pinned `7a116a2` exports only `input::Search`; its `SearchPanel`, navigation methods and owning field are private. Until public actions exist, Kagi offers working Find… only, not disabled placeholders for Next/Previous/Use Selection, and does not change dependency pins.
+
 
 ## #1479-S0 — 方針と出自を固定する（最初に merge）
 

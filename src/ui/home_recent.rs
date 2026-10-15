@@ -85,6 +85,7 @@ impl KagiApp {
                             root.focus(window, cx);
                         }
                         super::tabs::remove_recent_repo(&path);
+                        super::commands::publish_menus(cx);
                         app.home_github.recent.pending_focus = Some(at);
                     }
                 }

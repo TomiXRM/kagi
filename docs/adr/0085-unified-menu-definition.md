@@ -208,3 +208,46 @@ Role/density/reference: native macOS menu / AppKit-owned / standard File and
 Edit menus. Existing portable row rendering is reused; there is no new control
 style, modal, save executor, repository mutation or operation-log path.
 
+
+## Amendment — 2026-10-15: native selection, recent repositories and Find (#1604/#1608; Refs #1607)
+
+Menu action names contain no checkmarks or indentation. Theme, Language,
+Toolbar and workspace entries carry native `checked` state; the portable
+renderer draws its own separate check column from the same selection values.
+Workspace menu labels use dedicated nouns: Graph / Pull Requests / Editor in
+English and グラフ / Pull Request / エディター in Japanese, not compact toolbar labels.
+
+File > Open Recent and the Dock use the existing Home recent-repository store,
+in its most-recent-first order. Clear Menu clears only that history, never open
+tabs or repository data. Opening an entry uses `KagiApp::open_repository` and
+registers successful opens through GPUI's public recent-document API.
+The portable renderer retains an Open Recent heading and separators around the
+group and before Clear Menu; all action labels align with the shared check column.
+Clear Menu registers a handler on repository/Home and Settings roots only while
+the published history is nonempty. Availability changes refresh those roots;
+no unconditional global Clear handler bypasses AppKit validation.
+Clear Menu belongs only to File > Open Recent, not the Dock. Dock entries are
+repository actions only, with no separators; their global dispatch remains
+available without an active window and creates a repository host when needed.
+The target is the active repository window or the last main host, preserved
+independently of Settings' menu ownership, with native ordering as a fallback.
+Activate the repository window and application before attempting the open,
+including newly created hosts, so missing repositories' existing error feedback
+is also brought forward. Hidden native tests check repository routing, rendered
+failure notices and activation requests; actual OS foreground behavior remains
+Tier B coverage.
+
+
+Edit > Find exposes a Kagi action only when the focused target can find: its
+conditional root handler forwards to public `input::Search`, or the existing
+Graph sidebar filter as the non-Input/non-Terminal Cmd-F target. Plain sidebar,
+commit and Settings Inputs do not register that handler. Native validation
+checks action availability, not merely MenuItem's disabled metadata.
+Input search keeps priority; no global Cmd-F override is introduced. The owner approved
+omitting Next/Previous/Use Selection until official Kit offers public navigation
+actions: pinned `7a116a2` keeps SearchPanel and next/previous private. Do not
+emulate those commands by changing queries, synthetic keys or dependency forks.
+
+Role/density/reference: native menu / OS-owned / Finder and TextEdit.
+Hidden native assertions cover menu metadata and dispatch; Tier B remains
+pending while the screen is locked.

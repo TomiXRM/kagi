@@ -208,6 +208,12 @@ pub(super) fn render_pane(
             pane_id,
             body_count,
             cx.processor(move |this, visible: Range<usize>, window, cx| {
+                let pitch = this.sidebar.scroll_handles[index]
+                    .0
+                    .borrow()
+                    .last_item_size
+                    .filter(|_| body_count > 0)
+                    .map_or(row_h, |size| size.contents.height / body_count as f32);
                 let now_secs = super::commit_list::now_unix_secs();
                 if collapsed {
                     // Closing content is real, retained row data, but never a
@@ -248,7 +254,11 @@ pub(super) fn render_pane(
                 let rows = focus.lists[index]
                     .as_deref()
                     .map(|rows| rows.as_drawn(&visible));
-                let selected = rows.as_ref().and_then(|rows| rows.focused_stop(window, cx));
+                let selected = rows.as_ref().and_then(|rows| {
+                    rows.focused_stop(window, cx).filter(|&at| {
+                        rows.focus_handle(at).is_focused(window) && window.last_input_was_keyboard()
+                    })
+                });
                 let moving = this.sidebar.motion.borrow_mut().panes[index].sync_wash(selected);
                 kagi_ui_core::motion::request_frame(window, moving);
                 let visible_start = visible.start;
@@ -273,17 +283,13 @@ pub(super) fn render_pane(
                         let el = build_sidebar_row(this, &row, now_secs, cx);
                         let motion = this.sidebar.motion.borrow();
                         let pane = &motion.panes[index];
-                        let sample = pane.row_sample(position, row_h);
-                        let wash = pane.wash(position);
+                        let sample = pane.row_sample(position, pitch);
+                        let ring_opacity = pane.wash(position);
                         let wash = super::sidebar::probe_row_motion(
-                            div()
-                                .absolute()
-                                .size_full()
-                                .bg(rgb(theme().selected))
-                                .opacity(wash),
+                            div().absolute().size_full().opacity(ring_opacity),
                             &row,
                             index,
-                            "wash",
+                            "ring",
                         );
                         let el = super::sidebar::probe_row_motion(
                             div()
@@ -309,11 +315,11 @@ pub(super) fn render_pane(
                                 .min(visible_end.saturating_sub(1))
                                 == position
                         }) {
-                            if let Some(ghost_sample) = pane.ghost_sample(ghost, row_h) {
-                                let offset = row_h * (ghost.mount as f32 - position as f32)
+                            if let Some(ghost_sample) = pane.ghost_sample(ghost, pitch) {
+                                let offset = pitch * (ghost.mount as f32 - position as f32)
                                     + ghost_sample.offset
                                     + if ghost_sample.after.is_some() {
-                                        pane.row_sample(ghost.mount, row_h).offset
+                                        pane.row_sample(ghost.mount, pitch).offset
                                     } else {
                                         px(0.)
                                     };
@@ -342,10 +348,10 @@ pub(super) fn render_pane(
                             // viewport; draw only that bounded fringe as inert content.
                             if sample.offset > px(0.) {
                                 for extra in (0..visible_start).rev() {
-                                    let extra_sample = pane.row_sample(extra, row_h);
-                                    let top = row_h * (extra as f32 - position as f32)
+                                    let extra_sample = pane.row_sample(extra, pitch);
+                                    let top = pitch * (extra as f32 - position as f32)
                                         + extra_sample.offset;
-                                    if top + row_h <= px(0.) {
+                                    if top + pitch <= px(0.) {
                                         break;
                                     }
                                     if let Some(row) = this.sidebar.rows.get(body_start + extra) {
@@ -367,13 +373,13 @@ pub(super) fn render_pane(
                                 }
                             }
                             if visible_end > visible_start
-                                && pane.row_sample(visible_end - 1, row_h).offset < px(0.)
+                                && pane.row_sample(visible_end - 1, pitch).offset < px(0.)
                             {
                                 for extra in visible_end..body_count {
-                                    let extra_sample = pane.row_sample(extra, row_h);
-                                    let top = row_h * (extra as f32 - position as f32)
+                                    let extra_sample = pane.row_sample(extra, pitch);
+                                    let top = pitch * (extra as f32 - position as f32)
                                         + extra_sample.offset;
-                                    if top >= row_h * (visible_end - visible_start) as f32 {
+                                    if top >= pitch * (visible_end - visible_start) as f32 {
                                         break;
                                     }
                                     if let Some(row) = this.sidebar.rows.get(body_start + extra) {
@@ -416,6 +422,7 @@ pub(super) fn render_pane(
                                 rows,
                                 position,
                                 slot,
+                                ring_opacity,
                                 (row, el),
                                 cx,
                                 window,

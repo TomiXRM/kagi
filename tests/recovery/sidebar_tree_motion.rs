@@ -227,6 +227,65 @@ pub fn scenario_sidebar_tree_subgroup_motion(cx: &mut VisualTestAppContext) {
         click(cx, &app, window, group);
         frame(cx, &app, window, t + Duration::from_millis(1200));
     }
+    for n in 0..60 {
+        git(fixture.path(), &["branch", &format!("aaa-{n:02}")]);
+        git(fixture.path(), &["branch", &format!("zzz-{n:02}")]);
+    }
+    theme::set_reduce_motion(true);
+    app.update(cx, |app, cx| app.reload(cx));
+    cx.run_until_parked();
+    paint(cx, &app, window);
+    theme::set_reduce_motion(false);
+    // Pixel-snapped uniform-list pitch differs from the theme height at
+    // fractional zoom. Keep the removed rows anchored well above the drawn
+    // range, so ghost mounting accumulates any per-slot placement error.
+    appearance(
+        cx,
+        &app,
+        window,
+        kagi_ui_core::i18n::Lang::En,
+        "apple-light",
+        1.1,
+        0,
+    );
+    app.update(cx, |app, cx| {
+        app.sidebar.scroll_handles[0].scroll_to_item_strict(58, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    let t = Instant::now();
+    frame(cx, &app, window, t);
+    let group = e2e::control_bounds(window.window_id(), "sidebar-group-local:topic")
+        .expect("scrolled fractional group");
+    let child = sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "row").unwrap();
+    let neighbor = sidebar::sidebar_motion_for_e2e(0, "branch:zzz-00", "row").unwrap();
+    let pitch = (neighbor.y - child.y) / 3.;
+    assert!((child.y - f32::from(group.top()) - pitch).abs() < 0.6);
+    click(cx, &app, window, "sidebar-group-local:topic");
+    frame(cx, &app, window, t);
+    app.update(cx, |app, cx| {
+        app.sidebar.scroll_handles[0].scroll_to_item_strict(85, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    frame(cx, &app, window, t);
+    let ghost = sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "ghost")
+        .expect("retained ghost anchored above drawn range");
+    let neighbor = sidebar::sidebar_motion_for_e2e(0, "branch:zzz-30", "row")
+        .expect("real fractional-zoom neighbor");
+    assert!(
+        (neighbor.y - ghost.y - pitch * 33.).abs() < 0.6,
+        "scrolled ghost and real neighbor share measured native pitch"
+    );
+    frame(cx, &app, window, t + Duration::from_millis(75));
+    let ghost = sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "ghost").unwrap();
+    assert!(ghost.opacity > 0. && ghost.opacity < 1.);
+    let neighbor = sidebar::sidebar_motion_for_e2e(0, "branch:zzz-30", "row").unwrap();
+    assert!(
+        (neighbor.y - ghost.y - pitch * (31. + 2. * ghost.opacity)).abs() < 0.6,
+        "mid-splice ghost and real neighbor retain measured-pitch alignment"
+    );
+    frame(cx, &app, window, t + Duration::from_millis(300));
+    assert!(sidebar::sidebar_motion_for_e2e(0, "branch:topic/one", "ghost").is_none());
+    theme::set_zoom(1.);
     unmount(cx, app, window);
 }
 
@@ -235,12 +294,12 @@ fn fill(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) -> [u8
     cx.update_window(window, |_, window, _| {
         let image = window
             .render_to_image()
-            .expect("native sidebar fill capture");
+            .expect("native sidebar ring capture");
         let scale = window.scale_factor();
         image
             .get_pixel(
-                ((f32::from(bounds.left()) + 6.) * scale) as u32,
-                ((f32::from(bounds.top()) + 9.) * scale) as u32,
+                ((f32::from(bounds.left()) - 1.) * scale) as u32,
+                ((f32::from(bounds.top()) + f32::from(bounds.size.height) / 2.) * scale) as u32,
             )
             .0
     })
@@ -273,12 +332,13 @@ pub fn scenario_sidebar_tree_selection_motion(cx: &mut VisualTestAppContext) {
     let t = Instant::now();
     frame(cx, &app, window, t);
     let plain = fill(cx, window, "sidebar-local-main");
+    cx.simulate_keystrokes(window, "f19");
     support::focus(cx, &app, window, 0, "branch:main");
     frame(cx, &app, window, t + Duration::from_millis(300));
     let selected = fill(cx, window, "sidebar-local-main");
     assert!(
         distance(plain, selected) > 12,
-        "focused identity has a real painted selection wash"
+        "focused identity paints the existing keyboard ring"
     );
     support::focus(cx, &app, window, 0, "branch:feature");
     assert_eq!(
@@ -289,11 +349,11 @@ pub fn scenario_sidebar_tree_selection_motion(cx: &mut VisualTestAppContext) {
     frame(cx, &app, window, t + Duration::from_millis(375));
     let outgoing = fill(cx, window, "sidebar-local-main");
     let wash =
-        sidebar::sidebar_motion_for_e2e(0, "branch:main", "wash").expect("painted outgoing wash");
+        sidebar::sidebar_motion_for_e2e(0, "branch:main", "ring").expect("painted outgoing ring");
     assert!(wash.opacity > 0. && wash.opacity < 1.);
     assert!(
         distance(outgoing, plain) > 2 && distance(outgoing, selected) > 2,
-        "outgoing selection is painted mid-crossfade"
+        "outgoing keyboard ring is painted mid-crossfade"
     );
     support::focus(cx, &app, window, 0, "branch:main");
     assert!(
@@ -336,6 +396,34 @@ pub fn scenario_sidebar_tree_refresh_motion(cx: &mut VisualTestAppContext) {
     });
     let t = Instant::now();
     frame(cx, &app, window, t);
+    // A new owner first renders before its async read publishes. That empty
+    // frame must not consume the initial-load instant contract.
+    let initial = build_fixture();
+    git(initial.path(), &["branch", "initial-small"]);
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(initial.path().to_path_buf(), cx));
+    });
+    frame(cx, &app, window, t);
+    cx.run_until_parked();
+    frame(cx, &app, window, t);
+    for key in ["branch:main", "branch:initial-small"] {
+        let row = sidebar::sidebar_motion_for_e2e(0, key, "row")
+            .expect("initial async small-list row is painted");
+        assert_eq!(row.opacity, 1., "first publication is immediate: {key}");
+    }
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(repo.to_path_buf(), cx));
+    });
+    frame(cx, &app, window, t);
+    cx.run_until_parked();
+    frame(cx, &app, window, t);
+    assert_eq!(
+        sidebar::sidebar_motion_for_e2e(0, "branch:main", "row")
+            .expect("returning owner is painted")
+            .opacity,
+        1.,
+        "switching back settles immediately"
+    );
     git(repo, &["branch", "incoming"]);
     git(
         repo,

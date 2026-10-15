@@ -507,8 +507,9 @@ impl Render for KagiApp {
                 &sidebar_filter_text,
             );
             let owner = self.active_session();
+            let ready = owner.is_some_and(|session| self.reads.has_read(session));
             self.sidebar
-                .prepare_rows_motion(&rows, owner, &sidebar_filter_text);
+                .prepare_rows_motion(&rows, owner, &sidebar_filter_text, ready);
             self.sidebar.pane_ranges = sidebar_panes::pane_ranges(&rows);
             self.sidebar
                 .focus

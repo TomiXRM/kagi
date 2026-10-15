@@ -609,6 +609,8 @@ struct EditorTreeMotion {
     initialized: bool,
     #[cfg(feature = "gui-e2e")]
     painted: std::rc::Rc<std::cell::RefCell<Vec<EditorTreeMotionProbe>>>,
+    #[cfg(feature = "gui-e2e")]
+    foreground_painted: std::rc::Rc<std::cell::RefCell<Vec<EditorTreeForegroundProbe>>>,
 }
 
 struct EditorTreeGhost {
@@ -619,12 +621,26 @@ struct EditorTreeGhost {
     between: Vec<PathBuf>,
 }
 
+#[cfg(feature = "gui-e2e")]
+#[derive(Clone, Debug)]
+pub struct EditorTreeForegroundProbe {
+    pub path: PathBuf,
+    pub background: gpui::Hsla,
+    pub name: gpui::Hsla,
+    pub badge: gpui::Hsla,
+    pub dirty: gpui::Hsla,
+    pub dirty_visible: bool,
+    pub wash: f32,
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+}
+
 /// Samples recorded inside the subtree receiving displacement and opacity.
 #[cfg(feature = "gui-e2e")]
 #[derive(Clone, Debug)]
 pub struct EditorTreeMotionProbe {
     pub path: PathBuf,
     pub ghost: bool,
+    pub fringe: bool,
     pub opacity: f32,
     pub offset: gpui::Pixels,
     pub selection: f32,
@@ -779,6 +795,11 @@ impl EditorWorkspaceView {
     #[cfg(feature = "gui-e2e")]
     pub fn tree_motion_probes_for_e2e(&self) -> Vec<EditorTreeMotionProbe> {
         self.tree_motion.painted.borrow().clone()
+    }
+
+    #[cfg(feature = "gui-e2e")]
+    pub fn tree_foreground_probes_for_e2e(&self) -> Vec<EditorTreeForegroundProbe> {
+        self.tree_motion.foreground_painted.borrow().clone()
     }
 
     pub fn new(repo_path: PathBuf, hooks: EditorHooks, root_focus: gpui::FocusHandle) -> Self {
@@ -2912,6 +2933,8 @@ fn render_tree_pane(
     view.tree_probes.0.borrow_mut().clear();
     #[cfg(feature = "gui-e2e")]
     view.tree_motion.painted.borrow_mut().clear();
+    #[cfg(feature = "gui-e2e")]
+    view.tree_motion.foreground_painted.borrow_mut().clear();
     // T-WS-EDITOR-007: right-click on the empty area below the tree (or the
     // whole pane while loading/empty) opens the menu targeting the repo root
     // (New File… / New Folder…). File/dir rows below stop propagation on
@@ -2972,6 +2995,7 @@ fn render_tree_pane(
                     // for zebra striping (T-WS-EDITOR-005 finding #8), which must
                     // key on visible position, not the base `tree` index.
                     let first_visible = range.start;
+                    let visible_end = range.end;
                     range
                         .filter_map(|i| {
                             let a11y = *this.tree_layout.a11y.get(i)?;
@@ -2979,6 +3003,7 @@ fn render_tree_pane(
                                 this,
                                 i,
                                 first_visible,
+                                visible_end,
                                 *this.tree_layout.visible.get(i)?,
                                 a11y,
                                 window.is_window_active(),
@@ -3009,17 +3034,29 @@ struct TreeRowA11y {
     position: (usize, usize),
 }
 
+#[allow(clippy::too_many_arguments)] // Virtual range and AX metadata stay borrowed at the row paint boundary.
 fn render_tree_motion_row(
     view: &EditorWorkspaceView,
     visible_pos: usize,
     first_visible: usize,
+    visible_end: usize,
     index: usize,
     a11y: TreeRowA11y,
     window_active: bool,
     cx: &mut Context<EditorWorkspaceView>,
 ) -> Option<AnyElement> {
     let now = motion::now();
-    let height = theme::scaled_px(20.);
+    // UniformList publishes the snapped content size before calling its processor.
+    // Keep the intrinsic slot height unsnapped so zoom can remeasure it.
+    let height = view
+        .tree_scroll
+        .0
+        .borrow()
+        .last_item_size
+        .filter(|_| !view.tree_layout.visible.is_empty())
+        .map_or(theme::scaled_px(20.), |size| {
+            size.contents.height / view.tree_layout.visible.len() as f32
+        });
     let key = view.tree_motion.keys.get(index)?;
     let sample = view.tree_motion.splice.row(key, height, now, |changed| {
         view.tree_motion
@@ -3031,16 +3068,80 @@ fn render_tree_motion_row(
     let mut slot = div()
         .relative()
         .w_full()
-        .h(height)
+        .h(theme::scaled_px(20.))
         .flex_shrink_0()
         .child(tree_motion_content(
             view,
             index,
             false,
+            false,
             sample.offset,
             sample.opacity,
             div().relative().w_full().child(content),
         ));
+    if visible_pos == first_visible {
+        // Only neighboring final slots displaced into the viewport are painted.
+        // They reuse normal content without handlers/AX, never a whole-list copy.
+        let fringe = (0..first_visible)
+            .rev()
+            .take_while(|&position| {
+                let index = view.tree_layout.visible[position];
+                let extra = view.tree_motion.splice.row(
+                    &view.tree_motion.keys[index],
+                    height,
+                    now,
+                    |changed| {
+                        view.tree_motion
+                            .order
+                            .get(changed)
+                            .is_some_and(|&order| order < index)
+                    },
+                );
+                height * (position as f32 - visible_pos as f32) + extra.offset + height > px(0.)
+            })
+            .chain(visible_end..view.tree_layout.visible.len());
+        for position in fringe {
+            let head = position < first_visible;
+            let extra_index = view.tree_layout.visible[position];
+            let extra = view.tree_motion.splice.row(
+                &view.tree_motion.keys[extra_index],
+                height,
+                now,
+                |changed| {
+                    view.tree_motion
+                        .order
+                        .get(changed)
+                        .is_some_and(|&order| order < extra_index)
+                },
+            );
+            let top = height * (position as f32 - visible_pos as f32) + extra.offset;
+            if head && top + height <= px(0.) {
+                continue;
+            }
+            if !head && top >= height * (visible_end - first_visible) as f32 {
+                break;
+            }
+            if let Some(content) = render_tree_row(
+                view,
+                position,
+                extra_index,
+                view.tree_layout.a11y[position],
+                window_active,
+                true,
+                cx,
+            ) {
+                slot = slot.child(tree_motion_content(
+                    view,
+                    extra_index,
+                    false,
+                    true,
+                    top,
+                    extra.opacity,
+                    div().absolute().left_0().w_full().child(content),
+                ));
+            }
+        }
+    }
     for ghost in &view.tree_motion.ghosts {
         let anchor_position = ghost
             .after
@@ -3091,6 +3192,7 @@ fn render_tree_motion_row(
                 view,
                 ghost.index,
                 true,
+                false,
                 offset,
                 removed.opacity,
                 div().absolute().left_0().w_full().child(content),
@@ -3104,6 +3206,7 @@ fn tree_motion_content(
     _view: &EditorWorkspaceView,
     _index: usize,
     _ghost: bool,
+    _fringe: bool,
     offset: gpui::Pixels,
     opacity: f32,
     element: gpui::Div,
@@ -3126,6 +3229,7 @@ fn tree_motion_content(
                     painted.borrow_mut().push(EditorTreeMotionProbe {
                         path: path.clone(),
                         ghost: _ghost,
+                        fringe: _fringe,
                         opacity,
                         offset,
                         selection,
@@ -3140,6 +3244,39 @@ fn tree_motion_content(
         )
     };
     element.into_any_element()
+}
+
+fn tree_selection_foreground(
+    normal: gpui::Hsla,
+    background: gpui::Hsla,
+    window_active: bool,
+    wash: f32,
+) -> gpui::Hsla {
+    if wash <= 0. || !theme().selection_uses_on_accent(true, window_active) {
+        return normal;
+    }
+    let luminance = |color: gpui::Hsla| {
+        let color = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    };
+    let bg = luminance(background);
+    let contrast = |color| {
+        let fg = luminance(color);
+        (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05)
+    };
+    let accent = theme().selection_foreground(window_active);
+    if contrast(accent) > contrast(normal) {
+        accent
+    } else {
+        normal
+    }
 }
 
 /// One row in the left file tree (dir label or a clickable file row).
@@ -3259,7 +3396,7 @@ fn render_tree_row(
             let indent = (depth as f32) * 12.0;
             let (badge, badge_color, _) = status_badge(change.as_ref(), false);
             let is_selected = view.selected == Some(file_index);
-            let uses_on_accent = theme().selection_uses_on_accent(is_selected, window_active);
+            // Foreground follows the painted wash, not immediate logical/AX selection.
             // T-WS-EDITOR-005 finding #8: stripe by visible position, not the
             // base tree index — collapsing a directory must not leave the
             // remaining visible rows with a broken (skip-a-beat) checkerboard.
@@ -3275,6 +3412,13 @@ fn render_tree_row(
                 .map_or(if is_selected { 1. } else { 0. }, |transition| {
                     transition.sample(motion::now()).value
                 });
+            let selected_bg = theme().selected_for_window(window_active);
+            let visual_bg = row_bg.blend(selected_bg.alpha(selected_bg.a * wash));
+            let foreground =
+                |normal| tree_selection_foreground(normal, visual_bg, window_active, wash);
+            let name_foreground = foreground(rgb(theme().text_main).into());
+            let badge_foreground = foreground(rgb(badge_color).into());
+            let dirty_foreground = foreground(rgb(theme().color_warning).into());
             // T-WS-EDITOR-002 §2 + editor tabs: any row whose file is open
             // in a tab with unsaved edits gets the dot, active or not.
             let show_dirty_dot = view
@@ -3336,11 +3480,7 @@ fn render_tree_row(
                     div()
                         .w(theme::scaled_px(16.))
                         .flex_shrink_0()
-                        .text_color(if uses_on_accent {
-                            theme().selection_foreground(window_active)
-                        } else {
-                            rgb(badge_color).into()
-                        })
+                        .text_color(badge_foreground)
                         .child(SharedString::from(badge))
                         .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
                             #[cfg(feature = "gui-e2e")]
@@ -3356,11 +3496,7 @@ fn render_tree_row(
                     div()
                         .flex_1()
                         .min_w(px(0.))
-                        .text_color(if uses_on_accent {
-                            theme().selection_foreground(window_active)
-                        } else {
-                            rgb(theme().text_main).into()
-                        })
+                        .text_color(name_foreground)
                         .truncate()
                         .child(name)
                         .when(!ghost && cfg!(feature = "gui-e2e"), |el| {
@@ -3378,13 +3514,38 @@ fn render_tree_row(
                         div()
                             .flex_shrink_0()
                             .pl(theme::scaled_px(4.))
-                            .text_color(if uses_on_accent {
-                                theme().selection_foreground(window_active)
-                            } else {
-                                rgb(theme().color_warning).into()
-                            })
+                            .text_color(dirty_foreground)
                             .child(SharedString::from("\u{25cf}")),
                     )
+                })
+                .when(cfg!(feature = "gui-e2e"), |el| {
+                    #[cfg(feature = "gui-e2e")]
+                    let el = {
+                        let painted = view.tree_motion.foreground_painted.clone();
+                        let path = view.tree_motion.keys[index].clone();
+                        el.child(
+                            gpui::canvas(
+                                |_, _, _| {},
+                                move |bounds, _, _, _| {
+                                    painted.borrow_mut().push(EditorTreeForegroundProbe {
+                                        path: path.clone(),
+                                        background: visual_bg,
+                                        name: name_foreground,
+                                        badge: badge_foreground,
+                                        dirty: dirty_foreground,
+                                        wash,
+                                        bounds,
+                                        dirty_visible: show_dirty_dot,
+                                    });
+                                },
+                            )
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full(),
+                        )
+                    };
+                    el
                 });
             if ghost {
                 return Some(el.into_any_element());

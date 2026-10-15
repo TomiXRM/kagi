@@ -145,10 +145,11 @@ owns sidebar presentation; `EditorWorkspaceView` owns Editor presentation.
 There is no second tree model or Git read in the animation path.
 
 - Editor selection intent changes immediately. The Navigator has no independent
-  selection: its existing keyboard/pointer `RowFocus` active wash crossfades.
-  Stable ref names, worktree paths, stash commit identities and Editor paths key
-  presentation only; no graph-target-driven Navigator wash or new AX selection
-  state is introduced.
+  selection: its existing keyboard `RowFocus` ring crossfades, without adding a
+  persistent selected-looking row fill. Pointer hover keeps its existing
+  appearance. Stable ref names, worktree paths, stash commit identities and
+  Editor paths key presentation only; no graph-target-driven Navigator wash or
+  new AX selection state is introduced.
 - Local/remote subgroups and Editor directories use `RowSplice`: final logical
   membership is immediate, children fade/slide, and content below them settles
   into its final slot. Removed content is retained only as noninteractive,
@@ -166,6 +167,22 @@ There is no second tree model or Git read in the animation path.
   the keyboard and accessibility models.
 
 Native Tier A is the behavior gate for mid-flight geometry/opacity, endpoints,
-reversal and instant policy. Tier B uses an isolated PID-targeted background
-window without foreground activation or user-pointer control; hidden native
-test-window assertions are not screenshot evidence.
+reversal and instant policy. Tier B uses an isolated PID-targeted fixture window;
+foreground activation is allowed only with owner authorization. Neither lane
+controls the user's pointer; hidden native assertions are not screenshot evidence.
+
+### Review corrections
+
+The Navigator's prior presentation was a keyboard focus ring and pointer hover,
+not a selected-row fill. Its keyed transition therefore scales only the existing
+focus-ring color, retaining the direct-focus and keyboard-visible gates. Editor
+selection foregrounds choose the higher-contrast normal/on-accent color against
+the actual composited wash, independently of immediate logical selection.
+
+Both virtual trees paint a bounded inert fringe when displaced rows outside the
+final virtual range enter the viewport. Motion offsets, ghost anchors and fringe
+origins use the public list handle's measured content height divided by its
+current item count; the intrinsic slot height remains theme-derived so zoom
+changes are remeasured. This avoids cumulative device-pixel rounding drift.
+Sidebar initial-read readiness is explicit: loading headers do not consume the
+instant initialization boundary before the first accepted asynchronous read.

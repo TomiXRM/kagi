@@ -487,6 +487,7 @@ impl SidebarState {
         rows: &[SidebarRow],
         owner: Option<crate::app::SessionId>,
         filter: &str,
+        ready: bool,
     ) {
         let ranges = super::sidebar_panes::pane_ranges(rows);
         let mut state = self.motion.borrow_mut();
@@ -495,7 +496,7 @@ impl SidebarState {
             *state = SidebarMotion {
                 owner,
                 filter: filter.to_owned(),
-                initialized: true,
+                initialized: ready,
                 ..Default::default()
             };
         }

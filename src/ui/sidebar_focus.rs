@@ -592,11 +592,13 @@ pub(super) fn header(
 
 /// Row `at` of `list`: its Tab stop, ↑/↓, and Enter / Space for its main
 /// action. `el` is the row's slot; `row` what it draws.
+#[allow(clippy::too_many_arguments)] // Existing row boundary also carries presentation-only ring opacity.
 pub(super) fn row(
     app: &KagiApp,
     list: &RowList,
     at: usize,
     el: Stateful<Div>,
+    ring: f32,
     (row, drawn): (SidebarRow, AnyElement),
     cx: &mut Context<KagiApp>,
     window: &mut Window,
@@ -616,6 +618,18 @@ pub(super) fn row(
         super::sidebar_ref_rows::with_keyboard_group_reveal(app, &row, focused, el, window, cx);
     let el = list
         .row(at, el)
+        // Keep RowList's focus geometry and handlers, but paint its existing
+        // border from the sidebar's identity-keyed transition.
+        .border_color(gpui::Rgba {
+            a: ring,
+            ..gpui::rgb(kagi_ui_core::theme::theme().ui_accent())
+        })
+        .focus_visible(move |style| {
+            style.border_color(gpui::Rgba {
+                a: ring,
+                ..gpui::rgb(kagi_ui_core::theme::theme().ui_accent())
+            })
+        })
         .child(under_ring(drawn, app.root_focus.clone()))
         .on_click(cx.listener(move |this, event: &ClickEvent, _window, cx| {
             if event.is_keyboard()

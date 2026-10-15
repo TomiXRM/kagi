@@ -2,6 +2,10 @@
 //! Reversible Before-FAIL mutation: in lib.rs::tree_motion_content insert
 //! `let offset = px(0.);` immediately before styling and paint recording.
 //! Insertion still fades, but the same displaced-tail midpoint assertion fails.
+//! Fringe Before-FAIL: replace `for position in fringe` with
+//! `for position in fringe.take(0)` in render_tree_motion_row.
+//! Contrast Before-FAIL: return `theme().selection_foreground(window_active)`
+//! unconditionally from tree_selection_foreground (new-selection start fails).
 use crate::macos::{build_fixture, git, mount, unmount};
 use gpui::{px, AnyWindowHandle, Entity, VisualTestAppContext};
 use kagi::ui::{e2e::system_accessibility::SystemDisplayInjection, KagiApp};
@@ -79,6 +83,59 @@ fn assert_settled(rows: &[EditorTreeMotionProbe]) {
     }
 }
 
+fn contrast(foreground: gpui::Hsla, background: gpui::Hsla) -> f32 {
+    let luminance = |color: gpui::Hsla| {
+        let rgb = color.to_rgb();
+        let linear = |v: f32| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
+    };
+    let a = luminance(foreground);
+    let b = luminance(background);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn assert_fringe(rows: &[EditorTreeMotionProbe], head: bool) {
+    let mut normal: Vec<_> = rows
+        .iter()
+        .filter(|row| !row.ghost && !row.fringe)
+        .collect();
+    normal.sort_by(|a, b| a.bounds.top().partial_cmp(&b.bounds.top()).unwrap());
+    let pitch = normal[1].bounds.top() - normal[0].bounds.top();
+    assert!(pitch > px(0.));
+    let mut fringe: Vec<_> = rows.iter().filter(|row| row.fringe).collect();
+    assert!(
+        !fringe.is_empty(),
+        "actual out-of-range content must be painted"
+    );
+    assert!(fringe.len() <= 3, "two-row splice must have bounded fringe");
+    fringe.sort_by(|a, b| a.bounds.top().partial_cmp(&b.bounds.top()).unwrap());
+    let (before, after) = if head {
+        (fringe.last().unwrap().bounds.top(), normal[0].bounds.top())
+    } else {
+        (normal.last().unwrap().bounds.top(), fringe[0].bounds.top())
+    };
+    assert!(
+        (after - before - pitch).abs() <= px(0.5),
+        "snapped fringe must abut the final-list content"
+    );
+    for row in fringe {
+        assert_eq!(row.opacity, 1.);
+        assert!(!row.ghost);
+        assert!(row.bounds.size.width > px(0.) && row.bounds.size.height > px(0.));
+        assert!(!recorded_tree("ews-file-tree")
+            .unwrap()
+            .rows
+            .values()
+            .any(|ax| ax.label.contains(row.path.to_str().unwrap())));
+    }
+}
+
 fn directory(editor: &EditorWorkspaceView) -> usize {
     editor
         .tree
@@ -113,16 +170,21 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
     theme::set_reduce_motion(false);
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
+    for index in 0..120 {
+        std::fs::write(repo.join(format!("zz-long-{index:03}.txt")), "long tree\n").unwrap();
+    }
     std::fs::create_dir(repo.join("motion")).unwrap();
     for path in ["motion/a.txt", "motion/b.txt", "z-tail.txt"] {
         std::fs::write(repo.join(path), "before\n").unwrap();
     }
-    git(&repo, &["add", "motion", "z-tail.txt"]);
+    git(&repo, &["add", "."]);
     git(&repo, &["commit", "-qm", "editor motion fixture"]);
     for path in ["motion/a.txt", "motion/b.txt", "z-tail.txt"] {
         std::fs::write(repo.join(path), "after\n").unwrap();
     }
     let (app, window): (Entity<KagiApp>, _) = mount(cx, &repo);
+    let original_zoom = theme::zoom();
+    let original_theme = theme::theme().slug.to_string();
     app.update(cx, |app, cx| app.open_editor_workspace(cx));
     let editor = cx
         .read(|cx| app.read(cx).ui().editor_workspace.clone())
@@ -206,6 +268,66 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
             .values()
             .any(|row| row.label.contains("b.txt") && row.selected == Some(true)));
         let selected_mid = frame(cx, &editor, window, t + Duration::from_millis(90));
+        wait_editor(cx, &editor, window, t);
+        editor.update(cx, |view, cx| {
+            view.dirty = true;
+            cx.notify();
+        });
+        for slug in ["apple-light", "apple-dark"] {
+            app.update(cx, |app, cx| app.set_theme(slug, cx));
+            for millis in [0, 45, 90, 135] {
+                frame(cx, &editor, window, t + Duration::from_millis(millis));
+                let painted = cx.read(|cx| editor.read(cx).tree_foreground_probes_for_e2e());
+                for path in ["motion/a.txt", "motion/b.txt"] {
+                    let row = painted
+                        .iter()
+                        .find(|row| row.path == Path::new(path))
+                        .unwrap();
+                    if path == "motion/b.txt" {
+                        assert!(row.dirty_visible, "probe must cover a painted dirty dot");
+                    }
+                    let base = theme::theme();
+                    assert!(
+                        contrast(row.name, row.background) + 0.001
+                            >= contrast(gpui::rgb(base.text_main).into(), row.background),
+                        "{slug} must retain normal text until on-accent has better contrast",
+                    );
+                    let wash_color = base.selected_for_window(true);
+                    let matches_fill = [base.panel, base.bg_row_alt].into_iter().any(|stripe| {
+                        let expected: gpui::Hsla = gpui::rgb(stripe).into();
+                        let expected = expected.blend(wash_color.alpha(wash_color.a * row.wash));
+                        let a = expected.to_rgb();
+                        let b = row.background.to_rgb();
+                        (a.r - b.r).abs() + (a.g - b.g).abs() + (a.b - b.b).abs() < 0.001
+                    });
+                    assert!(
+                        matches_fill,
+                        "{slug}: measured fill must be the actual composited wash"
+                    );
+                    if millis == 90 {
+                        assert!(row.wash > 0. && row.wash < 1.);
+                    }
+                    assert!(row.bounds.size.height > px(0.));
+                    for foreground in [row.name, row.badge, row.dirty] {
+                        let selected = theme::theme().selection_foreground(true);
+                        // The applied foreground must never be the lower-contrast
+                        // on-accent option on a still nearly-unselected surface.
+                        assert!(
+                            contrast(foreground, row.background) + 0.001
+                                >= contrast(selected, row.background),
+                            "{slug} {path} wash={} foreground={foreground:?} background={:?}",
+                            row.wash,
+                            row.background,
+                        );
+                    }
+                }
+            }
+        }
+        app.update(cx, |app, cx| app.set_theme(&original_theme, cx));
+        editor.update(cx, |view, cx| {
+            view.dirty = false;
+            cx.notify();
+        });
         for path in ["motion/a.txt", "motion/b.txt"] {
             let wash = sample(&selected_mid, path, false).selection;
             assert!(
@@ -292,6 +414,65 @@ pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
         theme::set_reduce_motion(false);
         t += Duration::from_millis(800);
     }
+    theme::set_zoom(1.13);
+    let dir = cx.read(|cx| directory(editor.read(cx)));
+    theme::set_reduce_motion(true);
+    frame(cx, &editor, window, t);
+    // The previous loop leaves this directory expanded.
+    editor.update(cx, |view, cx| {
+        view.tree_scroll
+            .scroll_to_item(35, gpui::ScrollStrategy::Center);
+        cx.notify();
+    });
+    let baseline = frame(cx, &editor, window, t);
+    assert!(
+        baseline.len() < 100,
+        "fixture must exceed the native viewport"
+    );
+    theme::set_reduce_motion(false);
+    editor.update(cx, |view, cx| view.toggle_dir(dir, cx));
+    let closing_start = frame(cx, &editor, window, t);
+    assert_fringe(&closing_start, true);
+    let derivations = cx.read(|cx| editor.read(cx).tree_layout_derivations());
+    let closing_mid = frame(cx, &editor, window, t + Duration::from_millis(90));
+    assert_fringe(&closing_mid, true);
+    assert_eq!(
+        cx.read(|cx| editor.read(cx).tree_layout_derivations()),
+        derivations
+    );
+    editor.update(cx, |view, cx| view.toggle_dir(dir, cx));
+    let reversed = frame(cx, &editor, window, t + Duration::from_millis(90));
+    for row in reversed.iter().filter(|row| !row.ghost) {
+        if let Some(before) = closing_mid.iter().find(|before| before.path == row.path) {
+            assert!((row.bounds.top() - before.bounds.top()).abs() <= px(0.5));
+            assert_eq!(row.opacity, before.opacity);
+        }
+    }
+    theme::set_reduce_motion(true);
+    assert_settled(&frame(cx, &editor, window, t + Duration::from_millis(90)));
+    // Settle collapsed, then expand with the directory well above the viewport.
+    editor.update(cx, |view, cx| view.toggle_dir(dir, cx));
+    frame(cx, &editor, window, t + Duration::from_millis(300));
+    theme::set_reduce_motion(false);
+    t += Duration::from_millis(400);
+    frame(cx, &editor, window, t);
+    editor.update(cx, |view, cx| view.toggle_dir(dir, cx));
+    assert_fringe(&frame(cx, &editor, window, t), false);
+    assert_fringe(
+        &frame(cx, &editor, window, t + Duration::from_millis(90)),
+        false,
+    );
+    theme::set_reduce_motion(true);
+    assert_settled(&frame(cx, &editor, window, t + Duration::from_millis(90)));
+    editor.update(cx, |view, cx| {
+        view.tree_scroll
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    theme::set_zoom(original_zoom);
+    frame(cx, &editor, window, t + Duration::from_millis(300));
+    theme::set_reduce_motion(false);
+    t += Duration::from_millis(400);
     // A retained owner returning within the same frozen tick must not resume
     // its old splice, even though no monotonic time has elapsed while away.
     let other_fixture = build_fixture();

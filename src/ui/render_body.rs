@@ -127,8 +127,8 @@ impl KagiApp {
 
         // The sidebar follows its toggle (#955); the right slot follows
         // resolved visibility (#1001). Whole-workspace takeovers stay instant.
-        let motion_now = super::panel_motion::now();
-        let motion_instant = super::panel_motion::instant();
+        let motion_now = kagi_ui_core::motion::now();
+        let motion_instant = kagi_ui_core::motion::instant();
         let sidebar_shown = layout.left == workspace::LeftPane::Navigator;
         self.panel_motion.sync_sidebar(
             sidebar_shown,
@@ -785,10 +785,10 @@ impl KagiApp {
                 .child(workspace_mode::render_sidebar_pages(self, mode, cx))
                 .child(divider1);
             body_row = body_row.child(
-                super::panel_motion::clip(
+                kagi_ui_core::motion::clip(
                     "sidebar-clip",
-                    super::panel_motion::Axis::Horizontal,
-                    super::panel_motion::Anchor::End,
+                    kagi_ui_core::motion::Axis::Horizontal,
+                    kagi_ui_core::motion::Anchor::End,
                     theme::scaled_px(sidebar_width + 4.),
                     sidebar_fraction,
                     sidebar,
@@ -967,10 +967,10 @@ impl KagiApp {
                 .child(divider2)
                 .child(el);
             body_row = body_row.child(
-                super::panel_motion::clip(
+                kagi_ui_core::motion::clip(
                     "right-pane-clip",
-                    super::panel_motion::Axis::Horizontal,
-                    super::panel_motion::Anchor::Start,
+                    kagi_ui_core::motion::Axis::Horizontal,
+                    kagi_ui_core::motion::Anchor::Start,
                     theme::scaled_px(right_width + 4.),
                     right_fraction,
                     pane,

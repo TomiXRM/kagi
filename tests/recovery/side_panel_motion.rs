@@ -44,7 +44,7 @@ const SELECTED: usize = 45;
 const PROBES: [&str; 3] = ["sidebar-clip", "right-pane-clip", "commit-list-viewport"];
 
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
-    e2e::set_panel_motion_clock(Some(at));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(at));
     for name in PROBES {
         e2e::clear_control_bounds(window.window_id(), name);
     }
@@ -317,7 +317,7 @@ pub fn scenario_side_panel_motion(cx: &mut VisualTestAppContext) {
     frame(cx, window, t5 + Duration::from_millis(60));
     assert_eq!(width(window, "right-pane-clip"), Some(right_full));
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(reduce_before);
     unmount(cx, app, window);
     eprintln!(
@@ -459,7 +459,7 @@ pub fn scenario_right_selection_motion(cx: &mut VisualTestAppContext) {
         "Graph mode return is instant"
     );
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(reduce_before);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS right_selection_motion");

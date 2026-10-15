@@ -30,7 +30,7 @@ fn static_motion(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
         "production sync spinner is static"
     );
     // A frozen clock removes the runner's default instant-motion override.
-    e2e::set_panel_motion_clock(Some(Instant::now()));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(Instant::now()));
     draw(cx, win);
     let full = e2e::control_bounds(win.window_id(), "bottom-panel-clip")
         .unwrap()
@@ -51,7 +51,7 @@ fn static_motion(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
             .height,
         full
     );
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
 }
 
 fn motion_leg(

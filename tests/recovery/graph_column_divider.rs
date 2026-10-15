@@ -11,7 +11,7 @@ use kagi::ui::{e2e, theme, KagiApp};
 use crate::macos::{build_fixture, mount, unmount};
 
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
-    e2e::set_panel_motion_clock(Some(at));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(at));
     for name in ["sidebar-clip", "divider-badge-col", "divider-graph-col"] {
         e2e::clear_control_bounds(window.window_id(), name);
     }
@@ -148,7 +148,7 @@ pub fn scenario_graph_column_divider_hidden(cx: &mut VisualTestAppContext) {
         true,
     );
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(previous_reduce_motion);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS graph_column_divider_hidden");
@@ -281,7 +281,7 @@ pub fn scenario_graph_columns_fit(cx: &mut VisualTestAppContext) {
             );
         }
     }
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(previous_reduce_motion);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS graph_columns_fit");
@@ -350,7 +350,7 @@ pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
     resize(cx, window, 1392., 883.);
     assert_eq!(bounds(window, "divider-badge-col").left(), px(365.5));
     assert_eq!(bounds(window, "divider-graph-col").left(), px(527.5));
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(previous_motion);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS graph_columns_compressed_drag");
@@ -391,7 +391,7 @@ pub fn scenario_graph_columns_inspector_fit(cx: &mut VisualTestAppContext) {
             "only sub-minimum center panes relax the subject floor"
         );
     }
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(previous_motion);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS graph_columns_inspector_fit");

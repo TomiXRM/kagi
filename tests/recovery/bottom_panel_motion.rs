@@ -52,7 +52,7 @@ fn top_row(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) -> f32 {
 
 /// Draw the frame at `at` on the stand-in clock.
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
-    e2e::set_panel_motion_clock(Some(at));
+    kagi_ui_core::motion::set_clock_for_e2e(Some(at));
     draw(cx, window);
 }
 
@@ -167,7 +167,7 @@ pub fn scenario_bottom_panel_motion(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(top_row(cx, &app), top);
 
-    e2e::set_panel_motion_clock(None);
+    kagi_ui_core::motion::set_clock_for_e2e(None);
     theme::set_reduce_motion(reduce_before);
     assert_eq!(
         repo_fingerprint(&repo),

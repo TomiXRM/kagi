@@ -334,10 +334,10 @@ impl KagiApp {
         // #950: only the clip's height moves. The panel hangs from its top
         // edge, so the tab strip rises from the bottom with it.
         Some(
-            super::panel_motion::clip(
+            kagi_ui_core::motion::clip(
                 "bottom-panel-clip",
-                super::panel_motion::Axis::Vertical,
-                super::panel_motion::Anchor::Start,
+                kagi_ui_core::motion::Axis::Vertical,
+                kagi_ui_core::motion::Anchor::Start,
                 theme::scaled_px(panel_h),
                 visible,
                 panel,

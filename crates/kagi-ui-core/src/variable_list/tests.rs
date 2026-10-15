@@ -330,3 +330,42 @@ fn near_tail_jump_keeps_target_when_actual_successors_exceed_estimates() {
     assert_eq!(rows.first().unwrap().ix, 96);
     assert!(list.0.borrow().offset() < list.0.borrow().maximum());
 }
+
+#[test]
+fn keyed_reconciliation_keeps_reading_identity_fraction_and_survivor_measurements() {
+    let list = list(8);
+    measure(&list, 3, 80.);
+    measure(&list, 6, 120.);
+    list.scroll_to(ListOffset {
+        item_ix: 3,
+        offset_in_item: px(20.),
+    });
+    let key = list.0.borrow().rows[3].key;
+    list.reconcile_rows(&[Some(0), None, Some(3), Some(1), Some(6), Some(7)]);
+    assert_eq!(list.logical_scroll_top().item_ix, 2);
+    assert_eq!(list.logical_scroll_top().offset_in_item, px(20.));
+    assert_eq!(list.0.borrow().rows[2].key, key);
+    assert_eq!(list.measured_height(4), Some(px(120.)));
+    list.invalidate_rows(2..3);
+    assert_eq!(list.measured_height(2), None);
+    assert_eq!(list.measured_height(4), Some(px(120.)));
+    measure(&list, 2, 160.);
+    assert_eq!(list.logical_scroll_top().offset_in_item, px(40.));
+}
+
+#[test]
+fn keyed_deletion_chooses_next_old_survivor_and_relocates_pending_reveal() {
+    let list = list(8);
+    list.scroll_to(ListOffset {
+        item_ix: 3,
+        offset_in_item: px(5.),
+    });
+    list.scroll_to_reveal_item(6);
+    list.reconcile_rows(&[Some(7), Some(1), Some(6), Some(4)]);
+    assert_eq!(list.logical_scroll_top().item_ix, 3);
+    assert_eq!(list.logical_scroll_top().offset_in_item, px(5.));
+    assert!(matches!(list.0.borrow().pending, Some(Intent::Reveal(2))));
+    list.reconcile_rows(&[]);
+    assert_eq!(list.item_count(), 0);
+    assert!(list.0.borrow().pending.is_none());
+}

@@ -139,6 +139,7 @@ pub fn scenario_review_hunk_full(cx: &mut VisualTestAppContext) {
     let _gh = OfflineGh::install();
     let (_fixture, repo, _remote, head) = crate::pr_threads::c_txt_pr();
     let (app, window) = mount(cx, &repo);
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
     let source = (0..40)
         .map(|i| {
             format!(
@@ -185,6 +186,7 @@ pub fn scenario_issue_body_zoom(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     let repo = fixture.path().canonicalize().unwrap();
     let (app, window) = mount(cx, &repo);
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
     app.update(cx, |app, cx| {
         app.seed_issue_composer_for_e2e(cx);
         app.show_issues_mode(cx);
@@ -207,6 +209,7 @@ pub fn scenario_issue_body_zoom(cx: &mut VisualTestAppContext) {
         "visible body lines must stay equal across zoom: {counts:?}"
     );
     focused_issue_body(cx, &app, window);
+    giant_issue_previews(cx, &app, window);
     theme::set_zoom(before_zoom);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS issue_body_zoom");
@@ -217,7 +220,7 @@ fn focused_issue_body(
     app: &gpui::Entity<kagi::ui::KagiApp>,
     window: AnyWindowHandle,
 ) {
-    crate::pr_detail_adaptive::resize(cx, window, (940., 660.));
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
     theme::set_zoom(1.67);
     cx.update_window(window, |_, window, cx| {
         app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
@@ -285,4 +288,143 @@ fn focused_footer_reachable(cx: &mut VisualTestAppContext, window: AnyWindowHand
     assert!(submit.top() >= pane.top() && submit.bottom() <= pane.bottom() + gpui::px(1.),
         "outer scrolling must expose the focused submit inside the actual pane: {submit:?}, {pane:?}");
     wheel(cx, window, gutter, 0., 10000.);
+}
+
+fn giant_issue_previews(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+) {
+    // Leave focused editing through its actual control before measuring the
+    // ordinary feed composer. The giant Markdown remains one variable row.
+    let pane = bounds(cx, window, "issue-mode-center-pane");
+    let gutter = Bounds::new(
+        gpui::point(pane.right() - gpui::px(2.), pane.top()),
+        gpui::size(gpui::px(2.), pane.size.height),
+    );
+    wheel(cx, window, gutter, 0., -10000.);
+    click(cx, window, "issue-composer-focus");
+    app.update(cx, |app, cx| {
+        app.seed_issue_navigation_for_e2e(cx);
+        app.ui.values_mut().next().unwrap().github_issue_tab =
+            kagi_domain::github::IssueListTab::RecentlyUpdated;
+        cx.notify();
+    });
+    let giant = (0..160)
+        .map(|line| {
+            format!("Paragraph {line}: **giant preview** 日本語, with wrapped content.\n\n")
+        })
+        .collect::<String>();
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_body_for_e2e(&giant, window, cx)
+        });
+    })
+    .unwrap();
+    feed_composer_footer(cx, app, window);
+    click(cx, window, "issue-composer-mode-toggle");
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        app.update(cx, |app, cx| {
+            app.ui().github_issues_list.scroll_to(gpui::ListOffset {
+                item_ix: 0,
+                offset_in_item: gpui::px(0.),
+            });
+            cx.notify();
+        });
+        let preview = bounds(cx, window, "issue-composer-preview-md-0");
+        let viewport = bounds(cx, window, "issue-main-list");
+        assert!(
+            preview.size.height > viewport.size.height * 3.,
+            "fixture must paint a truly oversized preview, not an estimated row"
+        );
+        cx.read(|cx| {
+            let list = &app.read(cx).ui().github_issues_list;
+            let row = list.bounds_for_item(0).expect("composer row painted");
+            assert_eq!(list.measured_height(0), Some(row.size.height));
+            assert!(
+                row.size.height >= preview.size.height,
+                "the virtual row must include the entire live Markdown preview"
+            );
+        });
+        feed_composer_footer(cx, app, window);
+        let viewport = bounds(cx, window, "issue-main-list");
+        wheel(cx, window, viewport, 0., -100_000.);
+        let final_issue = bounds(cx, window, "issue-main-row-1");
+        assert!(
+            final_issue.top() >= viewport.top()
+                && final_issue.bottom() <= viewport.bottom() + gpui::px(1.),
+            "the final Issue remains reachable beyond a giant composer"
+        );
+    }
+    giant_reply_preview(cx, app, window, &giant);
+}
+
+fn feed_composer_footer(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+) {
+    bounds(cx, window, "issue-main-list");
+    app.update(cx, |app, cx| {
+        let list = &app.ui().github_issues_list;
+        let height = list
+            .measured_height(0)
+            .expect("composer measured by layout");
+        let viewport = list.viewport_bounds().size.height;
+        list.scroll_to(gpui::ListOffset {
+            item_ix: 0,
+            offset_in_item: (height - viewport).max(gpui::px(0.)),
+        });
+        cx.notify();
+    });
+    let submit = bounds(cx, window, "issue-composer-submit");
+    let viewport = bounds(cx, window, "issue-main-list");
+    assert!(
+        submit.top() >= viewport.top() && submit.bottom() <= viewport.bottom() + gpui::px(1.),
+        "the giant composer's final Post control must fit inside the live viewport"
+    );
+}
+
+fn giant_reply_preview(
+    cx: &mut VisualTestAppContext,
+    app: &gpui::Entity<kagi::ui::KagiApp>,
+    window: AnyWindowHandle,
+    giant: &str,
+) {
+    app.update(cx, |app, cx| {
+        app.seed_issue_reply_for_e2e(4, cx);
+        app.set_issue_body_for_e2e(4, "Final accepted post before the Reply composer.", cx);
+    });
+    let viewport = bounds(cx, window, "issue-thread");
+    wheel(cx, window, viewport, 0., -100_000.);
+    bounds(cx, window, "issue-reply-composer-submit");
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.replace_issue_reply_body_for_e2e(4, giant, window, cx)
+        });
+    })
+    .unwrap();
+    wheel(cx, window, viewport, 0., -100_000.);
+    click(cx, window, "issue-reply-mode-toggle");
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        app.update(cx, |_, cx| cx.notify());
+        let viewport = bounds(cx, window, "issue-thread");
+        wheel(cx, window, viewport, 0., -100_000.);
+        let preview = bounds(cx, window, "issue-composer-preview-md-4");
+        let submit = bounds(cx, window, "issue-reply-composer-submit");
+        assert!(
+            preview.size.height > viewport.size.height * 3.,
+            "Reply preview must retain the complete giant Markdown layout"
+        );
+        assert!(
+            preview.bottom() <= submit.top(),
+            "the Reply footer must follow, never overlap, the complete preview"
+        );
+        assert!(
+            submit.top() >= viewport.top() && submit.bottom() <= viewport.bottom() + gpui::px(1.),
+            "the final Reply control must remain reachable at either zoom"
+        );
+    }
 }

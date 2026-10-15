@@ -64,6 +64,7 @@ pub fn scenario_home_heading(cx: &mut VisualTestAppContext) {
                             let text = Msg::HomeRecent.t();
                             let mut style = window.text_style();
                             style.font_family = theme::UI_FONT.into();
+                            style.font_fallbacks = kagi_ui_core::fonts::ui_font().fallbacks;
                             style.font_weight = heading.font_weight;
                             window
                                 .text_system()

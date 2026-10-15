@@ -132,10 +132,12 @@ fn tag_no_more_cell(cx: &mut VisualTestAppContext, language: Lang) {
 pub fn scenario_sidebar_group_reveal_lifetime(cx: &mut VisualTestAppContext) {
     let _settings = Settings::capture();
     let fixture = build_fixture();
+    git(fixture.path(), &["branch", "aaa/one"]);
     git(fixture.path(), &["branch", "feat/a"]);
     git(fixture.path(), &["branch", "feat/b"]);
-    let (app, window) = mount_dimensions(cx, fixture.path(), (940., 660.));
+    let (app, window) = mount_dimensions(cx, fixture.path(), (1000., 720.));
     appearance(cx, &app, window, Lang::En, "apple-light", 1., 0);
+    group_reveal_arrows(cx, &app, window);
     focus(cx, &app, window, 0, "group:local:feat");
     keys(cx, window, "shift-f10");
     paint(cx, &app, window);
@@ -174,4 +176,64 @@ pub fn scenario_sidebar_group_reveal_lifetime(cx: &mut VisualTestAppContext) {
         "yielding sidebar focus retires reveal"
     );
     unmount(cx, app, window);
+}
+
+fn group_reveal_arrows(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: gpui::AnyWindowHandle,
+) {
+    let group = "group:local:feat";
+    let card = "sidebar-group-local:feat-reveal";
+    focus(cx, app, window, 0, group);
+    keys(cx, window, "shift-f10");
+    paint(cx, app, window);
+    bounds(window, card);
+    // Right has no tree expansion binding: Graph's existing pane action is inert.
+    keys(cx, window, "right");
+    paint(cx, app, window);
+    assert_eq!(focused(cx, app, window), Some((0, group.into())));
+    assert!(!app.read_with(cx, |app, _| app
+        .ui()
+        .branch_groups_collapsed
+        .contains("local:feat")));
+    bounds(window, card);
+    keys(cx, window, "left");
+    paint(cx, app, window);
+    assert!(
+        app.read_with(cx, |app, _| app
+            .ui()
+            .branch_groups_collapsed
+            .contains("local:feat")),
+        "Left on a revealed group still reaches SidebarTreeLeft"
+    );
+    assert_eq!(focused(cx, app, window), Some((0, group.into())));
+    keys(cx, window, "enter");
+    paint(cx, app, window);
+    let rows = app.read_with(cx, |app, _| app.sidebar_row_keys_for_e2e(0));
+    let index = rows.iter().position(|key| key == group).unwrap();
+    assert!(index > 0 && index + 1 < rows.len());
+    for (key, target) in [
+        ("up", index - 1),
+        ("down", index + 1),
+        ("home", 0),
+        ("end", rows.len() - 1),
+    ] {
+        focus(cx, app, window, 0, group);
+        keys(cx, window, "shift-f10");
+        paint(cx, app, window);
+        bounds(window, card);
+        e2e::clear_control_bounds(window.window_id(), card);
+        keys(cx, window, key);
+        paint(cx, app, window);
+        assert_eq!(
+            focused(cx, app, window),
+            Some((0, rows[target].clone())),
+            "{key} keeps its row-list handler while a reveal is pinned"
+        );
+        assert!(
+            e2e::control_bounds(window.window_id(), card).is_none(),
+            "{key} focus departure retires the reveal"
+        );
+    }
 }

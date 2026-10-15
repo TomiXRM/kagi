@@ -93,7 +93,7 @@ fn status_text_width(text: SharedString, window: &Window) -> gpui::Pixels {
             px(theme::rem_size_px() * 0.75),
             &[gpui::TextRun {
                 len,
-                font: gpui::font(UI_FONT),
+                font: kagi_ui_core::fonts::ui_font(),
                 color: rgb(theme().text_main).into(),
                 ..Default::default()
             }],

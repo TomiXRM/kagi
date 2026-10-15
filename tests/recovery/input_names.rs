@@ -1,13 +1,11 @@
-//! #1331: inventory of production Input renderers and their focused-node names.
-//!
-//! The fork records the aria_label passed to its track_focus TextInput div,
-//! not Kagi's Group ancestors. This is Tier A renderer/focus evidence; native
-//! AccessKit delivery and VoiceOver remain Tier B.
+//! Production Input names and IME boundaries inspected through native AX.
+//! The oracle is the actual TextInput node, not a named ancestor or SDK recorder.
 use crate::keyboard_nav::keys;
 use crate::macos::{build_fixture, mount, unmount};
+use crate::native_ax;
 use crate::pr_fields_focus::OfflineGh;
-use gpui::{AnyWindowHandle, Entity, Focusable, VisualTestAppContext};
-use gpui_component::input::{take_rendered_inputs_for_test, InputState};
+use gpui::{AnyWindowHandle, Entity, EntityInputHandler, Focusable, VisualTestAppContext};
+use gpui_component::WindowExt;
 use kagi::ui::{
     e2e,
     i18n::{Lang, Msg},
@@ -27,22 +25,6 @@ fn draw(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     .unwrap();
 }
 
-fn rendered(cx: &mut VisualTestAppContext, window: AnyWindowHandle) -> Vec<Entity<InputState>> {
-    // Discard previous windows/frames. Weak entries cannot keep closed views
-    // alive; only Inputs rendered by this fresh production frame are checked.
-    take_rendered_inputs_for_test();
-    draw(cx, window);
-    let mut inputs = cx.read(|_cx| {
-        take_rendered_inputs_for_test()
-            .into_iter()
-            .filter_map(|input| input.upgrade())
-            .collect::<Vec<_>>()
-    });
-    inputs.sort_by_key(|input| input.entity_id().as_u64());
-    inputs.dedup_by_key(|input| input.entity_id());
-    inputs
-}
-
 fn check(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -52,64 +34,52 @@ fn check(
 ) {
     for language in [Lang::En, Lang::Ja, Lang::En, Lang::Ja] {
         app.update(cx, |app, cx| app.set_lang(language, cx));
-        let inputs = rendered(cx, window);
+        native_ax::activate(cx);
+        draw(cx, window);
+        let tree = native_ax::tree(cx, window);
+        let names = tree["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|node| {
+                matches!(
+                    node["aria"]["role"].as_str(),
+                    Some("TextInput" | "MultilineTextInput")
+                )
+            })
+            .map(|node| {
+                let name = node["aria"]["label"].as_str().unwrap_or_else(|| {
+                    panic!("{surface} {language:?}: unnamed native TextInput: {node}")
+                });
+                assert!(!name.trim().is_empty(), "{surface}: empty TextInput name");
+                (
+                    node["aria"]["role"].as_str().unwrap().to_owned(),
+                    name.to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
         assert!(
-            inputs.len() >= expected.len(),
-            "{surface} {language:?}: expected fields actually render ({} < {})",
-            inputs.len(),
-            expected.len()
+            names.len() >= expected.len(),
+            "{surface}: missing native fields: {tree}"
         );
-        let names = cx.read(|cx| {
-            inputs
-                .iter()
-                .map(|input| {
-                    let name = input.read(cx).rendered_aria_label().unwrap_or_else(|| {
-                        panic!(
-                            "{surface} {language:?}: Input {:?} has no own aria_label",
-                            input.entity_id()
-                        )
-                    });
-                    assert!(
-                        !name.trim().is_empty(),
-                        "{surface} {language:?}: Input {:?} has an empty own aria_label",
-                        input.entity_id()
-                    );
-                    name
-                })
-                .collect::<Vec<_>>()
-        });
         for message in expected {
             assert!(
-                names.iter().any(|name| name.as_ref() == message.t()),
+                names.iter().any(|(_, name)| name == message.t()),
                 "{surface} {language:?}: missing localized field {:?}; rendered {names:?}",
                 message.t()
             );
         }
-        for (input, name) in inputs.iter().zip(&names) {
-            cx.update_window(window, |_, window, cx| {
-                input.read(cx).focus_handle(cx).focus(window, cx);
-            })
-            .unwrap();
-            draw(cx, window);
-            cx.update_window(window, |_, window, cx| {
-                assert!(
-                    input.read(cx).focus_handle(cx).is_focused(window),
-                    "{surface} {language:?}: focus belongs to the rendered Input itself"
-                );
-                assert_eq!(
-                    input.read(cx).rendered_aria_label().as_ref(),
-                    Some(name),
-                    "{surface} {language:?}: the focused TextInput retains its own name"
-                );
-            })
-            .unwrap();
+        for (role, name) in &names {
+            native_ax::focus_named(cx, window, role, name);
+            let focused = native_ax::focused(cx, window);
+            assert_eq!(focused["aria"]["role"], role.as_str());
+            assert_eq!(focused["aria"]["label"], name.as_str());
         }
         eprintln!(
             "[gui-e2e] input_names_inventory {surface} {language:?}: {} named focused Inputs",
-            inputs.len()
+            names.len()
         );
     }
-    take_rendered_inputs_for_test();
 }
 
 pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
@@ -370,4 +340,207 @@ pub fn scenario_input_names_inventory(cx: &mut VisualTestAppContext) {
         check(cx, &app, window, "pr-fields", &[Msg::A11yPrReviewersFilter]);
         unmount(cx, app, window);
     }
+}
+
+pub fn scenario_input_ime_escape_boundaries(cx: &mut VisualTestAppContext) {
+    let _restore = crate::recovery_layout::GlobalSettings::capture();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&[
+        "lang",
+        "recent_repos",
+        "settings_pane",
+        "settings_window_frame",
+    ]);
+    let _gh = OfflineGh::install();
+    let fixture = build_fixture();
+    for surface in ["sidebar", "commit-body", "issue-body", "settings"] {
+        let _host = crate::settings_window::SettingsHostGuard::native(cx);
+        let (app, repo_window) = mount(cx, fixture.path());
+        let mut window = repo_window;
+        let name = match surface {
+            "sidebar" => Msg::A11ySidebarFilter,
+            "commit-body" => {
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| app.open_commit_panel(window, cx));
+                })
+                .unwrap();
+                Msg::A11yCommitDescription
+            }
+            "issue-body" => {
+                app.update(cx, |app, cx| {
+                    app.seed_issue_composer_for_e2e(cx);
+                    app.seed_issue_navigation_for_e2e(cx);
+                    app.show_issues_mode(cx);
+                });
+                draw(cx, window);
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| app.focus_issue_title_for_e2e(window, cx));
+                })
+                .unwrap();
+                keys(cx, window, "enter");
+                Msg::A11yIssueBody
+            }
+            "settings" => {
+                kagi::ui::settings::write_setting("settings_pane", Some("3"));
+                cx.update_window(window, |_, window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.handle_menu_command("app.settings", window, cx)
+                    });
+                })
+                .unwrap();
+                cx.run_until_parked();
+                window = cx.read(|cx| {
+                    cx.windows()
+                        .into_iter()
+                        .find(|other| other.window_id() != repo_window.window_id())
+                        .unwrap()
+                });
+                Msg::A11yAnalyzeIgnorePatterns
+            }
+            _ => unreachable!(),
+        };
+        cx.run_until_parked();
+        native_ax::activate(cx);
+        draw(cx, window);
+        let role = if surface == "sidebar" {
+            "TextInput"
+        } else {
+            "MultilineTextInput"
+        };
+        native_ax::focus_named(cx, window, role, name.t());
+        let input = cx
+            .update_window(window, |_, window, cx| {
+                let input = window.focused_input(cx).expect("actual focused Input");
+                assert!(input.read(cx).focus_handle(cx).is_focused(window));
+                input.update(cx, |state, cx| {
+                    state.set_value("draft", window, cx);
+                    state.replace_and_mark_text_in_range(None, "変換", None, window, cx);
+                    assert!(state.marked_text_range(window, cx).is_some());
+                });
+                input
+            })
+            .unwrap();
+        draw(cx, window);
+        assert_eq!(
+            native_ax::focused(cx, window)["aria"]["label"],
+            name.t(),
+            "{surface}: the composed field still owns the dispatched Escape"
+        );
+        let value = cx.read(|cx| input.read(cx).value());
+        keys(cx, window, "escape");
+        draw(cx, window);
+        cx.update_window(window, |_, window, cx| {
+            input.update(cx, |state, cx| {
+                assert!(
+                    state.marked_text_range(window, cx).is_none(),
+                    "{surface}: unmarked"
+                );
+                assert_eq!(
+                    state.value(),
+                    value,
+                    "{surface}: Escape does not clear draft"
+                );
+                assert!(
+                    state.focus_handle(cx).is_focused(window),
+                    "{surface}: focus retained"
+                );
+            });
+        })
+        .unwrap();
+        assert_eq!(native_ax::focused(cx, window)["aria"]["label"], name.t());
+        // The next capture must overwrite its previous marked flag. Ordinary
+        // Escape still follows the existing host policy, rather than sticking.
+        if surface == "sidebar" {
+            keys(cx, window, "escape");
+            draw(cx, window);
+            assert!(cx.read(|cx| input.read(cx).value().is_empty()));
+            assert_eq!(native_ax::focused(cx, window)["aria"]["label"], name.t());
+            keys(cx, window, "escape");
+            draw(cx, window);
+            cx.update_window(window, |_, window, cx| {
+                assert!(app.read(cx).sidebar_row_focused_for_e2e(window).is_some());
+            })
+            .unwrap();
+        } else {
+            keys(cx, window, "escape");
+            draw(cx, window);
+            assert_eq!(native_ax::focused(cx, window)["aria"]["label"], name.t());
+            assert_eq!(cx.read(|cx| input.read(cx).value()), value);
+        }
+        drop(input);
+        if window.window_id() != repo_window.window_id() {
+            cx.update_window(window, |_, window, _| window.remove_window())
+                .unwrap();
+        }
+        unmount(cx, app, repo_window);
+    }
+    input_menu_priority(cx, fixture.path());
+}
+
+fn input_menu_priority(cx: &mut VisualTestAppContext, repo: &std::path::Path) {
+    let _toolbar = crate::toolbar_overflow::ToolbarRestore::capture(cx);
+    kagi_ui_core::theme::set_zoom(1.67);
+    kagi::ui::settings::set_toolbar_display(kagi::ui::settings::ToolbarDisplay::IconAndText);
+    let (app, window) = mount(cx, repo);
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
+    native_ax::activate(cx);
+    draw(cx, window);
+    keys(cx, window, "cmd-f");
+    draw(cx, window);
+    let input = cx.read(|cx| app.read(cx).sidebar.filter.clone().unwrap());
+    let overflow = e2e::control_bounds(window.window_id(), "tb-overflow")
+        .expect("real toolbar overflow is mounted at enlarged desktop density");
+    native_ax::focus_named(cx, window, "Button", Msg::ToolbarOverflow.t());
+    // A retained editor may still carry marked text after another control
+    // takes focus. Neither observation nor an editing action may target it.
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            state.replace_and_mark_text_in_range(None, "変換", None, window, cx);
+        });
+        assert!(!input.read(cx).focus_handle(cx).is_focused(window));
+        assert!(!kagi_ui_core::input_actions::focused_input_has_marked_text(
+            window, cx
+        ));
+        window.dispatch_action(Box::new(gpui_component::input::Escape), cx);
+    })
+    .unwrap();
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            assert!(
+                state.marked_text_range(window, cx).is_some(),
+                "button-focused Escape does not edit a retained Input"
+            );
+        });
+    })
+    .unwrap();
+    cx.simulate_click(window, overflow.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "tb-overflow-menu").is_some(),
+        "real component PopupMenu opens"
+    );
+    let bottom_open = cx.read(|cx| app.read(cx).bottom_panel_open);
+    keys(cx, window, "escape");
+    e2e::clear_control_bounds(window.window_id(), "tb-overflow-menu");
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "tb-overflow-menu").is_none(),
+        "PopupMenu consumes Escape before the workspace fallback (#1554)"
+    );
+    assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_open), bottom_open);
+    assert_eq!(
+        native_ax::focused(cx, window)["aria"]["label"],
+        Msg::ToolbarOverflow.t()
+    );
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |state, cx| {
+            assert!(
+                state.marked_text_range(window, cx).is_some(),
+                "menu cancellation does not unmark its unfocused editor"
+            );
+        });
+    })
+    .unwrap();
+    drop(input);
+    unmount(cx, app, window);
 }

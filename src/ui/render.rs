@@ -484,6 +484,7 @@ impl Render for KagiApp {
         // gives it back. The selected row records where it is drawn anew.
         self.sync_menu_keys(window, cx);
         self.sync_file_menu_keys(window, cx);
+        self.sync_pr_menu_keys(window, cx);
         self.context_anchor.clear();
         let commit_menu_overlay = self
             .commit_menu
@@ -690,6 +691,20 @@ impl Render for KagiApp {
             )
             // T-BP-002: cmd-j toggle action (window-wide via on_action on root div).
             .on_action(toggle_bottom_panel)
+            .capture_action(
+                cx.listener(|this, _: &gpui_component::input::Escape, window, cx| {
+                    this.input_escape_started_marked =
+                        kagi_ui_core::input_actions::focused_input_has_marked_text(window, cx);
+                    cx.propagate();
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &gpui_component::input::Escape, _, cx| {
+                    if !this.input_escape_started_marked {
+                        cx.propagate();
+                    }
+                }),
+            )
             .on_action(
                 cx.listener(|this, _: &super::FocusSidebarFilter, window, cx| {
                     this.focus_sidebar_filter(window, cx);
@@ -880,7 +895,7 @@ impl Render for KagiApp {
         let root = self.attach_modal_layer(root, true, window, cx);
         let content = root
             // ── W3-NOTIFY: toast stack (above everything) ──────
-            .children(self.render_toasts(cx))
+            .children(self.render_toasts(Some(window), true, cx))
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();

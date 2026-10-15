@@ -130,6 +130,7 @@ fn main() -> Result<()> {
             let config = TerminalConfig {
                 font_family: "Mononoki Nerd Font".into(),
                 font_size: px(14.0),
+                font_fallbacks: None,
                 cols: 80,
                 rows: 24,
                 scrollback: 10000,

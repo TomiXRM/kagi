@@ -118,6 +118,10 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, size: (f32, f32),
     for region in ["right", "name", "stat"] {
         let row = bounds(window, "inspector-file-0");
         let viewport = bounds(window, "inspector-files-scroll");
+        assert!(
+            (row.size.height - KagiApp::inspector_row_height_for_e2e()).abs() < px(0.6),
+            "uniform file slots keep their scaled native height"
+        );
         let position = match region {
             "right" => point(viewport.right() - px(4.), row.center().y),
             "name" => bounds(window, "inspector-file-name-0").center(),

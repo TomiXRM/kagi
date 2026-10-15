@@ -42,9 +42,14 @@ pub type RowKeys = Rc<[(String, usize)]>;
 #[derive(Clone)]
 pub enum RowScroll {
     List(ListState),
-    /// A native list with an unfocusable note after its last focusable entry.
-    ListWithTail(ListState, usize),
     Uniform(UniformListScrollHandle, std::ops::Range<usize>),
+    /// A uniform list whose last focusable row reveals a trailing note too.
+    UniformWithTail {
+        handle: UniformListScrollHandle,
+        drawn: std::ops::Range<usize>,
+        last_row: usize,
+        tail: usize,
+    },
 }
 
 /// Reveal a lazy-list row, anchoring an unmeasured destination before layout.
@@ -62,18 +67,18 @@ impl RowScroll {
     /// The entry at the top of the list's viewport.
     fn top(&self) -> usize {
         match self {
-            Self::List(state) | Self::ListWithTail(state, _) => state.logical_scroll_top().item_ix,
+            Self::List(state) => state.logical_scroll_top().item_ix,
             // The first item it drew is the one at the top (the handle's own
             // `logical_scroll_top_index` is test-only in gpui).
-            Self::Uniform(_, drawn) => drawn.start,
+            Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => drawn.start,
         }
     }
 
     /// Whether entry `ix` was drawn last frame.
     fn drawn(&self, ix: usize) -> bool {
         match self {
-            Self::List(state) | Self::ListWithTail(state, _) => state.bounds_for_item(ix).is_some(),
-            Self::Uniform(_, drawn) => drawn.contains(&ix),
+            Self::List(state) => state.bounds_for_item(ix).is_some(),
+            Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => drawn.contains(&ix),
         }
     }
 
@@ -81,12 +86,19 @@ impl RowScroll {
     fn reveal(&self, ix: usize) {
         match self {
             Self::List(state) => reveal_list_row(state, ix),
-            Self::ListWithTail(state, last_row) if ix == *last_row => {
-                state.scroll_to_reveal_item(state.item_count() - 1);
-            }
-            Self::ListWithTail(state, _) => reveal_list_row(state, ix),
             // Not strict: it scrolls only when the item is out of view.
             Self::Uniform(handle, _) => handle.scroll_to_item(ix, ScrollStrategy::Top),
+            Self::UniformWithTail {
+                handle,
+                last_row,
+                tail,
+                ..
+            } => {
+                handle.scroll_to_item(
+                    if ix == *last_row { *tail } else { ix },
+                    ScrollStrategy::Top,
+                );
+            }
         }
     }
 
@@ -94,7 +106,7 @@ impl RowScroll {
     /// at the top.
     fn page_size(&self, keys: &[(String, usize)], first: usize) -> usize {
         match self {
-            Self::List(state) | Self::ListWithTail(state, _) => {
+            Self::List(state) => {
                 let viewport = state.viewport_bounds();
                 page(
                     keys.iter()
@@ -105,7 +117,9 @@ impl RowScroll {
                         .count(),
                 )
             }
-            Self::Uniform(_, drawn) => uniform_page(keys, first, drawn),
+            Self::Uniform(_, drawn) | Self::UniformWithTail { drawn, .. } => {
+                uniform_page(keys, first, drawn)
+            }
         }
     }
 }
@@ -499,5 +513,47 @@ impl RowList {
             .on_action(move |_: &RowListLast, window, cx| end(window, cx))
             .on_action(move |_: &RowListPageUp, window, cx| page_up(window, cx))
             .on_action(move |_: &RowListPageDown, window, cx| page_down(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod uniform_tail_tests {
+    use super::*;
+
+    #[test]
+    fn final_focusable_row_reveals_note_without_making_it_focusable() {
+        let handle = UniformListScrollHandle::new();
+        let scroll = RowScroll::UniformWithTail {
+            handle: handle.clone(),
+            drawn: 90..101,
+            last_row: 99,
+            tail: 100,
+        };
+        assert!(scroll.drawn(99));
+        assert_eq!(scroll.top(), 90);
+        scroll.reveal(98);
+        assert_eq!(
+            handle
+                .0
+                .borrow()
+                .deferred_scroll_to_item
+                .as_ref()
+                .unwrap()
+                .item_index,
+            98
+        );
+        scroll.reveal(99);
+        assert_eq!(
+            handle
+                .0
+                .borrow()
+                .deferred_scroll_to_item
+                .as_ref()
+                .unwrap()
+                .item_index,
+            100
+        );
+        let keys: Vec<_> = (0..100).map(|ix| (ix.to_string(), ix)).collect();
+        assert_eq!(scroll.page_size(&keys, 90), 9);
     }
 }

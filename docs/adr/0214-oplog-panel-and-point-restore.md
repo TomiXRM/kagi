@@ -340,8 +340,8 @@ rather than duplicating its key context.
 ## Amendment — 2026-10-13: keyboard inspection (#1382)
 
 The dense, read-only restore targets and AFTER graph use retained, stable-keyed
-RowFocus/RowList navigation with independent ListState scrolling and the existing
-system scrollbar. Each list has one Tab stop and a localized accessibility name;
+RowFocus/RowList navigation with independent uniform-list scrolling (as amended
+by #1479-S5B below) and the existing system scrollbar. Each list has one Tab stop and a localized accessibility name;
 Up/Down, Home/End and PageUp/PageDown reveal the focused row. The card traverses
 Copy all, the named body region, refs, preview and footer in document order.
 Warnings/blockers render uncapped within that keyboard-scrollable body instead
@@ -363,6 +363,36 @@ operation state is added.
 Empty/unavailable previews keep their existing explanation rather than an empty
 Tab stop. The canonical refs, Copy all, two-stage approval, execution plan and
 backend write pipeline are unchanged.
+
+## Amendment — 2026-10-15: uniform inspection geometry (#1479-S5B)
+
+Restore refs and AFTER graph now use GPUI's public `uniform_list` and
+`UniformListScrollHandle`, not estimated `ListState` item heights. Their existing
+31px and graph-row heights remain zoom-scaled; only the visible range is built.
+The retained RowScroll adapter receives the actual drawn range, and `as_drawn`
+assigns the current frame's Tab stop. Keyboard parent reveal uses the live inner
+viewport, offset and measured content extent divided by row count, retaining
+GPUI's pixel-rounded row height rather than accumulating unrounded zoom tokens.
+It waits for inner reveal to converge and remains one-shot per newly focused
+entry so later pointer scrolling survives. Both lists and the body restrict
+wheel input to their vertical axis. A zero-size out-of-flow canvas registers a
+capture-phase observer for the actual wheel-start offset; Bubble decides pane
+ownership after the native list has scrolled. This avoids treating a deferred
+Home reveal's old render-time offset as the start of the next pointer event.
+Boundary chaining above remains unchanged; fitting panes chain immediately.
+The modal alert-focus backstop recognizes only the active restore card's retained
+inspection-row handles while their deferred reveal mounts the destination. The
+previous frame's dispatch-tree membership alone cannot authorize that move:
+Page Up from a later range would otherwise replace a valid first-row handle with
+the alert trap. Other cards, unrelated handles and departed restore owners retain
+the normal modal containment checks.
+
+Inspector uses the same public uniform-list pattern, with equal-height file,
+directory, generated-fold, More and unavailable slots. Stable file-path focus
+survives generated expansion/collapse. Its final focusable entry reveals the
+trailing More slot without creating a focus stop for that note. This is geometry
+migration only: no user-facing strings, Copy payload, approval or Git behavior changes.
+
 
 ## Amendment — 2026-10-14: dense summary typography (#1498)
 

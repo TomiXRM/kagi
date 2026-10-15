@@ -179,6 +179,13 @@ pub struct SetToolbarDisplay {
     pub mode: settings::ToolbarDisplay,
 }
 
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = kagi_menu, no_json)]
+pub struct OpenRecentRepository {
+    pub path: std::path::PathBuf,
+}
+actions!(kagi_menu, [ClearRecentRepositories]);
+
 /// Map a language command id back to its [`Lang`].
 pub fn lang_for_command(id: &str) -> Option<Lang> {
     match id {
@@ -223,7 +230,7 @@ pub enum MenuNode {
     Command(&'static str),
     /// An in-menu divider.
     Separator,
-    /// A dynamic submenu whose contents (and the "✓ " active marker) are built
+    /// A dynamic submenu whose contents and checked state are built
     /// at render time.  macOS nests a real `Menu`; Linux expands it inline into
     /// the dropdown panel (it has no nested-panel support) — both behaviours are
     /// preserved from before ADR-0085.
@@ -243,6 +250,8 @@ pub enum DynSubmenu {
     Theme,
     Language,
     ToolbarDisplay,
+    OpenRecent,
+    Find,
 }
 
 /// Standard macOS Edit entries; Undo/Redo share the focused keyboard actions.
@@ -307,6 +316,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Separator,
             MenuNode::Command("file.cloneRepository"),
             MenuNode::Command("file.openRepository"),
+            MenuNode::Submenu(DynSubmenu::OpenRecent),
             MenuNode::Command("file.openInTerminal"),
             MenuNode::Command("file.connectRemote"),
             MenuNode::Separator,
@@ -325,6 +335,8 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::OsEdit(OsEditItem::Copy),
             MenuNode::OsEdit(OsEditItem::Paste),
             MenuNode::OsEdit(OsEditItem::SelectAll),
+            MenuNode::Separator,
+            MenuNode::Submenu(DynSubmenu::Find),
         ],
     },
     // ── View ─────────────────────────────────────────────────────────
@@ -347,7 +359,7 @@ pub const MENU_BAR: &[MenuSection] = &[
             MenuNode::Command("view.togglePrMode"),
             MenuNode::Command("view.showGraph"),
             MenuNode::Separator,
-            // W9-THEME / W22-I18N: dynamic submenus (active item gets "✓ ").
+            // Dynamic selections use native checked state, never title prefixes.
             MenuNode::Submenu(DynSubmenu::Theme),
             MenuNode::Submenu(DynSubmenu::Language),
             MenuNode::Separator,
@@ -847,8 +859,7 @@ pub const COMMANDS: &[Command] = &[
         keystroke: None,
         dangerous: false,
     },
-    // View → Language (W22-I18N / ADR-0048). The live "✓ " active marker is
-    // applied in `lang_submenu`.
+    // View → Language. Native checked state is applied in `lang_submenu`.
     Command {
         id: "lang.english",
         label: "English",
@@ -1084,9 +1095,14 @@ fn action_menu_item(id: &str, state: &super::window_menu::ViewMenuState) -> Menu
         "view.toggleTerminal" => MenuItem::action(label, ToggleBottomPanel),
         "view.toggleCommitDetails" => MenuItem::action(label, ToggleCommitDetails),
         "view.toggleDiffView" => MenuItem::action(label, ToggleDiffView),
-        "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace),
-        "view.togglePrMode" => MenuItem::action(label, TogglePrMode),
-        "view.showGraph" => MenuItem::action(label, ShowGraph),
+        "view.toggleEditorWorkspace" => MenuItem::action(label, ToggleEditorWorkspace)
+            .checked(super::window_menu::checked(id, state)),
+        "view.togglePrMode" => {
+            MenuItem::action(label, TogglePrMode).checked(super::window_menu::checked(id, state))
+        }
+        "view.showGraph" => {
+            MenuItem::action(label, ShowGraph).checked(super::window_menu::checked(id, state))
+        }
         // Repository
         "repo.fetch" => MenuItem::action(label, Fetch),
         "repo.pull" => MenuItem::action(label, Pull),
@@ -1166,10 +1182,12 @@ pub fn publish_menus(cx: &mut App) {
         .position(|section| section.label == "Window")
         .expect("canonical Window menu");
     crate::native_menus::publish(cx, build_menus(cx), window_section);
+    cx.set_dock_menu(recent_menu().items);
 }
 
 /// Build the shared canonical tree with the active window's presentation labels.
-/// Availability remains GPUI's dispatch-tree validation, not a second state map.
+/// Dispatch-tree validation owns availability. Find additionally excludes plain
+/// text fields: Kit registers Search even on Inputs that are not searchable.
 pub fn build_menus(cx: &App) -> Vec<Menu> {
     let state = super::window_menu::current_state(cx);
     menus_for_state(state)
@@ -1187,12 +1205,26 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
                     MenuNode::Separator => MenuItem::separator(),
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
+                    MenuNode::Submenu(DynSubmenu::OpenRecent) => MenuItem::submenu(recent_menu()),
+                    MenuNode::Submenu(DynSubmenu::Find) => {
+                        MenuItem::submenu(Menu::new(Msg::MenuFind.t()).items([
+                            if state.find_sidebar {
+                                MenuItem::action(Msg::MenuFindOpen.t(), super::FocusSidebarFilter)
+                            } else {
+                                MenuItem::action(
+                                    Msg::MenuFindOpen.t(),
+                                    gpui_component::input::Search,
+                                )
+                                .disabled(!state.find_input)
+                            },
+                        ]))
+                    }
                     MenuNode::Submenu(DynSubmenu::ToolbarDisplay) => MenuItem::submenu(Menu {
                         name: Msg::SettingsToolbarDisplay.t().into(),
                         items: toolbar_display_menu_entries()
                             .into_iter()
-                            .map(|(mode, label)| {
-                                MenuItem::action(label, SetToolbarDisplay { mode })
+                            .map(|(mode, label, checked)| {
+                                MenuItem::action(label, SetToolbarDisplay { mode }).checked(checked)
                             })
                             .collect(),
                         disabled: false,
@@ -1214,8 +1246,27 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
         .collect()
 }
 
-/// Shared localized rows and selection markers for both platform menu renderers.
-pub fn toolbar_display_menu_entries() -> [(settings::ToolbarDisplay, SharedString); 2] {
+/// File and Dock share Home's history order and the existing repository opener.
+pub fn recent_menu() -> Menu {
+    let mut items: Vec<_> = super::tabs::recent_repos()
+        .into_iter()
+        .map(|path| {
+            MenuItem::action(
+                path.to_string_lossy().into_owned(),
+                OpenRecentRepository { path },
+            )
+        })
+        .collect();
+    let empty = items.is_empty();
+    if !empty {
+        items.push(MenuItem::separator());
+    }
+    items.push(MenuItem::action(Msg::MenuClearRecent.t(), ClearRecentRepositories).disabled(empty));
+    Menu::new(Msg::MenuOpenRecent.t()).items(items)
+}
+
+/// Shared localized rows and checked state for both platform menu renderers.
+pub fn toolbar_display_menu_entries() -> [(settings::ToolbarDisplay, SharedString, bool); 2] {
     let selected = settings::toolbar_display(&theme().slug);
     [
         (
@@ -1224,27 +1275,18 @@ pub fn toolbar_display_menu_entries() -> [(settings::ToolbarDisplay, SharedStrin
         ),
         (settings::ToolbarDisplay::IconOnly, Msg::ToolbarIconOnly),
     ]
-    .map(|(mode, label)| {
-        let marker = if selected == mode { "✓ " } else { "   " };
-        (mode, SharedString::from(format!("{marker}{}", label.t())))
-    })
+    .map(|(mode, label)| (mode, label.t().into(), selected == mode))
 }
 
 /// Build the View → Theme submenu (W9-THEME / ADR-0036, #922).
 ///
-/// One item per registered theme — built-in and custom, from
-/// [`theme_menu_entries`] — with the active theme's label prefixed "✓ ".
-/// Because the label changes when the active theme changes (and the list
-/// changes on a theme reload), the menu bar must be rebuilt (`cx.set_menus`)
-/// after either — unlike the disabled/enabled mechanism, which is purely
-/// dispatch-tree based.
+/// One item per registered theme, with selection in the native check column.
+/// Rebuild on theme changes to publish the new checked state.
 fn theme_submenu() -> Menu {
     let items = theme_menu_entries()
         .into_iter()
         .map(|entry| {
-            let marker = if entry.active { "\u{2713} " } else { "   " };
-            let label = SharedString::from(format!("{marker}{}", entry.name));
-            MenuItem::action(label, SetTheme { slug: entry.slug })
+            MenuItem::action(entry.name, SetTheme { slug: entry.slug }).checked(entry.active)
         })
         .collect();
     Menu {
@@ -1277,25 +1319,18 @@ pub fn theme_menu_entries() -> Vec<ThemeMenuEntry> {
 
 /// Build the View → Language submenu (W22-I18N / ADR-0048).
 ///
-/// Two items (English / 日本語); the active language's label is prefixed with
-/// "✓ ".  Like the Theme submenu, the label changes on switch, so the menu bar
-/// must be rebuilt (`cx.set_menus`) on every language change.
+/// Rebuilt on language changes to publish the new native checked state.
 fn lang_submenu() -> Menu {
     let active = i18n::lang();
     let entries = [(Lang::En, "English"), (Lang::Ja, "日本語")];
     let mut items: Vec<MenuItem> = Vec::with_capacity(entries.len());
     for (l, name) in entries {
-        let label = if l == active {
-            format!("\u{2713} {}", name)
-        } else {
-            format!("   {}", name)
-        };
-        let label = SharedString::from(label);
+        let label = SharedString::from(name);
         let item = match l {
             Lang::En => MenuItem::action(label, LangEnglish),
             Lang::Ja => MenuItem::action(label, LangJapanese),
         };
-        items.push(item);
+        items.push(item.checked(l == active));
     }
     Menu {
         name: i18n::menu_heading("Language", i18n::lang()).into(),
@@ -1491,6 +1526,16 @@ pub(crate) fn setup_app(cx: &mut App) {
     bind_app_keys(cx);
     register_keybindings(cx);
     cx.on_action(|_: &BringAllToFront, cx| super::window_menu::bring_all_to_front(cx));
+    cx.on_action(|action: &OpenRecentRepository, cx| {
+        let path = action.path.clone();
+        // Global listeners can run while their dispatching window is leased.
+        cx.defer(move |cx| super::tabs::open_recent_from_app(&path, cx));
+    });
+    cx.on_action(|_: &ClearRecentRepositories, cx| {
+        super::tabs::clear_recent_repos();
+        publish_menus(cx);
+        cx.refresh_windows();
+    });
     #[cfg(target_os = "macos")]
     {
         cx.bind_keys([
@@ -2191,9 +2236,7 @@ impl KagiApp {
     /// 1. Update + persist the active theme (`theme::set_active`).
     /// 2. Live-apply the new palette to any running terminal sessions via
     ///    `TerminalView::update_config`.
-    /// 3. Rebuild the menu bar so the "✓ " active marker moves (the label
-    ///    changes, so `cx.set_menus` must be re-called — unlike the disabled
-    ///    mechanism, which is purely dispatch-tree based).
+    /// 3. Rebuild the menu bar to publish the active theme's checked state.
     /// 4. `cx.notify()` so every `theme()`-reading render path repaints.
     pub fn set_theme(&mut self, slug: &str, cx: &mut Context<Self>) {
         if !theme::set_active(slug) {
@@ -2219,9 +2262,7 @@ impl KagiApp {
     /// Switch the active UI language (W22-I18N / ADR-0048).
     ///
     /// 1. Update + persist the active language (`i18n::set_lang`).
-    /// 2. Rebuild the menu bar so the "✓ " active marker moves (the label
-    ///    changes, so `cx.set_menus` must be re-called — same as the theme
-    ///    submenu).
+    /// 2. Rebuild the menu bar to publish the active language's checked state.
     /// 3. Notify the persistent Settings picker as well as this view; its
     ///    `SelectItem::title` resolves localized names at render time.
     pub fn set_lang(&mut self, l: Lang, cx: &mut Context<Self>) {

@@ -145,6 +145,9 @@ impl KagiApp {
                         .map(|c| c == path)
                         .unwrap_or(false))
         }) {
+            record_recent_repo(&path);
+            cx.add_recent_document(&path);
+            super::commands::publish_menus(cx);
             let left = self.home_yields_to_repository();
             self.return_to_tab(idx, left, cx);
             return true;
@@ -165,6 +168,8 @@ impl KagiApp {
 
         // Remember it for the Welcome screen's "Recent" list.
         record_recent_repo(&path);
+        cx.add_recent_document(&path);
+        super::commands::publish_menus(cx);
 
         // #482: `attach` unifies by the *resolved* `WorktreeId`, so two locators
         // for one worktree (`/repo` and `/repo/.git`, a symlink) come back as the
@@ -1062,6 +1067,49 @@ pub fn remove_recent_repo(path: &Path) {
     let mut list = recent_repo_strings();
     list.retain(|entry| entry != p.as_ref());
     super::settings::write_setting(RECENT_REPOS_KEY, Some(&list.join("\u{1f}")));
+}
+
+/// Clear history only; leave open tabs and all repository files untouched.
+pub fn clear_recent_repos() {
+    super::settings::write_setting(RECENT_REPOS_KEY, None);
+}
+
+/// Dock and utility-window dispatch need a repository host even after the last
+/// repository window closes. Opening still belongs to the normal tab path.
+pub(super) fn open_recent_from_app(path: &Path, cx: &mut gpui::App) {
+    let host = cx
+        .active_window()
+        .into_iter()
+        .chain(cx.windows())
+        .find_map(|handle| {
+            handle
+                .update(cx, |_, window, cx| super::repository_window(window, cx))
+                .ok()
+                .flatten()
+        });
+    if let Some(host) = host {
+        host.update(cx, |app, cx| {
+            app.open_repository(path.to_path_buf(), cx);
+        });
+        return;
+    }
+    super::open_main_window(KagiApp::with_error(""), cx);
+    for handle in cx.windows() {
+        let opened = handle
+            .update(cx, |_, window, cx| {
+                let Some(host) = super::repository_window(window, cx) else {
+                    return false;
+                };
+                host.update(cx, |app, cx| {
+                    app.open_repository(path.to_path_buf(), cx);
+                });
+                true
+            })
+            .unwrap_or(false);
+        if opened {
+            break;
+        }
+    }
 }
 
 /// Recently-opened repositories that still exist on disk (most-recent first).

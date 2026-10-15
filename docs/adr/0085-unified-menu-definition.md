@@ -208,3 +208,26 @@ Role/density/reference: native macOS menu / AppKit-owned / standard File and
 Edit menus. Existing portable row rendering is reused; there is no new control
 style, modal, save executor, repository mutation or operation-log path.
 
+
+## Amendment — 2026-10-15: native selection, recent repositories and Find (#1604/#1608; Refs #1607)
+
+Menu action names contain no checkmarks or indentation. Theme, Language,
+Toolbar and workspace entries carry native `checked` state; the portable
+renderer draws its own separate check column from the same selection values.
+Workspace menu labels are Graph / Pull Requests / Editor nouns.
+
+File > Open Recent and the Dock use the existing Home recent-repository store,
+in its most-recent-first order. Clear Menu clears only that history, never open
+tabs or repository data. Opening an entry uses `KagiApp::open_repository` and
+registers successful opens through GPUI's public recent-document API.
+
+Edit > Find exposes Find… through public `input::Search`, with the existing
+Graph sidebar filter as the non-Input/non-Terminal Cmd-F target. Input search
+keeps priority; no global Cmd-F override is introduced. The owner approved
+omitting Next/Previous/Use Selection until official Kit offers public navigation
+actions: pinned `7a116a2` keeps SearchPanel and next/previous private. Do not
+emulate those commands by changing queries, synthetic keys or dependency forks.
+
+Role/density/reference: native menu / OS-owned / Finder and TextEdit.
+Hidden native assertions cover menu metadata and dispatch; Tier B remains
+pending while the screen is locked.

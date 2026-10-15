@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Use native menu checkmarks for Theme, Language, Toolbar and the active workspace, with plain Graph / Pull Requests / Editor names. Add File > Open Recent and matching Dock entries from Home history, with history-only Clear Menu. Expose the working Find… command in Edit while preserving the existing sidebar shortcut priority; further Find navigation awaits public upstream actions. (#1604, #1608; Refs #1607)
 - Replace internal operation names and implementation diagnostics in notifications, preview cards and Operation Log with English/Japanese action-oriented text. Existing receipts and stderr contracts stay unchanged; branch names, paths, commit IDs and raw Git diagnostics remain available. (#1588, shared presentation)
   - Preserve original blocked-operation log arguments, retain complete recorded failure causes and backup identifiers in Details/Copy, and keep recovery and shortcut guidance tied to actions users can actually perform.
   - Use display-only errors in worktree planning notices, lock-reason dialogs, checkout preparation and filesystem prompts; keep recording-failure checks independent of translated wording.

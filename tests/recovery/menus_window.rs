@@ -1,11 +1,27 @@
 //! Native window identity, stateful menus and the About task boundary.
 use crate::macos::{build_fixture, git, unmount};
-use crate::platform_menu_scroll::mount_short;
 use gpui::Action as _;
 use gpui::{AnyWindowHandle, Entity, MenuItem, Role, VisualTestAppContext};
 use kagi::ui::{commands, dialog_a11y, e2e, window_menu, KagiApp};
 use kagi_ui_core::i18n::{self, Lang};
 
+fn mount_short(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+) -> (Entity<KagiApp>, AnyWindowHandle) {
+    let state = e2e::app_state(repo).unwrap();
+    let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let out = captured.clone();
+    let window = crate::macos::open_offscreen(
+        cx,
+        gpui::size(gpui::px(1000.), gpui::px(720.)),
+        move |window, cx| e2e::mount_root(state, window, cx, &out),
+    );
+    let app = captured.borrow().clone().unwrap();
+    app.update(cx, |app, cx| app.set_window_active_for_e2e(true, cx));
+    cx.run_until_parked();
+    (app, window.into())
+}
 fn draw(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     cx.update_window(win, |_, w, cx| {
         w.refresh();
@@ -93,6 +109,27 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
     let other = build_fixture();
     let (app, win) = mount_short(cx, fixture.path());
     let (other_app, other_win) = mount_short(cx, other.path());
+    let menus = cx.read(commands::build_menus);
+    let view = menus
+        .iter()
+        .find(|menu| menu.name.as_ref() == "View")
+        .unwrap();
+    for submenu in view.items.iter().filter_map(|item| match item {
+        MenuItem::Submenu(menu) => Some(menu),
+        _ => None,
+    }) {
+        let mut selected = 0;
+        for item in &submenu.items {
+            if let MenuItem::Action { name, checked, .. } = item {
+                assert!(
+                    !name.starts_with('✓') && !name.starts_with(' '),
+                    "menu names must not encode selection: {name:?}"
+                );
+                selected += usize::from(*checked);
+            }
+        }
+        assert_eq!(selected, 1, "native selection for {}", submenu.name);
+    }
     for (lang, hide, show, enter, exit) in [
         (
             Lang::En,
@@ -115,6 +152,33 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
             a.set_window_active_for_e2e(true, cx);
         });
         draw(cx, win);
+        for (id, label) in [
+            ("view.showGraph", kagi_ui_core::i18n::Msg::WorkspaceGraph),
+            ("view.togglePrMode", kagi_ui_core::i18n::Msg::WorkspacePrs),
+            (
+                "view.toggleEditorWorkspace",
+                kagi_ui_core::i18n::Msg::ToolbarEditor,
+            ),
+            ("view.showGraph", kagi_ui_core::i18n::Msg::WorkspaceGraph),
+        ] {
+            invoke(cx, &app, win, id);
+            let menus = cx.read(commands::build_menus);
+            let view = menus
+                .iter()
+                .find(|menu| menu.name.as_ref() == i18n::menu_heading("View", lang))
+                .unwrap();
+            assert!(
+                view.items.iter().any(|item| matches!(
+                    item, MenuItem::Action { name, checked: true, .. } if name.as_ref() == label.t()
+                )),
+                "active workspace {id} is checked"
+            );
+            assert_eq!(
+                view.items.iter().filter(|item| item.is_checked()).count(),
+                1,
+                "workspace selection is exclusive"
+            );
+        }
         assert!(
             labels(cx, "View").contains(&hide.to_string()),
             "visible sidebar offers {hide}"
@@ -164,8 +228,21 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
 }
 pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang"]);
+    kagi_ui_core::settings::write_setting("recent_repos", None);
     let fixture = build_fixture();
     let (app, win) = mount_short(cx, fixture.path());
+    let menus = cx.read(commands::build_menus);
+    let file = menus
+        .iter()
+        .find(|menu| menu.name.as_ref() == "File")
+        .unwrap();
+    assert!(
+        file.items.iter().any(|item| matches!(
+            item, MenuItem::Submenu(menu) if menu.name.as_ref() == "Open Recent"
+        )),
+        "File menu must expose recently opened repositories"
+    );
     assert_eq!(
         labels(cx, "Window"),
         [
@@ -214,6 +291,19 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     assert!(!cx.read(|cx| app.read(cx).home_in_front()));
     invoke(cx, &app, win, "window.nextTab");
     assert!(cx.read(|cx| app.read(cx).home_in_front()));
+    let menus = cx.read(commands::build_menus);
+    let find = menus
+        .iter()
+        .flat_map(|menu| &menu.items)
+        .find_map(|item| match item {
+            MenuItem::Submenu(menu) if menu.name.as_ref() == "Find" => Some(menu),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        matches!(&find.items[0], MenuItem::Action { disabled: true, .. }),
+        "Home has no Find target"
+    );
     assert_eq!(
         commands::effective_keystroke("window.previousTab").as_deref(),
         Some("secondary-shift-[")
@@ -224,6 +314,68 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     );
     assert_eq!(cx.read(window_menu::main_window_targets), vec![win]);
     check_window_owners(cx, &app, win);
+    for lang in [Lang::En, Lang::Ja] {
+        let old = i18n::lang();
+        i18n::set_lang(lang);
+        let recent = commands::recent_menu();
+        let paths: Vec<_> = recent
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Action { name, action, .. }
+                    if action.as_any().is::<commands::OpenRecentRepository>() =>
+                {
+                    Some(name.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                third.path().canonicalize().unwrap(),
+                second.path().canonicalize().unwrap()
+            ]
+            .map(|path| path.to_string_lossy().into_owned())
+        );
+        i18n::set_lang(old);
+    }
+    let recent = commands::recent_menu();
+    let MenuItem::Action { action, .. } = &recent.items[1] else {
+        panic!("second recent repository")
+    };
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, win);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).repo_path.clone()),
+        Some(second.path().canonicalize().unwrap())
+    );
+    let tabs = cx.read(|cx| app.read(cx).tabs.len());
+    let recent = commands::recent_menu();
+    let MenuItem::Action { action, .. } = recent.items.last().unwrap() else {
+        panic!("Clear Menu")
+    };
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let empty = commands::recent_menu();
+    assert_eq!(empty.items.len(), 1);
+    assert!(matches!(
+        &empty.items[0],
+        MenuItem::Action { disabled: true, .. }
+    ));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).tabs.len()),
+        tabs,
+        "Clear Menu leaves open tabs intact"
+    );
+    assert!(second.path().join(".git").is_dir());
     unmount(cx, app, win);
 }
 

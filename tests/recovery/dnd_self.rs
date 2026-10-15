@@ -58,6 +58,7 @@ fn drag_over(
     let target = e2e::control_bounds(window.window_id(), target)
         .unwrap()
         .center();
+    kagi_ui_core::fonts::e2e::take(window.window_id(), "branch-drag-ghost");
     cx.simulate_mouse_move(window, source, None, Modifiers::none());
     cx.simulate_mouse_down(window, source, MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(
@@ -71,6 +72,13 @@ fn drag_over(
     cx.simulate_mouse_move(window, target, MouseButton::Left, Modifiers::none());
     cx.run_until_parked();
     paint(cx, window);
+    let font = kagi_ui_core::fonts::e2e::take(window.window_id(), "branch-drag-ghost")
+        .expect("the actual detached drag ghost was prepainted");
+    assert_eq!(
+        font,
+        kagi_ui_core::fonts::ui_font(),
+        "drag ghosts do not inherit Root's Japanese fallback"
+    );
     target
 }
 

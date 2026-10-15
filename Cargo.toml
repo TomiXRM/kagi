@@ -171,7 +171,7 @@ assets = [
 # Slice definitions: docs/rearch/upstream-migration-1479.md (#1479 namespace).
 # #1479-S1b removed the cosmic-text patch after the Linux JA/EN ×
 # minimal/system-Noto × X11/Wayland native matrix passed on registry 0.19.0.
-# Explicit bundled JP fallback now covers native shaping (ADR-0130).
+# Explicit bundled JP fallback covers native shaping and detached tooltip/drag roots (ADR-0130).
 # Retired cosmetic highlight/heading-gap patches must not be reintroduced.
 #
 # Transitional list fix: retain estimates across layout/reset/splice, preserve

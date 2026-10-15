@@ -149,6 +149,7 @@ impl KagiApp {
                 .w_full()
                 .px_3()
                 .h(px(rh))
+                .block_mouse_except_scroll()
                 .on_click(peek)
                 .on_mouse_down(gpui::MouseButton::Right, menu)
                 .when(selection == 0., |row| {
@@ -374,6 +375,7 @@ impl KagiApp {
         let wash = theme().selection_wash(self.window_active);
         row = row
             .bg(base.blend(row_wash).blend(wash.alpha(wash.a * selection)))
+            .when(!ghost, |row| row.block_mouse_except_scroll())
             .when(selection > 0., |row| {
                 row.child(
                     div()

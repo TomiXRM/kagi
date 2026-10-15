@@ -2013,6 +2013,10 @@ mod macos {
                 Box::new(crate::graph_motion_edges::scenario_graph_activation_motion_reset),
             ),
             (
+                "graph_insert_motion_hit_targets",
+                Box::new(crate::graph_motion_edges::scenario_graph_insert_motion_hit_targets),
+            ),
+            (
                 "graph_wip_hover_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
             ),

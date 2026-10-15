@@ -279,6 +279,7 @@ pub(crate) fn render_rows(
             })
             .bg(row_bg)
             .text_color(foreground)
+            .block_mouse_except_scroll()
             .on_click(click_handler)
             .on_mouse_down(MouseButton::Right, context_click_handler)
             .when(is_dimmed, |el| el.opacity(0.32))

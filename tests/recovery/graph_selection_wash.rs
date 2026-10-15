@@ -401,6 +401,28 @@ pub fn scenario_graph_commit_insert_motion(cx: &mut VisualTestAppContext) {
         (f32::from(tail_after.top() - tail_bounds.top())).abs() <= 1.,
         "tail {tail_index}: before={tail_bounds:?}, after={tail_after:?}, viewport={viewport:?}"
     );
+    let tail_id = cx.read(|cx| app.read(cx).view().rows[tail_index + 1].id.clone());
+    let tail_point = gpui::point(
+        tail_after.center().x,
+        tail_after.top() + gpui::px(3.).min((viewport.bottom() - tail_after.top()) / 2.),
+    );
+    cx.simulate_mouse_move(window, tail_point, None, Modifiers::none());
+    cx.simulate_click(window, tail_point, Modifiers::none());
+    draw(cx, window);
+    assert_eq!(
+        cx.read(|cx| {
+            let app = app.read(cx);
+            app.ui()
+                .selected
+                .map(|index| app.view().rows[index].id.clone())
+        }),
+        Some(tail_id),
+        "displaced viewport-tail pixels must hit their real commit identity"
+    );
+    app.update(cx, |app, cx| {
+        app.select_headless(tail_index + 1);
+        cx.notify();
+    });
     motion::set_clock_for_e2e(Some(t + Duration::from_millis(90)));
     draw(cx, window);
     let mid = e2e::control_bounds(window.window_id(), "graph-row-1").unwrap();

@@ -667,6 +667,12 @@ impl KagiApp {
                 editor.update(cx, |editor, _| editor.settle_tree_motion());
             }
         }
+        if let Some((owner, super::workspace::CenterPane::CommitList)) = previous {
+            if let Some(ui) = self.ui.get_mut(&owner) {
+                // Hidden reads must leave this pending until Graph is visible.
+                ui.graph_motion.reset = true;
+            }
+        }
     }
 
     /// The mode the resolver will show. PR and Issues mode both outrank Editor

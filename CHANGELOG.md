@@ -13,6 +13,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Notifications stay fixed at the bottom-left above the status bar in repository and Settings windows, expanding upward instead of appearing below the toolbar on the right. The newest-preview/count disclosure, 30% window-height budget and 45% window-width cap from #1551 remain unchanged. (#1590)
+  - Compact repository windows with an open bottom panel further fit notifications to its body minus the toast inset, preserving the 30% upper bound and fixed anchor while leaving the panel tab strip's primary controls exposed. Settings shares the busy-snackbar/toast renderer.
 - PR swimlane geometry uses GPUI's public uniform-list API for its fixed-height commit and elision rows. Shared list keyboard navigation accepts the existing row-scroll adapter directly; Branch Picker, Home Recent, Issue feed and restore inspection retain their current list geometry. This prepares the official-upstream migration without changing dependency pins. (#1479-S5A)
   - Review: horizontal wheel gestures retain the lane rail's horizontal scrolling without moving the vertical row list.
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

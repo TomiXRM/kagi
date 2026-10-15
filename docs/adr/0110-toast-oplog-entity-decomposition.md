@@ -143,9 +143,10 @@ name changes to Collapse when expanded. Expanded cards scroll inside the same
 error lifetime, explicit dismissal and four-card eviction policies remain.
 The existing card role colours, typography, hover pause and motion are reused;
 there is no new global settings or notification owner.
-The shared out-of-flow host moves to the trailing side, below toolbar chrome,
-and uses at most 45% of the viewport width. This leaves Sidebar/search and the
-leading Graph hit lane available and avoids covering the bottom Operation Log.
+The shared out-of-flow host originally moved to the trailing side, below toolbar
+chrome, to leave Sidebar/search and the leading Graph hit lane available and
+avoid covering the bottom Operation Log. Its placement is superseded by #1590
+below; the cap of at most 45% of the viewport width remains.
 Disclosure stays above the card scroller so Collapse cannot scroll out of reach.
 Native Click actions share the disclosure/dismiss listeners, and hiding controls
 repairs their retained focus through the existing ToastRemoved contract.
@@ -154,3 +155,33 @@ replacement and on Collapse; the old subtree cannot be relied on to deliver
 hover-leave after it is removed. Open Repository also owns an explicit native
 Click action, so activation of a scroll-clipped action does not depend on
 synthetic pointer hit-testing. The English one-older-card caption is singular.
+
+## Bottom-left anchor amendment (#1590, 2026-10-15)
+
+Restore a fixed bottom-left anchor for the shared notification host in both
+repository and Settings windows, above the status bar rather than below the
+toolbar on the trailing side. Adding notifications or expanding the stack grows
+the overlay upward; its bottom-left origin does not move with its content.
+This supersedes #1551's host-placement decision while retaining its bounded
+disclosure policy. Settings uses the same busy-snackbar/toast renderer.
+
+Keep the newest preview and localized EN/JA counted disclosure for older cards.
+Expanded cards still scroll under the same zoom-independent 30%-of-viewport
+height upper bound, with the disclosure outside the scroller so Collapse stays
+reachable. In compact repository windows (under 1000 logical px) with the bottom
+panel open, further cap the notification container to the bottom-panel body
+height minus the toast inset. Reuse the panel's `bottom_panel_body_height`
+calculation so the compact tab strip's primary controls remain exposed, without
+moving the exact bottom-left anchor. Retain the 45%-of-viewport width cap,
+bounded previews, persistent
+errors, hover-paused routine timers, explicit dismissal, four-card eviction,
+keyboard/accessibility actions and focus repair. Complete operation details
+remain in the durable Operation Log; this is a placement correction, not a new
+notification owner, setting or lifetime policy.
+
+Acceptance geometry uses repository widths of 1000/1400 logical px plus 940px
+compact coverage. The owner accepted Settings' actual native 715px width in
+EN/JA at 100%/167% zoom instead of imposing repository-sized 1000/1400px frames:
+production `fit_content` restores that width, and the E2E must not bypass it.
+Tier B visual review remains pending while the screen is locked; this amendment
+does not claim completed screenshots or native visual acceptance.

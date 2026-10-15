@@ -483,7 +483,7 @@ pub(super) fn with_keyboard_group_reveal(
         .when(cfg!(feature = "gui-e2e"), |el| {
             el.child(super::e2e::measure_inside(format!("{id}-reveal")))
         });
-    el.key_context("KagiRowList SidebarGroupReveal")
+    el.key_context("KagiRowList KagiSidebarPaneRows SidebarGroupReveal")
         .on_action(cx.listener(|app, _: &super::CloseMainDiff, _w, cx| {
             app.sidebar.focus.group_reveal = None;
             cx.notify();

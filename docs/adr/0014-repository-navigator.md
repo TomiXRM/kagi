@@ -80,9 +80,14 @@ A containing kit Popover consumes its `Cancel`; a Kagi-owned child must not
 rely on the shallower workspace fallback to dismiss first. The co-author
 ListBox now binds Escape in `KagiCoauthorMenu` to its existing dismiss action:
 clear `coauthor_menu`, reconcile navigation, and restore `cp-coauthor` focus.
-Pinned group reveals retain `KagiRowList` for arrow navigation and add
-`SidebarGroupReveal` to bind Escape to the existing row-local `CloseMainDiff`
-handler. A root overlay must also take focus:
+Pinned group reveals retain both `KagiRowList` and `KagiSidebarPaneRows` at
+the revealed row's context depth, alongside `SidebarGroupReveal`. The row-list
+keys and tree Left must outrank negation-only global pane bindings at that
+same depth; retaining only the ancestor's tree context lets global Left win.
+Escape binds to the existing row-local `CloseMainDiff` handler.
+`sidebar_group_reveal_lifetime` covers revealed Left, Up/Down/Home/End, and
+Right's existing inert Graph behavior (tree expansion remains Enter/Space).
+A root overlay must also take focus:
 the PR context menu now shares `MenuKeys`, `with_menu_keys` and `focus_row`
 with the Changes file menu, retaining its existing four-row chrome while
 restoring its opener on dismissal.

@@ -211,6 +211,13 @@ window resize. Native frozen-clock coverage reopens from the all-closed state
 at three viewport heights, checks real intermediate body height and endpoint
 continuity, and retains immediate Reduce Motion opening/closing.
 
+Editor ghosts and displaced edge content also consume right-button presses.
+Removing their file/directory handlers alone still lets the blank-tree ancestor
+open its root creation menu. The shared presentation wrapper stops that bubble
+without restoring any row action or accessibility node. Frozen-clock native
+coverage right-clicks an unobscured closing ghost in both tree sources and
+retains ordinary file, directory and genuine blank-space menu targets.
+
 ## Graph surface amendment (#1617)
 
 The dense Graph retains its existing stripes, lane tints, fixed row height and

@@ -3221,7 +3221,14 @@ fn tree_motion_content(
     element: gpui::Div,
 ) -> AnyElement {
     // These exact applied values also feed the native paint observer below.
-    let element = element.top(offset).opacity(opacity);
+    let element = element
+        .top(offset)
+        .opacity(opacity)
+        .when(_ghost || _fringe, |element| {
+            // Presentation-only rows must not fall through to the blank-tree
+            // context menu, even though their file/directory handlers are gone.
+            element.on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+        });
     #[cfg(feature = "gui-e2e")]
     let element = {
         let painted = _view.tree_motion.painted.clone();

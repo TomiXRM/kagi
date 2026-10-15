@@ -481,7 +481,7 @@ fn independent_scroll(
     drop((unstaged, staged, graph));
 }
 
-fn open_wip(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
+pub(crate) fn open_wip(cx: &mut VisualTestAppContext, win: AnyWindowHandle) {
     let wip = bounds(win, "compact-wip-row");
     let graph = bounds(win, "compact-graph");
     contained(

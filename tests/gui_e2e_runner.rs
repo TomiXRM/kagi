@@ -1959,6 +1959,14 @@ mod macos {
                 Box::new(crate::input_context_menus::scenario_command_period_settings_select),
             ),
             (
+                "compact_input_escape",
+                Box::new(crate::input_context_menus::scenario_compact_input_escape),
+            ),
+            (
+                "compact_input_command_period",
+                Box::new(crate::input_context_menus::scenario_compact_input_command_period),
+            ),
+            (
                 "modal_command_period",
                 Box::new(crate::destructive_modal_return::scenario_modal_command_period),
             ),

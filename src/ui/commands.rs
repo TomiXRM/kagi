@@ -1482,6 +1482,14 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     )]);
     #[cfg(target_os = "macos")]
     {
+        // Remove only the old code-action candidate. Otherwise, after Input's
+        // Escape propagates, ToggleCodeActions consumes Command-Period before
+        // its Popover / dialog owner can handle the next matching binding.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            gpui::Unbind(gpui::Action::name(&gpui_component::input::ToggleCodeActions).into()),
+            Some("Input"),
+        )]);
         // Reuse Escape's registered actions AND owner predicates. This keeps
         // child menus / Find / completion ahead of their containing dialog
         // and overrides Input's earlier Command-Period code-action binding.

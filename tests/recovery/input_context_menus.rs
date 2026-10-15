@@ -311,3 +311,82 @@ pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS command_period_settings_select");
 }
+
+fn compact_input_cancel(cx: &mut VisualTestAppContext, key: &str) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    kagi_ui_core::theme::set_zoom(1.);
+    cx.update(kagi_ui_core::theme::sync_gpui_component_theme);
+    let fixture = build_fixture();
+    std::fs::write(
+        fixture.path().join("README.md"),
+        "unsaved compact changes\n",
+    )
+    .unwrap();
+    let (app, window) = mount_at(cx, fixture.path(), 940.);
+    for _ in 0..4 {
+        paint(cx, window);
+    }
+    crate::compact_layout::open_wip(cx, window);
+    assert!(e2e::control_bounds(window.window_id(), "compact-composer").is_some());
+    let panel = cx.read(|cx| app.read(cx).ui().commit_panel.clone().unwrap());
+    let title = cx.read(|cx| panel.read(cx).title_input.clone().unwrap());
+    let stack = cx.read(|cx| app.read(cx).toast_stack.clone().unwrap());
+    stack.update(cx, |stack, cx| {
+        stack.push_notify(kagi::ui::ToastKind::Error, "Background notice", cx);
+    });
+    cx.update_window(window, |_, window, cx| {
+        title.update(cx, |input, cx| {
+            input.set_value("Retained compact draft", window, cx);
+        });
+        title.read(cx).focus_handle(cx).focus(window, cx);
+    })
+    .unwrap();
+    paint(cx, window);
+    let before = cx.read(|cx| {
+        (
+            app.read(cx).ui().selected,
+            app.read(cx).ui().main_diff.is_some(),
+        )
+    });
+    crate::keyboard_nav::keys(cx, window, key);
+    e2e::clear_control_bounds(window.window_id(), "compact-composer");
+    paint(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "compact-composer").is_none(),
+        "{key} in the composer Input must dismiss its Popover before background notices"
+    );
+    cx.read(|cx| {
+        assert!(
+            stack
+                .read(cx)
+                .toasts()
+                .iter()
+                .any(|toast| toast.message.as_ref() == "Background notice"
+                    && toast.dismissing.is_none()),
+            "{key} must leave background notices unchanged"
+        );
+        assert_eq!(title.read(cx).value().as_ref(), "Retained compact draft");
+        assert_eq!(
+            (
+                app.read(cx).ui().selected,
+                app.read(cx).ui().main_diff.is_some()
+            ),
+            before
+        );
+        assert_eq!(app.read(cx).ui().commit_panel.as_ref().unwrap(), &panel);
+    });
+    drop(title);
+    drop(panel);
+    drop(stack);
+    unmount(cx, app, window);
+}
+
+pub fn scenario_compact_input_escape(cx: &mut VisualTestAppContext) {
+    compact_input_cancel(cx, "escape");
+    eprintln!("[gui-e2e] PASS compact_input_escape");
+}
+
+pub fn scenario_compact_input_command_period(cx: &mut VisualTestAppContext) {
+    compact_input_cancel(cx, "cmd-.");
+    eprintln!("[gui-e2e] PASS compact_input_command_period");
+}

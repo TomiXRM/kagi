@@ -350,14 +350,6 @@ impl KagiApp {
             .size_full()
             .key_context("KagiWorkspace")
             .on_action(escape)
-            // Input consumes its own completion / IME cancellation first.
-            // An unconsumed input Escape must reach the same Kagi owner even
-            // when the keymap selected that child action instead of ours.
-            .on_action(
-                |_: &gpui_component::input::Escape, window: &mut Window, cx: &mut App| {
-                    window.dispatch_action(Box::new(CloseMainDiff), cx);
-                },
-            )
             .on_action(composer)
             .on_key_down(enter)
             .child(content)

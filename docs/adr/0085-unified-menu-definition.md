@@ -226,6 +226,9 @@ group and before Clear Menu; all action labels align with the shared check colum
 Clear Menu registers a handler on repository/Home and Settings roots only while
 the published history is nonempty. Availability changes refresh those roots;
 no unconditional global Clear handler bypasses AppKit validation.
+Clear Menu belongs only to File > Open Recent, not the Dock. Dock entries are
+repository actions only, with no separators; their global dispatch remains
+available without an active window and creates a repository host when needed.
 
 
 Edit > Find exposes a Kagi action only when the focused target can find: its

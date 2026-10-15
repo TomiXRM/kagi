@@ -253,7 +253,7 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
     unmount(cx, app, win);
 }
 pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["recent_repos", "lang", "window_frame"]);
     kagi_ui_core::settings::write_setting("recent_repos", None);
     let fixture = build_fixture();
     let (app, win) = mount_short(cx, fixture.path());
@@ -456,7 +456,58 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         "Clear Menu leaves open tabs intact"
     );
     assert!(second.path().join(".git").is_dir());
+    app.update(cx, |app, cx| {
+        assert!(app.open_repository(second.path().to_path_buf(), cx))
+    });
+    cx.run_until_parked();
+    let dock = commands::dock_menu_items();
+    assert_eq!(
+        dock.len(),
+        1,
+        "Dock lists repository entries only, never Clear Menu or separators"
+    );
+    let MenuItem::Action { action, name, .. } = &dock[0] else {
+        panic!("Dock repository action")
+    };
+    assert!(action.as_any().is::<commands::OpenRecentRepository>());
+    assert_eq!(
+        name.as_ref(),
+        second.path().canonicalize().unwrap().to_string_lossy()
+    );
     unmount(cx, app, win);
+    // Unlike VisualTestAppContext::update, AsyncApp::update flushes deferred
+    // effects even when no window exists, matching a native menu event.
+    cx.read(|cx| cx.to_async()).update(|cx| {
+        assert!(cx.windows().is_empty(), "last repository window is closed");
+        assert!(
+            cx.is_action_available(action.as_ref()),
+            "Dock recent remains available without windows"
+        );
+        cx.dispatch_action(action.as_ref());
+    });
+    cx.run_until_parked();
+    let reopened = cx.read(|cx| {
+        let windows = cx.windows();
+        assert_eq!(
+            windows.len(),
+            1,
+            "Dock recent creates one repository window"
+        );
+        windows[0]
+    });
+    let host = cx
+        .update_window(reopened, |_, window, cx| {
+            let root = window.root::<gpui_component::Root>().flatten().unwrap();
+            root.read(cx).view().clone().downcast::<KagiApp>().unwrap()
+        })
+        .unwrap();
+    draw(cx, reopened);
+    assert_eq!(
+        cx.read(|cx| host.read(cx).repo_path.clone()),
+        Some(second.path().canonicalize().unwrap())
+    );
+    assert_eq!(cx.read(|cx| host.read(cx).tabs.len()), 1);
+    unmount(cx, host, reopened);
 }
 
 fn check_window_owners(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, win: AnyWindowHandle) {

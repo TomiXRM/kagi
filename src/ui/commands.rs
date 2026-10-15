@@ -1200,13 +1200,13 @@ pub fn publish_menus(cx: &mut App) {
         .position(|section| section.label == "Window")
         .expect("canonical Window menu");
     crate::native_menus::publish(cx, build_menus(cx), window_section);
-    let recent = recent_menu();
-    let available = recent.items.len() > 1;
+    let recent = dock_menu_items();
+    let available = !recent.is_empty();
     if cx.try_global::<RecentMenuAvailable>().map(|state| state.0) != Some(available) {
         cx.set_global(RecentMenuAvailable(available));
         cx.refresh_windows();
     }
-    cx.set_dock_menu(recent.items);
+    cx.set_dock_menu(recent);
 }
 
 /// Build the shared canonical tree with the active window's presentation labels.
@@ -1266,7 +1266,18 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
 
 /// File and Dock share Home's history order and the existing repository opener.
 pub fn recent_menu() -> Menu {
-    let mut items: Vec<_> = super::tabs::recent_repos()
+    let mut items = dock_menu_items();
+    let empty = items.is_empty();
+    if !empty {
+        items.push(MenuItem::separator());
+    }
+    items.push(MenuItem::action(Msg::MenuClearRecent.t(), ClearRecentRepositories).disabled(empty));
+    Menu::new(Msg::MenuOpenRecent.t()).items(items)
+}
+
+/// Recent-repository entries published to the Dock.
+pub fn dock_menu_items() -> Vec<MenuItem> {
+    super::tabs::recent_repos()
         .into_iter()
         .map(|path| {
             MenuItem::action(
@@ -1274,13 +1285,7 @@ pub fn recent_menu() -> Menu {
                 OpenRecentRepository { path },
             )
         })
-        .collect();
-    let empty = items.is_empty();
-    if !empty {
-        items.push(MenuItem::separator());
-    }
-    items.push(MenuItem::action(Msg::MenuClearRecent.t(), ClearRecentRepositories).disabled(empty));
-    Menu::new(Msg::MenuOpenRecent.t()).items(items)
+        .collect()
 }
 
 /// Shared localized rows and checked state for both platform menu renderers.

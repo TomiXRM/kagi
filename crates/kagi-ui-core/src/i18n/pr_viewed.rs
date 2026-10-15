@@ -20,6 +20,8 @@ pub fn checkbox_tooltip() -> &'static str {
 
 /// Marking changed on screen but could not be stored.
 pub fn save_failed(error: &std::io::Error) -> String {
+    let raw = error.to_string();
+    let error = super::op::user_text::diagnostic(&raw);
     match lang() {
         Lang::En => format!("Could not save viewed files: {error}"),
         Lang::Ja => format!("確認済みの状態を保存できませんでした: {error}"),

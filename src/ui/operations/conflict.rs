@@ -256,7 +256,10 @@ impl KagiApp {
             None => {
                 self.push_toast(
                     ToastKind::Error,
-                    SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                    SharedString::from(i18n::op::op_failed_contract(
+                        i18n::Op::RepoOpen,
+                        "session unavailable",
+                    )),
                     cx,
                 );
                 return;
@@ -569,7 +572,10 @@ impl KagiApp {
         if self.ui().repo_session.is_none() {
             self.push_toast(
                 ToastKind::Error,
-                SharedString::from(i18n::op_failed(i18n::Op::RepoOpen, "session unavailable")),
+                SharedString::from(i18n::op::op_failed_contract(
+                    i18n::Op::RepoOpen,
+                    "session unavailable",
+                )),
                 cx,
             );
             return;
@@ -746,7 +752,7 @@ impl KagiApp {
             ),
             Err(e) => self.push_toast(
                 ToastKind::Error,
-                SharedString::from(i18n::op_failed(i18n::Op::ExternalTool, e)),
+                SharedString::from(i18n::op::op_failed_contract(i18n::Op::ExternalTool, e)),
                 cx,
             ),
         }

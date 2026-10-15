@@ -56,7 +56,8 @@ impl KagiApp {
         let message = Msg::DiscardUnsafePath
             .t()
             .replace("{}", &path.display().to_string());
-        self.status_footer = FooterStatus::Failed(message.clone().into());
+        self.status_footer =
+            FooterStatus::Failed(crate::ui::operations::display_text(message.clone().into()));
         self.push_toast(ToastKind::Error, message, cx);
         cx.notify();
     }
@@ -158,8 +159,9 @@ impl KagiApp {
         let planned = match self.with_write_repo(origin, cx, |repo| repo.plan_discard(&paths)) {
             Some(p) => p,
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("discard: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -180,8 +182,8 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Discard, e)),
                 ));
             }
         }
@@ -207,8 +209,9 @@ impl KagiApp {
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_discard(&eligible)) {
             Some(p) => p,
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("discard: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("discard: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -233,8 +236,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Discard, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Discard, e)),
                 ));
             }
         }
@@ -344,10 +347,9 @@ impl KagiApp {
             }
             Err(e) => {
                 klog!("refused: discard preflight — repo open failed: {}", e);
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "discard: repo open error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("discard: repo open error: {}", e)),
+                ));
                 cx.notify();
                 return;
             }
@@ -358,7 +360,9 @@ impl KagiApp {
         // recovery handle is the oplog entry's backup blob list (ADR-0083), and
         // `Backend::run` writes that entry against `repo_path` above.
         self.clear_discard_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDiscard.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDiscard.t()),
+        ));
         klog!("async: discard started");
 
         let plan = modal.plan.clone();
@@ -385,18 +389,19 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::Discard(d)) => {
                     let status = if d.is_partial() {
-                        FooterStatus::Failed(SharedString::from(format!(
-                            "{}: {}",
-                            Msg::DiscardPartial.t(),
-                            d.error.clone().unwrap_or_default()
-                        )))
+                        FooterStatus::Failed(
+                            i18n::op::user_text::operations::partial(
+                                "discard",
+                                d.error.as_deref().unwrap_or_default(),
+                            )
+                            .into(),
+                        )
                     } else {
-                        let human = if d.backups.len() == 1 {
-                            format!("{} discarded", d.backups[0].path)
-                        } else {
-                            format!("{} files discarded", d.backups.len())
-                        };
-                        FooterStatus::Success(SharedString::from(format!("discard: {}", human)))
+                        let only_path = (d.backups.len() == 1).then(|| d.backups[0].path.as_str());
+                        FooterStatus::Success(
+                            i18n::op::user_text::operations::discarded(d.backups.len(), only_path)
+                                .into(),
+                        )
                     };
                     RunPresentation::status(status).refresh_worktree_wip(wip_path.clone())
                 }

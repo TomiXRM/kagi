@@ -200,7 +200,7 @@ pub fn note_ja(note: &CommonNote) -> String {
         CommonNote::BranchMissing { name, .. } => {
             format!("branch `{}` は存在しません。", name)
         }
-        // Error messages stay untranslated (error keying is out of scope).
+        // Known diagnostic payloads were localized by plan_note_text.
         CommonNote::GitErrorPassthrough { message } => message.clone(),
         // §E — delegate to the existing keyed-error localizers so there is
         // exactly one source of truth for their JA text.

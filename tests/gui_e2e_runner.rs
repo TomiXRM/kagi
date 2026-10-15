@@ -358,6 +358,10 @@ mod stash_apply_manifest;
 mod busy_label;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/user_text.rs"]
+mod user_text;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/op_queue.rs"]
 mod op_queue;
 #[cfg(target_os = "macos")]
@@ -3994,6 +3998,10 @@ mod macos {
             (
                 "stage_failure_notice",
                 Box::new(crate::recovery_operations::scenario_stage_failure_notice),
+            ),
+            (
+                "user_text_native",
+                Box::new(crate::user_text::scenario_user_text_native),
             ),
             (
                 "batch_staging_refresh",

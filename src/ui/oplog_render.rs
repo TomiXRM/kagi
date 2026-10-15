@@ -198,18 +198,12 @@ fn render_summary(
     stable_key: SharedString,
 ) -> gpui::AnyElement {
     let outcome = SharedString::from(oplog_panel::outcome_summary(&entry.outcome));
+    let operation = SharedString::from(kagi_domain::text_safety::sanitize_control_bytes(
+        &kagi_ui_core::i18n::op::user_text::operation_label(&entry.op),
+    ));
     let time = SharedString::from(format_hms(entry.timestamp));
     let identity = kagi_ui_core::i18n::oplog_panel::entry_disclosure_name(
-        entry.id,
-        &time,
-        &kagi_domain::text_safety::sanitize_control_bytes(&entry.op),
-        match &entry.outcome {
-            OpOutcome::Success { .. } => "Success",
-            OpOutcome::Partial { .. } => "Partial",
-            OpOutcome::Unknown { .. } => "Unknown",
-            OpOutcome::Failed { .. } => "Failed",
-            OpOutcome::Refused { .. } => "Refused",
-        },
+        entry.id, &time, &operation, &outcome,
     );
     let copy_name = kagi_ui_core::i18n::oplog_panel::entry_copy_name(&identity);
     let key = oplog_panel::EntryKey::of(entry);
@@ -252,9 +246,7 @@ fn render_summary(
                     .text_size(theme_mod::scaled_px(theme_mod::FILE_TREE_FONT_PX))
                     .text_color(rgb(theme().text_sub))
                     .truncate()
-                    .child(SharedString::from(
-                        kagi_domain::text_safety::sanitize_control_bytes(&entry.op),
-                    ))
+                    .child(operation)
                     .when(cfg!(feature = "gui-e2e"), |label| {
                         label.child(super::e2e::measure_inside(format!("oplog-operation-{i}")))
                     }),

@@ -72,7 +72,7 @@ impl StageFailure {
         let recording = recording::finalize(entry);
         let display_error = match error {
             GitError::Blocked(note) => i18n::plan_note_text(note),
-            _ => error.to_string(),
+            _ => i18n::op::user_text::diagnostic(&error.to_string()).into_owned(),
         };
         let mut footer = i18n::op_failed(
             action.label(),
@@ -122,7 +122,9 @@ impl KagiApp {
         let entry = crate::ui::oplog_panel::OpLogPanel::entry_for_recording(&failure.recording);
         let display = failure.typed_refusal.then(|| failure.footer.clone());
         self.record_op_impl(entry, cx, false, display);
-        self.status_footer = FooterStatus::Failed(failure.footer.clone().into());
+        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+            failure.footer.clone().into(),
+        ));
         if failure.needs_notice {
             self.app_notices.push_back(failure.footer.into());
             self.present_app_notice();

@@ -473,7 +473,7 @@ fn terminal_empty_labels(
         ),
         TerminalState::Failed { reason } => (
             Msg::TerminalFailedTitle.t().into(),
-            i18n::terminal_failed_hint(reason).into(),
+            i18n::terminal_failed_hint(&i18n::op::user_text::diagnostic(reason)).into(),
             IconName::TriangleAlert,
         ),
         TerminalState::Running => unreachable!("running terminal owns a view"),

@@ -142,7 +142,7 @@ impl KagiApp {
         let mut repo = match crate::ui::blocking_ops::open_backend(&repo_path) {
             Ok(r) => r,
             Err(e) => {
-                let err_msg = i18n::op_failed(i18n::Op::RepoOpen, e);
+                let err_msg = i18n::op::op_failed_contract(i18n::Op::RepoOpen, e);
                 self.record_op(
                     "create-branch",
                     plan.current.clone(),
@@ -169,7 +169,7 @@ impl KagiApp {
         };
         let report = repo.run_recorded(&op, &plan);
         if let Err(e) = &report.result {
-            let err_msg = i18n::op_failed(i18n::Op::CreateBranch, e);
+            let err_msg = i18n::op::op_failed_contract(i18n::Op::CreateBranch, e);
             self.present_report("create-branch", &report, &repo_path, cx);
             if let Some(m) = self.create_branch_modal_mut() {
                 m.error = Some(SharedString::from(err_msg));
@@ -190,7 +190,7 @@ impl KagiApp {
                 klog!("verify: repo open error: {}", e);
                 self.present_report("create-branch", &report, &repo_path, cx);
                 if let Some(m) = self.create_branch_modal_mut() {
-                    m.error = Some(i18n::op_failed(i18n::Op::RepoOpen, e).into());
+                    m.error = Some(i18n::op::op_failed_contract(i18n::Op::RepoOpen, e).into());
                 }
                 self.reload(cx);
                 return;
@@ -213,7 +213,7 @@ impl KagiApp {
             self.focus_root_for_modal();
         } else if let Some(m) = self.create_branch_modal_mut() {
             m.error = Some(
-                i18n::op_failed(
+                i18n::op::op_failed_contract(
                     i18n::Op::CreateBranch,
                     format!("branch '{}' not found after create", modal.input),
                 )
@@ -302,8 +302,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "branch operation: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("branch operation: repo session unavailable"),
                 ));
                 return;
             }
@@ -346,10 +346,9 @@ impl KagiApp {
                 self.focus_root_for_modal(); // #817: Enter / Escape via the root
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch operation plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("branch operation plan error: {}", e)),
+                ));
             }
         }
     }
@@ -402,7 +401,7 @@ impl KagiApp {
 
         self.clear_branch_plan_modal();
         self.status_footer =
-            FooterStatus::Busy(SharedString::from(format!("{} in progress...", op_name)));
+            FooterStatus::Busy(i18n::op::user_text::operations::progress(op_name).into());
         if modal.kind == BranchPlanKind::SyncToRemote {
             klog!("async: sync-to-remote started");
         }
@@ -423,11 +422,22 @@ impl KagiApp {
             |_| None,
             move |done| match done {
                 Ok(outcome) => {
-                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                        "{}: {}",
-                        op_name,
-                        branch_plan_summary(&modal.branch_name, outcome)
-                    ))))
+                    let text =
+                        i18n::op::user_text::operations::branch_result(&modal.branch_name, outcome)
+                            .into();
+                    let confirmed = matches!(
+                        outcome,
+                        kagi_git::OperationOutcome::Pull(
+                            kagi_git::PullOutcome::UpToDate
+                                | kagi_git::PullOutcome::FastForward { .. }
+                        ) | kagi_git::OperationOutcome::Push(_)
+                            | kagi_git::OperationOutcome::SyncToRemote { .. }
+                    );
+                    RunPresentation::status(if confirmed {
+                        FooterStatus::Success(text)
+                    } else {
+                        FooterStatus::Failed(text)
+                    })
                 }
                 Err(_) => RunPresentation::none(),
             },
@@ -660,8 +670,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "checkout tracking: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("checkout tracking: repo session unavailable"),
                 ));
                 return;
             }
@@ -684,10 +694,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "checkout tracking plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("checkout tracking plan error: {}", e)),
+                ));
             }
         }
     }
@@ -724,7 +733,9 @@ impl KagiApp {
         }
 
         self.clear_tracking_checkout_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyCheckout.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyCheckout.t()),
+        ));
         klog!("async: checkout-tracking started");
 
         let plan = modal.plan.clone();
@@ -758,8 +769,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "switch-to-latest: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("switch-to-latest: repo session unavailable"),
                 ));
                 return;
             }
@@ -781,10 +792,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "switch-to-latest plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("switch-to-latest plan error: {}", e)),
+                ));
             }
         }
     }
@@ -821,7 +831,9 @@ impl KagiApp {
         }
 
         self.clear_switch_to_latest_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusySwitchToLatest.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusySwitchToLatest.t()),
+        ));
         klog!("async: switch-to-latest started");
 
         let plan = modal.plan.clone();
@@ -905,7 +917,9 @@ impl KagiApp {
         };
         let repo_path = owner.path.clone();
         self.planning = Some("delete-branch-plan");
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranchPlan.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDeleteBranchPlan.t()),
+        ));
         klog!("async: delete-branch plan started for {}", branch_name);
 
         let bg_path = repo_path.clone();
@@ -1021,7 +1035,9 @@ impl KagiApp {
         }
 
         self.clear_delete_branch_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyDeleteBranch.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyDeleteBranch.t()),
+        ));
         klog!("async: delete-branch started");
 
         let plan = modal.plan.clone();
@@ -1047,14 +1063,13 @@ impl KagiApp {
             move || delete_branch_blocking(&bg_owner, &bg_plan, &bg_branch),
             |_| None,
             move |done| match done {
-                Ok(kagi_git::OperationOutcome::DeleteBranch { reference, .. }) => {
+                Ok(kagi_git::OperationOutcome::DeleteBranch { .. }) => {
                     if removes_pinning_worktree {
                         klog!("executed: delete-branch removed pinning worktree");
                     }
-                    RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                        "delete-branch: '{}' deleted (restore: git branch {} {reference})",
-                        branch_name, branch_name
-                    ))))
+                    RunPresentation::status(FooterStatus::Success(
+                        i18n::op::user_text::operations::deleted_branch(&branch_name, false).into(),
+                    ))
                 }
                 Ok(_) | Err(_) => RunPresentation::none(),
             },

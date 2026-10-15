@@ -99,7 +99,9 @@ pub(super) fn work_items(work: &HomeWork, pane: HomePane, query: &str) -> Vec<Ho
         items.push(HomeItem::Heading(heading(kind).to_string()));
         if let Some(error) = failed {
             items.push(HomeItem::WorkFailed(
-                Msg::HomeWorkFailed.t().replace("{}", error),
+                Msg::HomeWorkFailed
+                    .t()
+                    .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
             ));
         } else if list.items.is_empty() {
             items.push(HomeItem::Note(empty(kind).to_string()));

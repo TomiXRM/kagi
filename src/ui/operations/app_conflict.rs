@@ -42,10 +42,10 @@ impl KagiApp {
         let entry = recording.entry().clone();
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         let summary = match &entry.outcome {
-            OpOutcome::Refused { blockers } => blocker
+            OpOutcome::Refused { .. } => blocker
                 .map(kagi_ui_core::i18n::plan_note_text)
-                .unwrap_or_else(|| blockers.join("\n")),
-            _ => oplog_panel::outcome_summary(&entry.outcome),
+                .unwrap_or_else(|| super::outcome_text(&entry.op, &entry.outcome)),
+            _ => super::outcome_text(&entry.op, &entry.outcome),
         };
         if let Some(panel) = &self.op_log {
             panel.update(cx, |panel, cx| {
@@ -67,7 +67,7 @@ impl KagiApp {
                 (true, kagi_domain::conflict_family::ConflictAction::Abort) => {
                     Msg::ConflictAborted.t().to_string()
                 }
-                (true, _) => Msg::EditorSavedResolved.t().to_string(),
+                (true, _) => i18n::op::user_text::operations::conflict_saved().to_string(),
                 (false, _) => summary.clone(),
             },
             cx,
@@ -92,15 +92,27 @@ impl KagiApp {
                 ),
             };
             klog!("footer: {}", footer);
-            self.status_footer = if success {
-                FooterStatus::Success(footer.into())
+            let display = if success {
+                match action {
+                    kagi_domain::conflict_family::ConflictAction::Abort => {
+                        Msg::ConflictAborted.t().to_string()
+                    }
+                    _ => i18n::op::user_text::operations::conflict_saved().to_string(),
+                }
             } else {
-                FooterStatus::Failed(footer.into())
+                summary.clone()
+            };
+            self.status_footer = if success {
+                FooterStatus::Success(display.into())
+            } else {
+                FooterStatus::Failed(display.into())
             };
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = recording {
-            self.app_notices
-                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
+            self.app_notices.push_back(
+                i18n::op::user_text::operations::recording_failed(&entry.repo, &error.to_string())
+                    .into(),
+            );
         }
     }
 }

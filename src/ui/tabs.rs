@@ -528,10 +528,10 @@ impl KagiApp {
         let read = self.begin_slow_read(session, None, cx);
         let task = cx.background_spawn(async move {
             let mut backend = kagi_git::Backend::open(&bg_path)
-                .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+                .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
             let snap = backend
                 .snapshot_repairing_stat_cache(commit_limit, read.probe())
-                .map_err(|e| i18n::op_failed(i18n::Op::Snapshot, e))?;
+                .map_err(|e| i18n::op::op_failed_contract(i18n::Op::Snapshot, e))?;
             let wip_diffstat = KagiApp::wip_diffstat_from_backend(&backend);
             let status = snap.status.clone();
             let repo_name = bg_path
@@ -579,7 +579,7 @@ impl KagiApp {
                         if !app.reads.fail(key) || app.active_session() != Some(session) {
                             return;
                         }
-                        let msg = format!("Error: {err}");
+                        let msg = i18n::op::user_text::diagnostic(&err).into_owned();
                         klog!("tab-load: {} error: {}", name, err);
                         app.status_footer = FooterStatus::Failed(SharedString::from(msg));
                         cx.notify();

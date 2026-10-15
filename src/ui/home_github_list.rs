@@ -313,7 +313,10 @@ fn github_items(
     let mut complete = !reading && orgs_error.is_none() && refresh_error.is_none();
     if let Some(error) = refresh_error {
         items.push(HomeItem::RefreshFailed(
-            Msg::HomeGithubRefreshFailed.t().replace("{}", error).into(),
+            Msg::HomeGithubRefreshFailed
+                .t()
+                .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error))
+                .into(),
         ));
     }
     for section in sections {
@@ -327,7 +330,9 @@ fn github_items(
                 complete = false;
                 items.push(HomeItem::Heading(title));
                 items.push(HomeItem::Note(
-                    Msg::HomeGithubOwnerFailed.t().replace("{}", error),
+                    Msg::HomeGithubOwnerFailed
+                        .t()
+                        .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
                 ));
                 continue;
             }
@@ -382,7 +387,9 @@ fn github_items(
     if let Some(error) = orgs_error {
         items.push(HomeItem::Heading(Msg::HomeGithubOrgs.t().to_string()));
         items.push(HomeItem::OrgsFailed(
-            Msg::HomeGithubOrgsFailed.t().replace("{}", error),
+            Msg::HomeGithubOrgsFailed
+                .t()
+                .replace("{}", &crate::ui::i18n::op::user_text::diagnostic(error)),
         ));
     }
     if shown == 0 && !query.is_empty() && complete {

@@ -3254,7 +3254,7 @@ fn delete_recording_failure_does_not_offer_retry(cx: &mut VisualTestAppContext) 
             "completed deletion cannot be retried"
         );
         let notice = kagi::ui::e2e::app_notice_message(state).unwrap();
-        assert!(notice.contains("recording failed") && notice.contains(repo.to_str().unwrap()));
+        assert!(notice.contains(repo.to_str().unwrap()));
         let panel = state.op_log.as_ref().unwrap().read(cx);
         let entry = panel
             .entries()

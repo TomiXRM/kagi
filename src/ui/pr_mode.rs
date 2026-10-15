@@ -1706,7 +1706,9 @@ fn render_center(
         }
         let body: gpui::AnyElement = match conflicts.as_ref() {
             None => pr_center_note(SharedString::from("\u{2026}")),
-            Some(Err(e)) => pr_center_note(SharedString::from(e.clone())),
+            Some(Err(e)) => pr_center_note(SharedString::from(
+                super::i18n::op::user_text::diagnostic(e).into_owned(),
+            )),
             Some(Ok(files)) if files.is_empty() => {
                 pr_center_note(SharedString::from(Msg::PrConflictsNone.t()))
             }

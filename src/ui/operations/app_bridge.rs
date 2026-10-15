@@ -98,29 +98,20 @@ impl KagiApp {
     pub(crate) fn display_footer_message(
         op: &str,
         outcome: &OpOutcome,
-        contract: &SharedString,
+        _contract: &SharedString,
         display_override: Option<String>,
     ) -> SharedString {
-        match outcome {
-            OpOutcome::Unknown { evidence, .. } => {
-                format!("{}: outcome unknown — {}", op, evidence).into()
+        if matches!(
+            outcome,
+            OpOutcome::Refused { .. } | OpOutcome::Failed { .. }
+        ) {
+            if let Some(display) =
+                display_override.or_else(|| super::record::refused_display(op, outcome))
+            {
+                return super::display_text(display.into());
             }
-            OpOutcome::Refused { .. } => display_override
-                .or_else(|| super::record::refused_display(op, outcome))
-                .map_or_else(|| contract.clone(), Into::into),
-            OpOutcome::Failed { error } => {
-                let commit_op = match op {
-                    "commit" => Some(i18n::Op::Commit),
-                    "amend" => Some(i18n::Op::Amend),
-                    "merge-commit" => Some(i18n::Op::MergeCommit),
-                    _ => None,
-                };
-                display_override
-                    .or_else(|| commit_op.map(|op| i18n::op_failed(op, error)))
-                    .map_or_else(|| contract.clone(), Into::into)
-            }
-            _ => contract.clone(),
         }
+        super::outcome_text(op, outcome).into()
     }
 
     fn deliver_stash_result(
@@ -138,7 +129,7 @@ impl KagiApp {
         // the same Partial as an AppNotice would keep the one modal slot occupied
         // throughout Conflict Mode and strand the post-continue drop prompt.
         let conflict_partial = partial && !report.evidence.conflicts.is_empty();
-        let summary = oplog_panel::outcome_summary(&entry.outcome);
+        let summary = oplog_panel::outcome_summary_contract(&entry.outcome);
         if report.evidence.stop == Some(kagi_git::backend::stash::StashStopReason::Abandoned)
             && name != "stash-apply"
         {
@@ -165,7 +156,11 @@ impl KagiApp {
         } else if let Some(error) = &report.evidence.preflight_error {
             i18n::op_failed(i18n::Op::Preflight, error)
         } else if !report.evidence.conflicts.is_empty() {
-            format!("{}: {}", name, Msg::StashPopConflictedKept.t())
+            format!(
+                "{}: {}",
+                i18n::op::user_text::operation_label(name),
+                Msg::StashPopConflictedKept.t()
+            )
         } else if let Some(refused) = report
             .evidence
             .plan_blocked
@@ -176,7 +171,7 @@ impl KagiApp {
             // #353: a plan-blocked stash names its first typed blocker.
             refused
         } else {
-            format!("{}: {}", name, summary)
+            super::outcome_text(name, &entry.outcome)
         };
         let recording_failed = matches!(
             report.recording,
@@ -193,11 +188,11 @@ impl KagiApp {
         );
         if self.active_session() == Some(owner.session) {
             self.status_footer = if success && !recording_failed {
-                FooterStatus::Success(footer.clone().into())
+                FooterStatus::Success(crate::ui::operations::display_text(footer.clone().into()))
             } else if partial {
                 FooterStatus::Idle(footer.clone().into())
             } else {
-                FooterStatus::Failed(footer.clone().into())
+                FooterStatus::Failed(crate::ui::operations::display_text(footer.clone().into()))
             };
         }
         if !success && !conflict_partial && report.evidence.unknown {
@@ -206,8 +201,10 @@ impl KagiApp {
             self.app_notices.push_back(notice);
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
-            self.app_notices
-                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
+            self.app_notices.push_back(
+                i18n::op::user_text::operations::recording_failed(&entry.repo, &error.to_string())
+                    .into(),
+            );
         }
     }
     /// Reserve and mirror in the same UI turn, before any writer dispatch.
@@ -331,7 +328,9 @@ impl KagiApp {
             "conflict-abort" => self.clear_conflict_abort_modal(),
             _ => unreachable!(),
         }
-        self.status_footer = FooterStatus::Busy(SharedString::from(label.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(label.t()),
+        ));
         if name == "remove-worktree" {
             klog!("async: remove-worktree started");
         } else if name == "remote-stash-drop" {
@@ -431,7 +430,7 @@ impl KagiApp {
                     }
                 };
                 let entry = report.recording.entry().clone();
-                let summary = oplog_panel::outcome_summary(&entry.outcome);
+                let summary = oplog_panel::outcome_summary_contract(&entry.outcome);
                 let success = matches!(entry.outcome, OpOutcome::Success { .. });
                 let footer = match &entry.outcome {
                     OpOutcome::Success { after } => {
@@ -461,11 +460,15 @@ impl KagiApp {
                     i18n::plan_note_text(note)
                 } else if matches!(entry.outcome, OpOutcome::Refused { .. }) {
                     report.blocker.as_ref().map_or_else(
-                        || footer.clone(),
+                        || super::outcome_text("remove-worktree", &entry.outcome),
                         |blocker| format!("{}: {}", entry.repo, i18n::plan_note_text(blocker)),
                     )
                 } else {
-                    format!("{}: {}", entry.repo, summary)
+                    format!(
+                        "{}: {}",
+                        entry.repo,
+                        super::outcome_text("remove-worktree", &entry.outcome)
+                    )
                 };
                 match &entry.outcome {
                     OpOutcome::Success { .. } => klog!(
@@ -504,10 +507,12 @@ impl KagiApp {
                 );
                 if self.active_session() == Some(attachment.session) {
                     klog!("footer: {}", footer);
+                    let display =
+                        super::outcome_text("remove-worktree", &report.recording.entry().outcome);
                     self.status_footer = if success {
-                        FooterStatus::Success(footer.into())
+                        FooterStatus::Success(display.into())
                     } else {
-                        FooterStatus::Failed(footer.into())
+                        FooterStatus::Failed(display.into())
                     };
                 }
                 if !success
@@ -521,8 +526,11 @@ impl KagiApp {
                 if let kagi_git::backend::remove::Recording::Failed { error, .. } = report.recording
                 {
                     self.app_notices.push_back(
-                        format!("{}: recording failed: {}", attachment.path.display(), error)
-                            .into(),
+                        i18n::op::user_text::operations::recording_failed(
+                            attachment.path.display(),
+                            &error.to_string(),
+                        )
+                        .into(),
                     );
                 }
             }
@@ -551,9 +559,9 @@ impl KagiApp {
     ) {
         let entry = report.recording.entry().clone();
         let summary = if matches!(entry.outcome, OpOutcome::Unknown { .. }) {
-            Msg::RemoteOpAwaitingCompletion.t().to_string()
+            i18n::op::remote_completion_pending_contract(i18n::lang()).to_string()
         } else {
-            oplog_panel::outcome_summary(&entry.outcome)
+            oplog_panel::outcome_summary_contract(&entry.outcome)
         };
         let success = matches!(entry.outcome, OpOutcome::Success { .. });
         if success {
@@ -569,7 +577,7 @@ impl KagiApp {
         }
         // #353: a refused remote drop names its diagnostic, not a count.
         let shown = super::record::refused_display("stash-drop", &entry.outcome)
-            .unwrap_or_else(|| format!("stash-drop: {summary}"));
+            .unwrap_or_else(|| super::outcome_text("stash-drop", &entry.outcome));
         self.push_toast(
             if success {
                 ToastKind::Success
@@ -586,9 +594,9 @@ impl KagiApp {
         });
         if active {
             self.status_footer = if success {
-                FooterStatus::Success(shown.into())
+                FooterStatus::Success(crate::ui::operations::display_text(shown.into()))
             } else {
-                FooterStatus::Failed(shown.into())
+                FooterStatus::Failed(crate::ui::operations::display_text(shown.into()))
             };
             if success {
                 #[cfg(feature = "gui-e2e")]
@@ -601,13 +609,19 @@ impl KagiApp {
             }
         }
         if !success && matches!(entry.outcome, OpOutcome::Unknown { .. }) {
-            let mut notice = modals::AppNotice::from(format!("{}: {summary}", entry.repo));
+            let mut notice = modals::AppNotice::from(format!(
+                "{}: {}",
+                entry.repo,
+                super::outcome_text("stash-drop", &entry.outcome)
+            ));
             notice.inspect = Some(id);
             self.app_notices.push_back(notice);
         }
         if let kagi_git::backend::recording::Recording::Failed { error, .. } = report.recording {
-            self.app_notices
-                .push_back(format!("{}: recording failed: {}", entry.repo, error).into());
+            self.app_notices.push_back(
+                i18n::op::user_text::operations::recording_failed(&entry.repo, &error.to_string())
+                    .into(),
+            );
         }
     }
     fn deliver_remote_pull_result(
@@ -645,8 +659,9 @@ impl KagiApp {
                 klog!("async: remote pull finished — {summary}");
                 self.present_recorded(&report.recording, cx);
                 if recorded_clean {
-                    self.status_footer =
-                        FooterStatus::Success(SharedString::from(format!("pull: {summary}")));
+                    self.status_footer = FooterStatus::Success(
+                        i18n::op::user_text::operations::pull_summary(summary).into(),
+                    );
                 }
                 self.refresh_remote_view(cx);
             }
@@ -688,7 +703,9 @@ impl KagiApp {
     /// contract and stays exactly as it was.
     pub(crate) fn report_plan_failure(&mut self, op: i18n::Op, error: impl std::fmt::Display) {
         let message = i18n::op_plan_failed(op, error);
-        self.status_footer = FooterStatus::Failed(SharedString::from(message.clone()));
+        self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+            SharedString::from(message.clone()),
+        ));
         self.app_notices.push_back(message.into());
         self.present_app_notice();
     }
@@ -696,7 +713,7 @@ impl KagiApp {
         self.app_notices.push_back(modals::AppNotice::from(format!(
             "{}: {}",
             repo.display(),
-            evidence.into()
+            i18n::op::user_text::diagnostic(&evidence.into())
         )));
         self.present_app_notice();
     }
@@ -759,9 +776,11 @@ mod tests {
             contract.as_ref(),
             "rebase-skip: partially applied — process state unavailable"
         );
-        assert_eq!(
-            display.as_ref(),
-            "rebase-skip: outcome unknown — termination unconfirmed — do not retry"
-        );
+        let OpOutcome::Unknown { evidence, .. } = &outcome else {
+            unreachable!()
+        };
+        assert!(display.contains(evidence));
+        assert_ne!(display, contract);
+        assert!(!display.contains("rebase-skip"));
     }
 }

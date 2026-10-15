@@ -230,8 +230,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "branch-cleanup: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("branch-cleanup: repo session unavailable"),
                 ));
                 return;
             }
@@ -251,10 +251,9 @@ impl KagiApp {
                 cx.notify();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "branch-cleanup plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("branch-cleanup plan error: {}", e)),
+                ));
             }
         }
     }
@@ -301,7 +300,7 @@ impl KagiApp {
             move || {
                 // An open failure is the job's own to record (`RunJob::run`).
                 let backend = kagi_git::Backend::open(&bg_path)
-                    .map_err(|e| i18n::op_failed(i18n::Op::Cleanup, e))?;
+                    .map_err(|e| i18n::op::op_failed_contract(i18n::Op::Cleanup, e))?;
                 Ok(backend.execute_delete_merged_branches(&bg_plan, &bg_targets))
             },
             |_| None,
@@ -313,11 +312,9 @@ impl KagiApp {
                         outcome.failed.len()
                     );
                     if outcome.failed.is_empty() {
-                        RunPresentation::status(FooterStatus::Success(SharedString::from(format!(
-                            "branch-cleanup: {} deleted, {} failed",
-                            outcome.deleted.len(),
-                            outcome.failed.len()
-                        ))))
+                        RunPresentation::status(FooterStatus::Success(
+                            i18n::op::user_text::operations::cleanup(outcome.deleted.len()).into(),
+                        ))
                     } else {
                         // Some refs may already be deleted. The durable row is
                         // the only safe presentation; never offer a raw retry.

@@ -14,7 +14,8 @@ fn oplog_restore_blocking(
     op: &Operation,
     plan: &kagi_git::OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     Ok(repo.run_recorded(op, plan))
 }
 
@@ -54,17 +55,20 @@ impl KagiApp {
             _ => i18n::Op::RestoreToPoint,
         };
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
-                i18n_op,
-                Msg::RestoreRepoSessionUnavailable.t(),
-            )));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from(i18n::op::op_plan_failed_contract(
+                    i18n_op,
+                    Msg::RestoreRepoSessionUnavailable.t(),
+                )),
+            ));
             return;
         };
         match session.backend().plan(&op) {
             Ok(plan) => self.admit_oplog_restore_plan(op, plan, cx),
             Err(e) => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(i18n_op, e)));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n_op, e)),
+                ));
             }
         }
     }

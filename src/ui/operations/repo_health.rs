@@ -35,7 +35,8 @@ fn repo_health_blocking(
     op: &Operation,
     plan: &kagi_git::OperationPlan,
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     Ok(repo.run_recorded(op, plan))
 }
 
@@ -48,10 +49,10 @@ impl KagiApp {
         }
         let op = operation(fix);
         let Some(session) = self.ui().repo_session.as_ref() else {
-            self.status_footer = FooterStatus::Failed(SharedString::from(i18n::op_plan_failed(
-                op_label(fix),
-                "repo session unavailable",
-            )));
+            self.status_footer =
+                FooterStatus::Failed(crate::ui::operations::display_text(SharedString::from(
+                    i18n::op::op_plan_failed_contract(op_label(fix), "repo session unavailable"),
+                )));
             return;
         };
         match session.backend().plan(&op) {
@@ -64,8 +65,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(op_label(fix), e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(op_label(fix), e)),
                 ));
             }
         }

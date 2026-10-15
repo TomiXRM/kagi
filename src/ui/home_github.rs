@@ -378,9 +378,10 @@ impl KagiApp {
                 if self.home_github.refreshing {
                     self.push_toast(
                         super::ToastKind::Error,
-                        Msg::HomeGithubRefreshFailed
-                            .t()
-                            .replace("{}", &error.to_string()),
+                        Msg::HomeGithubRefreshFailed.t().replace(
+                            "{}",
+                            &crate::ui::i18n::op::user_text::diagnostic(&error.to_string()),
+                        ),
                         cx,
                     );
                     // The list on screen stays, saying why it is not current.
@@ -646,7 +647,9 @@ impl KagiApp {
                     div()
                         .text_sm()
                         .text_color(rgb(theme().color_blocker))
-                        .child(safe_text(error)),
+                        .child(safe_text(&crate::ui::i18n::op::user_text::diagnostic(
+                            error,
+                        ))),
                 )
                 .child(muted(Msg::HomeGithubFailedHint.t().to_string()))
                 .into_any_element(),

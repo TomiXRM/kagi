@@ -133,7 +133,9 @@ impl KagiApp {
                                     let reason = blocker.as_ref().map(i18n::plan_note_text);
                                     let message =
                                         SharedString::from(reason.unwrap_or_else(|| error.clone()));
-                                    app.status_footer = FooterStatus::Failed(message.clone());
+                                    app.status_footer = FooterStatus::Failed(
+                                        crate::ui::operations::display_text(message.clone()),
+                                    );
                                     app.push_toast(ToastKind::Error, message, cx);
                                 }
                                 _ => {}
@@ -323,7 +325,7 @@ impl KagiApp {
         };
         let mut plan = repo
             .plan_pull()
-            .map_err(|e| i18n::op_plan_failed(i18n::Op::Pull, e))?;
+            .map_err(|e| i18n::op::op_plan_failed_contract(i18n::Op::Pull, e))?;
         // A blocked plan has no executable identity: preserve its actual blocker
         // instead of turning it into an upstream-change error after a successful fetch.
         if plan.blockers.is_empty()
@@ -463,7 +465,9 @@ impl KagiApp {
         }
 
         self.clear_pull_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPull.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyPull.t()),
+        ));
         klog!("async: pull started");
         self.finish_pull(cx, modal, repo_path);
     }
@@ -483,8 +487,9 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("push: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("push: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -521,8 +526,8 @@ impl KagiApp {
                 self.focus_root_for_modal();
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Push, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Push, e)),
                 ));
             }
         }
@@ -562,7 +567,9 @@ impl KagiApp {
         }
 
         self.clear_push_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyPush.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyPush.t()),
+        ));
         klog!("async: push started");
 
         let plan = modal.plan.clone();
@@ -576,9 +583,16 @@ impl KagiApp {
             move || push_blocking(&bg_path, &plan),
             |outcome| Some(format!("finished — {}", push_summary(outcome))),
             move |done| match done {
-                Ok(outcome) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    format!("push: {}", push_summary(outcome)),
-                ))),
+                Ok(outcome) => {
+                    let text = i18n::op::user_text::operations::push_result(outcome).into();
+                    RunPresentation::status(
+                        if matches!(outcome, kagi_git::OperationOutcome::Push(_)) {
+                            FooterStatus::Success(text)
+                        } else {
+                            FooterStatus::Failed(text)
+                        },
+                    )
+                }
                 Err(_) => RunPresentation::none(),
             },
         );

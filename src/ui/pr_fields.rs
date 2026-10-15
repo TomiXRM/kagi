@@ -362,7 +362,7 @@ pub(crate) fn render_pr_fields_modal(
                     div()
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
-                        .child(error)
+                        .child(crate::ui::i18n::op::user_text::diagnostic(&error).into_owned())
                 }))
                 .when(loading, |el| {
                     el.child(

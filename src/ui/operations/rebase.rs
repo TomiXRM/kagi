@@ -41,8 +41,9 @@ impl KagiApp {
         };
         self.clear_rebase_current_onto_modal();
         self.planning = Some("rebase-plan");
-        self.status_footer =
-            FooterStatus::Busy(SharedString::from(i18n::busy_label("rebase-plan")));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(i18n::busy_label("rebase-plan")),
+        ));
         let bg_onto = onto.clone();
         let task = cx.background_spawn(async move {
             let repo = crate::ui::blocking_ops::open_merge_backend(&owner)?;
@@ -97,15 +98,17 @@ impl KagiApp {
             .find(|(_, current)| *current)
             .map(|(name, _)| name.clone())
         else {
-            self.status_footer =
-                FooterStatus::Failed(SharedString::from("replay: no current branch"));
+            self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                SharedString::from("replay: no current branch"),
+            ));
             return;
         };
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("replay: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("replay: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -132,8 +135,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Replay, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Replay, e)),
                 ));
             }
         }
@@ -195,7 +198,9 @@ impl KagiApp {
                 i18n::Op::Rebase,
             ),
         };
-        self.status_footer = FooterStatus::Busy(SharedString::from(busy));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(busy),
+        ));
         klog!("async: {} started", op_name);
 
         let plan = modal.plan.clone();
@@ -212,9 +217,9 @@ impl KagiApp {
             move || rebase_blocking(&bg_path, &bg_plan, &bg_op),
             |outcome| Some(format!("finished — {}", rebase_summary(outcome))),
             move |done| match done {
-                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    format!("{}: onto '{}'", op_name, onto),
-                ))),
+                Ok(_) => RunPresentation::status(FooterStatus::Success(
+                    i18n::op::user_text::operations::onto(op_name, &onto).into(),
+                )),
                 Err(failure)
                     if failure.code
                         == kagi_git::oplog::FailureCode::RebaseBlockedByRepoSettings =>
@@ -238,7 +243,7 @@ fn rebase_blocking(
     op: &kagi_git::Operation,
 ) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
-        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let onto = match op {
         kagi_git::Operation::RebaseCurrentOnto { onto }
         | kagi_git::Operation::ReplayOnto { onto, .. } => onto.as_str(),

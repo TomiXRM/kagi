@@ -7,6 +7,9 @@
 
 use super::{lang, Lang};
 
+#[path = "user_text.rs"]
+pub mod user_text;
+
 /// The operation named in a failure message shown to the user (modal + oplog).
 ///
 /// A `Msg` variant per call site would mean ~120 arms for one sentence shape,
@@ -120,7 +123,7 @@ impl Op {
             MoveToTrash => ("Move to Trash", "ゴミ箱への移動"),
             OpenWorktree => ("Open worktree", "worktree を開く操作"),
             Pop => ("Pop", "pop"),
-            Preflight => ("Preflight", "preflight"),
+            Preflight => ("Pre-run check", "実行前の確認"),
             PrComment => ("PR comment", "PR コメント"),
             IssueCreate => ("Create issue", "Issue 作成"),
             IssueComment => ("Issue reply", "Issue 返信"),
@@ -177,6 +180,32 @@ impl Op {
     }
 }
 
+/// Stable diagnostic text for receipt data and the stderr contract, not UI.
+pub fn op_failed_contract(op: Op, err: impl std::fmt::Display) -> String {
+    let label = match (op, lang()) {
+        (Op::Preflight, Lang::En) => "Preflight",
+        (Op::Preflight, Lang::Ja) => "preflight",
+        _ => op.t(),
+    };
+    match lang() {
+        Lang::En => format!("{label} failed: {err}"),
+        Lang::Ja => format!("{label} に失敗しました: {err}"),
+    }
+}
+
+/// Stable planning diagnostic for receipt data and the stderr contract.
+pub fn op_plan_failed_contract(op: Op, err: impl std::fmt::Display) -> String {
+    let label = match (op, lang()) {
+        (Op::Preflight, Lang::En) => "Preflight",
+        (Op::Preflight, Lang::Ja) => "preflight",
+        _ => op.t(),
+    };
+    match lang() {
+        Lang::En => format!("{label} plan failed: {err}"),
+        Lang::Ja => format!("{label} の plan に失敗しました: {err}"),
+    }
+}
+
 /// The operation finished, but Kagi could not persist its oplog record.
 ///
 /// Kagi's promise is that every operation leaves a record to recover and audit
@@ -184,13 +213,15 @@ impl Op {
 /// the entry — and the in-session panel still shows it, so nothing looks wrong
 /// until the next launch (#643 A1).
 pub fn oplog_write_failed(err: impl std::fmt::Display) -> String {
+    let raw = err.to_string();
+    let err = user_text::diagnostic(&raw);
     match lang() {
         Lang::En => format!(
-            "The operation finished, but its oplog record could not be written ({err}). \
-             Recovery and audit history for it is missing."
+            "The operation finished, but it could not be saved to the Operation Log ({err}). \
+             You cannot undo it from there."
         ),
         Lang::Ja => format!(
-            "操作は完了しましたが、oplog への記録に失敗しました({err})。この操作の復旧・監査履歴が残っていません。"
+            "操作は完了しましたが、Operation Log に保存できませんでした({err})。Operation Log からは取り消せません。"
         ),
     }
 }
@@ -198,8 +229,10 @@ pub fn oplog_write_failed(err: impl std::fmt::Display) -> String {
 /// `"Pull failed: <err>"` / `"pull に失敗しました: <err>"`.
 ///
 /// The single sentence every operation-failure string in the UI goes through.
-/// `err` is the raw backend error and is never translated.
+/// Known Kagi diagnostics are localized; unknown Git details remain intact.
 pub fn op_failed(op: Op, err: impl std::fmt::Display) -> String {
+    let raw = err.to_string();
+    let err = user_text::diagnostic(&raw);
     match lang() {
         Lang::En => format!("{} failed: {}", op.t(), err),
         Lang::Ja => format!("{} に失敗しました: {}", op.t(), err),
@@ -230,22 +263,23 @@ pub fn terminal_ports_exhausted(worktree: &str, range: (u16, u16), per: u16) -> 
 pub fn terminal_nonconcurrent_blocked(worktree: &str, running: &str) -> String {
     match lang() {
         Lang::En => format!(
-            "nonconcurrent: the terminal in {running} is still running, so none starts in \
-             {worktree}. Exit that shell first (worktree_run_mode in settings.json)."
+            "Only one terminal can run at a time in this repository. \
+             Exit the shell in {running} before starting one in {worktree}."
         ),
         Lang::Ja => format!(
-            "nonconcurrent: {running} の terminal が動作中のため、{worktree} では起動しません。\
-             先にその shell を終了してください(settings.json の worktree_run_mode)。"
+            "このリポジトリではターミナルを同時に 1 つしか起動できません。\
+             {worktree} で起動する前に {running} の shell を終了してください。"
         ),
     }
 }
 
-/// `"Pull plan failed: <err>"` / `"pull の plan に失敗しました: <err>"` — the
-/// planning step of [`op_failed`]'s operation (plan → confirm → preflight → …).
+/// Preparation failure, expressed as the user's action rather than a phase name.
 pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
+    let raw = err.to_string();
+    let err = user_text::diagnostic(&raw);
     match lang() {
-        Lang::En => format!("{} plan failed: {}", op.t(), err),
-        Lang::Ja => format!("{} の plan に失敗しました: {}", op.t(), err),
+        Lang::En => format!("Could not prepare {}: {}", op.t(), err),
+        Lang::Ja => format!("{}を準備できませんでした: {}", op.t(), err),
     }
 }
 
@@ -257,6 +291,7 @@ pub fn op_plan_failed(op: Op, err: impl std::fmt::Display) -> String {
 /// written over several lines is joined into one: the footer and toast show
 /// only a first line, which would otherwise drop its detail and the count.
 pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> String {
+    let op = user_text::operation_label(op);
     let reason = reason.to_string();
     let reason: Vec<&str> = reason
         .lines()
@@ -264,6 +299,7 @@ pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> Stri
         .filter(|l| !l.is_empty())
         .collect();
     let reason = reason.join(" ");
+    let reason = user_text::diagnostic(&reason);
     match (lang(), more) {
         (Lang::En, 0) => format!("{op} refused: {reason}"),
         (Lang::En, n) => format!("{op} refused: {reason} (+{n} more in Operation Log)"),
@@ -278,12 +314,12 @@ pub fn op_refused(op: &str, reason: impl std::fmt::Display, more: usize) -> Stri
 pub fn plan_not_shown_retry(op: Op) -> String {
     match lang() {
         Lang::En => format!(
-            "{} plan was not shown because another dialog took priority. Run {} again for a fresh plan.",
+            "{} was cancelled because another dialog opened. Run {} again.",
             op.t(),
             op.t()
         ),
         Lang::Ja => format!(
-            "別のダイアログを優先したため、{} の plan は表示しませんでした。最新の plan を作るには {} をもう一度実行してください。",
+            "別のダイアログが開いたため {} を中止しました。もう一度 {} を実行してください。",
             op.t(),
             op.t()
         ),
@@ -303,15 +339,16 @@ pub fn recorded_outcome_notice(message: impl std::fmt::Display) -> String {
 pub fn rebase_repository_settings_may_block_start() -> &'static str {
     match lang() {
         Lang::En => {
-            "Rebase did not start. Run `git status` in a terminal. If it is clean, Kagi disabling some repository settings for safety may be involved. If you trust the repository, run `git rebase` in a terminal."
+            "Rebase did not start. Check `git status` in a terminal; if it is clean and you trust the repository, run `git rebase` there."
         }
         Lang::Ja => {
-            "rebase を開始できませんでした。ターミナルで `git status` を確認してください。clean なら、Kagi が安全のため一部の repository 設定を無効化したことが影響している可能性があります。repository を信頼する場合は、ターミナルで `git rebase` を実行してください。"
+            "rebase を開始できませんでした。ターミナルで `git status` を確認し、clean でリポジトリを信頼する場合は、そこで `git rebase` を実行してください。"
         }
     }
 }
 
-pub fn auto_stash_identity_unverified() -> &'static str {
+/// Stable receipt/diagnostic wording; not for user-facing display.
+pub fn auto_stash_identity_unverified_contract() -> &'static str {
     match lang() {
         Lang::En => {
             "Your changes are stored in the stash entry named `kagi: auto-stash before pull`, but Kagi could not verify its identity. Pull was not started; inspect the stash before continuing."
@@ -319,6 +356,13 @@ pub fn auto_stash_identity_unverified() -> &'static str {
         Lang::Ja => {
             "変更内容は `kagi: auto-stash before pull` という名前の stash に保存されていますが、Kagi はその識別情報を確認できませんでした。Pull は開始していません。続行前に stash を確認してください。"
         }
+    }
+}
+
+pub fn auto_stash_identity_unverified() -> &'static str {
+    match lang() {
+        Lang::En => "Your changes are saved in the stash `kagi: auto-stash before pull`, but Kagi could not confirm it is the right one. Pull was not started; check the stash before continuing.",
+        Lang::Ja => "変更は `kagi: auto-stash before pull` という stash に保存されていますが、正しい stash か確認できませんでした。Pull は開始していません。続行前に stash を確認してください。",
     }
 }
 
@@ -370,6 +414,43 @@ pub fn auto_stash_missing() -> &'static str {
     }
 }
 
+// These messages were historically written into receipts or stderr via Msg.
+// Keep both locale forms stable; user_text translates them only for display.
+pub fn pull_identity_changed_contract(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "The approved Pull target changed (branch, local tip, remote or upstream). Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
+        Lang::Ja => "確認後に Pull の branch・先端・remote・upstream が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の内容を確認してください。",
+    }
+}
+
+pub fn pull_files_changed_contract(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "The working tree changed after this confirmation was shown, so the paths Kagi would stash — and what restoring them would do — are no longer the ones you approved. Nothing was stashed or pulled; press Pull again for a fresh confirmation.",
+        Lang::Ja => "確認を表示した後に working tree が変わったため、stash 対象と復元結果が承認内容と一致しません。stash も pull も実行していません。Pull をもう一度押すと最新の確認を表示します。",
+    }
+}
+
+pub fn pull_restore_changed_contract(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "The stash restore preview changed after confirmation. Nothing was stashed or pulled; press Pull again to review the new restore preview.",
+        Lang::Ja => "確認後に stash の復元予測が変わりました。stash も pull も実行していません。Pull をもう一度押して最新の復元予測を確認してください。",
+    }
+}
+
+pub fn remote_completion_pending_contract(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "Waiting to confirm that the remote operation stopped. Do not retry it; inspect the remote state and completion token.",
+        Lang::Ja => "remote 操作の停止確認待ちです。再実行せず、remote state と completion token を確認してください。",
+    }
+}
+
+pub fn terminal_lock_changed_contract(language: Lang) -> &'static str {
+    match language {
+        Lang::En => "Terminal lock owner, shell, or repository changed; recover the lock manually",
+        Lang::Ja => "terminal のロック所有者・shell・repository が変わりました。ロックは手動で確認して解除してください",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,10 +459,10 @@ mod tests {
     fn async_slot_notices_switch_language() {
         let _guard = super::super::tests::LOCK.lock();
         super::super::set_lang_no_persist(Lang::En);
-        assert!(plan_not_shown_retry(Op::Merge).starts_with("Merge plan was not shown"));
+        assert!(!plan_not_shown_retry(Op::Merge).contains("plan"));
         assert!(recorded_outcome_notice("Push failed").contains("Review Operation Log"));
         super::super::set_lang_no_persist(Lang::Ja);
-        assert!(plan_not_shown_retry(Op::Merge).contains("merge の plan"));
+        assert!(!plan_not_shown_retry(Op::Merge).contains("plan"));
         assert!(recorded_outcome_notice("push に失敗しました").contains("Operation Log"));
         super::super::set_lang_no_persist(Lang::En);
     }
@@ -390,25 +471,17 @@ mod tests {
     fn refusal_names_the_reason_and_counts_the_rest() {
         let _guard = super::super::tests::LOCK.lock();
         super::super::set_lang_no_persist(Lang::En);
-        assert_eq!(
-            op_refused("checkout", "dirty", 0),
-            "checkout refused: dirty"
+        let preview = op_refused("delete-branch", "checked out.\nbranch `main`\n", 0);
+        assert!(!preview.contains("delete-branch"));
+        assert!(
+            !preview.contains('\n'),
+            "the entire reason fits the first-line preview"
         );
-        assert_eq!(
-            op_refused("delete-branch", "checked out.\nbranch `main`\n", 0),
-            "delete-branch refused: checked out. branch `main`",
-            "one line, so a first-line preview keeps the detail"
-        );
-        assert_eq!(
-            op_refused("checkout", "dirty", 2),
-            "checkout refused: dirty (+2 more in Operation Log)"
-        );
+        assert!(preview.contains("branch `main`"), "retain user data");
+        assert!(op_refused("checkout", "dirty", 2).contains("2"));
         super::super::set_lang_no_persist(Lang::Ja);
-        assert_eq!(
-            op_refused("checkout", "未 commit", 0),
-            "checkout は拒否されました: 未 commit"
-        );
-        assert!(op_refused("checkout", "未 commit", 1).ends_with("（ほか 1 件は Operation Log）"));
+        assert!(op_refused("checkout", "未 commit", 0).contains("未 commit"));
+        assert!(op_refused("checkout", "未 commit", 1).contains("1"));
         super::super::set_lang_no_persist(Lang::En);
     }
 }

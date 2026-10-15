@@ -1843,7 +1843,7 @@ impl FetchFailure {
             kagi_git::oplog::OpOutcome::Failed {
                 error: match self.auth_summary() {
                     Some(summary) => summary,
-                    None => i18n::op_failed(i18n::Op::Fetch, &self.message),
+                    None => i18n::op::op_failed_contract(i18n::Op::Fetch, &self.message),
                 },
             }
         }

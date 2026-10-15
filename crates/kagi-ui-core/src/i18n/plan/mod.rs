@@ -104,6 +104,8 @@ pub(super) fn advice_text(msg: Msg, args: &[&dyn std::fmt::Display]) -> String {
 
 /// Localized text for one plan note (blocker / warning).
 pub fn plan_note_text(note: &PlanNote) -> String {
+    let note = super::op::user_text::plan_note_payload(note);
+    let note = note.as_ref();
     match lang() {
         Lang::En => note.message_en(),
         Lang::Ja => note_ja_any(note),

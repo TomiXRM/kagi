@@ -213,7 +213,9 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> AnyEl
         )),
         IssueListPresentation::Error => body.child(status_text(
             "issue-mode-list-error",
-            safe_text(error.unwrap_or_default()),
+            safe_text(&crate::ui::i18n::op::user_text::diagnostic(
+                error.unwrap_or_default(),
+            )),
             theme().color_blocker,
         )),
         IssueListPresentation::Empty | IssueListPresentation::Issues => {
@@ -245,7 +247,9 @@ fn render_list(app: &KagiApp, compact: bool, cx: &mut Context<KagiApp>) -> AnyEl
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
                         .whitespace_normal()
-                        .child(safe_text(message)),
+                        .child(safe_text(&crate::ui::i18n::op::user_text::diagnostic(
+                            message,
+                        ))),
                 );
             }
             // #906: "me" is the login on the Issues repository's host, not
@@ -462,7 +466,9 @@ fn render_main_list_status(
         )),
         IssueListPresentation::Error => list.child(status_text(
             "issue-main-list-error",
-            safe_text(error.unwrap_or_default()),
+            safe_text(&crate::ui::i18n::op::user_text::diagnostic(
+                error.unwrap_or_default(),
+            )),
             theme().color_blocker,
         )),
         IssueListPresentation::Empty | IssueListPresentation::Issues => {
@@ -493,7 +499,9 @@ fn render_main_list_status(
                         .text_xs()
                         .text_color(rgb(theme().color_blocker))
                         .whitespace_normal()
-                        .child(safe_text(message)),
+                        .child(safe_text(&crate::ui::i18n::op::user_text::diagnostic(
+                            message,
+                        ))),
                 );
             }
             if filtered_count == 0 {
@@ -547,7 +555,9 @@ fn render_issue_page_tail(
             if let Some(error) = &ui.github_issues_error {
                 tail = tail
                     .text_color(rgb(theme().color_blocker))
-                    .child(div().whitespace_normal().child(safe_text(error)))
+                    .child(div().whitespace_normal().child(safe_text(
+                        &crate::ui::i18n::op::user_text::diagnostic(error),
+                    )))
                     .child(super::list_filter_strip::page_button(
                         "issue-main-page-retry",
                         Msg::IssuesRetryLoadMore.t(),

@@ -17,8 +17,8 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    "reset-current: repo session unavailable",
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("reset-current: repo session unavailable"),
                 ));
                 return;
             }
@@ -38,10 +38,9 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "reset-current plan error: {}",
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!("reset-current plan error: {}", e)),
+                ));
             }
         }
     }
@@ -95,10 +94,10 @@ impl KagiApp {
         }
 
         self.clear_reset_current_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(format!(
-            "Resetting current branch to {}…",
-            modal.target.short()
-        )));
+        self.status_footer =
+            FooterStatus::Busy(crate::ui::operations::display_text(SharedString::from(
+                format!("Resetting current branch to {}…", modal.target.short()),
+            )));
         klog!("async: reset-current started");
 
         let plan = modal.plan.clone();
@@ -115,9 +114,9 @@ impl KagiApp {
             move || reset_current_blocking(&bg_path, &bg_plan, &bg_target),
             |_| None,
             move |done| match done {
-                Ok(_) => RunPresentation::status(FooterStatus::Success(SharedString::from(
-                    format!("reset-current: now at {}", target.short()),
-                ))),
+                Ok(_) => RunPresentation::status(FooterStatus::Success(
+                    i18n::op::user_text::operations::reset(&target.short()).into(),
+                )),
                 Err(_) => RunPresentation::none(),
             },
         );
@@ -132,7 +131,7 @@ fn reset_current_blocking(
     target: &CommitId,
 ) -> Result<kagi_git::backend::recording::RunReport, String> {
     let mut repo = crate::ui::blocking_ops::open_backend(repo_path)
-        .map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+        .map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::ResetCurrentToHead {
         target: target.clone(),
     };

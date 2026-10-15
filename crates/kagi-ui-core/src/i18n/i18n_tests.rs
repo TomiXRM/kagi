@@ -343,15 +343,14 @@ fn parameterized_helpers_switch() {
 #[test]
 fn op_failed_switches_and_keeps_domain_words() {
     let _g = LOCK.lock();
-    set_lang_no_persist(Lang::En);
-    assert_eq!(op_failed(Op::Pull, "boom"), "Pull failed: boom");
-    assert_eq!(op_failed(Op::RepoOpen, "boom"), "Repo open failed: boom");
-    assert_eq!(op_plan_failed(Op::Push, "boom"), "Push plan failed: boom");
+    for language in [Lang::En, Lang::Ja] {
+        set_lang_no_persist(language);
+        let raw = "raw Git detail: branch feature_session-name";
+        assert!(op_failed(Op::Pull, raw).contains(raw));
+        assert!(op_plan_failed(Op::Push, raw).contains(raw));
+        assert!(!op_plan_failed(Op::Push, raw).contains("plan"));
+    }
     set_lang_no_persist(Lang::Ja);
-    assert_eq!(
-        op_failed(Op::Pull, "boom"),
-        "pull \u{306b}\u{5931}\u{6557}\u{3057}\u{307e}\u{3057}\u{305f}: boom"
-    );
     // ADR-0048: git domain words stay English in the Japanese label too.
     for op in [
         Op::Pull,

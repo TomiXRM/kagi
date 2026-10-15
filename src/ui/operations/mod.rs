@@ -46,6 +46,33 @@ use crate::ui::i18n::Msg;
 use crate::ui::types::FooterStatus;
 use crate::ui::{BottomTab, ToastKind};
 
+/// Translate at the display boundary without changing a receipt or a log line.
+pub(crate) fn display_text(text: gpui::SharedString) -> gpui::SharedString {
+    match kagi_ui_core::i18n::op::user_text::diagnostic(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(display) => display.into(),
+    }
+}
+
+/// Present the outcome, not the receipt's internal state fields.
+pub(crate) fn outcome_text(op: &str, outcome: &kagi_git::oplog::OpOutcome) -> String {
+    use kagi_git::oplog::OpOutcome;
+    use kagi_ui_core::i18n::op::user_text::{diagnostic, operations};
+    match outcome {
+        OpOutcome::Success { .. } => operations::completed(op),
+        OpOutcome::Partial { error, .. } => operations::partial(op, error),
+        OpOutcome::Unknown { evidence, .. } => operations::unknown(op, evidence),
+        OpOutcome::Failed { error } => operations::failed(op, error),
+        OpOutcome::Refused { blockers } => {
+            let reason = blockers
+                .first()
+                .map(|reason| diagnostic(reason))
+                .unwrap_or_else(|| diagnostic("plan has blockers"));
+            kagi_ui_core::i18n::op_refused(op, reason, blockers.len().saturating_sub(1))
+        }
+    }
+}
+
 /// A failure handed to a family's `on_done` by [`KagiApp::finish_recorded`]:
 /// the localized text plus the receipt's typed code (ADR-0195), so a family
 /// can special-case a code without matching on prose.
@@ -300,12 +327,10 @@ impl KagiApp {
                     // above whatever happened, so nothing wedges.
                     None => {
                         klog!("op panicked: {} — busy_op cleared", tag);
-                        // ponytail: raw string, not a new i18n Msg — this is an
-                        // edge-case recovery footer, matching the raw-format!
-                        // footers already used across the op modules.
-                        app.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                            "{tag}: operation failed unexpectedly"
-                        )));
+                        app.status_footer =
+                            FooterStatus::Failed(crate::ui::operations::display_text(
+                                SharedString::from(format!("{tag}: operation failed unexpectedly")),
+                            ));
                     }
                 }
                 cx.notify();
@@ -475,11 +500,11 @@ impl KagiApp {
                                 // A typed refusal speaks the reader's language
                                 // (#866); everything else keeps its own text.
                                 message: match error.blocker() {
-                                    Some(note) => crate::ui::i18n::op_failed(
+                                    Some(note) => crate::ui::i18n::op::op_failed_contract(
                                         op,
                                         crate::ui::i18n::plan::plan_note_text(note),
                                     ),
-                                    None => crate::ui::i18n::op_failed(op, error),
+                                    None => crate::ui::i18n::op::op_failed_contract(op, error),
                                 },
                                 code: FailureCode::from(error),
                             };
@@ -570,7 +595,12 @@ impl KagiApp {
                         failure_message.as_deref(),
                         notice_override,
                     );
-                    if matches!(report.recording, Recording::Failed { .. }) {
+                    if matches!(report.recording, Recording::Failed { .. })
+                        || !matches!(
+                            report.recording.entry().outcome,
+                            kagi_git::oplog::OpOutcome::Success { .. }
+                        )
+                    {
                         if let Some(recorded_status) = recorded_status {
                             app.status_footer = recorded_status;
                         }
@@ -769,13 +799,8 @@ impl KagiApp {
         };
         let message = override_message
             .or_else(|| failure_message.map(str::to_owned))
-            .unwrap_or_else(|| {
-                format!(
-                    "{}: {}",
-                    entry.op,
-                    crate::ui::oplog_panel::outcome_summary(&entry.outcome)
-                )
-            });
+            .map(|reason| crate::ui::i18n::op::user_text::operations::partial(&entry.op, &reason))
+            .unwrap_or_else(|| outcome_text(&entry.op, &entry.outcome));
         // Recorded failures already have two surfaces: a transient toast and
         // the durable Operation Log row. A modal is reserved for an outcome
         // that needs an explicit inspect/acknowledge action.
@@ -806,13 +831,18 @@ impl KagiApp {
     /// "changed but not recorded" — the same delivery the stash family uses.
     pub(crate) fn notice_recording_failure(
         &mut self,
-        op: &str,
+        _op: &str,
         recording: &Recording,
         repo: &Path,
     ) {
         if let Recording::Failed { error, .. } = recording {
-            self.app_notices
-                .push_back(format!("{}: {op}: recording failed: {error}", repo.display()).into());
+            self.app_notices.push_back(
+                crate::ui::i18n::op::user_text::operations::recording_failed(
+                    repo.display(),
+                    &error.to_string(),
+                )
+                .into(),
+            );
         }
     }
 

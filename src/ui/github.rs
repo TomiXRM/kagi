@@ -35,7 +35,11 @@ pub(super) fn fetch_error_text(e: &kagi_git::github::PrFetchError) -> String {
     if detail.is_empty() {
         msg.t().to_string()
     } else {
-        format!("{}: {}", msg.t(), detail)
+        format!(
+            "{}: {}",
+            msg.t(),
+            crate::ui::i18n::op::user_text::diagnostic(detail)
+        )
     }
 }
 

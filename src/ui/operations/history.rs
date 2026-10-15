@@ -189,10 +189,12 @@ impl KagiApp {
         let repo = match self.ui().repo_session.as_ref() {
             Some(s) => s.backend(),
             None => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "{}: repo session unavailable",
-                    if is_undo { "undo" } else { "redo" },
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!(
+                        "{}: repo session unavailable",
+                        if is_undo { "undo" } else { "redo" },
+                    )),
+                ));
                 return;
             }
         };
@@ -218,11 +220,13 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(format!(
-                    "{}: plan error: {}",
-                    if is_undo { "undo" } else { "redo" },
-                    e
-                )));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(format!(
+                        "{}: plan error: {}",
+                        if is_undo { "undo" } else { "redo" },
+                        e
+                    )),
+                ));
             }
         }
     }
@@ -309,17 +313,19 @@ impl KagiApp {
                     &repo_path,
                     cx,
                 );
-                self.status_footer = FooterStatus::Success(SharedString::from(format!(
-                    "{}: {} → {} (recover: git reflog)",
-                    op_name,
-                    outcome.from.short(),
-                    outcome.to.short()
-                )));
+                self.status_footer = FooterStatus::Success(
+                    i18n::op::user_text::operations::moved(
+                        &op_name,
+                        &outcome.from.short(),
+                        &outcome.to.short(),
+                    )
+                    .into(),
+                );
                 self.reload(cx);
             }
             Err(e) => {
                 let err_msg = if e.is_preflight() {
-                    i18n::op_failed(i18n::Op::Preflight, e)
+                    i18n::op::op_failed_contract(i18n::Op::Preflight, e)
                 } else {
                     format!(
                         "{} failed: {}",
@@ -389,8 +395,9 @@ impl KagiApp {
         let planned = match self.with_commit_panel_repo(cx, |repo| repo.plan_amend(mode, msg_opt)) {
             Some(p) => p,
             None => {
-                self.status_footer =
-                    FooterStatus::Failed(SharedString::from("amend: repo session unavailable"));
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from("amend: repo session unavailable"),
+                ));
                 return;
             }
         };
@@ -412,8 +419,8 @@ impl KagiApp {
                 });
             }
             Err(e) => {
-                self.status_footer = FooterStatus::Failed(SharedString::from(
-                    i18n::op_plan_failed(i18n::Op::Amend, e),
+                self.status_footer = FooterStatus::Failed(crate::ui::operations::display_text(
+                    SharedString::from(i18n::op::op_plan_failed_contract(i18n::Op::Amend, e)),
                 ));
             }
         }
@@ -474,7 +481,9 @@ impl KagiApp {
         }
 
         self.clear_amend_modal();
-        self.status_footer = FooterStatus::Busy(SharedString::from(Msg::BusyAmend.t()));
+        self.status_footer = FooterStatus::Busy(crate::ui::operations::display_text(
+            SharedString::from(Msg::BusyAmend.t()),
+        ));
         klog!("async: amend started");
 
         let plan = modal.plan.clone();
@@ -500,12 +509,12 @@ impl KagiApp {
             move |done| match done {
                 Ok(kagi_git::OperationOutcome::Amend(outcome)) => {
                     let presentation = RunPresentation::status(FooterStatus::Success(
-                        SharedString::from(format!(
-                            "amend: {} → {} (restore: git reset --soft {})",
-                            outcome.old.short(),
-                            outcome.new.short(),
-                            outcome.old.short()
-                        )),
+                        i18n::op::user_text::operations::moved(
+                            "amend",
+                            &outcome.old.short(),
+                            &outcome.new.short(),
+                        )
+                        .into(),
                     ))
                     .consume_commit_message(repo_path.clone())
                     .refresh_worktree_wip(repo_path.clone());

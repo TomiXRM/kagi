@@ -11,7 +11,8 @@ pub(crate) fn discard_blocking(
     plan: &OperationPlan,
     paths: &[String],
 ) -> Result<RunReport, String> {
-    let mut repo = open_backend(repo_path).map_err(|e| i18n::op_failed(i18n::Op::RepoOpen, e))?;
+    let mut repo =
+        open_backend(repo_path).map_err(|e| i18n::op::op_failed_contract(i18n::Op::RepoOpen, e))?;
     let op = kagi_git::Operation::Discard {
         paths: paths.to_vec(),
     };

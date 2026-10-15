@@ -11,6 +11,8 @@ use gpui::{div, prelude::*, Div, ElementId, Pixels, Stateful, Window};
 pub const OPEN: Duration = Duration::from_millis(180);
 pub const CLOSE: Duration = Duration::from_millis(150);
 pub const TRANSITION: Duration = Duration::from_millis(180);
+/// About one viewport of changing rows. Larger splices settle immediately.
+pub const MAX_ANIMATED_ROWS: usize = 64;
 
 #[cfg(feature = "gui-e2e")]
 thread_local! {
@@ -275,6 +277,8 @@ impl<K: Eq + std::hash::Hash> RowSplice<K> {
     /// Existing keys reverse from their current presence/opacity; unaffected
     /// transitions continue, so overlapping batches do not restart one another.
     /// Call only on logical changes, not on viewport mounts or each render.
+    /// Exceeding `MAX_ANIMATED_ROWS` settles the entire splice, including older
+    /// active keys. Large list changes deliberately do not animate.
     pub fn retarget(
         &mut self,
         keys: impl IntoIterator<Item = K>,
@@ -282,15 +286,25 @@ impl<K: Eq + std::hash::Hash> RowSplice<K> {
         now: Instant,
         instant: bool,
     ) {
+        if instant {
+            self.rows.clear();
+            return;
+        }
         for key in keys {
-            if instant {
-                self.rows.remove(&key);
-                continue;
-            }
-            let transition = self
-                .rows
-                .entry(key)
-                .or_insert_with(|| KeyedTransition::new(!present, if present { 0. } else { 1. }));
+            let at_capacity = self.rows.len() == MAX_ANIMATED_ROWS;
+            let transition = match self.rows.entry(key) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    if at_capacity {
+                        self.rows.clear();
+                        return;
+                    }
+                    entry.insert(KeyedTransition::new(
+                        !present,
+                        if present { 0. } else { 1. },
+                    ))
+                }
+            };
             transition.retarget(
                 present,
                 if present { 1. } else { 0. },
@@ -343,9 +357,11 @@ impl<K: Eq + std::hash::Hash> RowSplice<K> {
     }
 
     /// Position a retained removed row after its nearest surviving predecessor.
-    /// `between` contains removed logical keys between that predecessor and this
-    /// ghost, in the caller's retained order. Supply updated anchors after every
-    /// splice, including when an earlier anchor is itself removed or reinserted.
+    /// `between` contains distinct active removed keys between that predecessor
+    /// and this ghost, in retained order: at most `MAX_ANIMATED_ROWS` keys, never
+    /// the entire historical removed set. Iteration is capped at that bound.
+    /// Supply updated anchors after every splice, including when an earlier
+    /// anchor is itself removed or reinserted.
     /// Add `offset` to the predecessor's animated top (or list start for `None`).
     /// No key or placement is copied, and a reversed/settled ghost is not drawn.
     pub fn ghost<'a>(
@@ -366,7 +382,7 @@ impl<K: Eq + std::hash::Hash> RowSplice<K> {
                 .get(anchor)
                 .map_or(1., |transition| transition.sample(now).value)
         });
-        for preceding in between {
+        for preceding in between.into_iter().take(MAX_ANIMATED_ROWS) {
             if let Some(transition) = self.rows.get(preceding) {
                 if !*transition.key() {
                     offset += transition.sample(now).value;

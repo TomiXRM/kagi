@@ -53,6 +53,12 @@ layout, toggle interpretation and retained Inspector content remain with
    baseline by exactly one row, preserving its painted position.
    The caller supplies logical order including ghosts and the zoomed row height.
    This is presentation displacement, not row-height animation or list migration.
+   **Large changes are instant:** `MAX_ANIMATED_ROWS = 64` bounds simultaneously
+   retained keys to approximately one screen. If a batch would exceed that cap,
+   settle the entire owner (including earlier active keys) immediately; do not
+   animate a partial subset of a large fetch or directory collapse. Row sampling
+   and retirement therefore visit at most 64 entries per call, regardless of
+   total list size. Duplicate/reversed keys already within the cap still animate.
 6. **Identity is logical, never positional.** Retain row presentation by
    `CommitId`, worktree path or file path, scoped to the owning session/surface.
    List indices may locate geometry but are never animation identity. Remove
@@ -81,6 +87,8 @@ layout, toggle interpretation and retained Inspector content remain with
   removed keys (`false`); do not call this on viewport mounts or each render.
   Existing keys reverse from their current value; new batches do not restart
   unaffected keys. Duplicate keys cannot double the displacement.
+  Retargeting beyond `MAX_ANIMATED_ROWS` clears all active motion and stops
+  consuming that batch; the caller has already published the complete final list.
   Call `advance(now, instant)` each render to retire settled keys or clear all
   motion under instant policy; its bool is the owning view's frame demand.
   `row(key, row_height, now, precedes)` returns `RowSample { offset, opacity }`.
@@ -90,7 +98,9 @@ layout, toggle interpretation and retained Inspector content remain with
 - For removal, retain the real removed content and its logical order in the
   view until `ghost(key, after, between, row_height, now)` returns `None`.
   `after` is the nearest surviving predecessor key (or `None` for list start);
-  `between` supplies removed keys between that anchor and this ghost.
+  `between` supplies distinct active removed keys between that anchor and this
+  ghost, at most `MAX_ANIMATED_ROWS` entries—not the historical removed set.
+  The implementation also caps iterator consumption at that bound.
   `GhostSample { after, offset, opacity }` locates the ghost relative to the
   anchor's animated top, or to list start. Its offset sums intervening removed
   keys' current presence plus the anchor's own current presence (normally one

@@ -265,6 +265,59 @@ fn row_splice_instant_settles_insertions_removals_and_active_batches() {
 }
 
 #[test]
+fn oversized_row_splice_settles_entire_owner_without_consuming_huge_batch() {
+    let now = Instant::now();
+    for present in [true, false] {
+        let mut splice = RowSplice::default();
+        splice.retarget([usize::MAX], false, now, false);
+        let mut consumed = 0;
+        splice.retarget((0..10_000).inspect(|_| consumed += 1), present, now, false);
+        assert_eq!(
+            consumed, MAX_ANIMATED_ROWS,
+            "one older key already occupied capacity"
+        );
+        assert!(splice.rows.is_empty(), "overflow settles old and new keys");
+        assert!(!splice.advance(now, false));
+        let row = splice.row(&0, px(20.), now, |_| true);
+        assert_eq!(row.offset, px(0.));
+        assert_eq!(row.opacity, 1.);
+        assert!(splice.ghost(&usize::MAX, None, [], px(20.), now).is_none());
+        assert!(splice.ghost(&0, None, [], px(20.), now).is_none());
+    }
+}
+
+#[test]
+fn row_splice_sampling_and_ghost_iteration_are_bounded() {
+    let now = Instant::now();
+    let mut splice = RowSplice::default();
+    splice.retarget(0..MAX_ANIMATED_ROWS, true, now, false);
+    assert_eq!(splice.rows.len(), MAX_ANIMATED_ROWS);
+    // Retargeting existing keys at capacity is not an overflow.
+    splice.retarget(0..MAX_ANIMATED_ROWS, false, now + TRANSITION, false);
+    assert!(splice.advance(now + TRANSITION, false));
+    let mut visits = 0;
+    splice.row(&usize::MAX, px(20.), now + TRANSITION, |_| {
+        visits += 1;
+        true
+    });
+    assert_eq!(visits, MAX_ANIMATED_ROWS);
+    // Even an incorrectly supplied historical iterator cannot create an
+    // unbounded per-frame scan. Correct callers pass only active removed keys.
+    let unknown = usize::MAX;
+    let mut ghost_visits = 0;
+    let between = std::iter::repeat_n(&unknown, 10_000).inspect(|_| ghost_visits += 1);
+    assert!(splice
+        .ghost(&0, None, between, px(20.), now + TRANSITION)
+        .is_some());
+    assert_eq!(ghost_visits, MAX_ANIMATED_ROWS);
+    splice.retarget([MAX_ANIMATED_ROWS], false, now + TRANSITION, false);
+    assert!(
+        splice.rows.is_empty(),
+        "one additional distinct key settles all"
+    );
+}
+
+#[test]
 fn measured_reveal_retains_closing_content_and_accepts_new_measurement() {
     let now = Instant::now();
     let mut reveal = Reveal::default();

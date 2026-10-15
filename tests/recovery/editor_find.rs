@@ -168,7 +168,47 @@ fn exercise(
         input.read(cx).focus_handle(cx).focus(window, cx)
     })
     .unwrap();
-    keys(cx, window, "cmd-f");
+    paint(cx, window);
+    let menus = cx.read(kagi::ui::commands::build_menus);
+    let find = menus
+        .iter()
+        .flat_map(|menu| &menu.items)
+        .find_map(|item| match item {
+            gpui::MenuItem::Submenu(menu)
+                if menu.name.as_ref() == if lang == Lang::En { "Find" } else { "検索" } =>
+            {
+                Some(menu)
+            }
+            _ => None,
+        })
+        .expect("Edit menu exposes Find");
+    assert_eq!(
+        find.items.len(),
+        1,
+        "only working public Find actions are offered"
+    );
+    let gpui::MenuItem::Action {
+        action, disabled, ..
+    } = &find.items[0]
+    else {
+        panic!("Find action")
+    };
+    assert!(!disabled, "focused code Input is a Find target");
+    assert!(
+        cx.update_window(window, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "native Find validates the focused code Input"
+    );
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_action(action.boxed_clone(), cx)
+    })
+    .unwrap();
+    paint(cx, window);
+    assert!(
+        probe(cx, input).open,
+        "native Find menu opens the actual search bar"
+    );
     cx.simulate_keystrokes(window, "alpha");
     paint(cx, window);
     assert_eq!(probe(cx, input).match_count, 4);
@@ -347,6 +387,7 @@ fn mount(
     .into();
     let app = captured.borrow_mut().take().unwrap();
     app.update(cx, |app, cx| {
+        app.set_window_active_for_e2e(true, cx);
         app.set_theme(slug, cx);
         app.open_editor_workspace(cx);
     });
@@ -400,7 +441,7 @@ pub fn scenario_editor_find_controls_a11y(cx: &mut VisualTestAppContext) {
     let old_theme = theme::theme().slug.to_string();
     let fixture = build_fixture();
     std::fs::write(fixture.path().join(FILE), TEXT).unwrap();
-    for dimensions in [(940., 660.), (1392., 883.)] {
+    for dimensions in [(940., 660.), (1000., 720.), (1392., 883.)] {
         for slug in ["apple-light", "apple-dark"] {
             for lang in [Lang::En, Lang::Ja] {
                 for zoom in [1., 1.67] {

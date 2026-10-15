@@ -156,6 +156,18 @@ Additional G covers queued append versus actual locked retirement, id-less
 legacy cleanup and surviving identities, and pre-remove-created unreadable
 content refusing before directory deletion. Backup repository/status/metadata/
 read/read_link errors stop removal; only a path confirmed absent is skipped.
+
+`crates/kagi-git/tests/oplog_multiprocess_test.rs` races two independent
+processes against one log, then compares every returned operation/id/parent
+with the persisted rows and checks unique ids and the complete parent chain.
+Each worker returns a strict JSON receipt array in its own file; stdout and
+stderr are diagnostics only. Serial libtest writes `test oplog_append_worker ... `
+without a newline, which made the former line-prefix stdout parser discard
+each worker's first receipt even though all 50 appends succeeded. Workers
+explicitly use `--test-threads=1` to retain coverage of that harness mode.
+Append errors fail the child with the operation and error, and the parent
+requires successful child exits plus exactly one receipt per attempted append.
+
 The scoped Tier A filter `worktree_panel,remove_public_boundary` checks the
 legacy blob log plus receipt ref, and real append-lock timeout delivery for both
 current and stale owners. No full GUI suite is run.

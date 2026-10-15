@@ -801,6 +801,15 @@ impl KagiApp {
                             self.host_dirty_buffer_count(cx),
                             self.editor_dirty_guard_modal()
                                 .is_some_and(|modal| modal.saving.is_some()),
+                            self.host_dirty_buffer_count(cx) == 0
+                                && self.editor_dirty_guard_modal().is_some_and(|modal| {
+                                    matches!(modal.intent, EditorPendingIntent::Relaunch)
+                                }),
+                            if self.may_close_host() {
+                                Msg::UpdateRestartReady
+                            } else {
+                                self.host_close_hold_message(true)
+                            },
                             cx,
                         ))
                     })
@@ -884,6 +893,7 @@ impl KagiApp {
                         el.child(render_update_modal(
                             plan.clone(),
                             self.update_installing,
+                            self.update_pending_relaunch.is_some(),
                             self.update_status.clone(),
                             window,
                             cx,

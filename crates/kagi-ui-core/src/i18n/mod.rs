@@ -251,6 +251,13 @@ pub enum Msg {
     MenuPaste,
     MenuSelectAll,
     MenuSave,
+    MenuOpenRecent,
+    MenuClearRecent,
+    MenuFind,
+    MenuFindOpen,
+    MenuWorkspaceGraph,
+    MenuWorkspacePrs,
+    MenuWorkspaceEditor,
     NothingToSave,
     AppNoticeDismiss,
     ToastDismiss,
@@ -1663,6 +1670,9 @@ pub enum Msg {
     EditorHostUnsavedTitle,
     EditorHostUnsavedCount,
     EditorHostSaveAll,
+    EditorHostSaveWaiting,
+    EditorHostRecoveryRequired,
+    EditorWorkspaceSaveInterrupted,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
@@ -1860,6 +1870,9 @@ pub enum Msg {
     UpdateHideContinuing,
     UpdateInstalling,
     UpdateInstallingReason,
+    UpdateRestartReady,
+    UpdateRestart,
+    UpdateRestartWaiting,
     UpdateFailed,
     UpdateNow,
     PrFieldsNoChanges,
@@ -2018,6 +2031,20 @@ impl Msg {
             (Ja, MenuSelectAll) => "すべてを選択",
             (En, MenuSave) => "Save",
             (Ja, MenuSave) => "保存",
+            (En, MenuOpenRecent) => "Open Recent",
+            (Ja, MenuOpenRecent) => "最近使った項目を開く",
+            (En, MenuClearRecent) => "Clear Menu",
+            (Ja, MenuClearRecent) => "メニューを消去",
+            (En, MenuFind) => "Find",
+            (Ja, MenuFind) => "検索",
+            (En, MenuFindOpen) => "Find…",
+            (Ja, MenuFindOpen) => "検索…",
+            (En, MenuWorkspaceGraph) => "Graph",
+            (Ja, MenuWorkspaceGraph) => "グラフ",
+            (En, MenuWorkspacePrs) => "Pull Requests",
+            (Ja, MenuWorkspacePrs) => "Pull Request",
+            (En, MenuWorkspaceEditor) => "Editor",
+            (Ja, MenuWorkspaceEditor) => "エディター",
             (En, NothingToSave) => "No editable unsaved file",
             (Ja, NothingToSave) => "保存できる未保存のファイルがありません",
             (language, OplogPanel(key)) => key.t_for(language),
@@ -4305,6 +4332,24 @@ impl Msg {
             (Ja, EditorHostUnsavedCount) => "未保存の変更があるファイル: {count}",
             (En, EditorHostSaveAll) => "Save All",
             (Ja, EditorHostSaveAll) => "すべて保存",
+            (En, EditorHostSaveWaiting) => {
+                "Another operation is still running. Wait for it to finish, then try Save All again."
+            }
+            (Ja, EditorHostSaveWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから、もう一度「すべて保存」を選んでください。"
+            }
+            (En, EditorHostRecoveryRequired) => {
+                "The result of an operation is unknown. Choose Cancel and review recovery in the Operation Log before trying again."
+            }
+            (Ja, EditorHostRecoveryRequired) => {
+                "操作の結果が不明です。「キャンセル」を選び、操作ログで復旧方法を確認してから再試行してください。"
+            }
+            (En, EditorWorkspaceSaveInterrupted) => {
+                "Saving was interrupted. Your changes are still open. Review the Operation Log before trying again."
+            }
+            (Ja, EditorWorkspaceSaveInterrupted) => {
+                "保存が中断されました。未保存の変更は開いたままです。再試行する前に操作ログを確認してください。"
+            }
             (En, EditorWorkspaceDiscard) => "Discard",
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",
@@ -4560,6 +4605,16 @@ impl Msg {
             (Ja, UpdateInstalling) => "更新中…",
             (En, UpdateInstallingReason) => "An update is currently being installed.",
             (Ja, UpdateInstallingReason) => "更新をインストール中です。",
+            (En, UpdateRestartReady) => "Update installed. Restart to finish updating.",
+            (Ja, UpdateRestartReady) => "更新をインストールしました。再起動すると更新が完了します。",
+            (En, UpdateRestart) => "Restart Kagi",
+            (Ja, UpdateRestart) => "Kagi を再起動",
+            (En, UpdateRestartWaiting) => {
+                "Another operation is still running. Wait for it to finish, then choose Restart Kagi."
+            }
+            (Ja, UpdateRestartWaiting) => {
+                "別の操作がまだ実行中です。完了を待ってから「Kagi を再起動」を選んでください。"
+            }
             (En, UpdateFailed) => "Update failed",
             (Ja, UpdateFailed) => "更新に失敗しました",
             (En, UpdateNow) => "Update now",

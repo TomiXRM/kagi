@@ -382,6 +382,7 @@ impl Render for SettingsWindow {
                 cx.stop_propagation();
             }))
             .on_action(|_: &commands::CloseTab, window, cx| close(window, cx))
+            .map(|el| commands::register_recent_clear(el, cx))
             .on_action(|_: &commands::OpenSettings, window, _| raise(window))
             .on_action(|_: &commands::MinimizeWindow, window, _| window.minimize_window())
             .on_action(|_: &commands::CloseWindow, window, cx| close(window, cx))

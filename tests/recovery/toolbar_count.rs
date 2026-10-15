@@ -336,12 +336,13 @@ pub fn scenario_toolbar_count_scale(cx: &mut VisualTestAppContext) {
             Some(mode)
         );
         let entries = kagi::ui::commands::toolbar_display_menu_entries();
-        assert!(entries
-            .iter()
-            .find(|(entry, _)| *entry == mode)
-            .unwrap()
-            .1
-            .starts_with("✓ "));
+        assert!(
+            entries
+                .iter()
+                .find(|(entry, _, _)| *entry == mode)
+                .unwrap()
+                .2
+        );
     }
     assert_eq!(
         repo_fingerprint(&repo),

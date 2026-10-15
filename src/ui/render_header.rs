@@ -174,6 +174,7 @@ impl KagiApp {
     /// behaviour stays in `commands.rs` (no menu-specific logic lives here).
     pub(super) fn register_menu_actions(&self, el: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
         use commands as cmds;
+        let el = cmds::register_recent_clear(el, cx);
 
         // Helper: conditionally attach one action handler bound to its registry
         // id.  `$ty` is the gpui Action type; `$id` is the registry id string.

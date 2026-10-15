@@ -681,6 +681,24 @@ pub(super) fn capture_app_quit(cx: &mut App) -> bool {
     true
 }
 
+#[cfg(feature = "gui-e2e")]
+#[derive(Default)]
+pub struct RelaunchForE2e {
+    pub requested: bool,
+}
+#[cfg(feature = "gui-e2e")]
+impl gpui::Global for RelaunchForE2e {}
+
+#[cfg(feature = "gui-e2e")]
+pub(super) fn capture_update_relaunch(cx: &mut App) -> bool {
+    if cx.try_global::<RelaunchForE2e>().is_none() {
+        return false;
+    }
+    super::settings::flush();
+    cx.global_mut::<RelaunchForE2e>().requested = true;
+    true
+}
+
 /// Build the real [`KagiApp`] state for a fixture repo: open + snapshot (via
 /// `kagi_git`, no `git2` token) + a single active tab, as `main.rs` does.
 pub fn app_state(repo_path: &Path) -> Result<KagiApp, String> {

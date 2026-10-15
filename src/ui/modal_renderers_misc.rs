@@ -244,12 +244,12 @@ pub(crate) fn render_smart_commit_modal(
 
 /// Auto-update detail modal (ADR-0082, T-AUTOUPDATE-001).
 ///
-/// Shows current → latest, the chosen asset, release notes, and — Phase 1 — a
-/// "Update now" button that downloads + verifies + installs + relaunches. Phase-0
-/// fallbacks ("Open release page", "Skip this version") are always present.
+/// Shows current → latest, the chosen asset and release notes. Installation
+/// becomes an explicit Restart action while the installed update is pending.
 pub(crate) fn render_update_modal(
     plan: kagi_domain::update::UpdatePlan,
     installing: bool,
+    restart_pending: bool,
     status: Option<SharedString>,
     window: &mut Window,
     cx: &mut Context<KagiApp>,
@@ -377,6 +377,11 @@ pub(crate) fn render_update_modal(
         );
     }
 
+    let status = if restart_pending {
+        Some(SharedString::from(Msg::UpdateRestartReady.t()))
+    } else {
+        status
+    };
     if let Some(s) = status {
         body = body.child(super::e2e::measure_control(
             "update/status",
@@ -388,7 +393,7 @@ pub(crate) fn render_update_modal(
         ));
     }
 
-    // Installation is the only primary action; release notes and skip are quieter.
+    // Restart replaces installation after success; skip cannot undo an installed update.
     let actions = super::button_style::modal_button_row()
         .items_center()
         .child(super::e2e::measure_control(
@@ -397,7 +402,11 @@ pub(crate) fn render_update_modal(
                 "update-skip",
                 Msg::UpdateSkipVersion.t(),
                 ModalButtonKind::Secondary,
-                installing.then(|| SharedString::from(Msg::UpdateInstallingReason.t())),
+                if installing {
+                    Some(SharedString::from(Msg::UpdateInstallingReason.t()))
+                } else {
+                    restart_pending.then(|| SharedString::from(Msg::UpdateRestartReady.t()))
+                },
                 skip,
                 cx,
             ),
@@ -417,6 +426,8 @@ pub(crate) fn render_update_modal(
                 "update-cancel",
                 if installing {
                     Msg::UpdateHideContinuing.t()
+                } else if restart_pending {
+                    Msg::EditorWorkspaceCancel.t()
                 } else {
                     Msg::UpdateLater.t()
                 },
@@ -432,6 +443,8 @@ pub(crate) fn render_update_modal(
                 "update-now",
                 if installing {
                     Msg::UpdateInstalling.t()
+                } else if restart_pending {
+                    Msg::UpdateRestart.t()
                 } else {
                     Msg::UpdateNow.t()
                 },
@@ -457,6 +470,8 @@ pub(crate) fn render_editor_dirty_guard_modal(
     host_close: bool,
     count: usize,
     saving: bool,
+    restart_waiting: bool,
+    restart_message: Msg,
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     let busy = saving.then(|| SharedString::from(Msg::OpInProgress.t()));
@@ -480,7 +495,9 @@ pub(crate) fn render_editor_dirty_guard_modal(
 
     let card = modal_card(MODAL_W_SM)
         .child(div().flex_shrink_0().child(render_modal_title_row(
-            SharedString::from(if host_close {
+            SharedString::from(if restart_waiting {
+                Msg::UpdateRestart.t()
+            } else if host_close {
                 Msg::EditorHostUnsavedTitle.t()
             } else {
                 Msg::EditorWorkspaceUnsavedTitle.t()
@@ -490,7 +507,10 @@ pub(crate) fn render_editor_dirty_guard_modal(
                 current_theme().color_warning,
             )),
         )))
-        .when(host_close, |card| {
+        .when(restart_waiting, |card| {
+            card.child(div().child(restart_message.t()))
+        })
+        .when(host_close && !restart_waiting, |card| {
             card.child(
                 div().child(
                     Msg::EditorHostUnsavedCount
@@ -512,13 +532,21 @@ pub(crate) fn render_editor_dirty_guard_modal(
                     ))
                     .child(modal_button(
                         "editor-dirty-guard-discard",
-                        Msg::EditorWorkspaceDiscard.t(),
-                        ModalButtonKind::Destructive,
+                        if restart_waiting {
+                            Msg::UpdateRestart.t()
+                        } else {
+                            Msg::EditorWorkspaceDiscard.t()
+                        },
+                        if restart_waiting {
+                            ModalButtonKind::Primary
+                        } else {
+                            ModalButtonKind::Destructive
+                        },
                         busy.clone(),
                         discard,
                         cx,
                     ))
-                    .when(host_close, |row| {
+                    .when(host_close && !restart_waiting, |row| {
                         row.child(modal_button(
                             "editor-dirty-guard-save",
                             Msg::EditorHostSaveAll.t(),

@@ -767,6 +767,14 @@ mod pane_resources;
 mod host_dirty_guard;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/host_guard_hold_reason.rs"]
+mod host_guard_hold_reason;
+
+#[cfg(target_os = "macos")]
+#[path = "recovery/host_guard_async_restart.rs"]
+mod host_guard_async_restart;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/cache_history_owner.rs"]
 mod cache_history_owner;
 
@@ -3783,6 +3791,42 @@ mod macos {
             (
                 "host_dirty_guard_save",
                 Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save),
+            ),
+            (
+                "host_dirty_guard_relaunch",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_relaunch),
+            ),
+            (
+                "host_dirty_guard_unknown_recovery",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_unknown_recovery),
+            ),
+            (
+                "host_dirty_guard_clean_restart",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_clean_restart),
+            ),
+            (
+                "host_dirty_guard_installed_restart",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_installed_restart),
+            ),
+            (
+                "host_dirty_guard_save_waiting",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save_waiting),
+            ),
+            (
+                "host_dirty_guard_save_unwind",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_save_unwind),
+            ),
+            (
+                "host_dirty_guard_close_then_quit",
+                Box::new(crate::host_dirty_guard::scenario_host_dirty_guard_close_then_quit),
+            ),
+            (
+                "host_guard_released_recovery_running",
+                Box::new(crate::host_guard_hold_reason::scenario_host_guard_released_recovery_running),
+            ),
+            (
+                "host_guard_async_update_preserves_modal",
+                Box::new(crate::host_guard_async_restart::scenario_host_guard_async_update_preserves_modal),
             ),
             (
                 "welcome_startup_renders",

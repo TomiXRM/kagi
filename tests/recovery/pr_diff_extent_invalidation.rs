@@ -452,7 +452,7 @@ pub fn scenario_pr_diff_extent_reflow(cx: &mut VisualTestAppContext) {
             "actual divider must narrow native diff: {before:?} -> {narrowed:?}"
         );
         anchor(before, narrowed, "width reflow");
-        for zoom in [0.7, 1.667] {
+        for zoom in [0.7, 1.7] {
             let before = reading(cx, app);
             zoom_to(cx, app, window, zoom);
             anchor(before, reading(cx, app), "product zoom reflow");
@@ -515,7 +515,7 @@ pub fn scenario_pr_diff_extent_threads(cx: &mut VisualTestAppContext) {
         // native window as well, reserving under half the original body's width
         // even when every companion collapses. Keep the measured reflow oracle.
         let before_zoom = reading(cx, app);
-        zoom_to(cx, app, window, 1.667);
+        zoom_to(cx, app, window, 1.7);
         let wanted = cx
             .update_window(window, |_, window, _| {
                 let mut size = window.viewport_size();

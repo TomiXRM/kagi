@@ -13,6 +13,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
+- Update toolbar count scaling and PR diff reflow/thread GUI regressions to expect the reachable 170% preset after public zoom steps, rather than the former 167% cap. Direct legacy 1667-permille rendering coverage remains unchanged.
 - PR swimlane geometry uses GPUI's public uniform-list API for its fixed-height commit and elision rows. Shared list keyboard navigation accepts the existing row-scroll adapter directly; Branch Picker, Home Recent, Issue feed and restore inspection retain their current list geometry. This prepares the official-upstream migration without changing dependency pins. (#1479-S5A)
   - Review: horizontal wheel gestures retain the lane rail's horizontal scrolling without moving the vertical row list.
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

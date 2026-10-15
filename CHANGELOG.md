@@ -14,6 +14,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Quit (including from Settings), Close Window, and the window close button now protect unsaved Editor changes in every repository and file tab. One confirmation counts unsaved files and offers Save All, Discard, or Cancel; saving errors keep the window open, and running operations still prevent closure. (#1603)
+- Serialize user-text tests that implicitly read the shared UI language with the existing i18n test lock, preventing parallel language-switching tests from changing diagnostic expectations mid-assertion. Production behavior is unchanged.
 - Replace internal operation names and implementation diagnostics in notifications, preview cards and Operation Log with English/Japanese action-oriented text. Existing receipts and stderr contracts stay unchanged; branch names, paths, commit IDs and raw Git diagnostics remain available. (#1588, shared presentation)
   - Preserve original blocked-operation log arguments, retain complete recorded failure causes and backup identifiers in Details/Copy, and keep recovery and shortcut guidance tied to actions users can actually perform.
   - Use display-only errors in worktree planning notices, lock-reason dialogs, checkout preparation and filesystem prompts; keep recording-failure checks independent of translated wording.

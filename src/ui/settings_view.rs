@@ -1138,6 +1138,7 @@ pub(super) fn analyze_ignore_section(
     // Multiline editor (or a fallback note pre-window / headless).
     let editor: AnyElement = match input.clone() {
         Some(state) => Input::new(&state)
+            .context_menu(kagi_ui_core::input::context_menu(&state, false))
             .aria_label(Msg::A11yAnalyzeIgnorePatterns.t())
             .appearance(true)
             .bordered(true)

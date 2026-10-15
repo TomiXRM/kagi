@@ -34,7 +34,13 @@ fn labeled_input(
                 .bg(rgb(current_theme().bg_base))
                 .border_1()
                 .border_color(rgb(current_theme().surface))
-                .child(Input::new(st).aria_label(label).appearance(false).flex_1())
+                .child(
+                    Input::new(st)
+                        .context_menu(kagi_ui_core::input::context_menu(st, false))
+                        .aria_label(label)
+                        .appearance(false)
+                        .flex_1(),
+                )
         }))
 }
 

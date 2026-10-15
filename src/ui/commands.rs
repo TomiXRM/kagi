@@ -1391,6 +1391,14 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         CloseMainDiff,
         Some("KagiWorkspace && !Terminal && !SearchPanel"),
     )]);
+    // Register after gpui-component: its Input binding otherwise consumes
+    // Command-Period as ToggleCodeActions. Mirror Escape's child-first routing
+    // so composition/completion cancellation keeps its existing precedence.
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-.", CloseMainDiff, Some("!Terminal")),
+        KeyBinding::new("cmd-.", gpui_component::input::Escape, Some("Input")),
+    ]);
     cx.bind_keys([KeyBinding::new(
         "secondary-enter",
         super::compact::OpenCommitComposer,

@@ -70,28 +70,29 @@ pub(crate) fn render_editor_fs_prompt_modal(
         cx.notify();
     });
 
-    let mut card =
-        modal_card(MODAL_W_SM)
-            .child(div().flex_shrink_0().child(render_modal_title_row(
-                SharedString::from(title),
-                Some(accent),
-            )))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(current_theme().text_label))
-                            .child(SharedString::from(Msg::EditorFsPromptNameLabel.t())),
-                    )
-                    .children(modal.input_state.as_ref().map(|input| {
-                        Input::new(input).aria_label(Msg::EditorFsPromptNameLabel.t())
-                    })),
-            );
+    let mut card = modal_card(MODAL_W_SM)
+        .child(div().flex_shrink_0().child(render_modal_title_row(
+            SharedString::from(title),
+            Some(accent),
+        )))
+        .child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(current_theme().text_label))
+                        .child(SharedString::from(Msg::EditorFsPromptNameLabel.t())),
+                )
+                .children(modal.input_state.as_ref().map(|input| {
+                    Input::new(input)
+                        .context_menu(kagi_ui_core::input::context_menu(input, false))
+                        .aria_label(Msg::EditorFsPromptNameLabel.t())
+                })),
+        );
 
     if let Some(err) = &modal.error {
         card = card.child(

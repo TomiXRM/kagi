@@ -201,6 +201,7 @@ pub(super) fn body_markdown(
 /// single-line/multi-line or auto-grow choice made at creation still stands.
 pub(super) fn body_input(input: &gpui::Entity<InputState>, label: &'static str) -> Input {
     Input::new(input)
+        .context_menu(kagi_ui_core::input::context_menu(input, false))
         .aria_label(label)
         .appearance(false)
         .bordered(false)

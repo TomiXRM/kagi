@@ -3299,6 +3299,7 @@ fn render_center_pane(
                 // (user-reported). `appearance(false)` / `bordered(false)`
                 // are kept so it still doesn't look like a form field.
                 Input::new(&editor)
+                    .context_menu(kagi_ui_core::input::context_menu(&editor, false))
                     .aria_label(Msg::A11yEditorFileContents.t())
                     .appearance(false)
                     .bordered(false)

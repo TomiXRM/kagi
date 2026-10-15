@@ -365,6 +365,7 @@ pub(super) fn render_strip(
             "list-filter-text",
             div().w(theme::scaled_px(180.)).child(
                 Input::new(input)
+                    .context_menu(kagi_ui_core::input::context_menu(input, false))
                     .aria_label(Msg::A11yListTitleFilter.t())
                     .small(),
             ),

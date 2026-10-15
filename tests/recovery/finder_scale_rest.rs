@@ -136,6 +136,7 @@ fn assert_glyphs(
     cx.update_window(window, |_, window, _| {
         let mut style = window.text_style();
         style.font_family = theme::UI_FONT.into();
+        style.font_fallbacks = kagi_ui_core::fonts::ui_font().fallbacks;
         style.font_weight = paint.font_weight;
         let system = window.text_system();
         let line = system.shape_line(text.into(), paint.font_size, &[style.to_run(text.len())], None);

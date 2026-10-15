@@ -22,6 +22,7 @@ pub mod find;
 pub mod fonts;
 pub mod header_fit;
 pub mod i18n;
+pub mod input;
 pub mod input_actions;
 pub mod keyboard_nav;
 pub mod markdown;

@@ -24,8 +24,10 @@ host font exists. It does not make rendering reproducible on a minimal system.
 2. Register all three families synchronously through the existing startup
    `TextSystem::add_fonts` call, before opening a window.
 3. Attach `FontFallbacks(["Noto Sans JP"])` to gpui-component's window `Root`.
-   Descendant Kagi elements and overlays inherit the same Inter -> Noto Sans JP
-   stack, including entities rendered after asynchronous repository loads.
+   Descendant Kagi elements and deferred overlays inherit the same Inter -> Noto
+   Sans JP stack, including entities rendered after asynchronous repository
+   loads. GPUI's independent tooltip and drag roots need their own explicit font
+   (see the detached-root correction below).
 4. Keep the cosmic-text locale patch until upstream PR #522 ships in GPUI's
    selected cosmic-text release. The explicit fallback is the deterministic
    primary path; the patch still protects other implicit Han fallback paths.
@@ -120,3 +122,142 @@ retained. The macOS terminal lifecycle scenario checks the requested application
 font stack, glyph coverage, weight, and cell geometry; exact bundled JP face
 identity remains the separate Linux oracle, since CoreText's embedded-font
 cascade can resolve differently from a direct Noto primary.
+
+## Amendment (2026-10-15): registry cosmic-text after Linux acceptance (#1479-S1b)
+
+The native acceptance gate deferred above is now observed with **unpatched
+crates.io cosmic-text 0.19.0**. Remove its `[patch.crates-io]` entry and empty
+table; update only that package with `cargo update -p cosmic-text --precise
+0.19.0`. The remaining GPUI/Kit migration patches are unchanged.
+
+The isolated aarch64 Debian container in `colima-kagi-linux` ran all eight fresh
+process combinations: `ja_JP.UTF-8` / `en_US.UTF-8`, private minimal fontconfig
+(DejaVu plus the real Nerd primary, no system CJK) / installed system Noto CJK
+SC+JP, and native X11 / native Wayland. The capture fixture mounts the production
+KagiApp, real selected Rust diff, commit title/body Inputs and production PTY
+terminal, alongside an explicit Noto Sans JP Regular/Bold reference and the
+same TextView component used by production. It checks the terminal's ANSI bold,
+two-cell Han layout and ASCII cursor column, and compares every Han character's
+FontId with the explicit JP reference in the same native text system. The
+existing bundled-only, competing-system-font and real-Nerd tests independently
+retain their exact static-face, weight and icon-priority assertions.
+
+Xvfb had working Mesa 22.3.6 llvmpipe/lavapipe, confirmed with `glxinfo -B` and
+`vulkaninfo --summary`; adding drivers alone did **not** fix its black Vulkan
+presentation. This pinned GPUI constructs its backend mask directly, so
+`WGPU_BACKEND=gl` alone does not force OpenGL. For this container only,
+`LIBGL_ALWAYS_SOFTWARE=1` plus `VK_ICD_FILENAMES` pointing at a nonexistent
+private ICD file disables Vulkan discovery and selects working OpenGL.
+No renderer/library patch or production environment override was added.
+X11 captures target the Kagi PID's window with ImageMagick `import` (and xwd
+diagnostics); Wayland runs with `DISPLAY` unset on an isolated Weston
+X11-backend/pixman compositor, whose sole application is the recorded Kagi PID.
+Its PNG captures the compositor window, not an Xwayland Kagi window.
+The worktree-local `target/s1b-evidence/` holds PNGs, face logs, private
+fontconfigs, candidate/final matrix records and the archived capture fixture
+source. Both eight-leg matrices passed: first against an isolated unpatched
+candidate, then after the manifest/lockfile cutover. The final Linux unit matrix
+ran two bundled/Nerd tests in each minimal-font locale and all three tests in
+each system-Noto locale (10 executions, no failures). The dedicated Linux
+container and profile were stopped afterward.
+
+The requested macOS gates also passed: `cargo build --locked`,
+`cargo test --workspace` (3,484 passed, 44 ignored), `cargo clippy --workspace`,
+`cargo fmt --all`, `uv run --project ci check-all`, and the filtered native
+`terminal_,status_bar_,finder_scale_rest,inspector_scale` runner (14/14,
+including `terminal_font_fallback`). Existing Clippy/future-incompatibility
+warnings remain. That initial dependency-removal commit changed no Rust source;
+the detached-root correction below closes its tooltip/drag coverage gap.
+
+Recommendation: **keep [pop-os/cosmic-text#522](https://github.com/pop-os/cosmic-text/pull/522)
+open**. Its region-subtag normalization fixes implicit Han fallback for other
+consumers; Kagi's explicit stack makes it unnecessary here, not incorrect or
+redundant upstream. No comment or state change was sent to that PR.
+This acceptance does not claim all Unicode coverage, replacement of a primary
+font's own SC glyphs, OS accessibility/IME coverage, or hardware-GPU coverage.
+
+## Correction: detached tooltip and branch-drag roots (#1479-S1b review)
+
+GPUI prepaints hover help and the active drag view independently of the window
+Root. They do **not** inherit its font fallback: the initial terminal/diff/Input/
+TextView matrix missed these separate roots. `HoverHelp` and `BranchDragGhost`
+must each apply `ui_font()` on their outer element. Kit's tooltip may override
+the primary family, but retains that explicit fallback.
+
+The root audit found one text-bearing drag view (`BranchDragGhost`, shared by
+graph badges and both sidebar branch row constructors). Every other production
+drag constructor returns the textless `DividerGhost`. Main and Settings windows
+already style their own Root. Deferred menus and anchored descendants retain
+their font scope: the pinned GPUI snapshots `text_style_stack` in `defer_draw`
+and restores it before prepainting deferred elements. **Interactive worktree
+hover cards are not deferred descendants:** `hoverable_tooltip` prepaints
+`WorktreeHoverCard` as another independent root, bypassing `HoverHelp`. Its
+outer inspection-card element must apply `ui_font()` too (shared with the
+keyboard presentation). Variable-list row measurement stays in its caller's
+text-style scope. Kagi registers no custom GPUI prompt root.
+
+The regression probe reads the **inherited font during actual prepaint**, not
+another call to `ui_font()`: native Linux shapes its Han characters against a
+direct Noto Sans JP reference. The production tooltip wrapper and actual branch
+drag ghost are exercised separately because GPUI displays one detached overlay
+at a time. Permanent tests also assert the fallback in the detached TestWindow
+tooltip and real native branch-drag scenarios.
+
+The unpatched system-Noto × `ja_JP.UTF-8` negative controls failed as intended:
+tooltip Han used FontId 15 and drag Han FontId 12, versus explicit JP FontId 4;
+both effective fonts had `fallbacks: None`. After the two root fixes, all eight
+Linux combinations passed for **both** overlays (16 fresh processes/PNGs), with
+the terminal, diff/code, commit Inputs and TextView still visible and the
+regular/bold terminal and primary-font face checks retained.
+`target/s1b-evidence/corrected-overlay-matrix.json`, the `corrected-*.png`/logs,
+`detached-root-negative-control.json`, and the archived
+`detached-root-fixture-source.tar.gz` record the evidence. The contact sheet
+shows each tooltip and drag ghost. Native Wayland capture additionally moves
+the nested compositor's real pointer after synthetic GPUI drag initiation;
+otherwise the ghost's inherited font can be observed while its pixels lie
+outside the captured window. No renderer or production input behavior was
+changed. The temporary fixture was removed, and the dedicated Linux container
+and `kagi-linux` profile were stopped.
+
+After the correction, macOS again passed `cargo build --locked`,
+`cargo test --workspace` (3,484 passed, 44 ignored), `cargo clippy --workspace`,
+`cargo fmt --all`, and `uv run --project ci check-all`. The detached-tooltip
+TestWindow group passed 4/4 with `--features gui-e2e,gpui/test-support`; the first
+standalone invocation omitted GPUI's required test-support feature and failed
+to compile, then passed with the documented invocation. The expanded native
+filter `terminal_,status_bar_,finder_scale_rest,inspector_scale,toast_tooltip_lifetime,branch_drag_`
+passed **17/17**, including the renderer-fed drag-font assertion across the
+existing locale/theme/zoom/viewport cases. Logs are retained as
+`corrected-macos-gates-initial.log` and `corrected-macos-native.log` beside the
+Linux evidence. Existing unrelated Clippy/future-compatibility warnings remain.
+
+A second root-registration audit explicitly included `hoverable_tooltip`,
+`tooltip`, `tooltip_builder`, `tooltip_with_action`, and `on_drag` across native
+sources. The worktree row is the only interactive `hoverable_tooltip` caller;
+other explanatory tooltips use `HoverHelp`, and drag views remain the one
+text-bearing branch ghost or textless divider ghosts. The `hover-tooltip` CI
+rule intentionally lists `hoverable_tooltip(build)` in `samples_ok`: interactive
+card ownership is distinct from explanatory help, so that rule alone cannot
+prove font inheritance. The worktree-card native regression clears its probe
+before drawing and asserts the actually inherited prepaint font equals
+`ui_font()`.
+
+The targeted interactive-card correction reproduced **FAIL → PASS** on native
+X11 × `ja_JP.UTF-8` × installed system Noto SC+JP, without the cosmic-text patch.
+Hovering a real linked-worktree row built the actual production card: before
+the fix its effective font was `.SystemUIFont`, `fallbacks: None`, and Han
+FontId 12 rather than JP reference FontId 4; afterward it was Inter plus Noto
+Sans JP and every sampled Han glyph matched FontId 4. The visible card's Japanese
+worktree/branch/path text is captured in
+`target/s1b-evidence/worktree-card-x11-ja_JP-system.png`; red/green logs,
+`worktree-card-evidence.json`, and archived fixture source are beside it.
+This card-specific follow-up is one targeted Linux combination, not a new
+eight-leg matrix. The temporary source was removed and `kagi-linux` stopped.
+
+After the interactive-card fix, macOS passed `cargo fmt --all`,
+`cargo test --workspace` (3,484 passed, 44 ignored), `uv run --project ci check-all`,
+and both registered native card scenarios: `worktree_inspection` and
+`worktree_inspection_actions` (2/2, including EN/JA, light/dark, 100%/167% and
+the existing viewport/focus/lifetime cases). Their actual runner prefix is
+`worktree_inspection`, not `sidebar_worktree_`. Full output is retained in
+`target/s1b-evidence/worktree-card-macos-gates.log`.

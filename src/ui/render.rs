@@ -12,6 +12,56 @@
 use super::*;
 
 impl KagiApp {
+    /// Typed external drops never participate in branch/file internal drags.
+    /// The out-of-flow frame paints feedback without resizing workspace panes.
+    pub(super) fn repository_drop_target(
+        &self,
+        content: gpui::AnyElement,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        div()
+            .relative()
+            .size_full()
+            .group("repository-drop")
+            .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
+                this.open_external_paths(paths.paths(), cx);
+            }))
+            .child(content)
+            .child(
+                div()
+                    .group("repository-drop-highlight")
+                    .absolute()
+                    .inset_0()
+                    .size_full()
+                    .border_2()
+                    .border_color(gpui::rgba(0))
+                    .can_drop(|drag, _, _| {
+                        drag.downcast_ref::<gpui::ExternalPaths>()
+                            .is_some_and(|paths| paths.paths().iter().any(|path| path.is_dir()))
+                    })
+                    .group_drag_over::<gpui::ExternalPaths>("repository-drop", |style| {
+                        style.border_color(rgb(theme().ui_accent()))
+                    }),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    |_, _, window, _| {
+                        // GPUI clears the drag on Exited but does not invalidate
+                        // its last painted feedback. Observe without consuming it.
+                        window.on_mouse_event(|event: &gpui::FileDropEvent, phase, window, _| {
+                            if phase.bubble() && matches!(event, gpui::FileDropEvent::Exited) {
+                                window.refresh();
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+            .into_any()
+    }
+
     fn render_commit_menu_overlay(
         &self,
         state: CommitMenuState,
@@ -917,6 +967,7 @@ impl Render for KagiApp {
             // Linux/FreeBSD in-app menu dropdown (native menu bar is macOS-only).
             .children(self.render_platform_menu_dropdown(self.window_active, cx))
             .into_any();
-        self.attach_active_modal_key_routing(content, true, cx)
+        let content = self.attach_active_modal_key_routing(content, true, cx);
+        self.repository_drop_target(content, cx)
     }
 }

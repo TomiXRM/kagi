@@ -80,6 +80,8 @@ impl gpui::Render for BranchDragGhost {
         // drag and the sidebar drag (kept consistent).
         let (badge_bg, badge_border, badge_text) = theme::badge_style(theme::theme().color_branch);
         div()
+            // Active drag views are separate GPUI roots, not descendants of Kit Root.
+            .font(kagi_ui_core::fonts::ui_font())
             .px_1()
             .rounded_sm()
             .bg(gpui::rgba(badge_bg))
@@ -88,6 +90,11 @@ impl gpui::Render for BranchDragGhost {
             .text_sm()
             .text_color(rgb(badge_text))
             .child(self.name.clone())
+            .map(|ghost| {
+                #[cfg(feature = "gui-e2e")]
+                let ghost = ghost.child(kagi_ui_core::fonts::e2e::probe("branch-drag-ghost"));
+                ghost
+            })
     }
 }
 

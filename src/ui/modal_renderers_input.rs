@@ -36,7 +36,12 @@ pub(crate) fn render_input_modal_field(
     input_modal_field(
         label,
         state.map(|s| {
-            super::e2e::measure_control("input-modal-field", Input::new(s).aria_label(label))
+            super::e2e::measure_control(
+                "input-modal-field",
+                Input::new(s)
+                    .context_menu(kagi_ui_core::input::context_menu(s, false))
+                    .aria_label(label),
+            )
         }),
         reason,
     )
@@ -75,7 +80,9 @@ pub(crate) fn render_input_modal_path_field(
                     .min_w_0()
                     .child(crate::ui::e2e::measure_control(
                         format!("{button_id}-input"),
-                        Input::new(state).aria_label(label),
+                        Input::new(state)
+                            .context_menu(kagi_ui_core::input::context_menu(state, false))
+                            .aria_label(label),
                     )),
             )
             .into_any_element()
@@ -367,7 +374,9 @@ pub(crate) fn render_worktree_lock_reason_modal(
         .children(modal.input_state.as_ref().map(|input| {
             measure_control(
                 "worktree-lock-reason-input",
-                Input::new(input).aria_label(Msg::WorktreeLockReason.t()),
+                Input::new(input)
+                    .context_menu(kagi_ui_core::input::context_menu(input, false))
+                    .aria_label(Msg::WorktreeLockReason.t()),
             )
         }));
     if let Some(error) = modal.error {

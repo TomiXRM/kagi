@@ -1667,6 +1667,9 @@ pub enum Msg {
     EditorWorkspaceSaveBlocked,
     /// Unsaved-changes confirmation title (file/source switch, close).
     EditorWorkspaceUnsavedTitle,
+    EditorHostUnsavedTitle,
+    EditorHostUnsavedCount,
+    EditorHostSaveAll,
     /// Unsaved-changes confirmation: destructive "discard and proceed" button.
     EditorWorkspaceDiscard,
     /// Unsaved-changes confirmation: cancel button (stay on the buffer).
@@ -4317,6 +4320,12 @@ impl Msg {
             }
             (En, EditorWorkspaceUnsavedTitle) => "Unsaved changes — discard?",
             (Ja, EditorWorkspaceUnsavedTitle) => "未保存の変更があります。破棄しますか?",
+            (En, EditorHostUnsavedTitle) => "Save changes before closing?",
+            (Ja, EditorHostUnsavedTitle) => "閉じる前に変更を保存しますか?",
+            (En, EditorHostUnsavedCount) => "Files with unsaved changes: {count}",
+            (Ja, EditorHostUnsavedCount) => "未保存の変更があるファイル: {count}",
+            (En, EditorHostSaveAll) => "Save All",
+            (Ja, EditorHostSaveAll) => "すべて保存",
             (En, EditorWorkspaceDiscard) => "Discard",
             (Ja, EditorWorkspaceDiscard) => "破棄",
             (En, EditorWorkspaceCancel) => "Cancel",

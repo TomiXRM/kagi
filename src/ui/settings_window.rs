@@ -389,12 +389,32 @@ impl Render for SettingsWindow {
             .on_action(cx.listener(|this, _: &commands::Quit, window, cx| {
                 if this
                     .owner
-                    .update(cx, |app, cx| !app.hold_host_close(cx))
+                    .update(cx, |app, cx| {
+                        !app.hold_host_close(super::EditorPendingIntent::Quit, cx)
+                    })
                     .unwrap_or(false)
                 {
                     remember_geometry(window, cx);
                     settings::flush();
                     commands::quit_app(cx);
+                } else {
+                    let owner = this.owner.clone();
+                    let settings_id = window.window_handle().window_id();
+                    cx.defer(move |cx| {
+                        for handle in cx.windows() {
+                            if handle.window_id() == settings_id {
+                                continue;
+                            }
+                            let _ = handle.update(cx, |_, window, cx| {
+                                if super::repository_window(window, cx)
+                                    .is_some_and(|app| app.downgrade() == owner)
+                                {
+                                    raise(window);
+                                    window.refresh();
+                                }
+                            });
+                        }
+                    });
                 }
             }))
             .child(titlebar())

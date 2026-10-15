@@ -45,6 +45,21 @@ fn info_plist(version: &str) -> String {
     <string>{version}</string>
     <key>CFBundleVersion</key>
     <string>{version}</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Folder</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.folder</string>
+            </array>
+        </dict>
+    </array>
     <key>LSMinimumSystemVersion</key>
     <string>{MIN_SYSTEM_VERSION}</string>
     <key>NSHighResolutionCapable</key>
@@ -231,4 +246,27 @@ fn applications_symlink(stage: &Path) -> Result<(), String> {
 #[cfg(not(unix))]
 fn applications_symlink(_stage: &Path) -> Result<(), String> {
     Err("dmg-macos is only supported on a Unix host".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::info_plist;
+
+    #[test]
+    fn info_plist_registers_folder_viewer_as_alternate() {
+        let plist = info_plist("1.2.3");
+        let compact: String = plist.split_whitespace().collect();
+        let folder_type = concat!(
+            "<key>CFBundleDocumentTypes</key><array><dict>",
+            "<key>CFBundleTypeName</key><string>Folder</string>",
+            "<key>CFBundleTypeRole</key><string>Viewer</string>",
+            "<key>LSHandlerRank</key><string>Alternate</string>",
+            "<key>LSItemContentTypes</key><array><string>public.folder</string></array>",
+            "</dict></array>"
+        );
+        assert!(
+            compact.contains(folder_type),
+            "Info.plist must accept folder opens without claiming the default folder handler"
+        );
+    }
 }

@@ -400,6 +400,7 @@ pub(super) fn render_composer(
                 }))
                 .child(
                     Input::new(&title)
+                        .context_menu(kagi_ui_core::input::context_menu(&title, false))
                         .aria_label(Msg::A11yIssueTitle.t())
                         .appearance(false)
                         .bordered(false)

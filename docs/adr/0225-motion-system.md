@@ -201,8 +201,6 @@ pane that is not the visible popup, and clear all Git rings when the popup is
 PRs or Issues. The rail itself remaining front does not keep its replaced
 pane's focus presentation alive. Native coverage returns Local → Remote → Local
 and Local → PRs/Issues → Local without replaying the skipped pane's ring.
-behavior gate. A locked screen prevents Tier B visual comparison; math tests
-and hidden native windows must not be described as that evidence.
 
 ## Graph surface amendment (#1617)
 

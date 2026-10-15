@@ -193,6 +193,26 @@ fn reset_leg(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWi
         "Reset must not write before draft-discard confirmation"
     );
     assert!(e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_some());
+    cx.simulate_keystrokes(window, "cmd-.");
+    draw(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "settings-analyze-reset-alert").is_none(),
+        "Command-Period cancels the native Settings alert"
+    );
+    assert_eq!(settings::read_analyze_ignore_text(), "saved-pattern\n");
+    assert_eq!(
+        cx.read(|cx| app
+            .read(cx)
+            .analyze_ignore_input
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .value()
+            .to_string()),
+        "unsaved-pattern\n",
+        "Command-Period preserves the unsaved draft"
+    );
+    click(cx, window, "settings-analyze-reset");
     cx.simulate_keystrokes(window, "enter");
     draw(cx, window);
     assert!(

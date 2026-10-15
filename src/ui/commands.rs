@@ -1391,14 +1391,6 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         CloseMainDiff,
         Some("KagiWorkspace && !Terminal && !SearchPanel"),
     )]);
-    // Register after gpui-component: its Input binding otherwise consumes
-    // Command-Period as ToggleCodeActions. Mirror Escape's child-first routing
-    // so composition/completion cancellation keeps its existing precedence.
-    #[cfg(target_os = "macos")]
-    cx.bind_keys([
-        KeyBinding::new("cmd-.", CloseMainDiff, Some("!Terminal")),
-        KeyBinding::new("cmd-.", gpui_component::input::Escape, Some("Input")),
-    ]);
     cx.bind_keys([KeyBinding::new(
         "secondary-enter",
         super::compact::OpenCommitComposer,
@@ -1488,6 +1480,41 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
         gpui_component::input::SelectAll,
         Some("Input"),
     )]);
+    #[cfg(target_os = "macos")]
+    {
+        // Reuse Escape's registered actions AND owner predicates. This keeps
+        // child menus / Find / completion ahead of their containing dialog
+        // and overrides Input's earlier Command-Period code-action binding.
+        // Keymap inspection/loading is public even when a component's action
+        // type is private (for example gpui-kit's menu cancellation action).
+        let escape = [gpui::Keystroke::parse("escape").expect("valid Escape keystroke")];
+        let aliases: Vec<_> = cx
+            .key_bindings()
+            .borrow()
+            .bindings()
+            // false means complete; true would mean a multi-key prefix.
+            .filter(|binding| binding.match_keystrokes(&escape) == Some(false))
+            .map(|binding| {
+                KeyBinding::load(
+                    "cmd-.",
+                    binding.action().boxed_clone(),
+                    binding.predicate(),
+                    false,
+                    None,
+                    cx.keyboard_mapper().as_ref(),
+                )
+                .expect("valid Command-Period keystroke")
+            })
+            .collect();
+        cx.bind_keys(aliases);
+        // These native Settings alerts handle Escape as a raw key event,
+        // rather than registering an action with the application keymap.
+        cx.bind_keys([KeyBinding::new(
+            "cmd-.",
+            CloseMainDiff,
+            Some("KagiCancelDialog"),
+        )]);
+    }
 }
 
 /// Install the application-wide command bindings and native menu definition.

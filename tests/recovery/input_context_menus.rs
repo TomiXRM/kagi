@@ -211,3 +211,103 @@ pub fn scenario_input_code_context_menus(cx: &mut VisualTestAppContext) {
     }
     eprintln!("[gui-e2e] PASS input_code_context_menus: actual Editor/Conflict/Issue menus, live JA/EN/JA at 1000/940x720");
 }
+
+pub fn scenario_command_period_overflow(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::{settings, theme};
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["toolbar_display"]);
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    settings::set_toolbar_display(settings::ToolbarDisplay::IconAndText);
+    theme::set_zoom(1.67);
+    cx.update(theme::sync_gpui_component_theme);
+    let fixture = build_fixture();
+    let (app, window) = mount_at(cx, fixture.path(), 1000.);
+    app.update(cx, |app, cx| {
+        app.select(0);
+        app.view_mut().status_summary.repo_name = "long-repository-name".repeat(6);
+        app.view_mut().status_summary.branch = "feature/long-branch-name".repeat(6);
+        cx.notify();
+    });
+    paint(cx, window);
+    crate::toolbar_overflow::open_keyboard_overflow(cx, &app, window);
+    assert!(e2e::control_bounds(window.window_id(), "tb-overflow-menu").is_some());
+    let before = cx.read(|cx| {
+        (
+            app.read(cx).ui().selected,
+            app.read(cx).ui().main_diff.is_some(),
+        )
+    });
+    crate::keyboard_nav::keys(cx, window, "cmd-.");
+    e2e::clear_control_bounds(window.window_id(), "tb-overflow-menu");
+    paint(cx, window);
+    assert!(
+        e2e::control_bounds(window.window_id(), "tb-overflow-menu").is_none(),
+        "Command-Period must dismiss only the focused overflow PopupMenu"
+    );
+    assert_eq!(
+        cx.read(|cx| (
+            app.read(cx).ui().selected,
+            app.read(cx).ui().main_diff.is_some()
+        )),
+        before,
+        "overflow cancellation must preserve the background selection and diff"
+    );
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS command_period_overflow");
+}
+
+pub fn scenario_command_period_settings_select(cx: &mut VisualTestAppContext) {
+    use kagi_ui_core::{settings, theme};
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["settings_pane"]);
+    let _host = crate::settings_window::SettingsHostGuard::portable(cx);
+    settings::write_setting("settings_pane", Some("0"));
+    theme::set_zoom(1.);
+    cx.update(theme::sync_gpui_component_theme);
+    let fixture = build_fixture();
+    let (app, window) = mount_at(cx, fixture.path(), 1000.);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_menu_command("app.settings", window, cx)
+        });
+    })
+    .unwrap();
+    paint(cx, window);
+    cx.update_window(window, |_, window, cx| {
+        app.read(cx)
+            .theme_select
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
+    })
+    .unwrap();
+    crate::keyboard_nav::keys(cx, window, "enter");
+    paint(cx, window);
+    assert_eq!(
+        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
+            .unwrap()
+            .expanded,
+        Some(true)
+    );
+    let before = theme::theme().slug.to_string();
+    crate::keyboard_nav::keys(cx, window, "cmd-.");
+    paint(cx, window);
+    assert!(
+        cx.read(|cx| matches!(
+            app.read(cx).menu_overlay,
+            Some(kagi::ui::commands::MenuOverlay::Settings)
+        )),
+        "Command-Period in the theme dropdown must not close Settings"
+    );
+    assert_eq!(
+        kagi::ui::settings_view::appearance_ax_for_e2e("settings-theme-select")
+            .unwrap()
+            .expanded,
+        Some(false),
+        "Command-Period must close only the focused Select dropdown"
+    );
+    assert_eq!(theme::theme().slug, before);
+    unmount(cx, app, window);
+    eprintln!("[gui-e2e] PASS command_period_settings_select");
+}

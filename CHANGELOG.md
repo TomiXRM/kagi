@@ -13,8 +13,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Text-field context menus follow the selected English/Japanese UI language and contain only Cut, Copy, Paste and Select All, including Editor, Conflict and Issue composition fields. (#1606)
-- Command-Period cancels dialogs through the same route as Escape, including when a text field owns focus. (#1609)
+- Context menus in text fields drawn by Kagi follow the selected English/Japanese UI language and contain only Cut, Copy, Paste and Select All, including Editor, Conflict and Issue composition fields. Find/Replace bar inputs retain gpui-kit’s default English context menu because the pinned library exposes no customization API for those internal fields. (#1606)
+- Command-Period follows Escape's child-first cancellation route: focused menus, dropdowns and Find bars close before the dialog or workspace behind them, including when a text field owns focus. (#1609)
 - Replace internal operation names and implementation diagnostics in notifications, preview cards and Operation Log with English/Japanese action-oriented text. Existing receipts and stderr contracts stay unchanged; branch names, paths, commit IDs and raw Git diagnostics remain available. (#1588, shared presentation)
   - Preserve original blocked-operation log arguments, retain complete recorded failure causes and backup identifiers in Details/Copy, and keep recovery and shortcut guidance tied to actions users can actually perform.
   - Use display-only errors in worktree planning notices, lock-reason dialogs, checkout preparation and filesystem prompts; keep recording-failure checks independent of translated wording.

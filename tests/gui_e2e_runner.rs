@@ -1951,6 +1951,14 @@ mod macos {
                 Box::new(crate::destructive_modal_return::scenario_input_context_menu_locale),
             ),
             (
+                "command_period_overflow",
+                Box::new(crate::input_context_menus::scenario_command_period_overflow),
+            ),
+            (
+                "command_period_settings_select",
+                Box::new(crate::input_context_menus::scenario_command_period_settings_select),
+            ),
+            (
                 "modal_command_period",
                 Box::new(crate::destructive_modal_return::scenario_modal_command_period),
             ),

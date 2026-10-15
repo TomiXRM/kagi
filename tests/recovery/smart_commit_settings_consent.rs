@@ -282,16 +282,18 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     click(cx, host, "smart-consent-cancel");
     assert_declined(cx, &app, host, &server);
 
-    switch_on(cx, &app, host, space);
-    assert_pending(cx, &app, host, &server);
-    keys(cx, host, "escape");
-    settle(cx, host);
-    assert_declined(cx, &app, host, &server);
-    assert_eq!(
-        cx.read(|cx| cx.windows().len()),
-        if native { 2 } else { 1 },
-        "Escape cancels consent, not native Settings"
-    );
+    for key in ["escape", "cmd-."] {
+        switch_on(cx, &app, host, space);
+        assert_pending(cx, &app, host, &server);
+        keys(cx, host, key);
+        settle(cx, host);
+        assert_declined(cx, &app, host, &server);
+        assert_eq!(
+            cx.read(|cx| cx.windows().len()),
+            if native { 2 } else { 1 },
+            "{key} cancels consent, not native Settings"
+        );
+    }
 
     switch_on(cx, &app, host, space);
     assert_pending(cx, &app, host, &server);

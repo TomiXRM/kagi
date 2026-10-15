@@ -176,14 +176,18 @@ pub fn scenario_editor_diff_extent_unchanged_reload(cx: &mut VisualTestAppContex
         let before_bounds = native
             .bounds_for_item(before.item_ix)
             .expect("reading row drawn");
-        let before_extent = native.max_offset_for_scrollbar().y;
+        let before_extent = native.max_offset();
         assert!(
             before.item_ix > 1 && before.item_ix + 20 < last,
             "native wheel must choose a real interior reading offset"
         );
         let known_tail = native
-            .bounds_for_item(last)
+            .measured_height(last)
             .expect("distant actual tail measurement retained before reload");
+        assert!(
+            native.bounds_for_item(last).is_none(),
+            "offscreen tail has no current paint bounds"
+        );
         let entity = editor.entity_id();
         // This is the same public boundary the real debounced WorkTree event
         // calls (#736), with an actual unrelated disk change behind it. No
@@ -259,12 +263,12 @@ pub fn scenario_editor_diff_extent_unchanged_reload(cx: &mut VisualTestAppContex
             );
             let retained = view
                 .diff_scroll
-                .bounds_for_item(last)
+                .measured_height(last)
                 .expect("unchanged reload discarded distant actual WIP measurement");
-            assert!((retained.size.height - known_tail.size.height).abs() < gpui::px(1.));
+            assert!((retained - known_tail).abs() < gpui::px(1.));
+            assert!(view.diff_scroll.bounds_for_item(last).is_none());
             assert!(
-                (view.diff_scroll.max_offset_for_scrollbar().y - before_extent).abs()
-                    < gpui::px(1.),
+                (view.diff_scroll.max_offset() - before_extent).abs() < gpui::px(1.),
                 "unchanged content must keep global native extent"
             );
             // The pre-notification native handle must still observe the same

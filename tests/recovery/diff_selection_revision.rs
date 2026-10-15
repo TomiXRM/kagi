@@ -39,6 +39,8 @@ fn draw(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>, window: AnyWindowH
 }
 
 fn open(cx: &mut VisualTestAppContext, app: &Entity<KagiApp>) {
+    // The panel's asynchronous read must publish its file list before opening.
+    cx.run_until_parked();
     app.update(cx, |app, cx| {
         app.open_main_diff_wip(CommitPanelFileRef::Unstaged { index: 0 }, cx)
     });
@@ -130,7 +132,8 @@ pub fn scenario_diff_selection_revision(cx: &mut VisualTestAppContext) {
         crate::diff_split_unicode_badge::mount_size(cx, &repo, (1392., 883.), "apple-light");
     for split in [false, true] {
         theme::set_diff_split(split);
-        for dimensions in [(940., 660.), (1392., 883.)] {
+        // #1479-S5C: widths below 1000px route away from standalone MainDiffPane.
+        for dimensions in [(1000., 720.), (1392., 883.)] {
             crate::pr_detail_adaptive::resize(cx, window, dimensions);
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);

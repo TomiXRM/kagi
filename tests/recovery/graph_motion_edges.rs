@@ -295,3 +295,101 @@ pub fn scenario_graph_insert_motion_hit_targets(cx: &mut VisualTestAppContext) {
     }
     theme::set_reduce_motion(reduced);
 }
+
+fn graph_targets_fixture() -> tempfile::TempDir {
+    let fixture = crate::macos::build_fixture();
+    std::fs::write(fixture.path().join("README.md"), "stash target\n").unwrap();
+    git(
+        fixture.path(),
+        &["stash", "push", "-q", "-m", "row interaction"],
+    );
+    std::fs::write(fixture.path().join("current-untracked"), "current WIP\n").unwrap();
+    fixture
+}
+
+pub fn scenario_graph_over_row_folder_drop(cx: &mut VisualTestAppContext) {
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let initial = graph_targets_fixture();
+    for row in ["graph-row-0", "graph-wip-row", "graph-stash-row-0"] {
+        let target = crate::macos::build_fixture();
+        let (app, window) = mount(cx, initial.path());
+        draw(cx, window);
+        let position = e2e::control_bounds(window.window_id(), row)
+            .unwrap()
+            .center();
+        cx.simulate_event(
+            window,
+            gpui::FileDropEvent::Entered {
+                position,
+                paths: gpui::ExternalPaths(vec![target.path().to_path_buf()].into_iter().collect()),
+            },
+        );
+        draw(cx, window);
+        cx.simulate_event(window, gpui::FileDropEvent::Submit { position });
+        cx.run_until_parked();
+        draw(cx, window);
+        cx.read(|cx| {
+            let app = app.read(cx);
+            assert_eq!(
+                app.tabs.len(),
+                2,
+                "external folder drop over {row} reaches the ancestor"
+            );
+            assert_eq!(
+                app.repo_path.as_deref(),
+                Some(target.path().canonicalize().unwrap().as_path())
+            );
+        });
+        unmount(cx, app, window);
+    }
+}
+
+pub fn scenario_graph_stash_pointer_focus(cx: &mut VisualTestAppContext) {
+    use gpui::Focusable;
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let fixture = graph_targets_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    draw(cx, window);
+    let input = cx.read(|cx| {
+        app.read(cx)
+            .sidebar
+            .filter
+            .clone()
+            .expect("mounted sidebar filter")
+    });
+    cx.update_window(window, |_, window, cx| {
+        input.update(cx, |input, cx| input.focus(window, cx));
+    })
+    .unwrap();
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            input.read(cx).focus_handle(cx).is_focused(window)
+        })
+        .unwrap(),
+        "start from an actual text input, not Graph"
+    );
+    let row = e2e::control_bounds(window.window_id(), "graph-stash-row-0").unwrap();
+    cx.simulate_mouse_move(window, row.center(), None, gpui::Modifiers::none());
+    cx.simulate_click(window, row.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    draw(cx, window);
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            app.read(cx)
+                .graph_focus
+                .as_ref()
+                .unwrap()
+                .is_focused(window)
+        })
+        .unwrap(),
+        "stash pointer selection retains ancestor Graph focus-on-mouse-down"
+    );
+    cx.simulate_keystrokes(window, "down");
+    draw(cx, window);
+    assert!(
+        cx.read(|cx| app.read(cx).ui().selected.is_some()),
+        "arrows navigate Graph, not the prior input"
+    );
+    drop(input);
+    unmount(cx, app, window);
+}

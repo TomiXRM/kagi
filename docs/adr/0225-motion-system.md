@@ -190,11 +190,14 @@ with the other motion slices. The owner's screen is not locked.
 New rows in a small multi-commit batch temporarily have less than one full row
 of visual spacing. GPUI's normal hitboxes can dispatch the same click to each
 overlapping row, letting an older handler overwrite the visible row's selection.
-Real commit, stash and WIP rows therefore use the public
-`block_mouse_except_scroll` behavior; inert ghosts and fixed slot shells do not.
-This makes the top painted row own pointer input while wheel events still chain.
+Real commit, stash and WIP click handlers therefore stop propagation after
+performing their existing action. Hitboxes remain normal: ancestor hover,
+external folder drops and mouse-down focus still work, as does wheel chaining.
+Ghosts and fixed slot shells remain inert; only the winning real click is consumed.
 Leading fringe paints before the first requested row and trailing fringe after
 the last, matching logical row order rather than mounting both at the first slot.
 Native coverage clicks both the actual displaced tail and the visible strip of
 a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
+Native controls also drop external folders onto occupied commit/WIP/stash rows
+and click a stash from a focused sidebar Input, requiring Graph keyboard focus.
 

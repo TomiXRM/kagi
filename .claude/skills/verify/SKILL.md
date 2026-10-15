@@ -700,6 +700,7 @@ for triage.
 
 For Graph motion (#1617), scope `graph_selection_crossfade,graph_commit_insert_motion,graph_wip_insert_motion,graph_target_crossfade,graph_unborn_wip_motion,graph_activation_motion_reset,graph_insert_motion_hit_targets`.
 These opt into the frozen motion clock; ordinary GUI scenarios remain instant.
+Also run `graph_over_row_folder_drop,graph_stash_pointer_focus`: clicks must not suppress ancestor external drops or focus-on-mouse-down.
 The existing `KagiApp::hold_next_snapshot_for_e2e` seam holds the next reload
 or tab activation/initial snapshot before backend work, only under `gui-e2e`.
 `graph_activation_motion_reset` draws the cached/empty view while that real

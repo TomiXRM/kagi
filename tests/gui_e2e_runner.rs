@@ -1967,6 +1967,14 @@ mod macos {
                 Box::new(crate::graph_motion_edges::scenario_graph_insert_motion_hit_targets),
             ),
             (
+                "graph_over_row_folder_drop",
+                Box::new(crate::graph_motion_edges::scenario_graph_over_row_folder_drop),
+            ),
+            (
+                "graph_stash_pointer_focus",
+                Box::new(crate::graph_motion_edges::scenario_graph_stash_pointer_focus),
+            ),
+            (
                 "graph_wip_hover_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
             ),

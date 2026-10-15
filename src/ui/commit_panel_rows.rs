@@ -148,7 +148,6 @@ fn render_cp_file_row(
         .w_full()
         .h(theme::scaled_px(FILE_ROW_HEIGHT))
         .min_h(px(20.))
-        .block_mouse_except_scroll()
         .flex()
         .flex_row()
         .items_center()
@@ -422,7 +421,7 @@ fn render_cp_fold_header(
             cx.notify();
         },
     );
-    div()
+    let row = div()
         .id(id)
         .map(|el| {
             cp_tree_item(
@@ -453,7 +452,8 @@ fn render_cp_fold_header(
                 .truncate()
                 .child(SharedString::from(label)),
         )
-        .into_any_element()
+        .into_any_element();
+    super::e2e::measure_leaf(id, row)
 }
 
 /// issue #338: whether `path` is an agent convention body (badge, never folded).

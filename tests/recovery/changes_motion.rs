@@ -13,6 +13,7 @@ fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
     })
     .unwrap();
 }
+
 fn reload(cx: &mut VisualTestAppContext, panel: &Entity<CommitPanelView>, repo: &std::path::Path) {
     panel.update(cx, |panel, cx| {
         panel.reload_status(repo);
@@ -190,6 +191,15 @@ fn fold_motion(
         Some((false, std::path::PathBuf::from(path))),
         "overlapping incoming fold row, not its predecessor, owns the click",
     );
+    if !agent {
+        crate::file_row_input::following_fold(
+            cx,
+            panel,
+            window,
+            at + Duration::from_millis(37),
+            incoming,
+        );
+    }
     frame(cx, window, at + Duration::from_millis(90));
     let mid = top();
     frame(cx, window, at + Duration::from_millis(250));
@@ -675,6 +685,32 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     );
     reopening(cx, &app, &panel, window, bulk + Duration::from_secs(3));
     foreground_motion(cx, &app, &panel, window, bulk + Duration::from_secs(5));
+    crate::file_row_input::directory(
+        cx,
+        &panel,
+        window,
+        fixture.path(),
+        bulk + Duration::from_secs(20),
+    );
+    crate::file_row_input::visibility_return(
+        cx,
+        &app,
+        &panel,
+        window,
+        fixture.path(),
+        bulk + Duration::from_secs(25),
+    );
+    panel.update(cx, |panel, cx| {
+        panel
+            .unstaged_scroll_handle
+            .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+        cx.notify();
+    });
+    frame(cx, window, motion::now());
+    let first = cx.read(|cx| panel.read(cx).state.unstaged_normal_files[0]);
+    let row =
+        e2e::control_bounds(window.window_id(), &format!("cp-us-density-file-{first}")).unwrap();
+    let _drop_target = crate::file_row_input::assert_repo_drop_on_row(cx, &app, window, row);
     drop(panel);
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);

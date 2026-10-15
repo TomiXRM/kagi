@@ -22,6 +22,15 @@ const LIST: &str = "inspector-files-scroll";
 const FOLD: &str = "\0generated";
 const ROW_HEIGHT: f32 = super::sidebar::SIDEBAR_ROW_H;
 
+impl KagiApp {
+    pub(super) fn settle_file_list_motion(&mut self, cx: &mut Context<Self>) {
+        self.ui().inspector_model.keyboard.settle_motion();
+        if let Some(panel) = self.ui().commit_panel.clone() {
+            panel.update(cx, |panel, _| panel.settle_file_motion());
+        }
+    }
+}
+
 #[cfg(feature = "gui-e2e")]
 impl KagiApp {
     pub fn inspector_row_height_for_e2e() -> gpui::Pixels {
@@ -56,9 +65,16 @@ struct FileRow {
     label: SharedString,
 }
 enum Entry {
-    Directory { name: SharedString, depth: usize },
+    Directory {
+        name: SharedString,
+        depth: usize,
+        key: SharedString,
+    },
     File(FileRow),
-    Generated { slot: usize, count: usize },
+    Generated {
+        slot: usize,
+        count: usize,
+    },
     More(usize),
     Unavailable,
 }
@@ -279,15 +295,24 @@ impl InspectorKeyboard {
                         _ => 0.,
                     };
                     let content = render_entry(ix, &entries[ix], &rows, presentation, wash, cx);
+                    let click_key = match &entries[ix] {
+                        Entry::File(row) => row.source.files[row.index].path.clone(),
+                        Entry::Directory { key, .. } => key.clone(),
+                        Entry::Generated { .. } => FOLD.into(),
+                        Entry::More(_) => "\0more".into(),
+                        Entry::Unavailable => "\0unavailable".into(),
+                    };
                     let mut slot = div()
                         .relative()
                         .h(theme::scaled_px(ROW_HEIGHT))
                         .w_full()
                         .child(
                             div()
+                                .id(click_key)
                                 .relative()
                                 .top(sample.offset)
                                 .opacity(sample.opacity)
+                                .on_click(|_, _, cx| cx.stop_propagation())
                                 .child(content),
                         );
                     if matches!(&entries[ix], Entry::Generated { .. }) {
@@ -411,12 +436,23 @@ fn entries(
         return (vec![Entry::Unavailable], keys);
     };
     if tree {
+        let mut directory = std::path::PathBuf::new();
+        let mut directory_depth = 0;
         for row in &files.tree {
             match row {
-                TreeRow::Dir { name, depth } => entries.push(Entry::Directory {
-                    name: super::render_helpers::safe_text(name),
-                    depth: *depth,
-                }),
+                TreeRow::Dir { name, depth } => {
+                    while directory_depth > *depth {
+                        directory.pop();
+                        directory_depth -= 1;
+                    }
+                    directory.push(name.as_ref());
+                    directory_depth += 1;
+                    entries.push(Entry::Directory {
+                        name: super::render_helpers::safe_text(name),
+                        depth: *depth,
+                        key: format!("\0directory/{}", directory.display()).into(),
+                    });
+                }
                 TreeRow::File {
                     file_index,
                     name,
@@ -493,7 +529,7 @@ fn render_entry(
     cx: &mut Context<KagiApp>,
 ) -> gpui::AnyElement {
     match entry {
-        Entry::Directory { name, depth } => div()
+        Entry::Directory { name, depth, .. } => div()
             .id(("inspector-dir", ix))
             .role(gpui::Role::TreeItem)
             .aria_label(name.clone())
@@ -603,7 +639,6 @@ fn file_row(
     .relative()
     .w_full()
     .h(theme::scaled_px(ROW_HEIGHT))
-    .block_mouse_except_scroll()
     .when(!selected, |el| {
         el.hover(|style| style.bg(rgb(theme().surface)))
     })

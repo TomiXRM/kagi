@@ -5,6 +5,7 @@ use super::*;
 use gpui::Pixels;
 use kagi_ui_core::motion::{self, Easing, KeyedTransition, RowSplice};
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -38,6 +39,7 @@ pub(super) struct FileListMotion {
     slots: HashMap<FileKey, usize>,
     order: Vec<FileKey>,
     rank: HashMap<FileKey, usize>,
+    click_ids: Vec<u64>,
     removed: Vec<RemovedRow>,
     splice: RowSplice<FileKey>,
     pitch: Pixels,
@@ -146,6 +148,12 @@ impl FileListMotion {
                 .enumerate()
                 .map(|(i, key)| (key.clone(), i))
                 .collect();
+            self.click_ids.clear();
+            self.click_ids.extend(rows.iter().map(|row| {
+                let mut hash = std::hash::DefaultHasher::new();
+                row.key.hash(&mut hash);
+                hash.finish()
+            }));
             self.rows = rows;
             self.slots = slots;
             self.revision = Some(revision);
@@ -204,17 +212,16 @@ impl FileListMotion {
 
     fn wrap(&self, i: usize, row: gpui::AnyElement, height: Pixels) -> gpui::AnyElement {
         let sample = self.sample(&self.rows[i].key, motion::now(), height);
-        if sample.offset == px(0.) && sample.opacity == 1. {
-            return row;
-        }
         div()
             .w_full()
             .h(theme::scaled_px(FILE_ROW_HEIGHT).max(px(20.)))
             .child(
                 div()
+                    .id(("cp-motion-row", self.click_ids[i]))
                     .relative()
                     .top(sample.offset)
                     .opacity(sample.opacity)
+                    .on_click(|_, _, cx| cx.stop_propagation())
                     .child(row),
             )
             .into_any_element()

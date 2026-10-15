@@ -370,6 +370,35 @@ fn case(cx: &mut VisualTestAppContext, repo: &std::path::Path, tree: bool) {
         distance(fill(cx, window, b), full) <= 3,
         "disabling reduction cannot resurrect motion"
     );
+    frame(cx, window, t + Duration::from_millis(2300));
+    click(cx, window, &format!("inspector-file-{a}"));
+    click(cx, window, "generated-fold-header");
+    frame(cx, window, t + Duration::from_millis(2337));
+    let transient = fill(cx, window, a);
+    assert!(
+        distance(transient, full) > 3 && distance(transient, empty) > 3,
+        "hide begins with real in-flight selection ink"
+    );
+    let ghost_id = format!("inspector-file-ghost-{second}");
+    assert!(e2e::control_bounds(window.window_id(), &ghost_id).is_some());
+    e2e::clear_control_bounds(window.window_id(), &ghost_id);
+    app.update(cx, |app, cx| app.show_editor_mode(cx));
+    frame(cx, window, t + Duration::from_millis(2337));
+    app.update(cx, |app, cx| app.show_graph_mode(cx));
+    frame(cx, window, t + Duration::from_millis(2337));
+    assert!(
+        e2e::control_bounds(window.window_id(), &ghost_id).is_none(),
+        "rapid workspace return must retire closing Inspector ghosts"
+    );
+    let ax = list_a11y::recorded_list("inspector-files-scroll").unwrap();
+    let selected_a = ax
+        .rows
+        .values()
+        .any(|(name, selected)| *selected && name.ends_with("a.txt"));
+    assert!(
+        distance(fill(cx, window, a), if selected_a { full } else { empty }) <= 3,
+        "rapid workspace return paints the current semantic selection endpoint"
+    );
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);
 }
@@ -398,14 +427,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS inspector_file_motion");
 }
 
-pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
-    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
-    let _keys = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
-    let _motion = MotionRestore(theme::reduce_motion());
-    assert!(theme::set_active("apple-light"));
-    theme::set_zoom(1.67);
-    theme::set_reduce_motion(false);
-    cx.update(theme::sync_gpui_component_theme);
+pub(crate) fn viewport_fixture(normal_count: usize) -> (tempfile::TempDir, Vec<String>) {
     let repo = fixture();
     std::fs::write(
         repo.path().join(".gitattributes"),
@@ -428,11 +450,30 @@ pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
         std::fs::write(repo.path().join(&path), "generated fixture\n").unwrap();
         paths.push(path);
     }
+    for n in 0..normal_count {
+        std::fs::write(
+            repo.path().join(format!("n-{n:02}.txt")),
+            "normal fixture\n",
+        )
+        .unwrap();
+    }
     git(repo.path(), &["add", "."]);
     git(
         repo.path(),
         &["commit", "-qm", "Scrollable generated Inspector"],
     );
+    (repo, paths)
+}
+
+pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
+    let _presentation = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _keys = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _motion = MotionRestore(theme::reduce_motion());
+    assert!(theme::set_active("apple-light"));
+    theme::set_zoom(1.67);
+    theme::set_reduce_motion(false);
+    cx.update(theme::sync_gpui_component_theme);
+    let (repo, paths) = viewport_fixture(0);
     let (app, window) = mount(cx, repo.path());
     app.update(cx, |app, cx| {
         app.inspector_visible = true;
@@ -613,6 +654,8 @@ pub fn scenario_generated_viewport(cx: &mut VisualTestAppContext) {
         pitch,
         "reduced opening reaches final snapped slots immediately",
     );
+    let row = bounds(window, &format!("inspector-file-{}", indices[0]));
+    let _drop_target = crate::file_row_input::assert_repo_drop_on_row(cx, &app, window, row);
     motion::set_clock_for_e2e(None);
     unmount(cx, app, window);
     eprintln!("[gui-e2e] PASS inspector_generated_viewport_motion");

@@ -658,6 +658,10 @@ mod changes_motion;
 mod inspector_motion;
 
 #[cfg(target_os = "macos")]
+#[path = "recovery/file_row_input.rs"]
+mod file_row_input;
+
+#[cfg(target_os = "macos")]
 #[path = "recovery/modal_motion.rs"]
 mod modal_motion;
 
@@ -3597,6 +3601,7 @@ mod macos {
             ("changes_file_motion", Box::new(crate::changes_motion::scenario)),
             ("inspector_file_motion", Box::new(crate::inspector_motion::scenario)),
             ("inspector_generated_viewport_motion", Box::new(crate::inspector_motion::scenario_generated_viewport)),
+            ("inspector_more_motion", Box::new(crate::file_row_input::inspector_more)),
             ("modal_disclosure_motion", Box::new(crate::modal_motion::scenario_modal_disclosure_motion)),
             (
                 "inspector_files_keyboard",

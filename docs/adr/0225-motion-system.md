@@ -211,10 +211,19 @@ measured pixel-snapped pitch, not the unsnapped configured height. Closing
 ghosts remain presentation-only and the shared splice cap bounds extra work.
 
 Changes uses the same leading-before-first/trailing-after-last placement order.
-Both lists block non-scroll mouse hits behind real interactive rows: compressed
-incoming contents overlap, and GPUI's normal hitboxes otherwise dispatch clicks
-to multiple rows. Wheel input continues to the virtual list. Presentation-only
-removal ghosts never acquire file actions or duplicate accessibility rows.
+Both lists give every real row kind a role-less parent click boundary, including
+fold headers, non-collapsible directories and overflow notes. It runs after the
+row's own child actions, then consumes only click propagation: compressed
+incoming contents overlap, so otherwise multiple normal hitboxes receive the
+same click. The top painted logical row owns that click. Mouse-down focus,
+ancestor folder-drop/hover handling, wheel input and child accessibility roles
+remain unchanged; broad hitbox occlusion would break those existing routes.
+Presentation-only removal ghosts never acquire actions or accessibility rows.
+
+Leaving the resolved Graph/Diff surface retires retained Changes and Inspector
+presentation without changing logical rows, selection or scroll. Returning
+inside the old transition duration must present settled endpoints, just as
+switching tab owners does; hidden frames do not notify or rebuild file models.
 
 ## Sidebar and editor tree amendment (#1617)
 

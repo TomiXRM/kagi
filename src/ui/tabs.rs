@@ -154,11 +154,7 @@ impl KagiApp {
         let info = match open_repository(&path) {
             Ok(info) => info,
             Err(e) => {
-                let msg = format!("Error: {e}");
-                klog!("open: {}", msg);
-                self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
-                self.push_toast(ToastKind::Error, msg, cx);
-                cx.notify();
+                self.present_repository_open_failure(e, cx);
                 return false;
             }
         };
@@ -189,6 +185,28 @@ impl KagiApp {
         let left = self.home_yields_to_repository();
         self.return_to_tab(new_idx, left, cx);
         true
+    }
+
+    /// Finder only opens folders; never discover a repository from a file's parent.
+    pub(super) fn open_external_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        for path in paths {
+            if path.is_dir() {
+                self.open_repository(path.clone(), cx);
+            } else {
+                self.present_repository_open_failure(
+                    kagi_git::GitError::NotARepository(path.display().to_string()),
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn present_repository_open_failure(&mut self, e: kagi_git::GitError, cx: &mut Context<Self>) {
+        let msg = format!("Error: {e}");
+        klog!("open: {}", msg);
+        self.status_footer = FooterStatus::Failed(SharedString::from(msg.clone()));
+        self.push_toast(ToastKind::Error, msg, cx);
+        cx.notify();
     }
 
     /// The application-layer session on screen (#482 stage 1). `None` on the
@@ -824,62 +842,6 @@ impl KagiApp {
                 });
                 if result.is_err() {
                     break; // app gone
-                }
-            }
-        })
-        .detach();
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // Single-instance listener (ADR-0102)
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// Drain the single-instance accept-thread channel on the UI thread.
-    ///
-    /// Mirrors [`arm_watcher`]'s spawn/weak/update/notify shape: a background
-    /// `std::thread` (spawned in `main`) feeds an `mpsc` channel as secondary
-    /// `kagi …` invocations forward repo paths; this loop polls the receiver and
-    /// opens each path as a new tab (`open_repository`, Backend-backed — no git2
-    /// in UI) and raises the window via `cx.activate(true)` (the same call the
-    /// Dock-reopen handler uses).  A `None` message is a focus-only request
-    /// (bare `kagi`).  Called once from `open_main_window`; a no-op when the
-    /// receiver is absent (bind failed, or headless).
-    pub fn arm_single_instance_listener(&mut self, cx: &mut Context<Self>) {
-        let rx = match crate::single_instance::take_receiver() {
-            Some(rx) => rx,
-            None => return,
-        };
-
-        cx.spawn(async move |weak, acx| {
-            use std::sync::mpsc::TryRecvError;
-            loop {
-                acx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
-                match rx.try_recv() {
-                    Ok(Some(path)) => {
-                        let result = acx.update(|cx| {
-                            cx.activate(true);
-                            weak.update(cx, |app, cx| {
-                                klog!("single-instance: open tab {}", path.display());
-                                app.open_repository(path.clone(), cx);
-                                cx.notify();
-                            })
-                        });
-                        if result.is_err() {
-                            break; // app gone
-                        }
-                    }
-                    Ok(None) => {
-                        // Focus-only request (bare `kagi`).
-                        acx.update(|cx| cx.activate(true));
-                        let _ = weak.update(acx, |_app, cx| {
-                            klog!("single-instance: focus");
-                            cx.notify();
-                        });
-                    }
-                    Err(TryRecvError::Empty) => continue,
-                    Err(TryRecvError::Disconnected) => break,
                 }
             }
         })

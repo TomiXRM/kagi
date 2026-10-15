@@ -11,6 +11,7 @@ impl KagiApp {
     /// and (for conflict) by the re-armed detection below.
     pub(crate) fn begin_session_revalidation(&mut self, session: crate::app::SessionId) {
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.cache_epoch = ui.cache_epoch.wrapping_add(1);
             ui.diff_caches.clear();
             ui.wip_diffstat = None;
@@ -253,6 +254,7 @@ impl KagiApp {
         let anchor = self.selected_commit(session);
         self.reads.amend(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }
@@ -266,6 +268,7 @@ impl KagiApp {
         let anchor = self.selected_commit(session);
         self.reads.publish(session, view);
         if let Some(ui) = self.ui.get_mut(&session) {
+            ui.graph_motion.reset = true;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }
@@ -278,10 +281,18 @@ impl KagiApp {
     /// and the caller must drop the result without any display side effect.
     pub fn accept_tab_view(&mut self, key: crate::app::ReadKey, view: TabViewState) -> bool {
         let anchor = self.selected_commit(key.session());
+        let animate_graph = self.active_session() == Some(key.session())
+            && self.ui.get(&key.session()).is_some_and(|ui| {
+                !matches!(
+                    ui.pane_revalidation,
+                    crate::ui::tab_ui_state_ops::PaneRevalidation::AwaitingRead
+                )
+            });
         if !self.reads.accept(key, view) {
             return false;
         }
         if let Some(ui) = self.ui.get_mut(&key.session()) {
+            ui.graph_motion.full_read = animate_graph;
             ui.view_publish_gen = ui.view_publish_gen.wrapping_add(1);
             ui.pane_revalidation = crate::ui::tab_ui_state_ops::PaneRevalidation::Queued;
         }

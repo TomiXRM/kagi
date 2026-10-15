@@ -64,7 +64,6 @@ pub(crate) fn render_rows(
     rows: &[CommitRow],
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
     range: std::ops::Range<usize>,
-    selected: Option<usize>,
     window_active: bool,
     badge_col_w: f32,
     graph_col_w: f32,
@@ -77,6 +76,7 @@ pub(crate) fn render_rows(
     a11y_offset_size: (usize, usize),
     // #985: where the selected row is drawn, for the context-menu key.
     anchor: &super::menu_keys::RowAnchor,
+    motion: &super::render_body::motion::GraphMotion,
     cx: &mut Context<KagiApp>,
 ) -> Vec<impl IntoElement> {
     let rh = row_height(graph_compact);
@@ -91,7 +91,9 @@ pub(crate) fn render_rows(
             // (not the row), and every field read either copies a `Copy` value
             // or bumps an Arc (`SharedString`) / clones a small Vec, so the
             // whole-row clone per visible row is unnecessary.
-            let is_selected = selected == Some(ix);
+            let key = motion.key(a11y_offset_size.0 + ix);
+            let is_selected = key.is_some_and(|key| motion.selected(key));
+            let selection = key.map_or(0., |key| motion.selection(key));
             let is_dimmed = solo_visible.is_some_and(|visible| !visible.contains(&row.id));
 
             // Graph keeps its normal stripe beneath the accent wash (#1485).
@@ -101,11 +103,8 @@ pub(crate) fn render_rows(
                 theme().bg_row_alt
             })
             .into();
-            let row_bg = if is_selected {
-                default_bg.blend(theme().selection_wash(window_active))
-            } else {
-                default_bg
-            };
+            let wash = theme().selection_wash(window_active);
+            let row_bg = default_bg.blend(wash.alpha(wash.a * selection));
             let foreground = rgb(theme().text_main).into();
             let secondary_foreground = rgb(theme().text_sub).into();
             let muted_foreground = rgb(theme().text_muted).into();
@@ -118,7 +117,7 @@ pub(crate) fn render_rows(
             // under their wash; inactive rows keep the existing grey fill.
             // Tuple = (normal, hover) wash colours.
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
-                if theme::graph_lane_compact() && (!is_selected || window_active) {
+                if theme::graph_lane_compact() && (selection < 1. || window_active) {
                     let c = theme().lane_color(row.node_color);
                     let (na, ha) = if theme().dark {
                         (0.18, 0.24)
@@ -127,9 +126,11 @@ pub(crate) fn render_rows(
                     };
                     let normal = gpui::hsla(c.h, c.s, c.l, na);
                     let hover = gpui::hsla(c.h, c.s, c.l, ha);
-                    if is_selected {
-                        // Composite the wash after the lane tint, not beneath it.
-                        let selected = default_bg.blend(normal).blend(theme().selection_wash(true));
+                    if selection > 0. {
+                        // Both incoming and outgoing lane bands retain their tint.
+                        let selected = default_bg
+                            .blend(normal)
+                            .blend(wash.alpha(wash.a * selection));
                         Some((selected, selected))
                     } else {
                         Some((normal, hover))
@@ -249,7 +250,7 @@ pub(crate) fn render_rows(
             // zoom > 100% the selected row's graph lane drifted right, at
             // zoom < 100% it drifted left, off the unselected rows' lanes.
             .px_3()
-            .when(is_selected, |el| {
+            .when(selection > 0., |el| {
                 el.child(
                     div()
                         .absolute()
@@ -262,11 +263,12 @@ pub(crate) fn render_rows(
                         } else {
                             theme().text_muted
                         }))
+                        .opacity(selection)
                         .when(cfg!(feature = "gui-e2e"), |bar| {
                             bar.child(super::e2e::measure_inside("graph-selection-bar"))
                         }),
                 )
-                .child(anchor.probe())
+                .when(is_selected, |el| el.child(anchor.probe()))
             })
             .h(px(rh))
             .when(ix == 0 && cfg!(feature = "gui-e2e"), |el| {

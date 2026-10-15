@@ -1935,6 +1935,22 @@ mod macos {
                 Box::new(crate::graph_selection_wash::scenario_graph_selection_wash),
             ),
             (
+                "graph_selection_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_selection_crossfade),
+            ),
+            (
+                "graph_commit_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_commit_insert_motion),
+            ),
+            (
+                "graph_wip_insert_motion",
+                Box::new(crate::graph_selection_wash::scenario_graph_wip_insert_motion),
+            ),
+            (
+                "graph_target_crossfade",
+                Box::new(crate::graph_selection_wash::scenario_graph_target_crossfade),
+            ),
+            (
                 "graph_wip_hover_wash",
                 Box::new(crate::graph_selection_wash::scenario_graph_wip_hover_wash),
             ),

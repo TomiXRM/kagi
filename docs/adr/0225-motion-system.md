@@ -136,3 +136,40 @@ for five settled-width checks: unchanged dev reproduced the exact comparison
 of pixel-snapped 327.5px against unsnapped 327.6px. Native Tier A remains the
 behavior gate. A locked screen prevents Tier B visual comparison; math tests
 and hidden native windows must not be described as that evidence.
+
+## Graph surface amendment (#1617)
+
+The dense Graph retains its existing stripes, lane tints, fixed row height and
+selection endpoints. Its single presentation owner lives in `TabUiState`, not
+the published read model. Selection transitions are keyed by commit OID, stash
+OID or worktree path and retain all still-visible outgoing washes through
+A → B → C retargets; keyboard/AX selection remains immediate.
+
+Only accepted full reads authorize commit arrivals. Initial/activation reads,
+pagination, filter/solo changes and broad rewrites settle immediately. Live WIP
+prefix membership is compared separately so cheap status refreshes do not need
+to rebuild commit rows. Changes larger than the measured viewport settle.
+Removed WIP rows retain their old content as presentation-only ghosts.
+
+The uniform list adopts its final length immediately. Fixed-height slot shells
+offset/fade their complete row content, including graph canvases: `graph_view`
+paints from the canvas's measured absolute bounds, so lanes move with their
+nodes and return to the original connector geometry at rest. The viewport
+clips overflowing presentation rather than changing row heights.
+Because the pinned public `uniform_list` realizes only final-index visible rows,
+expand the presentation range only for edge content displaced into the viewport,
+including visible ghosts whose anchor scrolled out. Mount these real rows once as
+out-of-flow children of the first realized slot, retaining their true final index
+for hit testing and AX. Expansion is capped at `MAX_ANIMATED_ROWS` additional
+slots; fixed list length and geometry never change to accommodate animation.
+
+When a splice occurs above a scrolled viewport, preserve the first visible
+logical key and its within-row pixel offset, and settle that splice instead of
+animating the reading anchor. At the top, new arrivals push visible content.
+Cache identity/order only on changed reads/prefixes; frame sampling visits only
+visible rows and the bounded active/ghost set, never rebuilds the read model.
+
+Native frozen-clock coverage checks midpoint wash/geometry, interruption,
+settlement and Reduce Motion. Existing default-instant scenarios retain their
+oracles. Tier B uses an isolated PID-targeted background application; the owner's
+screen is in use, not locked. Never activate it or control the user's pointer.

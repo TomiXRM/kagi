@@ -11,6 +11,9 @@ use super::render_helpers::*;
 use super::workspace::WorkspaceItem;
 use super::*;
 
+pub(crate) mod motion;
+use motion::{RowKey, WipPresentation};
+
 /// One WIP row's render parameters: its [`graph_wip::WipTarget`] key (#476 —
 /// what its connector anchor is looked up by), the worktree's ordinal lane
 /// colour (#767: a *fallback*, used only when the row has no anchor to take
@@ -363,6 +366,86 @@ impl KagiApp {
         let wip_count = wip_params.len();
         let prefix_count = wip_count + self.view().stash_graph_rows.len();
 
+        let selected_key = if commit_panel_open {
+            // The ordinary panel canonicalizes its path on open; the current
+            // row remains identified by the session's path (including fixture
+            // aliases). Foreign metadata is the authoritative target distinction.
+            self.ui()
+                .commit_panel
+                .as_ref()
+                .and_then(|panel| {
+                    let panel = panel.read(cx);
+                    if panel.foreign.is_some() {
+                        Some(RowKey::Wip(panel.repo_path.clone()))
+                    } else {
+                        self.repo_path.clone().map(RowKey::Wip)
+                    }
+                })
+                .or_else(|| self.repo_path.clone().map(RowKey::Wip))
+        } else {
+            self.ui()
+                .compare_view
+                .as_ref()
+                .and_then(|compare| {
+                    if let CompareTarget::Commit(id) = &compare.read(cx).view().target {
+                        self.view()
+                            .stashes
+                            .iter()
+                            .any(|stash| &stash.target == id)
+                            .then(|| RowKey::Stash(id.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    selected
+                        .and_then(|ix| self.view().rows.get(ix))
+                        .map(|row| RowKey::Commit(row.id.clone()))
+                })
+        };
+        let mut passing = Vec::new();
+        let wip_presentations = wip_params
+            .iter()
+            .zip(&wip_anchors)
+            .map(|(params, lane)| {
+                let path = match &params.5 {
+                    WipRowClick::CommitPanel => self.repo_path.clone().unwrap_or_default(),
+                    WipRowClick::Worktree { path, .. } => path.clone(),
+                };
+                let row = WipPresentation {
+                    key: RowKey::Wip(path),
+                    params: params.clone(),
+                    lane: *lane,
+                    passing: passing.clone(),
+                };
+                if let Some(lane) = lane {
+                    let trace = (lane.lane, lane.color);
+                    if !passing.contains(&trace) {
+                        passing.push(trace);
+                    }
+                }
+                row
+            })
+            .collect();
+        if let Some(session) = self.active_session() {
+            let view = self.reads.get(Some(session));
+            if let Some(ui) = self.ui.get_mut(&session) {
+                let selection_moving =
+                    ui.graph_motion
+                        .sync_selection(selected_key, motion_now, motion_instant);
+                let rows_moving = ui.graph_motion.sync_rows(
+                    view,
+                    ui.view_publish_gen,
+                    wip_presentations,
+                    &commit_scroll_handle,
+                    px(row_height(self.graph_compact)),
+                    motion_now,
+                    motion_instant,
+                );
+                kagi_ui_core::motion::request_frame(window, selection_moving || rows_moving);
+            }
+        }
+
         // T030: column header row (fixed, above WIP and commit list).
         let col_header = div()
             .id("col-header")
@@ -578,7 +661,41 @@ impl KagiApp {
                             root.focus(window, cx);
                         }
                     }
-                    self.render_unborn_empty_state(cx)
+                    let mut empty = div()
+                        .relative()
+                        .size_full()
+                        .child(self.render_unborn_empty_state(cx));
+                    let height = px(row_height(self.graph_compact));
+                    for (ghost, offset, opacity) in self.ui().graph_motion.ghosts_after(0, height) {
+                        let (_, ordinal, label, count, diffstat, click, is_worktree) =
+                            &ghost.params;
+                        let content = self.render_wip_row(
+                            ghost.lane.map_or(*ordinal, |lane| lane.color),
+                            label.clone(),
+                            *count,
+                            *diffstat,
+                            click.clone(),
+                            *is_worktree,
+                            ghost.lane.map(|lane| lane.lane),
+                            &ghost.passing,
+                            badge_col_w,
+                            graph_col_w,
+                            self.ui().graph_scroll_x,
+                            (0, 0),
+                            true,
+                            cx,
+                        );
+                        empty = empty.child(
+                            div()
+                                .absolute()
+                                .top(offset)
+                                .w_full()
+                                .h(height)
+                                .opacity(opacity)
+                                .child(content),
+                        );
+                    }
+                    empty.into_any_element()
                 } else {
                     // W12-GCADOPT (§2.10): keep a handle clone for the Scrollbar
                     // overlay; the other is moved into `track_scroll`.
@@ -606,6 +723,12 @@ impl KagiApp {
                                         }
                                         let rows_len = this.view().rows.len();
                                         let compact = this.graph_compact;
+                                        let requested = range;
+                                        let height = px(row_height(compact));
+                                        let range = this
+                                            .ui()
+                                            .graph_motion
+                                            .presentation_range(requested.clone(), height);
                                         let mut els = Vec::with_capacity(range.len());
                                         if range.start < wip_count {
                                             let mut passing = Vec::new();
@@ -636,13 +759,13 @@ impl KagiApp {
                                                         *diffstat,
                                                         click.clone(),
                                                         *is_worktree,
-                                                        commit_panel_open,
                                                         anchor.map(|anchor| anchor.lane),
                                                         &passing,
                                                         badge_col_w,
                                                         graph_col_w,
                                                         this.ui().graph_scroll_x,
                                                         (i, prefix_count + rows_len),
+                                                        false,
                                                         cx,
                                                     ));
                                                 }
@@ -676,7 +799,6 @@ impl KagiApp {
                                                 &this.view().rows,
                                                 &this.avatars.images,
                                                 commit_range,
-                                                selected,
                                                 this.window_active,
                                                 badge_col_w,
                                                 graph_col_w,
@@ -690,12 +812,97 @@ impl KagiApp {
                                                     .map(|solo| &solo.visible_commits),
                                                 (prefix_count, prefix_count + rows_len),
                                                 &this.context_anchor,
+                                                &this.ui().graph_motion,
                                                 cx,
                                             )
                                             .into_iter()
                                             .map(gpui::IntoElement::into_any_element),
                                         );
-                                        els
+                                        let mut slots = Vec::with_capacity(requested.len());
+                                        let mut overflow = Vec::new();
+                                        for (offset, row) in els.into_iter().enumerate() {
+                                            let index = range.start + offset;
+                                            let motion = &this.ui().graph_motion;
+                                            let sample = motion
+                                                .key(index)
+                                                .map(|key| motion.sample(key, height));
+                                            let mut slot =
+                                                div().relative().w_full().h(height).child(
+                                                    div()
+                                                        .relative()
+                                                        .top(sample.map_or(px(0.), |s| s.offset))
+                                                        .w_full()
+                                                        .h(height)
+                                                        .opacity(sample.map_or(1., |s| s.opacity))
+                                                        .child(row),
+                                                );
+                                            for (ghost, offset, opacity) in
+                                                motion.ghosts_after(index, height)
+                                            {
+                                                let (
+                                                    _,
+                                                    ordinal,
+                                                    label,
+                                                    count,
+                                                    diffstat,
+                                                    click,
+                                                    is_worktree,
+                                                ) = &ghost.params;
+                                                let content = this.render_wip_row(
+                                                    ghost.lane.map_or(*ordinal, |lane| lane.color),
+                                                    label.clone(),
+                                                    *count,
+                                                    *diffstat,
+                                                    click.clone(),
+                                                    *is_worktree,
+                                                    ghost.lane.map(|lane| lane.lane),
+                                                    &ghost.passing,
+                                                    badge_col_w,
+                                                    graph_col_w,
+                                                    this.ui().graph_scroll_x,
+                                                    (index, prefix_count + rows_len),
+                                                    true,
+                                                    cx,
+                                                );
+                                                slot = slot.child(
+                                                    div()
+                                                        .absolute()
+                                                        .top(offset)
+                                                        .w_full()
+                                                        .h(height)
+                                                        .opacity(opacity)
+                                                        .child(content)
+                                                        .child(e2e::measure_inside(
+                                                            "graph-wip-ghost",
+                                                        )),
+                                                );
+                                            }
+                                            if requested.contains(&index) {
+                                                slots.push(slot);
+                                            } else {
+                                                // Mount displaced edge rows once, at their real
+                                                // final-slot origins, without changing list length.
+                                                overflow.push(
+                                                    slot.absolute()
+                                                        .top(
+                                                            height
+                                                                * (index as f32
+                                                                    - requested.start as f32),
+                                                        )
+                                                        .into_any_element(),
+                                                );
+                                            }
+                                        }
+                                        if !overflow.is_empty() {
+                                            if let Some(first) = slots.first_mut() {
+                                                *first = std::mem::replace(first, div())
+                                                    .children(overflow);
+                                            }
+                                        }
+                                        slots
+                                            .into_iter()
+                                            .map(IntoElement::into_any_element)
+                                            .collect::<Vec<_>>()
                                     },
                                 ),
                             )

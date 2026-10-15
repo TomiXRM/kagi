@@ -34,6 +34,9 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                     size(px(1392.), px(883.)),
                     move |window, cx| e2e::mount_root(state, window, cx, &output),
                 );
+                // Hidden native windows need the existing activation-input seam
+                // for #1591's production tooltip lifetime guard.
+                let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
                 let app = captured.borrow().clone().unwrap();
                 cx.update_window(window.into(), |_, window, cx| {
                     app.update(cx, |app, cx| app.open_commit_panel(window, cx));

@@ -273,38 +273,53 @@ pub struct GhostSample<'a, K> {
 }
 
 impl<K: Eq + std::hash::Hash> RowSplice<K> {
-    /// Apply a batch of inserted (`present=true`) or removed (`false`) keys.
-    /// Existing keys reverse from their current presence/opacity; unaffected
-    /// transitions continue, so overlapping batches do not restart one another.
-    /// Call only on logical changes, not on viewport mounts or each render.
-    /// Exceeding `MAX_ANIMATED_ROWS` settles the entire splice, including older
-    /// active keys. Large list changes deliberately do not animate.
-    pub fn retarget(
+    /// Apply one logical change atomically, including both insertion and removal.
+    /// Existing keys reverse from their current presence; unaffected keys keep
+    /// moving. Call on logical changes, never viewport mounts or each render.
+    ///
+    /// Returns true when instant policy or the combined active-key limit settles
+    /// the entire owner. The complete batch is bounded before any transition is
+    /// changed, so oversized replacements never animate only one side.
+    /// Duplicate keys count once; if a key appears on both sides, removal wins.
+    pub fn splice(
         &mut self,
-        keys: impl IntoIterator<Item = K>,
-        present: bool,
+        inserted: impl IntoIterator<Item = K>,
+        removed: impl IntoIterator<Item = K>,
         now: Instant,
         instant: bool,
-    ) {
+    ) -> bool {
         if instant {
             self.rows.clear();
-            return;
+            return true;
         }
-        for key in keys {
-            let at_capacity = self.rows.len() == MAX_ANIMATED_ROWS;
-            let transition = match self.rows.entry(key) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    if at_capacity {
-                        self.rows.clear();
-                        return;
-                    }
-                    entry.insert(KeyedTransition::new(
-                        !present,
-                        if present { 0. } else { 1. },
-                    ))
+        let mut pending = std::collections::HashMap::new();
+        let mut total = self.rows.len();
+        for (key, present) in inserted
+            .into_iter()
+            .map(|key| (key, true))
+            .chain(removed.into_iter().map(|key| (key, false)))
+        {
+            match pending.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    entry.insert(present);
                 }
-            };
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    if !self.rows.contains_key(entry.key()) {
+                        if total == MAX_ANIMATED_ROWS {
+                            self.rows.clear();
+                            return true;
+                        }
+                        total += 1;
+                    }
+                    entry.insert(present);
+                }
+            }
+        }
+        for (key, present) in pending {
+            let transition = self
+                .rows
+                .entry(key)
+                .or_insert_with(|| KeyedTransition::new(!present, if present { 0. } else { 1. }));
             transition.retarget(
                 present,
                 if present { 1. } else { 0. },
@@ -314,6 +329,7 @@ impl<K: Eq + std::hash::Hash> RowSplice<K> {
                 false,
             );
         }
+        false
     }
 
     /// Call each render before sampling. Settled changes are retired; instant

@@ -82,13 +82,20 @@ layout, toggle interpretation and retained Inspector content remain with
   per logical row, using selected/unselected as its target key and 1/0 as opacity.
   This supports A → B → C and reversals without dropping still-visible fades.
 - `RowSplice<K: Eq + Hash>` replaces the single-insertion helper. Construct with
-  `default()` per list owner. On a logical change call
-  `retarget(keys, present, now, instant)` with inserted keys (`present=true`) or
-  removed keys (`false`); do not call this on viewport mounts or each render.
-  Existing keys reverse from their current value; new batches do not restart
-  unaffected keys. Duplicate keys cannot double the displacement.
-  Retargeting beyond `MAX_ANIMATED_ROWS` clears all active motion and stops
-  consuming that batch; the caller has already published the complete final list.
+  `default()` per list owner. On each logical change call
+  `splice(inserted, removed, now, instant) -> bool` once with both sides of the
+  diff; never split a replacement into two calls. Do not call it on viewport
+  mounts or each render. The return value is true when instant policy or the
+  combined key limit settled the entire owner, false otherwise.
+  Before touching any transition, stage the distinct batch keys and check the
+  union of existing active keys and unregistered batch keys against
+  `MAX_ANIMATED_ROWS`. Overflow clears all active motion and stops consuming the
+  batch; the caller has already published the complete final list. No insertion
+  or removal subset starts animating before this decision. Thus insertion-heavy
+  and removal-heavy replacements, and either iterator order, follow one policy.
+  Existing keys reverse from their current value; unaffected keys continue.
+  Duplicate keys count once; a key supplied on both sides resolves to removal.
+  Temporary staging is event-only and bounded to 64 distinct keys, not per frame.
   Call `advance(now, instant)` each render to retire settled keys or clear all
   motion under instant policy; its bool is the owning view's frame demand.
   `row(key, row_height, now, precedes)` returns `RowSample { offset, opacity }`.

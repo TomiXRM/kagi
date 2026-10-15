@@ -104,7 +104,7 @@ fn transition_zero_duration_instant_and_clock_bounds() {
 fn row_splice_inserts_n_rows_with_cumulative_offsets() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["a", "b", "c"], true, now, false);
+    splice.splice(["a", "b", "c"], [], now, false);
     assert!(splice.advance(now, false));
     assert_eq!(splice.row(&"tail", px(20.), now, |_| true).offset, px(-60.));
     assert_eq!(splice.row(&"head", px(20.), now, |_| false).offset, px(0.));
@@ -126,7 +126,7 @@ fn row_splice_inserts_n_rows_with_cumulative_offsets() {
 fn row_splice_removes_n_rows_and_positions_retained_ghosts() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["a", "b", "c"], false, now, false);
+    splice.splice([], ["a", "b", "c"], now, false);
     assert_eq!(splice.row(&"tail", px(20.), now, |_| true).offset, px(60.));
     let ghost = splice
         .ghost(&"c", Some(&"head"), [&"a", &"b"], px(20.), now)
@@ -163,11 +163,11 @@ fn row_splice_removes_n_rows_and_positions_retained_ghosts() {
 fn overlapping_row_splices_preserve_existing_presentation() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["a", "b"], true, now, false);
+    splice.splice(["a", "b"], [], now, false);
     let mid = now + TRANSITION / 2;
     // Final tail slot is after two new rows; visual position is 35px.
     let before = px(40.) + splice.row(&"tail", px(20.), mid, |_| true).offset;
-    splice.retarget(["c"], true, mid, false);
+    splice.splice(["c"], [], mid, false);
     let after = px(60.) + splice.row(&"tail", px(20.), mid, |_| true).offset;
     assert_eq!(
         before, after,
@@ -176,7 +176,7 @@ fn overlapping_row_splices_preserve_existing_presentation() {
     assert_eq!(splice.row(&"a", px(20.), mid, |_| false).opacity, 0.875);
     // An unrelated removal likewise shifts the final layout baseline, not the
     // current presentation or the already-running insertion generations.
-    splice.retarget(["old"], false, mid, false);
+    splice.splice([], ["old"], mid, false);
     assert_eq!(
         px(40.) + splice.row(&"tail", px(20.), mid, |_| true).offset,
         before
@@ -198,11 +198,11 @@ fn overlapping_row_splices_preserve_existing_presentation() {
 fn row_splice_reverses_opening_and_closing_without_position_or_opacity_jumps() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["a", "b"], true, now, false);
+    splice.splice(["a", "b"], [], now, false);
     let turn = now + TRANSITION / 2;
     let before = px(40.) + splice.row(&"tail", px(20.), turn, |_| true).offset;
     let opacity = splice.row(&"a", px(20.), turn, |_| false).opacity;
-    splice.retarget(["a", "b"], false, turn, false);
+    splice.splice([], ["a", "b"], turn, false);
     assert_eq!(splice.row(&"tail", px(20.), turn, |_| true).offset, before);
     let first = splice.ghost(&"a", None, [], px(20.), turn).unwrap();
     let second = splice.ghost(&"b", None, [&"a"], px(20.), turn).unwrap();
@@ -211,7 +211,7 @@ fn row_splice_reverses_opening_and_closing_without_position_or_opacity_jumps() {
     let back = turn + TRANSITION / 2;
     let before = splice.row(&"tail", px(20.), back, |_| true).offset;
     let opacity = splice.ghost(&"a", None, [], px(20.), back).unwrap().opacity;
-    splice.retarget(["a", "b"], true, back, false);
+    splice.splice(["a", "b"], [], back, false);
     assert_eq!(
         px(40.) + splice.row(&"tail", px(20.), back, |_| true).offset,
         before
@@ -224,10 +224,10 @@ fn row_splice_reverses_opening_and_closing_without_position_or_opacity_jumps() {
 fn ghost_anchor_can_be_removed_or_reinserted_mid_flight() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["b"], false, now, false);
+    splice.splice([], ["b"], now, false);
     let mid = now + TRANSITION / 2;
     let before = splice.ghost(&"b", Some(&"a"), [], px(20.), mid).unwrap();
-    splice.retarget(["a"], false, mid, false);
+    splice.splice([], ["a"], mid, false);
     let after = splice.ghost(&"b", None, [&"a"], px(20.), mid).unwrap();
     assert_eq!(
         before.offset, after.offset,
@@ -235,7 +235,7 @@ fn ghost_anchor_can_be_removed_or_reinserted_mid_flight() {
     );
     let back = mid + TRANSITION / 4;
     let before = splice.ghost(&"b", None, [&"a"], px(20.), back).unwrap();
-    splice.retarget(["a"], true, back, false);
+    splice.splice(["a"], [], back, false);
     let after = splice.ghost(&"b", Some(&"a"), [], px(20.), back).unwrap();
     assert_eq!(
         before.offset, after.offset,
@@ -247,13 +247,13 @@ fn ghost_anchor_can_be_removed_or_reinserted_mid_flight() {
 fn row_splice_instant_settles_insertions_removals_and_active_batches() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(["a", "b"], true, now, true);
-    splice.retarget(["old"], false, now, true);
+    splice.splice(["a", "b"], [], now, true);
+    splice.splice([], ["old"], now, true);
     assert!(!splice.advance(now, false));
     assert_eq!(splice.row(&"a", px(20.), now, |_| true).opacity, 1.);
     assert!(splice.ghost(&"old", None, [], px(20.), now).is_none());
-    splice.retarget(["c"], true, now, false);
-    splice.retarget(["d"], false, now, false);
+    splice.splice(["c"], [], now, false);
+    splice.splice([], ["d"], now, false);
     assert!(splice.advance(now, false));
     assert!(!splice.advance(now, true));
     assert!(
@@ -269,9 +269,15 @@ fn oversized_row_splice_settles_entire_owner_without_consuming_huge_batch() {
     let now = Instant::now();
     for present in [true, false] {
         let mut splice = RowSplice::default();
-        splice.retarget([usize::MAX], false, now, false);
+        splice.splice([], [usize::MAX], now, false);
         let mut consumed = 0;
-        splice.retarget((0..10_000).inspect(|_| consumed += 1), present, now, false);
+        let keys = (0..10_000).inspect(|_| consumed += 1);
+        let settled = if present {
+            splice.splice(keys, [], now, false)
+        } else {
+            splice.splice([], keys, now, false)
+        };
+        assert!(settled);
         assert_eq!(
             consumed, MAX_ANIMATED_ROWS,
             "one older key already occupied capacity"
@@ -290,10 +296,10 @@ fn oversized_row_splice_settles_entire_owner_without_consuming_huge_batch() {
 fn row_splice_sampling_and_ghost_iteration_are_bounded() {
     let now = Instant::now();
     let mut splice = RowSplice::default();
-    splice.retarget(0..MAX_ANIMATED_ROWS, true, now, false);
+    splice.splice(0..MAX_ANIMATED_ROWS, [], now, false);
     assert_eq!(splice.rows.len(), MAX_ANIMATED_ROWS);
     // Retargeting existing keys at capacity is not an overflow.
-    splice.retarget(0..MAX_ANIMATED_ROWS, false, now + TRANSITION, false);
+    splice.splice([], 0..MAX_ANIMATED_ROWS, now + TRANSITION, false);
     assert!(splice.advance(now + TRANSITION, false));
     let mut visits = 0;
     splice.row(&usize::MAX, px(20.), now + TRANSITION, |_| {
@@ -310,10 +316,67 @@ fn row_splice_sampling_and_ghost_iteration_are_bounded() {
         .ghost(&0, None, between, px(20.), now + TRANSITION)
         .is_some());
     assert_eq!(ghost_visits, MAX_ANIMATED_ROWS);
-    splice.retarget([MAX_ANIMATED_ROWS], false, now + TRANSITION, false);
+    splice.splice([], [MAX_ANIMATED_ROWS], now + TRANSITION, false);
     assert!(
         splice.rows.is_empty(),
         "one additional distinct key settles all"
+    );
+}
+
+#[test]
+fn mixed_splice_overflow_never_animates_only_one_side() {
+    let now = Instant::now();
+    for inserted_count in [1, MAX_ANIMATED_ROWS] {
+        for reverse_order in [false, true] {
+            let mut splice = RowSplice::default();
+            splice.splice([], [usize::MAX], now, false);
+            let mut inserted: Vec<_> = (0..inserted_count).collect();
+            let mut removed: Vec<_> = (inserted_count..=MAX_ANIMATED_ROWS).collect();
+            if reverse_order {
+                inserted.reverse();
+                removed.reverse();
+            }
+            assert!(splice.splice(inserted, removed, now, false));
+            assert!(
+                splice.rows.is_empty(),
+                "neither side nor older motion survives"
+            );
+            assert_eq!(splice.row(&0, px(20.), now, |_| true).offset, px(0.));
+            assert_eq!(splice.row(&0, px(20.), now, |_| true).opacity, 1.);
+            assert!(splice
+                .ghost(&MAX_ANIMATED_ROWS, None, [], px(20.), now)
+                .is_none());
+        }
+    }
+}
+
+#[test]
+fn mixed_splice_counts_union_before_changing_transitions() {
+    let now = Instant::now();
+    let mid = now + TRANSITION / 2;
+    let mut splice = RowSplice::default();
+    assert!(!splice.splice([0], [], now, false));
+    assert!(!splice.splice((1..33).chain([0, 1, 1]), 33..MAX_ANIMATED_ROWS, mid, false,));
+    assert_eq!(splice.rows.len(), MAX_ANIMATED_ROWS);
+    assert_eq!(splice.row(&0, px(20.), mid, |_| false).opacity, 0.875);
+    assert_eq!(splice.row(&1, px(20.), mid, |_| false).opacity, 0.);
+    assert_eq!(
+        splice.ghost(&33, None, [], px(20.), mid).unwrap().opacity,
+        1.
+    );
+    // Exactly one more distinct key on either side exceeds the union limit.
+    assert!(splice.splice([0], [MAX_ANIMATED_ROWS], mid, false));
+    assert!(splice.rows.is_empty());
+    assert!(!splice.splice([1, 1], [1, 1], mid, false));
+    assert_eq!(splice.rows.len(), 1);
+    assert!(
+        splice.ghost(&1, None, [], px(20.), mid).is_some(),
+        "removal wins overlap"
+    );
+    assert!(splice.splice([2], [3], mid, true));
+    assert!(
+        splice.rows.is_empty(),
+        "instant mixed change settles the entire owner"
     );
 }
 

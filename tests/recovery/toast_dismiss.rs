@@ -15,6 +15,33 @@ pub fn scenario_toast_tooltip_lifetime(cx: &mut VisualTestAppContext) {
         .unwrap();
     for lang in [Lang::En, Lang::Ja] {
         app.update(cx, |app, cx| app.set_lang(lang, cx));
+        // No seam here: the real hidden native window must suppress help.
+        cx.update_window(window, |_, window, _| assert!(!window.is_window_active()))
+            .unwrap();
+        stack.update(cx, |stack, cx| {
+            stack.push_notify(ToastKind::Error, "Inactive tooltip", cx);
+        });
+        paint(cx, window);
+        let id = cx.read(|cx| stack.read(cx).toasts().last().unwrap().id);
+        let close = e2e::control_bounds(window.window_id(), &format!("toast-dismiss-{id}"))
+            .expect("inactive dismiss control painted");
+        cx.simulate_mouse_move(window, close.center(), None, Modifiers::none());
+        cx.advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_tooltip_hidden(cx, window, "real inactive native window");
+        cx.simulate_mouse_move(
+            window,
+            gpui::point(gpui::px(10.), gpui::px(300.)),
+            None,
+            Modifiers::none(),
+        );
+        stack.update(cx, |stack, cx| {
+            stack.remove(id);
+            cx.notify();
+        });
+        paint(cx, window);
+        // Only substitute the active-state input for positive/lifecycle cases.
+        let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
         for change in [
             "leave", "rerender", "move", "remove", "replace", "exit", "pending",
         ] {
@@ -114,6 +141,7 @@ pub fn scenario_toast_tooltip_scroll(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     for lang in [Lang::En, Lang::Ja] {
         let (app, window) = mount(cx, fixture.path());
+        let _active = kagi_ui_core::tooltip::e2e::active_window(window.window_id());
         crate::surface_scrollbars::resize(cx, window);
         app.update(cx, |app, cx| app.set_lang(lang, cx));
         theme::set_zoom(1.);

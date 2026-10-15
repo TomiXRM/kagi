@@ -143,10 +143,16 @@ on resize, removal, preview replacement and timed exit; removal during the show
 delay must not create an orphan. `toast_tooltip_scroll` sends a real wheel event
 inside the 30%-height stack and collapses an older hovered card through its
 rendered accessibility action. Both cover EN/JA and clear old measurements before
-asserting absence. Pair with
-`cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::tests`:
-those are TestWindow checks for no-input movement, deactivation and fresh-hover
-recovery, not macOS activation evidence. Tier B remains own-PID hover/leave and
+asserting absence. Lifetime first checks that the real inactive native window
+shows no help without any override. Positive/lifecycle cases then use the
+window-scoped `gui-e2e` active-input seam, not an alternate visibility branch.
+Pair with
+`cargo test -p kagi-ui-core --features gui-e2e,gpui/test-support tooltip::`:
+TestWindow checks cover no-input movement, deactivation before/after the show
+delay and fresh-hover recovery without that seam. Ordinary workspace tests
+also cover the pure cancellation predicate. Run
+`uv run --project ci check-all --selftest` and `check-hover-tooltip` to guard
+registration. These are not macOS foreground-activation evidence. Tier B remains own-PID hover/leave and
 deactivation screenshots in the isolated application; a locked screen cannot
 supply that evidence. The shared boundary must not add children to Kit Buttons,
 whose icon-only sizing depends on their child list.

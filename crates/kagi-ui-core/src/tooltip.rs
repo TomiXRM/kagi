@@ -59,7 +59,7 @@ where
             cx.new(|cx| {
                 let activation =
                     cx.observe_window_activation(window, |tooltip: &mut HoverHelp, window, cx| {
-                        if !window.is_window_active() {
+                        if !window_active(window) {
                             tooltip.cancelled = true;
                             cx.notify();
                         }
@@ -67,7 +67,7 @@ where
                 HoverHelp {
                     content,
                     geometry: live_geometry.clone(),
-                    cancelled: false,
+                    cancelled: !window_active(window),
                     _activation: activation,
                 }
             })
@@ -155,9 +155,76 @@ impl Render for HoverHelp {
         let bounds = *self.geometry.read(cx);
         // Native tooltip callbacks retain the bounds at hover entry. Reconcile
         // actual geometry on every frame, including layout/scroll without input.
-        self.cancelled |= !bounds.contains(&window.mouse_position());
+        self.cancelled = hover_cancelled(
+            self.cancelled,
+            window_active(window),
+            bounds.contains(&window.mouse_position()),
+        );
         // Reactivation or moving back must not resurrect stale help.
         div().children((!self.cancelled).then(|| self.content.clone()))
+    }
+}
+
+fn window_active(window: &Window) -> bool {
+    #[cfg(feature = "gui-e2e")]
+    if e2e::active(window.window_handle().window_id()) {
+        return true;
+    }
+    window.is_window_active()
+}
+
+/// Input-only activation seam for hidden native test windows. The production
+/// lifetime guard is unchanged; tests of inactive windows must not use it.
+#[cfg(feature = "gui-e2e")]
+pub mod e2e {
+    use gpui::WindowId;
+    use std::{cell::RefCell, collections::HashSet};
+
+    thread_local! {
+        static ACTIVE: RefCell<HashSet<WindowId>> = RefCell::default();
+    }
+
+    #[must_use]
+    pub struct ActiveWindow(WindowId);
+
+    pub fn active_window(window: WindowId) -> ActiveWindow {
+        ACTIVE.with(|active| active.borrow_mut().insert(window));
+        ActiveWindow(window)
+    }
+
+    impl Drop for ActiveWindow {
+        fn drop(&mut self) {
+            ACTIVE.with(|active| active.borrow_mut().remove(&self.0));
+        }
+    }
+
+    pub(super) fn active(window: WindowId) -> bool {
+        ACTIVE.with(|active| active.borrow().contains(&window))
+    }
+}
+
+fn hover_cancelled(was_cancelled: bool, window_active: bool, pointer_inside: bool) -> bool {
+    was_cancelled || !window_active || !pointer_inside
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::hover_cancelled;
+
+    #[test]
+    fn active_hover_is_visible_and_inactive_hover_is_cancelled() {
+        assert!(!hover_cancelled(false, true, true));
+        assert!(hover_cancelled(false, false, true));
+    }
+
+    #[test]
+    fn cancellation_survives_reactivation_and_pointer_return() {
+        assert!(hover_cancelled(false, true, false));
+        for active in [false, true] {
+            for pointer_inside in [false, true] {
+                assert!(hover_cancelled(true, active, pointer_inside));
+            }
+        }
     }
 }
 
@@ -236,9 +303,43 @@ mod tests {
     }
 
     #[gpui::test]
+    fn deactivation_during_show_delay_never_displays_help(cx: &mut TestAppContext) {
+        let rendered = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, _| Trigger(rendered.clone(), px(0.)));
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        draw(cx);
+        cx.simulate_mouse_move(point(px(50.), px(50.)), None, Default::default());
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.deactivate_window();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(
+            rendered.get(),
+            0,
+            "inactive window must not show delayed help"
+        );
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        draw(cx);
+        assert_eq!(rendered.get(), 0, "reactivation cannot revive delayed help");
+        cx.simulate_mouse_move(point(px(150.), px(150.)), None, Default::default());
+        draw(cx);
+        cx.simulate_mouse_move(point(px(50.), px(50.)), None, Default::default());
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        draw(cx);
+        assert!(rendered.get() > 0, "fresh active hover recovers");
+    }
+
+    #[gpui::test]
     fn moving_a_live_trigger_cancels_help_without_mouse_input(cx: &mut TestAppContext) {
         let rendered = Rc::new(Cell::new(0));
         let (trigger, cx) = cx.add_window_view(|_, _| Trigger(rendered.clone(), px(0.)));
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
         draw(cx);
         cx.simulate_mouse_move(point(px(50.), px(50.)), None, Default::default());
         cx.executor().advance_clock(Duration::from_secs(1));

@@ -1302,8 +1302,12 @@ without inserting children that would change Kit icon-button sizing.
 This boundary delegates delay and unmount ownership to GPUI's element-owned
 `StatefulInteractiveElement::tooltip` registration and adds keyed geometry
 and window-activation invalidation.
-gpui-kit `Tooltip` remains the content/view styling implementation, including
-the existing theme bridge; it does not own Kagi controls' hover lifecycle.
+gpui-kit `Tooltip` still renders the text/custom content and theme colors,
+but this does not preserve the managed overlay's complete presentation.
+The roughly fourteen formerly Kit-managed registrations now use GPUI's
+cursor-relative placement and timing instead of Kit overlay animation and
+its grace when moving between adjacent buttons. This behavior is closer to
+standard macOS tooltips; it is not an AppKit tooltip implementation.
 Do not use component-inherent `.tooltip(text)` / `.tooltip_builder(...)`
 to install a Root-owned managed overlay.
 
@@ -1331,6 +1335,14 @@ with owner authorization; no foreground interaction or screenshot is claimed.
 Element-owned registration avoids handing dismissal to a longer-lived Root
 overlay. The shared helper also observes window activation: deactivation
 permanently cancels that tooltip content, and a fresh hover rebuilds it.
+It also reads activation when the delayed content is created, so deactivation
+during the show delay cannot create visible help in an already-inactive window.
+The review regression failed before that guard with two content renders
+instead of zero. The pure cancellation predicate runs under ordinary `cfg(test)`
+in workspace CI; TestWindow additionally exercises delayed creation and recovery.
+Hidden native positive/lifecycle cases use a `gui-e2e`-only, window-scoped
+active-input override while running the same production cancellation code.
+The inactive native assertion and all TestWindow activation tests use no override.
 Official-main timer/unmount behavior below remains a source-level inference,
 distinct from the observed failure on Kagi's pinned dependency.
 
@@ -1345,16 +1357,22 @@ The transparent boundary now records keyed current clipped bounds and cancels
 help once those bounds no longer contain the pointer. Small animation shifts
 that leave the pointer inside retain help. This keeps GPUI's delay/unmount owner and
 the existing activation guard rather than introducing a managed Root overlay.
-After the guard, that command with `-- --nocapture` passes both tests,
-including no resurrection when the trigger moves back or the window
-reactivates, and recovery after fresh hover. These use GPUI TestWindow;
-the eight-scenario pass above separately validates native macOS behavior.
+After the guard and delayed-activation review, the `tooltip::` filter with
+`-- --nocapture` passes three TestWindow tests plus two ordinary cancellation
+tests, including no resurrection after moving back/reactivating and fresh-hover
+recovery. The eight-scenario run separately validates native rendering;
+hidden-window positive cases substitute only activation input as described above.
 
 The registration rule also covers Kagi-owned direct explanatory
 `.tooltip(builder)` calls, including subjects, sidebar and toolbar help:
 their source-bounds lifetime needs the same terminal boundary. Preserve
 their content builders. Interactive `hoverable_tooltip` worktree cards remain
 a distinct ownership path, not ordinary explanatory tooltips.
+`check-hover-tooltip` bans direct explanatory `.tooltip`, `.tooltip_builder`
+and `.tooltip_with_action` registration in application/UI-crate Rust sources,
+excluding only the shared boundary. Samples preserve `hover_tooltip`,
+`hover_tooltip_builder` and interactive `hoverable_tooltip`; the workflow matrix
+and normal `check-all` run the gate.
 
 Use official public APIs without dependency edits, fork commits or pin changes.
 The owner-facing upstream proposal is recorded in `docs/decisions.md`: managed

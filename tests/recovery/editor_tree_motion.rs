@@ -147,7 +147,7 @@ fn assert_children_absent_from_ax() {
 }
 
 pub fn scenario_editor_directory_motion(cx: &mut VisualTestAppContext) {
-    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion", "theme", "ui_zoom"]);
     let _restore = MotionRestore(theme::app_reduce_motion());
     let _system = SystemDisplayInjection::new(false, false);
     theme::set_reduce_motion(false);

@@ -48,7 +48,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 # through the app's AssetSource, so kagi must be able to serve them — see
 # `src/ui/assets.rs`.
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b004e595cf5d" }
-gpui-terminal = { path = "vendor/gpui-terminal" }  # vendored fork (ADR-0035): selection/copy not yet upstream
+gpui-terminal = { path = "vendor/gpui-terminal" }  # Kagi-owned terminal; upstream origin/notices: ADR-0035
 portable-pty = "0.9"
 git2 = { version = "0.21", default-features = false }
 notify = "7"

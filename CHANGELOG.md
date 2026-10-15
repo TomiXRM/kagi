@@ -5,6 +5,11 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- Document the in-tree terminal as Kagi-owned frontend, selection/copy, scrollback and PTY integration rather than a temporary fork. Retain gpui-terminal's upstream origin, MIT/Apache notices and official alacritty_terminal emulator; terminal behavior and dependency pins are unchanged. (#1479-S2)
+  - Remove stale registry-import metadata and the obsolete duplicate manifest so the owned package can be packaged; preserve its upstream source SHA in the README and retain both license files and attribution.
+
 ### Fixed
 
 - WIP opens its desktop panel or compact Changes/composer without waiting for status, diffstats, file classification or the first Smart Commit login-shell PATH probe. File lists show a loading placeholder, retain their session/input owner, and reject opening reads superseded by a newer refresh. (#1570)

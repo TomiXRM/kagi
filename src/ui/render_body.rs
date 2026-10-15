@@ -833,7 +833,7 @@ impl KagiApp {
                                             .map(gpui::IntoElement::into_any_element),
                                         );
                                         let mut slots = Vec::with_capacity(requested.len());
-                                        let mut overflow = Vec::new();
+                                        let mut leading = Vec::new();
                                         for (offset, row) in els.into_iter().enumerate() {
                                             let index = range.start + offset;
                                             let motion = &this.ui().graph_motion;
@@ -892,25 +892,34 @@ impl KagiApp {
                                                 );
                                             }
                                             if requested.contains(&index) {
+                                                // Paint leading fringe before the first real slot;
+                                                // trailing fringe is appended after the last one.
+                                                if index == requested.start && !leading.is_empty() {
+                                                    slot = div()
+                                                        .relative()
+                                                        .w_full()
+                                                        .h(slot_height)
+                                                        .children(std::mem::take(&mut leading))
+                                                        .child(slot);
+                                                }
                                                 slots.push(slot);
                                             } else {
-                                                // Mount displaced edge rows once, at their real
-                                                // final-slot origins, without changing list length.
-                                                overflow.push(
-                                                    slot.absolute()
-                                                        .top(
-                                                            height
-                                                                * (index as f32
-                                                                    - requested.start as f32),
-                                                        )
-                                                        .into_any_element(),
-                                                );
-                                            }
-                                        }
-                                        if !overflow.is_empty() {
-                                            if let Some(first) = slots.first_mut() {
-                                                *first = std::mem::replace(first, div())
-                                                    .children(overflow);
+                                                let before = index < requested.start;
+                                                let anchor = if before {
+                                                    requested.start
+                                                } else {
+                                                    requested.end.saturating_sub(1)
+                                                };
+                                                let fringe = slot
+                                                    .absolute()
+                                                    .top(height * (index as f32 - anchor as f32))
+                                                    .into_any_element();
+                                                if before {
+                                                    leading.push(fringe);
+                                                } else if let Some(last) = slots.last_mut() {
+                                                    *last = std::mem::replace(last, div())
+                                                        .child(fringe);
+                                                }
                                             }
                                         }
                                         slots

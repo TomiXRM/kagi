@@ -167,3 +167,131 @@ pub fn scenario_graph_activation_motion_reset(cx: &mut VisualTestAppContext) {
     theme::set_reduce_motion(reduced);
     unmount(cx, app, window);
 }
+
+pub fn scenario_graph_insert_motion_hit_targets(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let _gh = crate::pr_fields_focus::OfflineGh::install();
+    let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
+    let reduced = theme::reduce_motion();
+    theme::set_reduce_motion(false);
+    let fixture = crate::macos::build_fixture();
+    for index in 0..40 {
+        git(
+            fixture.path(),
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("tail fixture {index}"),
+            ],
+        );
+    }
+    for zoom in [1., 1.67] {
+        theme::set_zoom(zoom);
+        let (app, window) = mount(cx, fixture.path());
+        let t = Instant::now();
+        motion::set_clock_for_e2e(Some(t));
+        draw(cx, window);
+        let height = e2e::control_bounds(window.window_id(), "graph-row-0")
+            .unwrap()
+            .size
+            .height;
+        let viewport = e2e::control_bounds(window.window_id(), "commit-list-viewport").unwrap();
+        for index in 0..4 {
+            git(
+                fixture.path(),
+                &[
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    &format!("batch arrival {index}"),
+                ],
+            );
+        }
+        app.update(cx, |app, cx| app.reload(cx));
+        cx.run_until_parked();
+        draw(cx, window);
+        motion::set_clock_for_e2e(Some(t + Duration::from_millis(37)));
+        // A fractional scroll after the splice starts makes the final-index
+        // viewport tail partial while displaced extra rows remain visible.
+        let pitch = f32::from(height);
+        let scroll =
+            (pitch * 0.75 - f32::from(viewport.size.height).rem_euclid(pitch)).rem_euclid(pitch);
+        cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .commit_scroll_handle
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(gpui::point(gpui::px(0.), gpui::px(-scroll)))
+        });
+        let count = cx.read(|cx| app.read(cx).view().rows.len());
+        for index in 0..count {
+            e2e::clear_control_bounds(window.window_id(), &format!("graph-row-{index}"));
+        }
+        draw(cx, window);
+        let (tail, bounds) = (0..count)
+            .filter_map(|index| {
+                let bounds =
+                    e2e::control_bounds(window.window_id(), &format!("graph-row-{index}"))?;
+                (bounds.top() < viewport.bottom()).then_some((index, bounds))
+            })
+            .last()
+            .unwrap();
+        let requested_end = ((f32::from(viewport.size.height) + scroll) / pitch).ceil() as usize;
+        assert!(
+            tail >= requested_end,
+            "must click an actually realized fringe row at zoom {zoom}"
+        );
+        let click =
+            |cx: &mut VisualTestAppContext, index: usize, bounds: gpui::Bounds<gpui::Pixels>| {
+                let expected = cx.read(|cx| app.read(cx).view().rows[index].id.clone());
+                let point = gpui::point(
+                    bounds.center().x,
+                    bounds.top() + gpui::px(3.).min((viewport.bottom() - bounds.top()) / 2.),
+                );
+                cx.simulate_mouse_move(window, point, None, gpui::Modifiers::none());
+                cx.simulate_click(window, point, gpui::Modifiers::none());
+                draw(cx, window);
+                assert_eq!(
+                    cx.read(|cx| {
+                        let app = app.read(cx);
+                        app.ui()
+                            .selected
+                            .map(|selected| app.view().rows[selected].id.clone())
+                    }),
+                    Some(expected),
+                    "painted commit {index} owns its visible hit strip at zoom {zoom}"
+                );
+                app.update(cx, |app, cx| {
+                    app.select_headless(index);
+                    cx.notify();
+                });
+            };
+        click(cx, tail, bounds);
+        cx.read(|cx| {
+            app.read(cx)
+                .ui()
+                .commit_scroll_handle
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)))
+        });
+        draw(cx, window);
+        let first = e2e::control_bounds(window.window_id(), "graph-row-1").unwrap();
+        let next = e2e::control_bounds(window.window_id(), "graph-row-2").unwrap();
+        let gap = next.top() - first.top();
+        assert!(
+            gap > gpui::px(3.) && gap < height,
+            "batch rows overlap during insertion"
+        );
+        click(cx, 2, next);
+        motion::set_clock_for_e2e(None);
+        unmount(cx, app, window);
+    }
+    theme::set_reduce_motion(reduced);
+}

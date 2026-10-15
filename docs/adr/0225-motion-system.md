@@ -162,8 +162,9 @@ clips overflowing presentation rather than changing row heights.
 Because the pinned public `uniform_list` realizes only final-index visible rows,
 expand the presentation range only for edge content displaced into the viewport,
 including visible ghosts whose anchor scrolled out. Mount these real rows once as
-out-of-flow children of the first realized slot, retaining their true final index
-for hit testing and AX. Expansion is capped at `MAX_ANIMATED_ROWS` additional
+out-of-flow children before the first and after the last realized slot, preserving
+logical paint order and retaining their true final index for hit testing and AX.
+Expansion is capped at `MAX_ANIMATED_ROWS` additional
 slots; fixed list length and geometry never change to accommodate animation.
 
 When a splice occurs above a scrolled viewport, preserve the first visible
@@ -183,3 +184,17 @@ oracles. The empty/unborn-list case retains its final disappearing WIP ghost
 over the empty-state page until settlement. Tier B uses an isolated,
 PID-targeted application; foreground access is owner-authorized but serialized
 with the other motion slices. The owner's screen is not locked.
+
+### Graph overlap hit ownership
+
+New rows in a small multi-commit batch temporarily have less than one full row
+of visual spacing. GPUI's normal hitboxes can dispatch the same click to each
+overlapping row, letting an older handler overwrite the visible row's selection.
+Real commit, stash and WIP rows therefore use the public
+`block_mouse_except_scroll` behavior; inert ghosts and fixed slot shells do not.
+This makes the top painted row own pointer input while wheel events still chain.
+Leading fringe paints before the first requested row and trailing fringe after
+the last, matching logical row order rather than mounting both at the first slot.
+Native coverage clicks both the actual displaced tail and the visible strip of
+a compressed new row at 37ms, at 100% and 167% zoom, and compares CommitId.
+

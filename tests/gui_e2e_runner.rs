@@ -4027,6 +4027,14 @@ mod macos {
                 Box::new(crate::folder_drop::scenario_folder_drop_open),
             ),
             (
+                "folder_drop_exit",
+                Box::new(crate::folder_drop::scenario_folder_drop_exit),
+            ),
+            (
+                "folder_drop_occluded",
+                Box::new(crate::folder_drop::scenario_folder_drop_occluded),
+            ),
+            (
                 "folder_urls_existing_root",
                 Box::new(crate::folder_urls::scenario_folder_urls_existing_root),
             ),

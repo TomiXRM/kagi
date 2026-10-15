@@ -121,3 +121,53 @@ pub fn scenario_folder_drop_open(cx: &mut VisualTestAppContext) {
         unmount(cx, app, window);
     }
 }
+
+pub fn scenario_folder_drop_exit(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
+    draw(cx, window);
+    let neutral = edge_pixel(cx, window);
+    enter(cx, window, vec![fixture.path().to_path_buf()]);
+    assert_ne!(edge_pixel(cx, window), neutral);
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_event(gpui::PlatformInput::FileDrop(FileDropEvent::Exited), cx);
+        // GPUI's key dispatch paints only an already-dirty window, like AppKit's
+        // frame callback. An unbound release does not invalidate the window.
+        window.dispatch_event(
+            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse("f24").unwrap(),
+            }),
+            cx,
+        );
+    })
+    .unwrap();
+    assert_eq!(
+        edge_pixel(cx, window),
+        neutral,
+        "leaving or cancelling the drag must clear target feedback"
+    );
+    unmount(cx, app, window);
+}
+
+pub fn scenario_folder_drop_occluded(cx: &mut VisualTestAppContext) {
+    let fixture = build_fixture();
+    let target = build_fixture();
+    let (app, window) = mount(cx, fixture.path());
+    crate::pr_detail_adaptive::resize(cx, window, (1000., 720.));
+    app.update(cx, |app, cx| {
+        app.open_rename_branch_modal("main".into());
+        cx.notify();
+    });
+    draw(cx, window);
+    let neutral = edge_pixel(cx, window);
+    enter(cx, window, vec![target.path().to_path_buf()]);
+    assert_eq!(
+        edge_pixel(cx, window),
+        neutral,
+        "an occluded repository drop target must not highlight"
+    );
+    submit(cx, window);
+    cx.read(|cx| assert_eq!(app.read(cx).tabs.len(), 1));
+    unmount(cx, app, window);
+}

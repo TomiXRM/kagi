@@ -22,6 +22,7 @@ impl KagiApp {
         div()
             .relative()
             .size_full()
+            .group("repository-drop")
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, _, cx| {
                 this.open_external_paths(paths.paths(), cx);
             }))
@@ -34,13 +35,29 @@ impl KagiApp {
                     .size_full()
                     .border_2()
                     .border_color(gpui::rgba(0))
-                    .drag_over::<gpui::ExternalPaths>(|style, paths, _, _| {
-                        if paths.paths().iter().any(|path| path.is_dir()) {
-                            style.border_color(rgb(theme().ui_accent()))
-                        } else {
-                            style
-                        }
+                    .can_drop(|drag, _, _| {
+                        drag.downcast_ref::<gpui::ExternalPaths>()
+                            .is_some_and(|paths| paths.paths().iter().any(|path| path.is_dir()))
+                    })
+                    .group_drag_over::<gpui::ExternalPaths>("repository-drop", |style| {
+                        style.border_color(rgb(theme().ui_accent()))
                     }),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    |_, _, window, _| {
+                        // GPUI clears the drag on Exited but does not invalidate
+                        // its last painted feedback. Observe without consuming it.
+                        window.on_mouse_event(|event: &gpui::FileDropEvent, phase, window, _| {
+                            if phase.bubble() && matches!(event, gpui::FileDropEvent::Exited) {
+                                window.refresh();
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
             )
             .into_any()
     }

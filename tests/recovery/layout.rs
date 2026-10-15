@@ -972,6 +972,9 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                     kagi::ui::commands::CommandState::Disabled(i18n::Msg::NoPrOpen.t()),
                     "dashboard must explain the unavailable reveal command"
                 );
+                // ADR-0224 keeps the compact rail at 940px; Cmd-B changes
+                // the shared preference, not an inline navigator below 1000px.
+                let compact = dimensions.0 < 1000.;
                 for visible in [false, true] {
                     cx.update_window(win, |_, window, cx| {
                         app.update(cx, |app, cx| {
@@ -981,12 +984,23 @@ pub fn scenario_pr_dashboard_responsive(cx: &mut VisualTestAppContext) {
                     .unwrap();
                     cx.simulate_keystrokes(win, "cmd-b");
                     e2e::clear_control_bounds(win.window_id(), "pr-mode-left-pane");
+                    e2e::clear_control_bounds(win.window_id(), "compact-rail");
                     cx.run_until_parked();
                     pr_table_frame(cx, &app, win, dimensions);
                     assert_eq!(
-                        e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some(),
+                        cx.read(|cx| app.read(cx).sidebar.visible),
                         visible,
-                        "dashboard must respect Toggle Sidebar at every width/zoom"
+                        "Toggle Sidebar must update the shared preference at every width/zoom"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(win.window_id(), "pr-mode-left-pane").is_some(),
+                        visible && !compact,
+                        "only desktop dashboards draw the toggled inline Sidebar"
+                    );
+                    assert_eq!(
+                        e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
+                        compact,
+                        "compact dashboards keep their navigator rail regardless of Sidebar preference"
                     );
                 }
                 pr_table_alignment(win, first, (dimensions, locale, zoom, "initial"));

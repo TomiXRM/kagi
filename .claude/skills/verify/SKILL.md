@@ -535,6 +535,10 @@ For #1175/#1182 use `KAGI_GUI_E2E_ONLY='pr_dashboard_responsive,palette_viewport
 The dashboard measures Apple Light table/viewport bounds at two widths, EN/JA,
 100/167% and Scrolling/Hover/Always policies: Scrolling overlays with zero lane;
 non-auto-hide Hover/Always reserve 16 logical px and pin the table bar to Always.
+The 940px compact dashboard retains its rail while Cmd-B changes the shared
+Sidebar preference; the 1440px desktop dashboard toggles its inline Sidebar.
+Both zooms use the same 1000-logical-pixel breakpoint (ADR-0224), and neither
+viewport is substituted to satisfy the old inline-only oracle.
 X/Y routing and trailing-column reachability stay intact. `e2e::chrome_border`
 records explicit rendered border styles for table
 rows/header and palette frame/divider; it is not a screenshot-pixel sample.

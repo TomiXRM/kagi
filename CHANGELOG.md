@@ -417,6 +417,8 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Changed
 
+- Adopt an official-upstream/public-API-first dependency policy and a staged zero-`[patch]` migration (#1479/#436). Existing pins remain unchanged in this policy-only slice; new fork commits/pins and reintroduced cosmetic patches are prohibited. Record the owner-approved move to official GPUI Kit's `gpui-pre` family and unmodified TextView/default selection scope: cross-post/offscreen conversation selection will no longer be a Kagi guarantee, while naturally supported mounted cross-view behavior is not prohibited. The runtime/oracle cutover remains [#1479-S6](docs/rearch/upstream-migration-1479.md).
+
 - Apple Light のサイドバーと toolbar の明度を同じ Mac の実 Finder ウィンドウと比較して揃え、hover の灰色を中立色にしました。見出し・更新時刻・フォーム label などの補助文字も読みやすくしました。白い本文、Git の状態色・レイアウト・Apple Dark は維持します。(#1065、#1066)
 
 ### Internal

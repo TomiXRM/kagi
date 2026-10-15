@@ -184,7 +184,25 @@ pub struct SetToolbarDisplay {
 pub struct OpenRecentRepository {
     pub path: std::path::PathBuf,
 }
-actions!(kagi_menu, [ClearRecentRepositories]);
+actions!(kagi_menu, [ClearRecentRepositories, FindInFocusedView]);
+
+#[derive(Default)]
+struct RecentMenuAvailable(bool);
+impl gpui::Global for RecentMenuAvailable {}
+
+pub(super) fn register_recent_clear(el: gpui::Div, cx: &App) -> gpui::Div {
+    el.when(
+        cx.try_global::<RecentMenuAvailable>()
+            .is_some_and(|state| state.0),
+        |el| {
+            el.on_action(|_: &ClearRecentRepositories, _, cx| {
+                super::tabs::clear_recent_repos();
+                publish_menus(cx);
+                cx.refresh_windows();
+            })
+        },
+    )
+}
 
 /// Map a language command id back to its [`Lang`].
 pub fn lang_for_command(id: &str) -> Option<Lang> {
@@ -1182,7 +1200,13 @@ pub fn publish_menus(cx: &mut App) {
         .position(|section| section.label == "Window")
         .expect("canonical Window menu");
     crate::native_menus::publish(cx, build_menus(cx), window_section);
-    cx.set_dock_menu(recent_menu().items);
+    let recent = recent_menu();
+    let available = recent.items.len() > 1;
+    if cx.try_global::<RecentMenuAvailable>().map(|state| state.0) != Some(available) {
+        cx.set_global(RecentMenuAvailable(available));
+        cx.refresh_windows();
+    }
+    cx.set_dock_menu(recent.items);
 }
 
 /// Build the shared canonical tree with the active window's presentation labels.
@@ -1206,19 +1230,13 @@ pub fn menus_for_state(state: super::window_menu::ViewMenuState) -> Vec<Menu> {
                     MenuNode::Submenu(DynSubmenu::Theme) => MenuItem::submenu(theme_submenu()),
                     MenuNode::Submenu(DynSubmenu::Language) => MenuItem::submenu(lang_submenu()),
                     MenuNode::Submenu(DynSubmenu::OpenRecent) => MenuItem::submenu(recent_menu()),
-                    MenuNode::Submenu(DynSubmenu::Find) => {
-                        MenuItem::submenu(Menu::new(Msg::MenuFind.t()).items([
-                            if state.find_sidebar {
-                                MenuItem::action(Msg::MenuFindOpen.t(), super::FocusSidebarFilter)
-                            } else {
-                                MenuItem::action(
-                                    Msg::MenuFindOpen.t(),
-                                    gpui_component::input::Search,
-                                )
-                                .disabled(!state.find_input)
-                            },
-                        ]))
-                    }
+                    MenuNode::Submenu(DynSubmenu::Find) => MenuItem::submenu(
+                        Menu::new(Msg::MenuFind.t()).items([MenuItem::action(
+                            Msg::MenuFindOpen.t(),
+                            FindInFocusedView,
+                        )
+                        .disabled(!state.find_sidebar && !state.find_input)]),
+                    ),
                     MenuNode::Submenu(DynSubmenu::ToolbarDisplay) => MenuItem::submenu(Menu {
                         name: Msg::SettingsToolbarDisplay.t().into(),
                         items: toolbar_display_menu_entries()
@@ -1409,7 +1427,7 @@ pub(crate) fn bind_app_keys(cx: &mut App) {
     )]);
     cx.bind_keys([KeyBinding::new(
         "secondary-f",
-        super::FocusSidebarFilter,
+        FindInFocusedView,
         Some("!Terminal && !Input"),
     )]);
     // T-BP-002: register secondary-j (Cmd-J on macOS / Ctrl-J elsewhere) as
@@ -1530,11 +1548,6 @@ pub(crate) fn setup_app(cx: &mut App) {
         let path = action.path.clone();
         // Global listeners can run while their dispatching window is leased.
         cx.defer(move |cx| super::tabs::open_recent_from_app(&path, cx));
-    });
-    cx.on_action(|_: &ClearRecentRepositories, cx| {
-        super::tabs::clear_recent_repos();
-        publish_menus(cx);
-        cx.refresh_windows();
     });
     #[cfg(target_os = "macos")]
     {

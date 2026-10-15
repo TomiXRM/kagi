@@ -278,7 +278,38 @@ impl KagiApp {
                     }
                 }
                 commands::MenuNode::Submenu(commands::DynSubmenu::OpenRecent) => {
-                    for item in commands::recent_menu().items {
+                    let separator = |probe| {
+                        div()
+                            .my_1()
+                            .h(px(1.0))
+                            .bg(rgb(theme().elevated_border(theme().surface)))
+                            .when(cfg!(feature = "gui-e2e"), |el| {
+                                el.relative().child(super::e2e::measure_inside(probe))
+                            })
+                    };
+                    let recent = commands::recent_menu();
+                    panel = panel.child(separator("platform-menu-recent-before")).child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py(theme::scaled_px(5.0))
+                            .text_xs()
+                            .text_color(rgb(theme().text_muted))
+                            .child(check_column(false))
+                            .child(recent.name)
+                            .when(cfg!(feature = "gui-e2e"), |el| {
+                                el.relative().child(super::e2e::measure_inside(
+                                    "platform-menu-recent-heading",
+                                ))
+                            }),
+                    );
+                    for (recent_ix, item) in recent.items.into_iter().enumerate() {
+                        if matches!(item, gpui::MenuItem::Separator) {
+                            panel = panel.child(separator("platform-menu-recent-separator"));
+                            continue;
+                        }
                         let gpui::MenuItem::Action {
                             name,
                             action,
@@ -292,6 +323,9 @@ impl KagiApp {
                             .id(SharedString::from(format!(
                                 "platform-menu-item-{ix}-{row_ix}"
                             )))
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .px_3()
                             .py(theme::scaled_px(5.0))
                             .text_sm()
@@ -300,7 +334,15 @@ impl KagiApp {
                             } else {
                                 theme().text_main
                             }))
-                            .child(name)
+                            .child(check_column(false))
+                            .child(div().flex_1().truncate().child(name).when(
+                                cfg!(feature = "gui-e2e"),
+                                |el| {
+                                    el.relative().child(super::e2e::measure_inside(format!(
+                                        "platform-menu-recent-{recent_ix}",
+                                    )))
+                                },
+                            ))
                             .when(!disabled, |row| {
                                 row.cursor_pointer()
                                     .hover(move |style| {
@@ -314,6 +356,7 @@ impl KagiApp {
                         panel = panel.child(row);
                         row_ix += 1;
                     }
+                    panel = panel.child(separator("platform-menu-recent-after"));
                 }
                 // OsEdit only ever appears in `mac_only` sections, which are
                 // filtered out before we get here — but match exhaustively.

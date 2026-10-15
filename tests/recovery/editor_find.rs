@@ -194,6 +194,12 @@ fn exercise(
         panic!("Find action")
     };
     assert!(!disabled, "focused code Input is a Find target");
+    assert!(
+        cx.update_window(window, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "native Find validates the focused code Input"
+    );
     cx.update_window(window, |_, window, cx| {
         window.dispatch_action(action.boxed_clone(), cx)
     })

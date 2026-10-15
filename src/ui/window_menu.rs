@@ -92,9 +92,9 @@ pub fn state_label(id: &str, state: &ViewMenuState) -> Option<&'static str> {
         "view.toggleSidebar" => Msg::MenuShowSidebar,
         "view.fullScreen" if state.fullscreen => Msg::MenuExitFullScreen,
         "view.fullScreen" => Msg::MenuEnterFullScreen,
-        "view.showGraph" => Msg::WorkspaceGraph,
-        "view.togglePrMode" => Msg::WorkspacePrs,
-        "view.toggleEditorWorkspace" => Msg::ToolbarEditor,
+        "view.showGraph" => Msg::MenuWorkspaceGraph,
+        "view.togglePrMode" => Msg::MenuWorkspacePrs,
+        "view.toggleEditorWorkspace" => Msg::MenuWorkspaceEditor,
         "window.previousTab" => Msg::MenuPreviousTab,
         "window.nextTab" => Msg::MenuNextTab,
         "window.bringAllToFront" => Msg::MenuBringAllToFront,
@@ -241,7 +241,11 @@ impl KagiApp {
                 .unwrap_or(previous.redo_summary),
         }
     }
-    fn find_menu_targets(&self, window: &mut Window, cx: &mut Context<Self>) -> (bool, bool) {
+    pub(super) fn find_menu_targets(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (bool, bool) {
         use gpui::Focusable as _;
         use gpui_component::WindowExt as _;
         if self.home_in_front() {

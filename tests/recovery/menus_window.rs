@@ -130,6 +130,30 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
         }
         assert_eq!(selected, 1, "native selection for {}", submenu.name);
     }
+    cx.update_window(win, |_, window, cx| {
+        window.dispatch_action(Box::new(kagi::ui::FocusSidebarFilter), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, win);
+    let menus = cx.read(commands::build_menus);
+    let find = menus
+        .iter()
+        .flat_map(|menu| &menu.items)
+        .find_map(|item| match item {
+            MenuItem::Submenu(menu) if menu.name.as_ref() == "Find" => Some(menu),
+            _ => None,
+        })
+        .unwrap();
+    let MenuItem::Action { action, .. } = &find.items[0] else {
+        panic!("Find action")
+    };
+    assert!(
+        !cx.update_window(win, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "Find must be unavailable in the non-searchable sidebar Input"
+    );
     for (lang, hide, show, enter, exit) in [
         (
             Lang::En,
@@ -152,14 +176,15 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
             a.set_window_active_for_e2e(true, cx);
         });
         draw(cx, win);
+        let [graph, prs, editor] = match lang {
+            Lang::En => ["Graph", "Pull Requests", "Editor"],
+            Lang::Ja => ["グラフ", "Pull Request", "エディター"],
+        };
         for (id, label) in [
-            ("view.showGraph", kagi_ui_core::i18n::Msg::WorkspaceGraph),
-            ("view.togglePrMode", kagi_ui_core::i18n::Msg::WorkspacePrs),
-            (
-                "view.toggleEditorWorkspace",
-                kagi_ui_core::i18n::Msg::ToolbarEditor,
-            ),
-            ("view.showGraph", kagi_ui_core::i18n::Msg::WorkspaceGraph),
+            ("view.showGraph", graph),
+            ("view.togglePrMode", prs),
+            ("view.toggleEditorWorkspace", editor),
+            ("view.showGraph", graph),
         ] {
             invoke(cx, &app, win, id);
             let menus = cx.read(commands::build_menus);
@@ -169,7 +194,7 @@ pub fn scenario_view_menu_state_labels(cx: &mut VisualTestAppContext) {
                 .unwrap();
             assert!(
                 view.items.iter().any(|item| matches!(
-                    item, MenuItem::Action { name, checked: true, .. } if name.as_ref() == label.t()
+                    item, MenuItem::Action { name, checked: true, .. } if name.as_ref() == label
                 )),
                 "active workspace {id} is checked"
             );
@@ -340,6 +365,44 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         );
         i18n::set_lang(old);
     }
+    // The portable dropdown belongs to the repository workspace, not Home.
+    invoke(cx, &app, win, "window.previousTab");
+    app.update(cx, |app, cx| {
+        assert!(app.open_platform_menu_for_e2e("File", cx))
+    });
+    for width in [1000., 940.] {
+        cx.update_window(win, |_, window, cx| {
+            window.resize(gpui::size(gpui::px(width), gpui::px(720.)));
+            window.bounds_changed(cx);
+        })
+        .unwrap();
+        draw(cx, win);
+        let bounds = |name| {
+            e2e::control_bounds(win.window_id(), name)
+                .unwrap_or_else(|| panic!("visible recent menu group: {name}"))
+        };
+        let heading = bounds("platform-menu-recent-heading");
+        let first = bounds("platform-menu-recent-0");
+        let clear = bounds("platform-menu-recent-3");
+        let open = bounds("platform-menu-cmd-file.openRepository-primary");
+        let next = bounds("platform-menu-cmd-file.openInTerminal");
+        assert!(heading.bottom() <= first.top());
+        assert!(first.bottom() < bounds("platform-menu-recent-separator").top());
+        assert!(bounds("platform-menu-recent-separator").bottom() < clear.top());
+        assert!(clear.bottom() < next.top());
+        assert_eq!(
+            first.left(),
+            open.left(),
+            "recent labels use the command check column"
+        );
+        assert_eq!(
+            clear.left(),
+            open.left(),
+            "Clear Menu uses the command check column"
+        );
+    }
+    cx.simulate_keystrokes(win, "escape");
+    cx.run_until_parked();
     let recent = commands::recent_menu();
     let MenuItem::Action { action, .. } = &recent.items[1] else {
         panic!("second recent repository")
@@ -359,6 +422,12 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
     let MenuItem::Action { action, .. } = recent.items.last().unwrap() else {
         panic!("Clear Menu")
     };
+    assert!(
+        cx.update_window(win, |_, window, cx| window
+            .is_action_available(action.as_ref(), cx))
+            .unwrap(),
+        "Clear Menu is available with recent repositories"
+    );
     cx.update_window(win, |_, window, cx| {
         window.dispatch_action(action.boxed_clone(), cx)
     })
@@ -370,6 +439,17 @@ pub fn scenario_window_menu_items(cx: &mut VisualTestAppContext) {
         &empty.items[0],
         MenuItem::Action { disabled: true, .. }
     ));
+    draw(cx, win);
+    assert!(
+        !cx.update(|cx| cx.is_action_available(&commands::ClearRecentRepositories)),
+        "Clear Menu must be unavailable with empty history"
+    );
+    assert!(
+        !cx.update_window(win, |_, window, cx| window
+            .is_action_available(&commands::ClearRecentRepositories, cx))
+            .unwrap(),
+        "empty history removes the window's Clear Menu handler"
+    );
     assert_eq!(
         cx.read(|cx| app.read(cx).tabs.len()),
         tabs,

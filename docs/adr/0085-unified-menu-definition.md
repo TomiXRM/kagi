@@ -214,16 +214,26 @@ style, modal, save executor, repository mutation or operation-log path.
 Menu action names contain no checkmarks or indentation. Theme, Language,
 Toolbar and workspace entries carry native `checked` state; the portable
 renderer draws its own separate check column from the same selection values.
-Workspace menu labels are Graph / Pull Requests / Editor nouns.
+Workspace menu labels use dedicated nouns: Graph / Pull Requests / Editor in
+English and グラフ / Pull Request / エディター in Japanese, not compact toolbar labels.
 
 File > Open Recent and the Dock use the existing Home recent-repository store,
 in its most-recent-first order. Clear Menu clears only that history, never open
 tabs or repository data. Opening an entry uses `KagiApp::open_repository` and
 registers successful opens through GPUI's public recent-document API.
+The portable renderer retains an Open Recent heading and separators around the
+group and before Clear Menu; all action labels align with the shared check column.
+Clear Menu registers a handler on repository/Home and Settings roots only while
+the published history is nonempty. Availability changes refresh those roots;
+no unconditional global Clear handler bypasses AppKit validation.
 
-Edit > Find exposes Find… through public `input::Search`, with the existing
-Graph sidebar filter as the non-Input/non-Terminal Cmd-F target. Input search
-keeps priority; no global Cmd-F override is introduced. The owner approved
+
+Edit > Find exposes a Kagi action only when the focused target can find: its
+conditional root handler forwards to public `input::Search`, or the existing
+Graph sidebar filter as the non-Input/non-Terminal Cmd-F target. Plain sidebar,
+commit and Settings Inputs do not register that handler. Native validation
+checks action availability, not merely MenuItem's disabled metadata.
+Input search keeps priority; no global Cmd-F override is introduced. The owner approved
 omitting Next/Previous/Use Selection until official Kit offers public navigation
 actions: pinned `7a116a2` keeps SearchPanel and next/previous private. Do not
 emulate those commands by changing queries, synthetic keys or dependency forks.

@@ -49,10 +49,10 @@ the same shape, mirrored (the squash commit is *newer*, so it is above).
 
 Two choices worth recording:
 
-- **Column**: the connector first tries the tip's *own* lane, which is dead
-  above the tip and is exactly the empty channel it wants. Only if something
-  reclaimed that column does it allocate a new lane. Without this, a repo with
-  24 stale branches would grow 24 columns.
+- **Column**: the connector first tries the tip's *own* lane. If that column
+  has been reclaimed, it reuses a nearby safe lane before allocating a new
+  one (see the local-routing correction below). Historical graph width must
+  not force a short connector to the far right.
 - **Ghost marking**: a `GHOST_COLOR` sentinel on `GraphEdge::color`, not a lane
   set. Because the connector deliberately shares a column with a real branch
   line, "is this lane a ghost" is not answerable the way `stash_lanes` is.
@@ -74,6 +74,39 @@ knock-on changes here:
 `inject_squash_edges` also dedupes by `(tip, squash)`: links are per branch, so
 two branches at the same tip drew the identical line twice and the second one
 took a whole new column.
+
+## Local-routing correction (2026-10-17, #1627)
+
+The original fallback allocated at the graph-wide high-water mark. An old,
+wide merge could therefore turn a short squash relationship into a large
+U-shaped detour even when nearby columns were empty throughout its interval.
+
+`kagi-domain::graph::squash::select_lane` now applies this policy:
+
+1. Keep the tip's own column if its connecting interval is free.
+2. Otherwise choose an existing free column by `(maximum endpoint distance,
+   sum of endpoint distances, column index)`, minimizing the longer detour
+   first and resolving ties deterministically.
+3. Allocate one new high-water column only when no existing column is safe.
+
+Candidates are visited from the endpoint midpoint outward without allocating
+or sorting; the first safe candidate wins. Occupancy checks include the squash
+row's lower half, the tip row's upper half, and every intervening node and
+both edge halves, regardless of color. Already-injected ghosts reserve their
+paths: overlapping connectors separate, while disjoint intervals can reuse
+the same column. Only a newly allocated column expands the shared width.
+
+The UI still injects complete `OutOfNode` / `Pass` / `IntoNode` paths after the
+Stable parent layout. Real nodes, parent edges, colors, WIP anchors and stash
+ownership do not move. Alias deduplication, unloaded/reversed endpoint skips,
+scan ownership and generation guards, and muted/dashed rendering are unchanged.
+WIP-to-HEAD routing retains its separate same-lane policy (ADR-0174).
+
+Regression coverage includes domain collision/ranking boundaries, UI injection
+and identity preservation, and `squash_graph_routing` native canvas coverage.
+The latter observes submitted endpoint commands and dashed segments in classic
+and avatar modes at 100% and 167%, including scrolling; it does not substitute
+a lane-number assertion for complete painted-path continuity.
 
 ## Consequences
 

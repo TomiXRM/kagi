@@ -5,6 +5,10 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Route squash-merge ghost connectors through nearby free graph lanes instead of detouring to the far-right width of unrelated older history. Keep overlapping connectors separate, reuse lanes for disjoint intervals, and preserve real parent lines, commit colors and WIP anchors. (#1627)
+
 ## [0.46.0] - 2026-10-17
 
 ### Added

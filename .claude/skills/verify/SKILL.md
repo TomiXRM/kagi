@@ -1295,6 +1295,22 @@ The current suite covers:
   commit above a WIP HEAD, and enough older history to scroll. Capture both
   the top and WIP-offscreen states; retain screenshots in the PR and verify
   that another pane does not obscure the graph.
+- local squash ghost routing (`KAGI_GUI_E2E_ONLY=squash_graph_routing`,
+  `tests/recovery/squash_graph_routing.rs`, #1627): a real wide-history fixture
+  receives three links through the production scan callback. Check complete
+  submitted endpoint move/line/curve commands, local bounds and intervening
+  dashed segments in classic/avatar modes at 100%/167%, including overlapping
+  and disjoint intervals and horizontal/vertical wheel input. Compare movement
+  with actual nodes: GPUI's vertical-only list may also consume horizontal
+  deltas. Keep real history, WIP ownership, read revision and publish generation
+  unchanged; do not suppress scan scheduling. The compile-time `gui-e2e`
+  `graph_view::record_graph_paints` guard arms endpoint recording for one window;
+  drain `take_endpoint_paint_trace` around a real draw. Dropping the guard clears
+  and disarms recording; draining alone does not arm it.
+  Tier B: compare released/fixed windows on the same real patch-id squash
+  fixture with old wide history and a locally reclaimed tip lane. Capture both
+  styles and zooms, plus scrolling; retain screenshots in the PR and compare
+  refs, staged content and worktree status before/after read-only interaction.
 - linked-worktree WIP rows plus commit-panel commit, amend, and discard;
 - Worktree occupancy and removal advisory (`KAGI_GUI_E2E_ONLY=worktree_inspection`,
   `tests/recovery/worktree_inspection.rs`): real pushed/dirty/locked/detached

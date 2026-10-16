@@ -8,6 +8,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 ### Fixed
 
 - Route squash-merge ghost connectors through nearby free graph lanes instead of detouring to the far-right width of unrelated older history. Keep overlapping connectors separate, reuse lanes for disjoint intervals, and preserve real parent lines, commit colors and WIP anchors. (#1627)
+- Keep neutral confirmation-dialog target and section counts readable over their composed pill backgrounds in Nagi and Apple Light/Dark. Preserve the existing tint, geometry, semantic warning/danger chips and operation routes. (#1638)
 
 ## [0.46.0] - 2026-10-17
 

@@ -150,7 +150,17 @@ impl KagiButton {
 pub fn apply_role(btn: Button, role: ButtonRole, cx: &gpui::App) -> Button {
     match role.filled_variant() {
         Some(variant) => btn.with_variant(variant),
-        None => btn.custom(tinted_action_variant(role.accent(&theme()), cx)),
+        None => {
+            let palette = theme();
+            if matches!(&*palette.slug, "nagi-light" | "nagi-dark") {
+                // Custom's fixed 40% pressed tint washes out subdued semantic ink.
+                // Keep the kit's neutral interaction fills and the operation label.
+                btn.with_variant(ButtonVariant::Default)
+                    .text_color(rgb(role.accent(&palette)))
+            } else {
+                btn.custom(tinted_action_variant(role.accent(&palette), cx))
+            }
+        }
     }
 }
 

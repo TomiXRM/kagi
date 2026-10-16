@@ -220,7 +220,7 @@ fn header(modal: &CloneModal) -> impl IntoElement {
                     .px_2()
                     .rounded_md()
                     .bg(rgb(theme().surface))
-                    .when(theme().slug == "apple-dark", |chip| {
+                    .when(theme().uses_neutral_dark_chrome(), |chip| {
                         chip.border_1()
                             .border_color(rgb(theme().elevated_border(theme().surface)))
                     })

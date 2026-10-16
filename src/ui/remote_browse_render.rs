@@ -243,7 +243,7 @@ pub(crate) fn render_remote_browse(
                     .p_2()
                     .rounded_md()
                     .bg(rgb(current_theme().surface))
-                    .when(current_theme().slug == "apple-dark", |card| {
+                    .when(current_theme().uses_neutral_dark_chrome(), |card| {
                         card.border_1().border_color(rgb(
                             current_theme().elevated_border(current_theme().surface)
                         ))
@@ -471,7 +471,7 @@ fn render_directory_list(
     let app = cx.entity();
     let row_keys = modal.row_keys.clone();
     let size = row_keys.len();
-    let row_fill = if current_theme().slug == "apple-dark" {
+    let row_fill = if current_theme().uses_neutral_dark_chrome() {
         current_theme().selected
     } else {
         current_theme().surface

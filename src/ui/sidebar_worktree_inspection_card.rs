@@ -227,7 +227,7 @@ fn url_button(card: &WorktreeHoverCard, port: u16, cx: &gpui::App) -> Inspection
             .px_1()
             .gap_0p5()
             .rounded_sm()
-            .when(theme().slug == "apple-dark", |button| {
+            .when(theme().uses_neutral_dark_chrome(), |button| {
                 button
                     .border_1()
                     .border_color(rgb(theme().elevated_border(theme().surface)))
@@ -320,7 +320,7 @@ fn state_chip(label: &'static str, color: u32) -> gpui::Div {
         .px_1()
         .rounded_sm()
         .bg(rgb(theme().surface))
-        .when(theme().slug == "apple-dark", |chip| {
+        .when(theme().uses_neutral_dark_chrome(), |chip| {
             chip.border_1()
                 .border_color(rgb(theme().elevated_border(theme().surface)))
         })

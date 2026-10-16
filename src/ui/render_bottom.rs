@@ -246,7 +246,7 @@ impl KagiApp {
             .w_full()
             .flex_shrink_0()
             .bg(rgb(theme().chrome_surface()))
-            .when(theme().slug == "apple-dark", |bar| {
+            .when(theme().uses_neutral_dark_chrome(), |bar| {
                 bar.border_b_1().border_color(rgb(theme().surface))
             })
             .child(

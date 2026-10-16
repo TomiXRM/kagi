@@ -22,14 +22,55 @@ following the Mac accent. Across every theme, small accent-as-text uses
 `accent_text_on` on its actual background; it may become darker or lighter for
 at least 4.5:1 contrast. Filled labels use the contrast-aware primary helper.
 
-Apple Light's built-in resting input and unchecked-checkbox boundary is a
-dedicated neutral `#8e8e8e`, not its readable `text_muted` label colour. Focus
+Apple Light / Nagi Light use the neutral `#8e8e8e` resting input and
+unchecked-checkbox boundary; Apple Dark / Nagi Dark share `#67676a`.
+These identifying boundaries are separate from readable label colours. Focus
 continues to use the accent ring. Other built-ins and custom themes retain the
-`text_muted` input-boundary mapping; `surface` supplies decorative chrome
-separators, and the stronger markdown-table border bridge is unchanged.
+`text_muted` mapping; `surface` supplies decorative chrome separators.
 The same `colors.input` boundary colours Default-outline buttons (modal
 Secondary and inspector/oplog/conflict actions), Radio, Select, Combobox,
 NumberInput and DatePicker; these are not separate token overrides.
+
+## Nagi Light / Nagi Dark — 凪
+
+Choose **Nagi Light / Nagi Dark** in the existing theme picker, command palette
+or View → Theme menu (Japanese: **凪 Light / 凪 Dark**). Their stable slugs are
+`nagi-light` and `nagi-dark`. Apple Light / Dark and the default theme remain
+unchanged. Nagi inherits Apple's neutral chrome and density, with gray row
+selections and a fixed, subdued blue interaction accent. It intentionally does
+not follow the Mac accent: a system purple or pink must not add another family.
+
+| Family | Meaning | Light ink | Dark ink |
+|---|---|---|---|
+| Blue | Interaction, links, rename | `#354d5f` | `#b2c4d2` |
+| Green | Success, added content | `#375345` | `#b3ccbf` |
+| Ochre | Warning, modified content | `#5a4a30` | `#d6c9b3` |
+| Brick | Danger, deleted content | `#653f39` | `#d7bbb7` |
+
+Graph lanes reuse these four families and grays instead of eight unrelated
+hues. Syntax keeps identifiers, punctuation and comments neutral; structural
+tokens reuse the same palette. Generated initial avatars are grayscale.
+The ANSI palette also reuses these families (magenta becomes brick, cyan green).
+Photos, external images and application-supplied terminal truecolor are not
+recoloured; those can still contain other hues.
+
+The design follows [CUDO's three points](https://cudo.jp/?page_id=86),
+[Apple HIG Color](https://developer.apple.com/design/human-interface-guidelines/color)
+and WCAG's [use of color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html),
+[text contrast](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
+and [non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html).
+Low saturation is not permission to fade text: palette regressions require
+4.5:1 for ordinary labels and code on their tested surfaces, and 3:1 for
+graph strokes and focus rings.
+
+**Limits:** this is a restrained visual theme, not CUD certification or a
+replacement for **Color Vision (Blue/Orange)**. Green/brick and pale diff fills
+are difficult to distinguish under red–green color-vision simulations.
+Read the `A/M/D/R`, `+/-`, icons, operation names, ref labels and graph geometry;
+do not describe an operation only by its colour. Neutral selection fills alone
+are below 3:1, so the existing selection/focus indicators remain important.
+Simulation and token ratios do not establish whole-application WCAG compliance
+or replace evaluation by people with different visual abilities.
 
 ## Where theme files live
 
@@ -75,7 +116,8 @@ A theme file is one JSON object.
   letter or digit. It is what `settings.json` and `KAGI_THEME` store. It must not
   equal a built-in slug (`catppuccin`, `catppuccin-latte`, `apple-dark`,
   `apple-light`, `color-vision`, `dracula`, `flower-road`, `ibm-pc`, `monokai`,
-  `one-dark`, `one-light`, `pinky-boo`, `tokyo-night`) or a retired alias
+  `nagi-dark`, `nagi-light`, `one-dark`, `one-light`, `pinky-boo`, `tokyo-night`)
+  or a retired alias
   (`xcode-dark`, `xcode-light`, `flower-road-bloom`, `flower-road-vivid`).
 - `name` — **required.** Non-empty display name shown in menus and Settings.
 - `extends` — optional. The slug of a **built-in** theme. Every key you leave out
@@ -252,6 +294,12 @@ handling to the pinned gpui-component Button. No new control is introduced.
 | `Danger` | `color_blocker` | Translucent tinted action (Abort / armed Reset outside dialog footers). |
 | `Neutral` | `text_sub` | Ghost (Keep Both / paging / external raw-side action). |
 | `NeutralTinted` | `text_sub` | Neutral tinted chip (editor navigation / external editor action). |
+
+Nagi renders the four tinted roles as the kit's existing Default buttons:
+neutral interaction fills with semantic resting text. The pinned Custom
+variant forces a 40% pressed tint, which would wash out the restrained ink.
+Primary, destructive-confirm and side-choice filled roles are unchanged;
+handlers, focus and safety gates still belong to the existing Button.
 
 Before #1079, Take Incoming / Keep File were tinted in 11 of the 13 built-ins
 because `color_remote == color_success`. Color Vision also tinted those buttons

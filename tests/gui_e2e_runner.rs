@@ -1882,6 +1882,10 @@ mod macos {
                 Box::new(crate::system_accent::scenario_system_accent_chrome),
             ),
             (
+                "nagi_fixed_accent",
+                Box::new(crate::system_accent::scenario_nagi_fixed_accent),
+            ),
+            (
                 "system_reduce_motion",
                 Box::new(crate::system_accessibility::scenario_system_reduce_motion),
             ),

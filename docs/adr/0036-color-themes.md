@@ -113,24 +113,41 @@ do not inherit their broad hue palettes or system-accent substitution.
 `Theme::uses_neutral_dark_chrome` is the single predicate for the shared dark
 elevation/boundary treatment, used by the existing renderers.
 
-Choose four low-saturation families: blue for interaction, green for success,
-ochre for warning, brick for danger. Graph lanes reuse these and grays; generated
-initial avatars are grayscale. Syntax colours structural roles rather than
-every identifier. ANSI magenta/cyan reuse brick/green; external images and
-terminal truecolor remain content, not theme-owned colour. Complete inherited
-component roles in the existing theme bridge so hover links, charts, switches,
-progress and semantic variants cannot reintroduce the kit's vivid palette.
-Token snapshots are still rebuilt only by that bridge.
+Correction: the original universal low-saturation interpretation washed out the
+hierarchy. Limit where chromatic colour appears instead; do not impose a blanket
+saturation ceiling. Retain at most four hue families: blue for interaction,
+green for success/additions, amber for warning/modified status, red for
+danger/deletions. Graph lanes cycle blue, green and amber, reusing three families
+instead of adding unrelated hues or collapsing to blue/gray. Remote/tag metadata
+is neutral; local branch/HEAD may reuse blue. Syntax keywords/types use blue,
+while ordinary functions, strings, numbers, variables, comments, operators and
+punctuation remain neutral. Generated initial avatars are grayscale. ANSI
+magenta/cyan reuse red/green; external images and terminal truecolor remain
+content, not theme-owned colour. Complete inherited component roles in the
+existing theme bridge so hover links, charts, switches, progress and semantic
+variants cannot introduce unrelated hue families. Token snapshots are still
+rebuilt only by that bridge.
 
 State contract: rest, hover, pressed, focus-visible, selected and inactive-window
-selection retain the existing control/state owners. Ordinary selected rows use
-neutral fills with normal semantic ink, not Apple's opaque on-accent ink.
+selection retain the existing control/state owners. Active selected rows are
+visibly blue and inactive selected rows neutral. Nagi Dark's brighter selection
+fill uses the existing on-accent policy with solid white primary/secondary ink;
+derive it from the selection fill, independently of the lighter button accent.
+Graph, WIP and stash fades use the actual composited row background for ink.
+Nagi Light, inactive rows and other presets retain their existing ink policy.
+Dark graph bands are stronger, and opaque tinted ref-chip backgrounds prevent
+selection from washing out their white labels. Expanded operation-log details
+are neutral content surfaces rather than active-selection surfaces.
+Keep that opaque paint in `graph_badge_style`, including the lifted branch
+badge. The generic `badge_style` still serves confirmation/plan chips whose
+callers draw semantic foregrounds; strengthening their fill would reduce text
+contrast instead of improving Graph visibility.
 Disabled controls retain native disabling. Loading, empty and error behavior
 is unchanged; only their existing semantic tokens differ. There are no new
 Git writes, modal slots, focus handles, animations or confirmation routes.
 
 The pinned Custom Button derives a 40% pressed tint and ignores its foreground
-override; subdued semantic ink on that tint can fall below 4.5:1. Nagi's
+override; semantic ink on that tint can fall below 4.5:1. Nagi's
 Success/Warning/Danger/NeutralTinted roles therefore use the existing Default
 variant's neutral state fills and native normal/disabled labels. Filled Primary,
 Destructive and Current/Incoming roles remain distinct and contrast-aware.
@@ -141,15 +158,19 @@ Use [CUDO's three principles](https://cudo.jp/?page_id=86),
 and WCAG's [Use of Color](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html),
 [Contrast Minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html)
 and [Non-text Contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html).
-The palette tests require readable ordinary text/code (4.5:1), graph/focus
-contrast (3:1), selection-overlay legibility and four-family containment,
-including the component bridge. Native coverage checks fixed-accent pixels and
-selected identity across activation, alongside existing theme/button scenarios.
+The palette tests require readable ordinary text/code (4.5:1), essential
+graph/focus strokes (3:1), selection-overlay legibility and at most four hue
+families, including the component bridge. These floors do not replace visual
+distinction: strengthen active/inactive selection and added/deleted row
+separation without lowering contrast requirements or globally fading colour.
+Native coverage checks fixed-accent pixels, perceptual active/inactive fill
+separation, selected label contrast and retained identity across activation,
+including graph/WIP selection fades, alongside existing theme/button scenarios.
 
 This is not whole-app WCAG compliance or CUD certification. In the repository's
-protan/deutan simulations, the green/brick semantic pair becomes close; pale
-diff fills and repeated lanes cannot identify meaning alone. Existing `A/M/D/R`,
+protan/deutan simulations, the green/red semantic pair can become close; diff
+fills and repeated lanes cannot identify meaning alone. Existing `A/M/D/R`,
 `+/-`, labels, icons, graph geometry and focus/selection indicators are required.
-Neutral selection fills alone are below 3:1. Keep the separate Color Vision
-blue/orange preset; do not market Nagi as its replacement. Real-window
-comparisons and people with differing visual abilities remain necessary.
+Keep the separate Color Vision blue/orange preset; do not market Nagi as its
+replacement. Real-window comparisons and people with differing visual abilities
+remain necessary.

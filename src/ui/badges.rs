@@ -42,7 +42,11 @@ pub(crate) enum WipRowClick {
     },
 }
 
-pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
+pub(crate) fn render_wip_diffstat(
+    stat: WipDiffStat,
+    selected_foreground: Option<gpui::Hsla>,
+) -> impl IntoElement {
+    let foreground = |normal| selected_foreground.unwrap_or_else(|| rgb(normal).into());
     div()
         .flex()
         .flex_row()
@@ -53,13 +57,23 @@ pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
         .font_weight(gpui::FontWeight::BOLD)
         .child(
             div()
-                .text_color(rgb(theme().change_added))
-                .child(SharedString::from(format!("+{}", stat.additions))),
+                .text_color(foreground(theme().change_added))
+                .child(SharedString::from(format!("+{}", stat.additions)))
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label
+                        .relative()
+                        .child(super::e2e::measure_inside("graph-wip-additions"))
+                }),
         )
         .child(
             div()
-                .text_color(rgb(theme().change_deleted))
-                .child(SharedString::from(format!("-{}", stat.deletions))),
+                .text_color(foreground(theme().change_deleted))
+                .child(SharedString::from(format!("-{}", stat.deletions)))
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label
+                        .relative()
+                        .child(super::e2e::measure_inside("graph-wip-deletions"))
+                }),
         )
 }
 
@@ -171,7 +185,7 @@ pub(crate) fn render_badges_column(
             SharedString::from(super::commit_list::badge_tooltip(badge));
         let worktrees = badge.worktrees.clone();
         let is_primary = i == 0;
-        let (badge_bg, badge_border, badge_text) = theme::badge_style(color);
+        let (badge_bg, badge_border, badge_text) = theme::graph_badge_style(color);
         let badge_foreground = rgb(badge_text);
         let name_el = div().min_w(px(0.)).truncate().child(name).when(
             cfg!(feature = "gui-e2e") && is_selected && is_primary,
@@ -541,7 +555,7 @@ pub(crate) fn render_provenance_badge(
         AgentKind::ClaudeCode => 0xf97316, // orange
         _ => 0x8b5cf6,                     // violet
     };
-    let (bg, border, text) = theme::badge_style(hue);
+    let (bg, border, text) = theme::graph_badge_style(hue);
     // Tooltip still names the agent (and review state) so hover carries the detail.
     let detail = provenance_detail(prov);
     let base_tip = if prov.reviewed {

@@ -37,29 +37,32 @@ Choose **Nagi Light / Nagi Dark** in the existing theme picker, command palette
 or View → Theme menu. Both languages use these names. Their stable slugs are
 `nagi-light` and `nagi-dark`. Apple Light / Dark and the default theme remain
 unchanged. Nagi inherits Apple's neutral chrome and density. Active selection
-is visibly blue; inactive selection is neutral. Both retain normal text and
-semantic ink through the existing selection helpers. The fixed blue interaction
-accent intentionally does not follow the Mac accent: system purple or pink
-must not add another family.
+is visibly blue; inactive selection is neutral. Nagi Dark uses solid white
+selected labels, including secondary/status text, against its brighter blue
+selection fill; Nagi Light and inactive rows retain normal ink. The fixed blue
+interaction accent intentionally does not follow the Mac accent: system purple
+or pink must not add another family.
 
 The restraint is in **where colour appears**, not a universal saturation cap.
 Keep at most four chromatic families, with clear interaction and semantic cues:
 
-| Family | Reserved roles |
+| Family | Roles |
 |---|---|
-| Blue | Interaction, links, local branch/HEAD, rename, syntax keywords/types |
-| Green | Success and added content |
-| Amber | Warnings and modified-content status |
+| Blue | Interaction, links, local branch/HEAD, rename, syntax keywords/types, graph lanes |
+| Green | Success, added content and graph lanes |
+| Amber | Warnings, modified-content status and graph lanes |
 | Red | Danger and deleted content |
 
-Graph lanes use only blue and neutral strokes; remote/tag metadata is neutral.
-Ordinary functions, strings, numbers, variables, comments, operators and
-punctuation stay neutral rather than decorating every token. Generated initial
-avatars are grayscale. Added/deleted rows retain distinct green/red cues, and
-amber is reserved for semantic warnings/status, not decorative graph or syntax
-colour. The ANSI palette reuses the four families (magenta becomes red, cyan
-green). Photos, external images and application-supplied terminal truecolor are
-not recoloured; those can still contain other hues.
+Graph lanes cycle **blue, green and amber** rather than adding more hues or
+alternating blue with gray. Dark lane bands and ref chips are brighter; opaque
+chip fills keep their white labels readable even over a selected row.
+Remote/tag metadata and ordinary functions, strings, numbers, variables,
+comments, operators and punctuation stay neutral. Generated initial avatars
+are grayscale. Added/deleted rows retain green/red cues. Expanded Dark operation
+log details use a neutral surface, not an active-selection fill. The ANSI palette
+reuses the four families (magenta becomes red, cyan green). Photos, external
+images and application-supplied terminal truecolor are not recoloured; those can
+still contain other hues.
 
 The design follows [CUDO's three points](https://cudo.jp/?page_id=86),
 [Apple HIG Color](https://developer.apple.com/design/human-interface-guidelines/color)

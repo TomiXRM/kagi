@@ -1,7 +1,7 @@
 //! Nagi — restrained Apple-derived palettes, not a color-vision certification.
 //!
 //! Four chromatic families only: blue (interaction/structure), green (success),
-//! amber (warning), and red (danger). Graph lanes spend only blue/neutral;
+//! amber (warning), and red (danger). Graph lanes cycle blue/green/amber;
 //! remote/tag metadata and ordinary syntax stay neutral. ANSI semantic slots
 //! reuse the four families; generated avatars are neutral. Fetched images and
 //! application-supplied terminal RGB are untouched. Labels, glyphs and diff +/-
@@ -63,17 +63,16 @@ pub const NAGI_LIGHT: Theme = Theme {
     change_dir: 0x505050,
     accent: LIGHT_BLUE,
 
-    // Repeated blue/neutral lanes leave green, amber and red to semantic state.
-    // Geometry/labels identify branches; every stroke retains >= 3:1 contrast.
+    // Three chromatic lanes reuse the global families without adding hues.
     lane_hsl: [
-        (211.0 / 360.0, 0.77, 0.355),
-        (0.0, 0.0, 0.36),
-        (211.0 / 360.0, 0.55, 0.40),
-        (0.0, 0.0, 0.42),
-        (211.0 / 360.0, 0.68, 0.33),
-        (0.0, 0.0, 0.31),
-        (211.0 / 360.0, 0.45, 0.43),
-        (0.0, 0.0, 0.45),
+        (0.58633095, 0.7679558, 0.35490197),
+        (0.41666666, 0.61290324, 0.24313726),
+        (0.10569106, 1.0, 0.24117647),
+        (0.58633095, 0.7679558, 0.35490197),
+        (0.41666666, 0.61290324, 0.24313726),
+        (0.10569106, 1.0, 0.24117647),
+        (0.58633095, 0.7679558, 0.35490197),
+        (0.41666666, 0.61290324, 0.24313726),
     ],
     avatar_sat: 0.0,
     avatar_light: 0.40,
@@ -126,7 +125,7 @@ pub const NAGI_DARK: Theme = Theme {
     bg_base: 0x101010,
     bg_row_alt: 0x181818,
     surface: 0x2c2c2c,
-    selected: 0x183959,
+    selected: 0x1768b5,
     inactive_selected: 0x373737,
     panel: 0x161616,
     sidebar: 0x101010,
@@ -137,7 +136,7 @@ pub const NAGI_DARK: Theme = Theme {
     text_label: 0xb4b4b4,
 
     color_head: DARK_BLUE,
-    color_branch: DARK_BLUE,
+    color_branch: 0x99c9ff,
     color_remote: 0xb4b4b4,
     color_tag: 0xb4b4b4,
     link: DARK_BLUE,
@@ -161,14 +160,14 @@ pub const NAGI_DARK: Theme = Theme {
     accent: DARK_BLUE,
 
     lane_hsl: [
-        (212.0 / 360.0, 1.0, 0.72),
-        (0.0, 0.0, 0.72),
-        (212.0 / 360.0, 0.65, 0.68),
-        (0.0, 0.0, 0.64),
-        (212.0 / 360.0, 0.80, 0.77),
-        (0.0, 0.0, 0.76),
-        (212.0 / 360.0, 0.55, 0.64),
-        (0.0, 0.0, 0.76),
+        (0.5882353, 1.0, 0.8),
+        (0.41558442, 0.503268, 0.7),
+        (0.105919, 0.6993464, 0.7),
+        (0.5882353, 1.0, 0.8),
+        (0.41558442, 0.503268, 0.7),
+        (0.105919, 0.6993464, 0.7),
+        (0.5882353, 1.0, 0.8),
+        (0.41558442, 0.503268, 0.7),
     ],
     avatar_sat: 0.0,
     avatar_light: 0.67,
@@ -248,7 +247,9 @@ pub(crate) fn complete_component_palette(k: &Theme, c: &mut gpui_component::them
     c.sidebar_primary = c.primary;
     c.sidebar_primary_foreground = c.primary_foreground;
     c.sidebar_accent = to_hsla(k.selected);
-    c.sidebar_accent_foreground = to_hsla(k.text_main);
+    c.sidebar_accent_foreground = k.selection_foreground(true);
+    c.tab_active = k.segment_selected_bg();
+    c.tab_active_foreground = k.selection_foreground(true);
     c.sidebar_border = to_hsla(k.surface);
     c.progress_bar = c.primary;
     c.slider_bar = c.primary;

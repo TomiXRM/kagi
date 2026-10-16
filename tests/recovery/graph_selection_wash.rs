@@ -175,6 +175,45 @@ pub fn scenario_graph_selection_wash(cx: &mut VisualTestAppContext) {
             });
         }
     }
+    // This fixture already exposes WIP. Nagi Dark's solid bright selection
+    // needs on-accent note/stat ink, while its opaque chip must not stack tints.
+    app.update(cx, |app, cx| {
+        app.set_theme("nagi-dark", cx);
+        app.select_headless(0);
+        app.set_window_active_for_e2e(true, cx);
+    });
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.open_commit_panel(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for active in [true, false, true] {
+        app.update(cx, |app, cx| app.set_window_active_for_e2e(active, cx));
+        draw(cx, window);
+        let fill = pixel(cx, window, "graph-wip-row");
+        let rgba = [(fill >> 16) as u8, (fill >> 8) as u8, fill as u8, 255];
+        for id in [
+            "graph-wip-note",
+            "graph-wip-additions",
+            "graph-wip-deletions",
+        ] {
+            crate::system_accent::assert_label_contrast(cx, window, id, rgba);
+        }
+        let chip = e2e::control_bounds(window.window_id(), "graph-wip-chip").unwrap();
+        let chip_fill = cx
+            .update_window(window, |_, window, _| {
+                let image = window.render_to_image().expect("native WIP chip");
+                let scale = window.scale_factor();
+                image
+                    .get_pixel(
+                        (f32::from(chip.center().x) * scale) as u32,
+                        ((f32::from(chip.top()) + 0.25) * scale) as u32,
+                    )
+                    .0
+            })
+            .unwrap();
+        crate::system_accent::assert_label_contrast(cx, window, "graph-wip-chip", chip_fill);
+    }
     unmount(cx, app, window);
 }
 

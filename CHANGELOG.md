@@ -12,7 +12,7 @@ All notable changes to Kagi are documented here. Format loosely follows
 
 ### Fixed
 
-- Correct Nagi's washed-out colour hierarchy by limiting chromatic roles rather than globally reducing saturation: blue/neutral graph lanes, neutral remote/tag metadata and ordinary syntax, clear green/red diff cues and semantic amber, visibly blue active selection and neutral inactive selection. Keep readable text and essential-stroke contrast, native neutral/disabled button paint, existing themes and defaults unchanged. (#1637)
+- Correct Nagi's washed-out colour hierarchy by limiting chromatic roles rather than globally reducing saturation: three blue/green/amber graph lane colours, neutral remote/tag metadata and ordinary syntax, and clear green/red diff cues. Brighten Dark selection, lane bands and ref chips; keep selected labels readable through row fades and inactive selection neutral. Expanded Dark operation-log details stay neutral. Preserve text and essential-stroke contrast, native neutral/disabled button paint, existing themes and defaults. (#1637)
 
 ## [0.45.0] - 2026-10-16
 

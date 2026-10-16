@@ -117,9 +117,10 @@ Correction: the original universal low-saturation interpretation washed out the
 hierarchy. Limit where chromatic colour appears instead; do not impose a blanket
 saturation ceiling. Retain at most four hue families: blue for interaction,
 green for success/additions, amber for warning/modified status, red for
-danger/deletions. Graph lanes use blue and neutral only. Remote/tag metadata is
-neutral; local branch/HEAD may reuse blue. Syntax keywords/types use blue, while
-ordinary functions, strings, numbers, variables, comments, operators and
+danger/deletions. Graph lanes cycle blue, green and amber, reusing three families
+instead of adding unrelated hues or collapsing to blue/gray. Remote/tag metadata
+is neutral; local branch/HEAD may reuse blue. Syntax keywords/types use blue,
+while ordinary functions, strings, numbers, variables, comments, operators and
 punctuation remain neutral. Generated initial avatars are grayscale. ANSI
 magenta/cyan reuse red/green; external images and terminal truecolor remain
 content, not theme-owned colour. Complete inherited component roles in the
@@ -129,8 +130,14 @@ rebuilt only by that bridge.
 
 State contract: rest, hover, pressed, focus-visible, selected and inactive-window
 selection retain the existing control/state owners. Active selected rows are
-visibly blue and inactive selected rows neutral; both preserve normal/semantic
-ink through the existing helpers, with no new on-accent policy.
+visibly blue and inactive selected rows neutral. Nagi Dark's brighter selection
+fill uses the existing on-accent policy with solid white primary/secondary ink;
+derive it from the selection fill, independently of the lighter button accent.
+Graph, WIP and stash fades use the actual composited row background for ink.
+Nagi Light, inactive rows and other presets retain their existing ink policy.
+Dark graph bands are stronger, and opaque tinted ref-chip backgrounds prevent
+selection from washing out their white labels. Expanded operation-log details
+are neutral content surfaces rather than active-selection surfaces.
 Disabled controls retain native disabling. Loading, empty and error behavior
 is unchanged; only their existing semantic tokens differ. There are no new
 Git writes, modal slots, focus handles, animations or confirmation routes.
@@ -153,8 +160,8 @@ families, including the component bridge. These floors do not replace visual
 distinction: strengthen active/inactive selection and added/deleted row
 separation without lowering contrast requirements or globally fading colour.
 Native coverage checks fixed-accent pixels, perceptual active/inactive fill
-separation and selected identity across activation, alongside existing
-theme/button scenarios.
+separation, selected label contrast and retained identity across activation,
+including graph/WIP selection fades, alongside existing theme/button scenarios.
 
 This is not whole-app WCAG compliance or CUD certification. In the repository's
 protan/deutan simulations, the green/red semantic pair can become close; diff

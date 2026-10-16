@@ -57,21 +57,24 @@ wants. There is deliberately no unfiltered example here to copy: without the
 filter the runner opens a window per scenario, which is the ~1,400-window path
 that crashed macOS.
 
-For #1635 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette'`
+For #1635 / #1637 use `KAGI_GUI_E2E_ONLY='nagi_fixed_accent,graph_selection_wash,graph_selection_crossfade,graph_wip_hover_wash,system_accent_chrome,primary_button_states,settings_theme_select_ax,theme_custom,dark_elevation_palette,oplog_select'`
 with KEEP_GOING. `nagi_fixed_accent` injects purple/red OS accents while
 selecting both Nagi presets, checks native focus-ring and graph-selection
 pixels, visibly blue active versus neutral inactive fills with rendered
-CIEDE2000 ΔE ≥ 10, and retained selected identity.
+CIEDE2000 ΔE ≥ 10, selected label contrast through graph fades, and retained
+selected identity. The graph wash scenario also checks Nagi Dark WIP text/chips.
 Pair this with the `nagi_` palette/contrast tests in `kagi-ui-core`: retain 4.5:1
 ordinary text/code and 3:1 essential graph/focus strokes, at most four hue
 families and perceptually distinct selection/diff fills, not a saturation cap.
 Tier B compares Apple versus Nagi on the same graph/diff/change fixture in
-Light/Dark, EN/JA, 100%/167% and wide/compact windows. Check blue/neutral graph
-lanes, neutral remote/tag metadata and ordinary syntax (only keywords/types
-blue), reserved green/red additions/deletions and semantic amber. Compare active
-blue with inactive neutral selection; contrast ratios alone do not establish
-visual distinction. Preserve `A/M/D/R`, `+/-`, labels, icons, lane geometry and
-focus indicators; no operation relies on colour alone. Inspect semantic action
+Light/Dark, EN/JA, 100%/167% and wide/compact windows. Check three blue/green/amber
+lane families, brighter Dark lane bands/ref chips, neutral remote/tag metadata
+and ordinary syntax (only keywords/types blue), and green/red additions/deletions.
+Compare bright blue active selection with neutral inactive selection, including
+WIP/commit/stash labels and secondary text. Inspect neutral expanded Dark oplog
+details. Contrast ratios alone do not establish visual distinction. Preserve
+`A/M/D/R`, `+/-`, labels, icons, lane geometry and focus indicators; no operation
+relies on colour alone. Inspect semantic action
 buttons' native neutral/disabled paint at rest, hover and held press; release
 outside to avoid a Git write.
 Capture Settings/palette switching and saved-theme relaunch. Copy the plain

@@ -42,7 +42,11 @@ pub(crate) enum WipRowClick {
     },
 }
 
-pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
+pub(crate) fn render_wip_diffstat(
+    stat: WipDiffStat,
+    selected_foreground: Option<gpui::Hsla>,
+) -> impl IntoElement {
+    let foreground = |normal| selected_foreground.unwrap_or_else(|| rgb(normal).into());
     div()
         .flex()
         .flex_row()
@@ -53,13 +57,23 @@ pub(crate) fn render_wip_diffstat(stat: WipDiffStat) -> impl IntoElement {
         .font_weight(gpui::FontWeight::BOLD)
         .child(
             div()
-                .text_color(rgb(theme().change_added))
-                .child(SharedString::from(format!("+{}", stat.additions))),
+                .text_color(foreground(theme().change_added))
+                .child(SharedString::from(format!("+{}", stat.additions)))
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label
+                        .relative()
+                        .child(super::e2e::measure_inside("graph-wip-additions"))
+                }),
         )
         .child(
             div()
-                .text_color(rgb(theme().change_deleted))
-                .child(SharedString::from(format!("-{}", stat.deletions))),
+                .text_color(foreground(theme().change_deleted))
+                .child(SharedString::from(format!("-{}", stat.deletions)))
+                .when(cfg!(feature = "gui-e2e"), |label| {
+                    label
+                        .relative()
+                        .child(super::e2e::measure_inside("graph-wip-deletions"))
+                }),
         )
 }
 

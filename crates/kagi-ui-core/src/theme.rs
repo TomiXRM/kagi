@@ -301,25 +301,28 @@ impl Theme {
         })
     }
 
-    /// Only opaque, active Apple selections replace ordinary/semantic labels.
+    /// Opaque active Apple and Nagi Dark selections replace ordinary/semantic labels.
     #[inline]
     pub fn selection_uses_on_accent(&self, selected: bool, window_active: bool) -> bool {
-        selected && window_active && matches!(&*self.slug, "apple-light" | "apple-dark")
+        selected
+            && window_active
+            && matches!(&*self.slug, "apple-light" | "apple-dark" | "nagi-dark")
     }
 
-    /// Primary selected label: on-accent in key Apple windows, normal otherwise.
+    /// Primary selected label follows the actual selection fill, not the UI accent.
     pub fn selection_foreground(&self, active: bool) -> Hsla {
         if self.selection_uses_on_accent(true, active) {
-            to_hsla(self.on_accent())
+            to_hsla(on_accent_foreground(self.ui_selected()))
         } else {
             to_hsla(self.text_main)
         }
     }
 
-    /// Secondary selected label: 70% on-accent, with normal non-key labels.
+    /// Nagi Dark needs solid selected secondary ink; Apple retains its 70% ink.
     pub fn selection_secondary_foreground(&self, active: bool) -> Hsla {
         if self.selection_uses_on_accent(true, active) {
-            self.selection_foreground(true).alpha(0.7)
+            self.selection_foreground(true)
+                .alpha(if self.slug == "nagi-dark" { 1.0 } else { 0.7 })
         } else {
             to_hsla(self.text_sub)
         }
@@ -378,10 +381,27 @@ impl Theme {
             .unwrap_or(self.text_main)
     }
 
-    /// HSLA colour for graph lane `i` (cycles through the 8-colour palette).
+    /// HSLA colour for graph lane `i`; Nagi cycles three chromatic families.
     pub fn lane_color(&self, i: usize) -> Hsla {
-        let (h, s, l) = self.lane_hsl[i % self.lane_hsl.len()];
+        let count = if matches!(&*self.slug, "nagi-light" | "nagi-dark") {
+            3
+        } else {
+            self.lane_hsl.len()
+        };
+        let (h, s, l) = self.lane_hsl[i % count];
         hsla(h, s, l, 1.0)
+    }
+
+    /// Graph-column band opacity; labels remain on the separate neutral row.
+    pub fn lane_band_alpha(&self, hovered: bool) -> f32 {
+        match (&*self.slug, self.dark, hovered) {
+            ("nagi-dark", _, false) => 0.40,
+            ("nagi-dark", _, true) => 0.45,
+            (_, true, false) => 0.18,
+            (_, true, true) => 0.24,
+            (_, false, false) => 0.11,
+            (_, false, true) => 0.15,
+        }
     }
 }
 // ──────────────────────────────────────────────────────────────────────────
@@ -588,17 +608,22 @@ pub fn take_theme_load_errors() -> Vec<ThemeLoadError> {
 
 /// GitKraken-style ref-badge styling (user request).
 ///
-/// Both light and dark themes use the tinted chip — the ref colour at low
-/// alpha for the fill, a stronger alpha for the border. Dark themes put white
-/// text on the tint; light themes put the theme's main (near-black) text on
-/// it, mirroring GitKraken's light theme (ADR-0126 — the old opaque light
-/// chips read as high-contrast blocks against light surfaces).
+/// Most presets use low-alpha ref fill with a stronger border. Nagi Dark
+/// precomposites a stronger tint over its base into an opaque chip so selected
+/// rows cannot wash out its white labels. Dark themes use white text; light
+/// themes use their main near-black ink, preserving ADR-0126's light treatment.
 ///
 /// Returns `(bg_rgba, border_rgba, text_rgb)` for use with
 /// `gpui::rgba` / `gpui::rgb`.
 #[inline]
 pub fn badge_style(color: u32) -> (u32, u32, u32) {
     let t = theme();
+    if t.slug == "nagi-dark" {
+        // An opaque base-anchored chip cannot stack its tint over selection.
+        let fill = to_hsla(t.bg_base).blend(to_hsla(color).alpha(0.40));
+        let fill = u32::from(fill.to_rgb());
+        return (fill, (color << 8) | 0xff, 0xffffff);
+    }
     // 0x33 ≈ 20% fill, 0x66 ≈ 40% border (rgitui grammar).
     let text = if t.dark { 0xffffff } else { t.text_main };
     ((color << 8) | 0x33, (color << 8) | 0x66, text)
@@ -2324,11 +2349,12 @@ mod tests {
     fn selection_on_accent_matches_activation_and_theme_identity() {
         for t in THEMES {
             let apple = matches!(&*t.slug, "apple-light" | "apple-dark");
+            let on_selection = apple || t.slug == "nagi-dark";
             for selected in [false, true] {
                 for window_active in [false, true] {
                     assert_eq!(
                         t.selection_uses_on_accent(selected, window_active),
-                        apple && selected && window_active,
+                        on_selection && selected && window_active,
                         "{} selected={selected} window_active={window_active}",
                         t.slug
                     );
@@ -2354,7 +2380,15 @@ mod tests {
             } else {
                 assert_eq!(t.ui_selected(), t.selected);
                 assert_eq!(t.segment_selected_bg(), to_hsla(t.selected));
-                assert_eq!(t.selection_foreground(true), to_hsla(t.text_main));
+                if t.slug == "nagi-dark" {
+                    assert_eq!(active, on_accent_foreground(t.selected));
+                    assert_eq!(
+                        t.selection_secondary_foreground(true),
+                        t.selection_foreground(true)
+                    );
+                } else {
+                    assert_eq!(t.selection_foreground(true), to_hsla(t.text_main));
+                }
                 assert_eq!(t.on_accent(), filled_button_foreground(t.ui_accent(), t));
             }
         }

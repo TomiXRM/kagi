@@ -60,6 +60,20 @@ pub(crate) fn connector_line(color: gpui::Hsla) -> gpui::Div {
     div().w_full().h(theme::scaled_px(1.)).bg(color)
 }
 
+/// Nagi Dark paints a solid blue selection, unlike Apple's translucent graph
+/// wash. Share file-row contrast ink during both incoming and outgoing fades.
+pub(super) fn graph_selection_ink(
+    selection: f32,
+    window_active: bool,
+    background: gpui::Hsla,
+) -> Option<(gpui::Hsla, gpui::Hsla)> {
+    if theme().slug.as_ref() == "nagi-dark" {
+        super::diffstat_bar::file_selection_ink(selection, window_active, background)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn render_rows(
     rows: &[CommitRow],
     avatar_images: &HashMap<String, std::sync::Arc<gpui::Image>>,
@@ -105,9 +119,15 @@ pub(crate) fn render_rows(
             .into();
             let wash = theme().selection_wash(window_active);
             let row_bg = default_bg.blend(wash.alpha(wash.a * selection));
-            let foreground = rgb(theme().text_main).into();
-            let secondary_foreground = rgb(theme().text_sub).into();
-            let muted_foreground = rgb(theme().text_muted).into();
+            let ink = graph_selection_ink(selection, window_active, row_bg);
+            let foreground =
+                ink.map_or_else(|| rgb(theme().text_main).into(), |(primary, _)| primary);
+            let secondary_foreground =
+                ink.map_or_else(|| rgb(theme().text_sub).into(), |(_, secondary)| secondary);
+            let muted_foreground = ink.map_or_else(
+                || rgb(theme().text_muted).into(),
+                |(_, secondary)| secondary,
+            );
             // Swimlane lane band (Gitru-style): an inner horizontal strip drawn
             // BEHIND the graph column only and tinted by this row's lane colour.
             // It is a separate absolute layer — NOT the row background — with
@@ -119,11 +139,8 @@ pub(crate) fn render_rows(
             let lane_band: Option<(gpui::Hsla, gpui::Hsla)> =
                 if theme::graph_lane_compact() && (selection < 1. || window_active) {
                     let c = theme().lane_color(row.node_color);
-                    let (na, ha) = if theme().dark {
-                        (0.18, 0.24)
-                    } else {
-                        (0.11, 0.15)
-                    };
+                    let na = theme().lane_band_alpha(false);
+                    let ha = theme().lane_band_alpha(true);
                     let normal = gpui::hsla(c.h, c.s, c.l, na);
                     let hover = gpui::hsla(c.h, c.s, c.l, ha);
                     if selection > 0. {

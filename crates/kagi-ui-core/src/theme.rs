@@ -339,8 +339,6 @@ impl Theme {
     pub fn display_name(&self) -> &str {
         match &*self.slug {
             "color-vision" => crate::i18n::Msg::ThemeColorVision.t(),
-            "nagi-light" => crate::i18n::Msg::ThemeNagiLight.t(),
-            "nagi-dark" => crate::i18n::Msg::ThemeNagiDark.t(),
             _ => &self.name,
         }
     }

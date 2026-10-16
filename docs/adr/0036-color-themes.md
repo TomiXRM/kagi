@@ -102,7 +102,7 @@ not OS Dynamic Type support or native VoiceOver-delivery evidence.
 Feedback: too many simultaneous UI colours obscure the information hierarchy.
 Add `nagi-light` / `nagi-dark` through the existing `Theme` registry; keep Apple
 Light / Dark, existing custom themes, saved choices and index-zero default.
-Names are Nagi Light / Dark, localized to 凪 Light / Dark in Japanese.
+Names are Nagi Light / Nagi Dark in both English and Japanese.
 `theme_nagi.rs` holds the pair using the existing struct-update convention.
 No additional theme store, SDK patch or per-frame palette conversion is added.
 

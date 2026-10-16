@@ -31,10 +31,10 @@ The same `colors.input` boundary colours Default-outline buttons (modal
 Secondary and inspector/oplog/conflict actions), Radio, Select, Combobox,
 NumberInput and DatePicker; these are not separate token overrides.
 
-## Nagi Light / Nagi Dark — 凪
+## Nagi Light / Nagi Dark
 
 Choose **Nagi Light / Nagi Dark** in the existing theme picker, command palette
-or View → Theme menu (Japanese: **凪 Light / 凪 Dark**). Their stable slugs are
+or View → Theme menu. Both languages use these names. Their stable slugs are
 `nagi-light` and `nagi-dark`. Apple Light / Dark and the default theme remain
 unchanged. Nagi inherits Apple's neutral chrome and density, with gray row
 selections and a fixed, subdued blue interaction accent. It intentionally does

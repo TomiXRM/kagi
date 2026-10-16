@@ -1,4 +1,4 @@
-//! 凪 — restrained Apple-derived palettes, not a color-vision certification.
+//! Nagi — restrained Apple-derived palettes, not a color-vision certification.
 //!
 //! Four chromatic families only: blue (interaction), green (success), ochre
 //! (warning), and brick (danger). Syntax, refs, graph lanes and ANSI reuse them;

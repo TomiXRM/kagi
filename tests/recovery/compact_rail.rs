@@ -379,7 +379,7 @@ pub fn scenario_compact_rail_cmd_f(cx: &mut VisualTestAppContext) {
             cx,
             win,
             Case {
-                width: 1000.,
+                width: (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
                 ..case
             },
         );
@@ -542,7 +542,8 @@ pub fn scenario_compact_rail_short_window(cx: &mut VisualTestAppContext) {
                 "supported restored rail",
             );
         }
-        for width in [999., 1000., 940.] {
+        let threshold = (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+        for width in [999., 1000., threshold - 1., threshold, 940.] {
             resize(
                 cx,
                 win,
@@ -555,7 +556,11 @@ pub fn scenario_compact_rail_short_window(cx: &mut VisualTestAppContext) {
             );
             assert_eq!(
                 e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
-                width < 1000.
+                kagi_domain::compact::is_compact(
+                    width,
+                    theme::rem_size_px(),
+                    theme::compact_threshold_rem()
+                )
             );
         }
         unmount(cx, app, win);
@@ -586,7 +591,10 @@ pub fn scenario_compact_popover_sections(cx: &mut VisualTestAppContext) {
         let (app, win) = mount(cx, fixture.path(), case);
         seed_prs(cx, &app, 1);
         click(cx, win, "compact-rail-prs");
-        for width in [940., 1000.] {
+        for width in [
+            940.,
+            (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
+        ] {
             if width != 940. {
                 resize(cx, win, Case { width, ..case });
             }
@@ -651,7 +659,10 @@ pub fn scenario_compact_popover_sections(cx: &mut VisualTestAppContext) {
             Msg::IssuesMentioningMe,
             Msg::IssuesRecentlyUpdated,
         ];
-        for width in [940., 1000.] {
+        for width in [
+            940.,
+            (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
+        ] {
             if width != 940. {
                 resize(cx, win, Case { width, ..case });
             }
@@ -741,7 +752,7 @@ pub fn scenario_compact_rail_ax(cx: &mut VisualTestAppContext) {
             cx,
             win,
             Case {
-                width: 1000.,
+                width: (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil(),
                 ..case
             },
         );

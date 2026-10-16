@@ -60,6 +60,13 @@ fn assert_ax(id: &str, role: gpui::Role, name: &str) {
 }
 const WIDTH: f32 = 940.;
 const FILES_PER_SIDE: usize = 72;
+
+/// Desktop-role transitions must clear the current rem threshold at every zoom.
+fn desktop_width() -> f32 {
+    (theme::compact_threshold_rem() as f32 * theme::rem_size_px())
+        .ceil()
+        .max(1392.)
+}
 const RECORDERS: &[&str] = &[
     "compact-rail",
     "plan-heading-title",
@@ -214,6 +221,7 @@ fn mount(
     // Startup migrates stored scale values; apply the requested matrix value
     // afterwards so the observed frame, not only its intended case, is tested.
     theme::set_zoom(case.zoom);
+    theme::set_compact_threshold_rem(kagi_domain::compact::DEFAULT_THRESHOLD_REM);
     theme::set_active(case.preset);
     cx.update(theme::sync_gpui_component_theme);
     let captured = Rc::new(RefCell::new(None));

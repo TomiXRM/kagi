@@ -90,12 +90,13 @@ Compact Cmd-F defers its existing `open_changed` callback until the shortcut's
 KagiApp update releases its mutable lease: the suspension guard reads that
 same owner. The previous immediate call panicked on the real compact search
 path; no new search, read-model or focus state is introduced.
-The compact breakpoint remains strictly below 1000 logical px, independent
-of zoom; exact 1000px continues exercising desktop layout. Native regression
-`zoom_200_operable` covers 1000×720, 1400×900 and compact 940×720 across EN/JA
-and Apple Light/Dark, including search input, footer containment/editing,
-native Settings pane/stepper operations, persistence and reopening. This is
-not OS Dynamic Type support or native VoiceOver-delivery evidence.
+The original fixed 1000px compact boundary is superseded by ADR-0224's
+configurable rem threshold (#1640). Native regression `zoom_200_operable`
+retains 1000×720, 1400×900 and 940×720 across EN/JA and Apple Light/Dark;
+at the default 70rem all three use compact presentation at 200% zoom.
+Coverage includes search input, footer containment/editing, native Settings
+pane/stepper operations, persistence and reopening. This is not OS Dynamic
+Type support or native VoiceOver-delivery evidence.
 
 ## Amendment — 2026-10-16: restrained Nagi presets (#1635)
 

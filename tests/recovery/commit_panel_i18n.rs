@@ -99,7 +99,11 @@ fn check_languages(
         // Compact captions include the pinned composer, but its Popover covers
         // the separate Changes headers. Dismiss through the real close button
         // before exercising the real List/Tree pointer target.
-        if dimensions.0 < 1000. {
+        if kagi_domain::compact::is_compact(
+            dimensions.0,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
             let close = e2e::control_bounds(window.window_id(), "compact-popup-close").unwrap();
             cx.simulate_mouse_down(
                 window,
@@ -139,7 +143,11 @@ fn check_languages(
             e2e::commit_panel_labels::accessible_selected("cp-view-list"),
             Some(false)
         );
-        if dimensions.0 < 1000. {
+        if kagi_domain::compact::is_compact(
+            dimensions.0,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
             // Real staged/unstaged fixture data keeps the WIP anchor reachable;
             // reopen the same owner for the next locale's composer captions.
             cx.simulate_keystrokes(window, "cmd-enter");

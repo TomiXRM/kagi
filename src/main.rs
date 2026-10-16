@@ -126,6 +126,7 @@ fn main() {
     // "ui_zoom", stored as permille) before the first render applies it via
     // `window.set_rem_size`.  Defaults to 1.0x.
     ui::theme::init_zoom();
+    ui::theme::init_compact_threshold_rem();
 
     // T-SETTINGS-001: resolve the persisted compact-graph flag (settings.json
     // "graph_compact") so new tabs/windows open in the user's chosen density.

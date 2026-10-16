@@ -85,15 +85,16 @@ reference-space preference semantics. Swipe distance uses the fitted sidebar,
 not its preferred width. Commit Panel keeps its existing viewport policy.
 Git, modal, keyboard and accessibility behavior are otherwise unchanged.
 
-This is the fit for the non-collapsed (≥1000px) layout. #1225 on
-`feature/compact-layout` handles <1000px by collapsing auxiliary panes; it is
-complementary, not another breakpoint in this change.
+This is the fit for the non-collapsed layout. ADR-0224's central configured
+rem boundary determines when auxiliary panes collapse; pane fitting does not
+introduce another breakpoint.
 
-After integration, native Tier A `pane_budget_fit` covers EN/JA defaults at the
-exact 1000×660 / 167% desktop breakpoint, diff-header containment, exact unchanged
-wide-window edges at 1392×883 / 100%, capped divider drags, preference restoration
-after widening and the sub-breakpoint compact rail. Pure unit coverage retains
-the non-collapsed sub-minimum fitting fallback.
+Native Tier A `pane_budget_fit` retains EN/JA at 1000×660 / 167% using an
+isolated supported 40rem threshold to keep the original desktop stress case.
+It covers diff-header containment, exact unchanged wide-window edges at
+1392×883 / 100%, capped divider drags and preference restoration after widening.
+Dedicated compact scenarios cover the rail and threshold transitions. Pure unit
+coverage retains the non-collapsed sub-minimum fitting fallback.
 Neighbor scenarios are `diff_`, `graph_`, `sidebar_panes`, `inspector_`.
 These geometry/input assertions are not native VoiceOver or Tier B evidence.
 

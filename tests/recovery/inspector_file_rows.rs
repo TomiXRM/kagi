@@ -4,6 +4,21 @@ use crate::macos::{git, mount, repo_fingerprint, unmount};
 use gpui::{point, px, AnyWindowHandle, Bounds, Entity, Pixels, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, list_a11y, theme, KagiApp};
 
+/// Inspector-only oracles require the independent desktop frame at every zoom.
+pub(crate) fn mount_desktop(
+    cx: &mut VisualTestAppContext,
+    repo: &std::path::Path,
+) -> (Entity<KagiApp>, AnyWindowHandle) {
+    let (app, window) = mount(cx, repo);
+    let viewport = cx
+        .update_window(window, |_, window, _| window.viewport_size())
+        .unwrap();
+    let width = f32::from(viewport.width)
+        .max((theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil());
+    crate::pr_detail_adaptive::resize(cx, window, (width, f32::from(viewport.height)));
+    (app, window)
+}
+
 fn fixture() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q", "-b", "main"]);
@@ -165,7 +180,10 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
             for zoom in [1., 1.67] {
                 theme::set_zoom(zoom);
                 cx.update(theme::sync_gpui_component_theme);
-                for size in [(1000., 720.), (1400., 900.)] {
+                // Right-edge Inspector row geometry requires the desktop host.
+                let desktop_width =
+                    (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+                for size in [(desktop_width, 720.), (1400_f32.max(desktop_width), 900.)] {
                     for tree in [false, true] {
                         case(cx, repo.path(), size, tree);
                     }

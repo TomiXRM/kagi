@@ -111,8 +111,8 @@ impl Render for CommitPanelSurfaceView {
                     view.reconcile_coauthor_menu(window, pcx);
                     div()
                         .w_full()
-                        .h_full()
                         .min_h(px(0.))
+                        .flex_shrink(1.)
                         .flex()
                         .flex_col()
                         .when(view.foreign.is_some(), |el| {

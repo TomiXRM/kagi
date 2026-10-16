@@ -189,6 +189,196 @@ pub fn scenario_settings_zoom_stepper_ax(cx: &mut VisualTestAppContext) {
     eprintln!("[gui-e2e] PASS settings_zoom_stepper_ax EN/JA Light/Dark 70/100/167/200%");
 }
 
+fn compact_threshold_ax_leg(
+    cx: &mut VisualTestAppContext,
+    app: &Entity<KagiApp>,
+    window: AnyWindowHandle,
+) {
+    // This must precede every pointer helper: click() wheel-scrolls offscreen
+    // targets itself and would otherwise mask missing keyboard reveal.
+    if theme::zoom() == 1.67 {
+        theme::set_compact_threshold_rem(80);
+        cx.update(|cx| cx.refresh_windows());
+        draw(cx, window);
+        let body = e2e::control_bounds(window.window_id(), "settings-window-scrollbar").unwrap();
+        let before = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        if i18n::lang() == i18n::Lang::Ja {
+            assert!(
+                before.bottom() > body.bottom(),
+                "167% Japanese starts with the threshold below the visible scroll body: {before:?} in {body:?}",
+            );
+        }
+        focus_zoom_by_tab(cx, app, window, "compact-threshold-inc", None);
+        draw(cx, window);
+        let focused = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        // The actual kit focus target (verified by F19 during traversal), not
+        // merely its row, must clear both the fixed tabs and the body bottom.
+        crate::recovery_layout::contained(
+            body,
+            focused,
+            "keyboard-first threshold focus ring is inside the Settings scroll body",
+        );
+        keys(cx, window, "space");
+        draw(cx, window);
+        assert_eq!(theme::compact_threshold_rem(), 81);
+        assert_eq!(settings::Settings::load().compact_threshold_rem(), 81);
+        assert_eq!(
+            settings::read_setting("compact_threshold_rem").as_deref(),
+            Some("81"),
+        );
+
+        // Retained focus is not a request to pin the body on every repaint.
+        cx.simulate_event(
+            window,
+            gpui::ScrollWheelEvent {
+                position: body.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(10000.))),
+                touch_phase: gpui::TouchPhase::Moved,
+                ..Default::default()
+            },
+        );
+        draw(cx, window);
+        draw(cx, window);
+        let after = e2e::control_bounds(window.window_id(), "compact-threshold-inc").unwrap();
+        assert!(
+            (after.top() - before.top()).abs() < gpui::px(1.),
+            "manual scroll returns to the top despite retained stepper focus",
+        );
+        e2e::pr_detail::clear_key_focus();
+        keys(cx, window, "f19");
+        assert_eq!(
+            e2e::pr_detail::key_focus(),
+            Some(gpui::ElementId::from("compact-threshold-inc")),
+        );
+    }
+    for threshold in [40, 70, 160] {
+        theme::set_compact_threshold_rem(threshold);
+        cx.update(|cx| cx.refresh_windows());
+        draw(cx, window);
+        let status = kagi::ui::settings_view::appearance_ax_for_e2e("compact-threshold-value")
+            .expect("rendered relative compact threshold");
+        assert_eq!(status.role, gpui::Role::Status);
+        assert_eq!(status.value, format!("{threshold}rem"));
+        assert_eq!(
+            status.name,
+            i18n::settings_compact_threshold_value(
+                threshold,
+                threshold as f32 * theme::rem_size_px(),
+            )
+        );
+        for (id, increase, disabled) in [
+            ("compact-threshold-dec", false, threshold == 40),
+            ("compact-threshold-inc", true, threshold == 160),
+        ] {
+            let ax = kagi::ui::settings_view::appearance_ax_for_e2e(id).unwrap();
+            assert_eq!(ax.role, gpui::Role::Button);
+            assert_eq!(
+                ax.name,
+                i18n::settings_compact_threshold_action(increase, threshold)
+            );
+            assert_eq!(ax.disabled, disabled);
+            if disabled {
+                click(cx, window, id);
+                assert_eq!(theme::compact_threshold_rem(), threshold);
+            }
+        }
+        let (id, skip, key, expected) = if threshold == 40 {
+            (
+                "compact-threshold-inc",
+                Some("compact-threshold-dec"),
+                "space",
+                41,
+            )
+        } else {
+            ("compact-threshold-dec", None, "enter", threshold - 1)
+        };
+        focus_zoom_by_tab(cx, app, window, id, skip);
+        keys(cx, window, key);
+        draw(cx, window);
+        let viewport =
+            e2e::control_bounds(window.window_id(), "settings-window-scrollbar").unwrap();
+        for button in ["compact-threshold-dec", "compact-threshold-inc"] {
+            crate::recovery_layout::contained(
+                viewport,
+                e2e::control_bounds(window.window_id(), button).unwrap(),
+                "threshold stepper remains keyboard-reachable inside Settings",
+            );
+        }
+        assert_eq!(theme::compact_threshold_rem(), expected);
+        assert_eq!(settings::Settings::load().compact_threshold_rem(), expected);
+        assert_eq!(
+            settings::read_setting("compact_threshold_rem"),
+            Some(expected.to_string())
+        );
+        let repo = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .find(|candidate| candidate.window_id() != window.window_id())
+                .unwrap()
+        });
+        e2e::clear_control_bounds(repo.window_id(), "compact-rail");
+        draw(cx, repo);
+        let width = cx
+            .update_window(repo, |_, w, _| f32::from(w.viewport_size().width))
+            .unwrap();
+        assert_eq!(
+            e2e::control_bounds(repo.window_id(), "compact-rail").is_some(),
+            kagi_domain::compact::is_compact(width, theme::rem_size_px(), expected),
+            "native Settings control refreshes the independent repository window",
+        );
+        // Exercise enabled native pointer hit-testing as well as keyboard
+        // activation, using the painted control bounds rather than a handler seam.
+        draw(cx, window);
+        click(cx, window, "compact-threshold-inc");
+        draw(cx, window);
+        let clicked = expected + 1;
+        assert_eq!(theme::compact_threshold_rem(), clicked);
+        assert_eq!(settings::Settings::load().compact_threshold_rem(), clicked);
+        assert_eq!(
+            settings::read_setting("compact_threshold_rem"),
+            Some(clicked.to_string()),
+        );
+        assert_eq!(
+            kagi::ui::settings_view::appearance_ax_for_e2e("compact-threshold-value")
+                .unwrap()
+                .value,
+            format!("{clicked}rem"),
+        );
+        e2e::clear_control_bounds(repo.window_id(), "compact-rail");
+        draw(cx, repo);
+        assert_eq!(
+            e2e::control_bounds(repo.window_id(), "compact-rail").is_some(),
+            kagi_domain::compact::is_compact(width, theme::rem_size_px(), clicked),
+            "enabled pointer increment refreshes repository layout",
+        );
+    }
+    for (start, id, expected, opposite) in [
+        (41, "compact-threshold-dec", 40, "compact-threshold-inc"),
+        (159, "compact-threshold-inc", 160, "compact-threshold-dec"),
+    ] {
+        theme::set_compact_threshold_rem(start);
+        cx.update(|cx| cx.refresh_windows());
+        draw(cx, window);
+        focus_zoom_by_tab(cx, app, window, id, None);
+        keys(cx, window, "enter");
+        draw(cx, window);
+        assert_eq!(theme::compact_threshold_rem(), expected);
+        e2e::pr_detail::clear_key_focus();
+        keys(cx, window, "f19");
+        assert_eq!(
+            e2e::pr_detail::key_focus(),
+            Some(gpui::ElementId::from(opposite))
+        );
+    }
+}
+
+pub fn scenario_settings_compact_threshold_ax(cx: &mut VisualTestAppContext) {
+    appearance_matrix(cx, compact_threshold_ax_leg);
+    eprintln!(
+        "[gui-e2e] PASS settings_compact_threshold_ax EN/JA limits keyboard persistence conversion"
+    );
+}
+
 struct CustomThemeRestore {
     themes: Vec<theme::Theme>,
     active: String,
@@ -370,7 +560,40 @@ fn assert_boundary_focus(
         Some(gpui::ElementId::from(opposite)),
         "reaching a bound preserves focus on the opposite stepper"
     );
+    // Appearance now places the relative-width stepper between Zoom and Graph.
+    // Preserve the real Tab order, including disabled threshold stops, rather
+    // than treating the new controls as a lost-focus regression.
+    let threshold = theme::compact_threshold_rem();
+    for (id, enabled) in [
+        (
+            "compact-threshold-dec",
+            threshold > kagi_domain::compact::MIN_THRESHOLD_REM,
+        ),
+        (
+            "compact-threshold-inc",
+            threshold < kagi_domain::compact::MAX_THRESHOLD_REM,
+        ),
+    ] {
+        if enabled {
+            keys(cx, window, "tab");
+            draw_focus(cx, window);
+            e2e::pr_detail::clear_key_focus();
+            keys(cx, window, "f19");
+            assert_eq!(
+                e2e::pr_detail::key_focus(),
+                Some(gpui::ElementId::from(id)),
+                "Tab after the zoom boundary follows the visible threshold controls",
+            );
+        }
+    }
     keys(cx, window, "tab");
     draw_focus(cx, window);
-    assert_eq!(cx.update_window(window, |_, w, cx| app.read(cx).settings_switch_focused_for_e2e(w)).unwrap(), Some(0), "Tab after reaching a bound continues to the adjacent Compact graph switch, not the window's first stop");
+    assert_eq!(
+        cx.update_window(window, |_, w, cx| app
+            .read(cx)
+            .settings_switch_focused_for_e2e(w))
+            .unwrap(),
+        Some(0),
+        "Tab after the threshold controls continues to Compact graph, not the window's first stop"
+    );
 }

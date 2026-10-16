@@ -30,13 +30,52 @@ fn settle(cx: &mut VisualTestAppContext, window: AnyWindowHandle) {
     }
 }
 
+fn settings_body(window: AnyWindowHandle) -> gpui::Bounds<gpui::Pixels> {
+    e2e::control_bounds(window.window_id(), "settings-window-scrollbar")
+        .or_else(|| e2e::control_bounds(window.window_id(), "settings-scrollbar"))
+        .expect("the actual Settings host's scroll viewport")
+}
+
 fn click(cx: &mut VisualTestAppContext, window: AnyWindowHandle, id: &str) {
     draw(cx, window);
-    let bounds = e2e::control_bounds(window.window_id(), id)
+    let mut bounds = e2e::control_bounds(window.window_id(), id)
         .unwrap_or_else(|| panic!("production control {id} is drawn"));
     let viewport = cx
         .update_window(window, |_, window, _| window.viewport_size())
         .unwrap();
+    // Settings is a scrolling form. Reveal pointer targets with real wheel
+    // input instead of relying on a fixture-written offset surviving Tab.
+    if id == "smart-commit-enabled-key" || id.starts_with("sc-model-") {
+        let body = settings_body(window);
+        for _ in 0..20 {
+            if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
+                break;
+            }
+            cx.simulate_event(
+                window,
+                gpui::ScrollWheelEvent {
+                    position: body.center(),
+                    delta: gpui::ScrollDelta::Pixels(gpui::point(
+                        gpui::px(0.),
+                        gpui::px(if bounds.top() < body.top() {
+                            300.
+                        } else {
+                            -300.
+                        }),
+                    )),
+                    touch_phase: gpui::TouchPhase::Moved,
+                    ..Default::default()
+                },
+            );
+            settle(cx, window);
+            bounds = e2e::control_bounds(window.window_id(), id).unwrap();
+        }
+        crate::recovery_layout::contained(
+            body,
+            bounds,
+            "Settings pointer target is inside its scroll body",
+        );
+    }
     assert!(
         bounds.top() >= gpui::px(0.) && bounds.bottom() <= viewport.height,
         "{id} is reachable in its actual host viewport: {bounds:?}"
@@ -56,7 +95,6 @@ fn fresh_settings() {
 
 fn open_settings(
     cx: &mut VisualTestAppContext,
-    app: &Entity<KagiApp>,
     root: AnyWindowHandle,
     native: bool,
 ) -> AnyWindowHandle {
@@ -79,17 +117,6 @@ fn open_settings(
         click(cx, host, "settings-pane-2");
     }
     assert!(e2e::control_bounds(host.window_id(), "settings-smart-heading").is_some());
-    if !native {
-        let switch = e2e::control_bounds(host.window_id(), "smart-commit-enabled-key")
-            .expect("Smart switch layout");
-        let scroll = cx.read(|cx| app.read(cx).settings_scroll.clone());
-        let offset = scroll.offset();
-        scroll.set_offset(gpui::point(
-            offset.x,
-            offset.y - (switch.top() - gpui::px(220.)),
-        ));
-        settle(cx, host);
-    }
     host
 }
 
@@ -115,6 +142,12 @@ fn switch_on(
             }
         }
         assert!(reached, "real Tab reaches the Smart Commit switch");
+        settle(cx, host);
+        crate::recovery_layout::contained(
+            settings_body(host),
+            e2e::control_bounds(host.window_id(), "smart-commit-enabled-key").unwrap(),
+            "real Tab reveals the focused Smart switch before consent activation",
+        );
         keys(cx, host, "space");
         settle(cx, host);
     } else {
@@ -274,7 +307,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
         mount(cx, fixture.path())
     };
     assert_eq!(cx.read(|cx| app.read(cx).tabs.is_empty()), home);
-    let mut host = open_settings(cx, &app, root, native);
+    let mut host = open_settings(cx, root, native);
     assert_switch(cx, host, false);
 
     switch_on(cx, &app, host, space);
@@ -305,7 +338,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
         "closing host cancels its consent slot"
     );
     assert_no_post(&server);
-    host = open_settings(cx, &app, root, native);
+    host = open_settings(cx, root, native);
     assert_switch(cx, host, false);
 
     switch_on(cx, &app, host, space);
@@ -356,7 +389,7 @@ fn settings_leg(cx: &mut VisualTestAppContext, native: bool, home: bool, space: 
     // Recreate the owner from persisted settings (the production restart read).
     let (app, root) = mount(cx, fixture.path());
     assert!(cx.read(|cx| app.read(cx).smart_commit.llm_enabled));
-    let host = open_settings(cx, &app, root, native);
+    let host = open_settings(cx, root, native);
     assert_switch(cx, host, true);
     click(cx, host, "smart-commit-enabled-key");
     assert_switch(cx, host, false);
@@ -390,7 +423,7 @@ fn owner_close_leg(cx: &mut VisualTestAppContext, native: bool, home: bool) {
     } else {
         mount(cx, fixture.path())
     };
-    let host = open_settings(cx, &app, root, native);
+    let host = open_settings(cx, root, native);
     switch_on(cx, &app, host, false);
     assert_pending(cx, &app, host, &server);
     let weak = app.downgrade();
@@ -485,7 +518,7 @@ fn native_preserves_plan(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     git(fixture.path(), &["branch", "consent-plan"]);
     let (app, root) = mount(cx, fixture.path());
-    let host = open_settings(cx, &app, root, true);
+    let host = open_settings(cx, root, true);
     app.update(cx, |app, cx| app.open_plan_modal("consent-plan", cx));
     cx.run_until_parked();
     let plan = cx.read(|cx| {

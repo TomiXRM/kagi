@@ -13,6 +13,7 @@ use kagi_ui_core::{
 
 fn matrix(
     cx: &mut VisualTestAppContext,
+    desktop_search: bool,
     mut check: impl FnMut(
         &mut VisualTestAppContext,
         &gpui::Entity<kagi::ui::KagiApp>,
@@ -27,8 +28,21 @@ fn matrix(
     for lang in [Lang::En, Lang::Ja] {
         for slug in ["apple-light", "apple-dark"] {
             for scale in [1., 1.67] {
-                for dimensions in [(1400., 900.), (1000., 720.)] {
+                for dimensions in [(1400_f32, 900.), (1000., 720.)] {
                     theme::set_zoom(scale);
+                    // Two-stage Escape belongs to inline search; compact Escape
+                    // dismisses the navigator. AX Clear keeps the general matrix.
+                    let dimensions = if desktop_search {
+                        (
+                            dimensions.0.max(
+                                (theme::rem_size_px() * theme::compact_threshold_rem() as f32)
+                                    .ceil(),
+                            ),
+                            dimensions.1,
+                        )
+                    } else {
+                        dimensions
+                    };
                     let (app, window) = mount(cx, fixture.path());
                     app.update(cx, |app, cx| {
                         app.set_lang(lang, cx);
@@ -48,7 +62,7 @@ fn matrix(
 }
 
 pub fn sidebar_search_escape(cx: &mut VisualTestAppContext) {
-    matrix(cx, |cx, app, window| {
+    matrix(cx, true, |cx, app, window| {
         keys(cx, window, "cmd-f f e a t u r e");
         paint(cx, window);
         let input = cx.read(|cx| app.read(cx).sidebar.filter.clone().unwrap());
@@ -104,7 +118,7 @@ pub fn sidebar_search_escape(cx: &mut VisualTestAppContext) {
 }
 
 pub fn sidebar_search_clear_ax(cx: &mut VisualTestAppContext) {
-    matrix(cx, |cx, app, window| {
+    matrix(cx, false, |cx, app, window| {
         native_ax::activate(cx);
         keys(cx, window, "cmd-f f e a t u r e");
         paint(cx, window);

@@ -81,7 +81,7 @@ pub fn scenario_compact_inspector_columns(cx: &mut VisualTestAppContext) {
         }
         // Width restoration projects the same selection into the ordinary
         // right Inspector without recreating the WIP owner or writing Git.
-        resize(cx, win, (1392., 883.));
+        resize(cx, win, (desktop_width(), 883.));
         assert!(
             e2e::control_bounds(win.window_id(), "compact-inspector-details").is_none(),
             "compact columns unmount in wide layout"

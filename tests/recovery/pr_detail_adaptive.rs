@@ -282,8 +282,15 @@ fn retained(
     geometry(cx, win, dimensions, false);
     assert_eq!(snapshot(cx, app), before, "keyboard close resets state");
     // Native resize, not a reconstructed entity or an injected layout flag.
-    let resized = if dimensions.0 < 1000. {
-        (1392., 883.)
+    let resized = if kagi_domain::compact::is_compact(
+        dimensions.0,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    ) {
+        (
+            1392_f32.max((theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil()),
+            883.,
+        )
     } else {
         (940., 660.)
     };
@@ -301,26 +308,29 @@ fn retained(
         before,
         "resize round trip resets PR state"
     );
-    // At 1000px the companions can fit at 100%; 110% keeps this desktop leg
-    // below their combined minimum, while 1392px still restores inline layout.
+    // Preserve the original narrow desktop drawer pressure with a supported
+    // threshold, without inventing an unreachable navigator preference.
     theme::set_zoom(1.1);
-    // #1479-S5C: this drawer leg needs desktop chrome; compact starts below 1000px.
-    resize(cx, win, (1000., 720.));
-    geometry(cx, win, (1000., 720.), false);
+    let threshold = theme::compact_threshold_rem();
+    theme::set_compact_threshold_rem(40);
+    let desktop = (1000., 720.);
+    resize(cx, win, desktop);
+    geometry(cx, win, desktop, false);
     key(cx, app, win, "cmd-alt-l");
-    geometry(cx, win, (1000., 720.), false);
+    geometry(cx, win, desktop, false);
     assert!(e2e::control_bounds(win.window_id(), "pr-companion-swimlane").is_some());
     resize(cx, win, (1392., 883.));
     geometry(cx, win, (1392., 883.), false);
     assert!(e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none());
-    resize(cx, win, (1000., 720.));
-    geometry(cx, win, (1000., 720.), false);
+    resize(cx, win, desktop);
+    geometry(cx, win, desktop, false);
     assert!(
         e2e::control_bounds(win.window_id(), "pr-companion-drawer").is_none(),
         "narrowing must not resurrect an inline reveal"
     );
     resize(cx, win, (1392., 883.));
     geometry(cx, win, (1392., 883.), false);
+    theme::set_compact_threshold_rem(threshold);
 }
 pub fn scenario_pr_detail_adaptive(cx: &mut VisualTestAppContext) {
     run(cx, false);

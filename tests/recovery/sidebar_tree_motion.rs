@@ -596,7 +596,7 @@ pub fn scenario_sidebar_tree_compact_focus_return_motion(cx: &mut VisualTestAppC
     );
     let mut t = Instant::now();
     frame(cx, &app, window, t);
-    click(cx, &app, window, "compact-rail-local");
+    support::reveal_pane(cx, &app, window, 0);
     let plain = fill(cx, window, "sidebar-local-main");
     for destination in [
         "compact-rail-remote",

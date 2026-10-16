@@ -74,7 +74,11 @@ fn drag(
     );
     let compact = cx
         .update_window(window, |_, window, _| {
-            window.viewport_size().width < px(1000.)
+            kagi_domain::compact::is_compact(
+                f32::from(window.viewport_size().width),
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            )
         })
         .unwrap();
     let graph_max = (viewport * 0.6 / scale).max(80.);
@@ -325,7 +329,8 @@ pub fn scenario_compact_bottom_third(cx: &mut VisualTestAppContext) {
                     app.bottom_panel_height = 240.;
                     cx.notify();
                 });
-                resize(cx, window, 1392., 883.);
+                // This reference must remain desktop at both zoom levels.
+                resize(cx, window, 2000., 883.);
                 let wide = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
                 resize(cx, window, 900., 660.);
                 let compact = e2e::control_bounds(window.window_id(), "bottom-panel").unwrap();
@@ -392,7 +397,7 @@ pub fn scenario_compact_bottom_third(cx: &mut VisualTestAppContext) {
                     moved.size.height,
                     "released compact divider retains its local presentation"
                 );
-                resize(cx, window, 1392., 883.);
+                resize(cx, window, 2000., 883.);
                 assert_eq!(cx.read(|cx| app.read(cx).bottom_panel_height), 240.);
                 assert_eq!(
                     e2e::control_bounds(window.window_id(), "bottom-panel")

@@ -1,5 +1,6 @@
 //! #1237: metadata retains complete identities and hash keyboard activation.
-use crate::macos::{git, mount, unmount};
+use crate::inspector_file_rows::mount_desktop as mount;
+use crate::macos::{git, unmount};
 use gpui::{AnyWindowHandle, ClipboardItem, Role, VisualTestAppContext};
 use kagi::ui::{e2e, i18n, theme};
 

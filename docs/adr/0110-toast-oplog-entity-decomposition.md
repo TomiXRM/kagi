@@ -168,7 +168,7 @@ disclosure policy. Settings uses the same busy-snackbar/toast renderer.
 Keep the newest preview and localized EN/JA counted disclosure for older cards.
 Expanded cards still scroll under the same zoom-independent 30%-of-viewport
 height upper bound, with the disclosure outside the scroller so Collapse stays
-reachable. In compact repository windows (under 1000 logical px) with the bottom
+reachable. In compact repository windows (ADR-0224's configured rem boundary) with the bottom
 panel open, further cap the notification container to the bottom-panel body
 height minus the toast inset. Reuse the panel's `bottom_panel_body_height`
 calculation with the same resolved Editor-center flag (including its body cap)

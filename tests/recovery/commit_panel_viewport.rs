@@ -13,20 +13,25 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
     let fixture = build_fixture();
     for (width, height, zoom) in [
         (1392., 883., 1.),
-        (1000., 660., 1.67),
-        (1000., 560., 1.67),
+        (2000., 660., 1.67),
+        (2000., 560., 1.67),
         (940., 660., 1.67),
         (940., 560., 1.67),
     ] {
         for locale in ["en", "ja"] {
             std::env::set_var("KAGI_LANG", locale);
             i18n::init_lang();
-            if width < 1000. {
+            theme::set_zoom(zoom);
+            let compact = kagi_domain::compact::is_compact(
+                width,
+                theme::rem_size_px(),
+                theme::compact_threshold_rem(),
+            );
+            if compact {
                 // The compact entry is the real WIP row, absent in this clean
                 // fixture. Leave the wide golden fixture completely unchanged.
                 std::fs::write(fixture.path().join("compact-wip.txt"), "viewport WIP\n").unwrap();
             }
-            theme::set_zoom(zoom);
             let state = e2e::app_state(fixture.path()).unwrap();
             let captured = Rc::new(RefCell::new(None));
             let output = captured.clone();
@@ -96,7 +101,7 @@ pub fn scenario_commit_panel_viewport(cx: &mut VisualTestAppContext) {
             let composer = e2e::control_bounds(window.window_id(), "cp-body").unwrap();
             let generate = e2e::control_bounds(window.window_id(), "cp-smart-suggest").unwrap();
             let commit = e2e::control_bounds(window.window_id(), "cp-commit-action").unwrap();
-            if width >= 1000. {
+            if !compact {
                 assert!(
                     e2e::control_bounds(window.window_id(), "compact-composer").is_none(),
                     "desktop viewport must exercise the original Commit Panel"

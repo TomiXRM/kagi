@@ -1,6 +1,6 @@
 //! Long group identities, cardinality layout and targeted disclosure (#1305).
 use gpui::VisualTestAppContext;
-use gpui::{point, px, size, AnyWindowHandle, Bounds, Entity, Modifiers, MouseButton};
+use gpui::{point, px, AnyWindowHandle, Bounds, Entity, Modifiers, MouseButton};
 use kagi::ui::list_a11y::{recorded_list, RecordedList};
 use kagi::ui::sidebar::SidebarRow;
 use kagi::ui::{e2e, KagiApp};
@@ -188,7 +188,10 @@ fn keyboard_reveal(
         Some(identity)
     );
     contained(
-        Bounds::new(point(px(0.), px(0.)), size(px(1000.), px(660.))),
+        cx.update_window(window, |_, window, _| {
+            Bounds::new(point(px(0.), px(0.)), window.viewport_size())
+        })
+        .unwrap(),
         bounds(window, &card),
         "keyboard identity card",
     );
@@ -309,9 +312,11 @@ fn group_cell(cx: &mut VisualTestAppContext, language: Lang, slug: &str, zoom: f
     for name in [format!("{prefix}/local"), format!("{prefix_other}/local")] {
         git(repo, &["branch", &name]);
     }
-    // ADR-0224 replaces the inline navigator below 1000 logical px. Keep this
-    // desktop header oracle at the exact breakpoint; sidebar widths stay narrow.
-    let (app, window) = mount_dimensions(cx, repo, (1000., 660.));
+    // This oracle varies inline desktop sidebar width, not the fixed rail popup.
+    // Keep desktop chrome at every tested zoom while leaving sidebar widths narrow.
+    theme::set_zoom(zoom);
+    let desktop_width = (theme::rem_size_px() * theme::compact_threshold_rem() as f32).ceil();
+    let (app, window) = mount_dimensions(cx, repo, (desktop_width, 660.));
     appearance(cx, &app, window, language, slug, zoom, 1);
     let before = Witness::read(repo);
     let subgroup = format!("remote:{remote}:{prefix}");

@@ -139,6 +139,96 @@ fn state_case(cx: &mut VisualTestAppContext, case: Case) {
     unmount(cx, app, win);
 }
 
+/// Resize, live preference and zoom all reconcile the same session/input owners.
+pub fn scenario_compact_rem_transitions(cx: &mut VisualTestAppContext) {
+    let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    let fixture = fixture();
+    for locale in ["en", "ja"] {
+        let case = Case {
+            height: 660.,
+            zoom: 1.,
+            locale,
+            preset: "apple-light",
+        };
+        let (app, win) = mount(cx, fixture.path(), case);
+        let panel = changes(cx, &app, win);
+        stage_selection(cx, &app, &panel, win, fixture.path());
+        open_wip(cx, win);
+        set_draft(cx, &panel, win);
+        let before = snapshot(cx, &panel);
+        let identities = input_ids(cx, &panel);
+        let owner = cx.read(|cx| app.read(cx).active_session());
+        let staged_index = index(fixture.path());
+        // 80rem produces exactly representable 1152/1440px native boundaries.
+        for zoom in [1., 1.25] {
+            theme::set_zoom(zoom);
+            theme::set_compact_threshold_rem(80);
+            cx.update(theme::sync_gpui_component_theme);
+            cx.update(|cx| cx.refresh_windows());
+            let threshold = 80. * theme::rem_size_px();
+            for (width, compact) in [
+                (threshold - 1., true),
+                (threshold, false),
+                (threshold + 1., false),
+            ] {
+                resize(cx, win, (width, case.height));
+                assert_eq!(
+                    e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
+                    compact
+                );
+                assert_eq!(snapshot(cx, &panel), before);
+                assert_eq!(input_ids(cx, &panel), identities);
+                assert_eq!(cx.read(|cx| app.read(cx).active_session()), owner);
+                assert_eq!(index(fixture.path()), staged_index);
+            }
+        }
+        resize(cx, win, case.dimensions());
+        for (threshold, zoom, compact) in [
+            (40, 1., false),
+            (160, 1., true),
+            (70, 0.7, false),
+            (70, 1.67, true),
+        ] {
+            theme::set_compact_threshold_rem(threshold);
+            theme::set_zoom(zoom);
+            cx.update(theme::sync_gpui_component_theme);
+            cx.update(|cx| cx.refresh_windows());
+            settle(cx, win);
+            assert_eq!(
+                e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
+                compact
+            );
+            assert_eq!(snapshot(cx, &panel), before);
+            assert_eq!(input_ids(cx, &panel), identities);
+            assert_eq!(cx.read(|cx| app.read(cx).active_session()), owner);
+            assert_eq!(
+                cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
+                panel.entity_id()
+            );
+            assert_eq!(index(fixture.path()), staged_index);
+        }
+        resize(cx, win, (1080., case.height));
+        for (zoom, compact) in [(1., false), (1.25, true)] {
+            theme::set_compact_threshold_rem(70);
+            theme::set_zoom(zoom);
+            cx.update(theme::sync_gpui_component_theme);
+            cx.update(|cx| cx.refresh_windows());
+            settle(cx, win);
+            assert_eq!(
+                e2e::control_bounds(win.window_id(), "compact-rail").is_some(),
+                compact
+            );
+            assert_eq!(snapshot(cx, &panel), before);
+            assert_eq!(input_ids(cx, &panel), identities);
+            assert_eq!(cx.read(|cx| app.read(cx).active_session()), owner);
+            assert_eq!(index(fixture.path()), staged_index);
+        }
+        drop(panel);
+        unmount(cx, app, win);
+    }
+    eprintln!("[gui-e2e] PASS compact_rem_transitions boundaries live preference zoom same-owner Git safety");
+}
+
 fn wide_first_leg(
     cx: &mut VisualTestAppContext,
     app: &Entity<KagiApp>,
@@ -146,7 +236,7 @@ fn wide_first_leg(
     win: AnyWindowHandle,
     case: Case,
 ) {
-    resize(cx, win, (1392., case.height));
+    resize(cx, win, (desktop_width(), case.height));
     cx.update_window(win, |_, window, cx| {
         app.update(cx, |app, cx| app.open_commit_panel(window, cx));
     })
@@ -313,7 +403,7 @@ fn roundtrip(
 ) {
     let staged_index = index(repo);
     let identities = input_ids(cx, panel);
-    for dimensions in [(1392., case.height), case.dimensions()] {
+    for dimensions in [(desktop_width(), case.height), case.dimensions()] {
         resize(cx, win, dimensions);
         if dimensions.0 == WIDTH {
             rail_graph(win, dimensions);
@@ -321,7 +411,7 @@ fn roundtrip(
         } else {
             assert!(
                 e2e::control_bounds(win.window_id(), "compact-rail").is_none(),
-                "1392px is wide even at 167%: breakpoint is fixed logical 1000px"
+                "desktop role clears the current configured rem threshold"
             );
             contained(
                 viewport(dimensions),
@@ -332,7 +422,7 @@ fn roundtrip(
         assert_eq!(
             cx.read(|cx| app.read(cx).ui().commit_panel.as_ref().unwrap().entity_id()),
             panel.entity_id(),
-            "940→1392→940 retains single commit-panel entity"
+            "compact→desktop→compact retains single commit-panel entity"
         );
         assert_eq!(
             &snapshot(cx, panel),

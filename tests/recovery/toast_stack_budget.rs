@@ -261,7 +261,11 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         "expansion keeps its bottom anchor"
                     );
                     assert_bottom_left(cx, window, "toast-stack", dimensions, true);
-                    if dimensions.0 < 1000. {
+                    if kagi_domain::compact::is_compact(
+                        dimensions.0,
+                        theme::rem_size_px(),
+                        theme::compact_threshold_rem(),
+                    ) {
                         let tabs = e2e::control_bounds(window.window_id(), "tab-oplog").unwrap();
                         assert!(
                             expanded.top() >= tabs.bottom(),
@@ -306,7 +310,11 @@ fn run_budget_matrix(cx: &mut VisualTestAppContext, zoom: f32) {
                         kagi::ui::BottomTab::Terminal,
                         "toolbar remains hit-testable"
                     );
-                    let entry = if dimensions.0 < 1000. {
+                    let entry = if kagi_domain::compact::is_compact(
+                        dimensions.0,
+                        theme::rem_size_px(),
+                        theme::compact_threshold_rem(),
+                    ) {
                         "tab-oplog"
                     } else {
                         "status-icon-oplog"
@@ -482,7 +490,11 @@ fn assert_bottom_left(
             bounds.bottom() <= footer.top(),
             "{control} never covers status-bar controls"
         );
-        if dimensions.0 < 1000. {
+        if kagi_domain::compact::is_compact(
+            dimensions.0,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        ) {
             for id in ["tb-terminal", "status-icon-oplog"] {
                 let control = e2e::control_bounds(window.window_id(), id)
                     .unwrap_or_else(|| panic!("compact control {id} painted"));

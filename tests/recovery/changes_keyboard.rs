@@ -233,8 +233,12 @@ fn inline_action_menu_anchor(
         .unwrap();
     // Stay in the presentation that owns the focused inline action. Desktop
     // widening moves the panel's left edge; compact height changes move the
-    // bottom Changes surface without unmounting it at the 1000px breakpoint.
-    let enlarged = if width < 1000. {
+    // bottom Changes surface without crossing the rem-based breakpoint.
+    let enlarged = if kagi_domain::compact::is_compact(
+        width,
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    ) {
         (width, height + 120.)
     } else {
         (width + 320., height)

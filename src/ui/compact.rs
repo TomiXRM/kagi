@@ -13,18 +13,17 @@ use super::{
 };
 use crate::app::SessionId;
 
-/// Logical viewport width, deliberately independent of density and zoom (ADR-0224).
-pub(super) const BREAKPOINT: f32 = 1000.;
 pub(super) const RAIL_WIDTH: f32 = 44.;
 
 gpui::actions!(kagi_compact, [OpenCommitComposer]);
 
+/// Window membership follows the configured root-text capacity (ADR-0224).
 pub(super) fn for_window(window: &Window) -> bool {
-    compact_width(window.viewport_size().width)
-}
-
-fn compact_width(width: Pixels) -> bool {
-    width < px(BREAKPOINT)
+    kagi_domain::compact::is_compact(
+        f32::from(window.viewport_size().width),
+        theme::rem_size_px(),
+        theme::compact_threshold_rem(),
+    )
 }
 
 #[derive(Default)]
@@ -38,6 +37,8 @@ pub(super) struct CompactState {
     owner: Option<SessionId>,
     pub popup_owner: Option<SessionId>,
     pub wip_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Painted popup geometry only; inputs and draft remain panel-owned.
+    pub popup_height: Rc<Cell<Option<Pixels>>>,
     pub wip_hovered: bool,
     surfaces: Option<CommitPanelSurfaces>,
     pub popup_state: Rc<RefCell<Option<Entity<PopoverState>>>>,
@@ -361,18 +362,5 @@ impl KagiApp {
                 .child(Msg::CompactCommitAffordance.t())
                 .child(e2e::measure_inside("compact-wip-affordance"))
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn logical_breakpoint_is_exclusive_and_zoom_independent() {
-        assert!(compact_width(px(940.)));
-        assert!(compact_width(px(999.)));
-        assert!(!compact_width(px(1000.)));
-        assert!(!compact_width(px(1392.)));
     }
 }

@@ -391,6 +391,12 @@ impl KagiApp {
             ui.main_diff = None;
         });
         self.show_compare(view, cx);
+        // An unloaded head does not call `select`, which normally reveals the
+        // Inspector in compact Changes. Peek must reveal Compare there too.
+        if self.compact.enabled {
+            self.bottom_tab = super::BottomTab::Changes;
+            self.bottom_panel_open = true;
+        }
         cx.notify();
     }
 

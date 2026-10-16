@@ -304,11 +304,16 @@ pub fn scenario_commit_panel_coauthor_keys(cx: &mut VisualTestAppContext) {
     author_fixture(fixture.path());
     let _keys = crate::gui_isolation::SavedKeys::keep(&["theme"]);
     for case in matrix() {
+        theme::set_zoom(case.zoom);
         // A compact composer is anchored to real WIP, unlike the wide panel.
         // Keep the author history clean in wide cases and add only an owned,
         // unstaged file for each narrow case (never synthetic panel rows).
-        let compact_wip =
-            (case.dimensions.0 < 1000.).then(|| fixture.path().join("coauthor-keyboard-wip.txt"));
+        let compact_wip = kagi_domain::compact::is_compact(
+            case.dimensions.0,
+            theme::rem_size_px(),
+            theme::compact_threshold_rem(),
+        )
+        .then(|| fixture.path().join("coauthor-keyboard-wip.txt"));
         if let Some(path) = &compact_wip {
             std::fs::OpenOptions::new()
                 .write(true)

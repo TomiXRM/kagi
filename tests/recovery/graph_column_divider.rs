@@ -12,7 +12,13 @@ use crate::macos::{build_fixture, mount, unmount};
 
 fn frame(cx: &mut VisualTestAppContext, window: AnyWindowHandle, at: Instant) {
     kagi_ui_core::motion::set_clock_for_e2e(Some(at));
-    for name in ["sidebar-clip", "divider-badge-col", "divider-graph-col"] {
+    for name in [
+        "sidebar-clip",
+        "divider-badge-col",
+        "divider-graph-col",
+        "compact-rail",
+        "right-pane-clip",
+    ] {
         e2e::clear_control_bounds(window.window_id(), name);
     }
     cx.update_window(window, |_, window, cx| {
@@ -238,6 +244,9 @@ fn assert_columns(
 
 pub fn scenario_graph_columns_fit(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    // Keep the original desktop pressure at1000px/167% and real compact940px
+    // projection under an isolated, supported preference; preserve pane budgets.
+    theme::set_compact_threshold_rem(40);
     let _saved =
         crate::gui_isolation::SavedKeys::keep(&["badge_col_w", "graph_col_w", "reduce_motion"]);
     let previous_reduce_motion = theme::reduce_motion();
@@ -269,6 +278,17 @@ pub fn scenario_graph_columns_fit(cx: &mut VisualTestAppContext) {
         for (width, height, zoom) in [(1392., 883., 1.), (1000., 660., 1.67), (940., 660., 1.67)] {
             theme::set_zoom(zoom);
             resize(cx, window, width, height);
+            let compact = width == 940.;
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "compact-rail").is_some(),
+                compact,
+                "the940px leg must draw compact chrome; desktop legs must not",
+            );
+            assert_eq!(
+                e2e::control_bounds(window.window_id(), "sidebar-clip").is_some(),
+                !compact,
+                "the original desktop sidebar allocation drives column fitting",
+            );
             assert_columns(window, lang, width, height, zoom);
             assert_eq!(
                 ["badge_col_w", "graph_col_w"].map(kagi_ui_core::settings::read_setting),
@@ -329,6 +349,9 @@ fn capped_drag(
 
 pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    // This oracle requires the original legal desktop allocation, not the
+    // additional center width supplied by compact chrome at default70rem.
+    theme::set_compact_threshold_rem(40);
     let _saved =
         crate::gui_isolation::SavedKeys::keep(&["badge_col_w", "graph_col_w", "reduce_motion"]);
     let previous_motion = theme::reduce_motion();
@@ -343,6 +366,8 @@ pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
     });
     theme::set_zoom(1.67);
     resize(cx, window, 1000., 660.);
+    assert!(e2e::control_bounds(window.window_id(), "compact-rail").is_none());
+    assert!(e2e::control_bounds(window.window_id(), "sidebar-clip").is_some());
     for name in ["divider-graph-col", "divider-badge-col"] {
         capped_drag(cx, &app, window, name);
     }
@@ -358,6 +383,8 @@ pub fn scenario_graph_columns_compressed_drag(cx: &mut VisualTestAppContext) {
 
 pub fn scenario_graph_columns_inspector_fit(cx: &mut VisualTestAppContext) {
     let _restore = crate::surface_scrollbars::PresentationRestore::capture(cx);
+    // Preserve the inline Inspector and original sub-minimum center pressure.
+    theme::set_compact_threshold_rem(40);
     let _saved = crate::gui_isolation::SavedKeys::keep(&["reduce_motion"]);
     let previous_motion = theme::reduce_motion();
     theme::set_reduce_motion(true);
@@ -376,6 +403,8 @@ pub fn scenario_graph_columns_inspector_fit(cx: &mut VisualTestAppContext) {
     for lang in [kagi::ui::i18n::Lang::En, kagi::ui::i18n::Lang::Ja] {
         kagi::ui::i18n::set_lang(lang);
         resize(cx, window, 1440., 883.);
+        assert!(e2e::control_bounds(window.window_id(), "compact-rail").is_none());
+        assert!(bounds(window, "right-pane-clip").size.width > px(0.));
         let row = bounds(window, "graph-commit-row");
         for name in ["graph-commit-author", "graph-commit-time"] {
             let cell = bounds(window, name);

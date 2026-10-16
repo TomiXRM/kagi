@@ -3123,6 +3123,10 @@ mod macos {
                 Box::new(crate::settings_appearance_ax::scenario_settings_zoom_stepper_ax),
             ),
             (
+                "settings_compact_threshold_ax",
+                Box::new(crate::settings_appearance_ax::scenario_settings_compact_threshold_ax),
+            ),
+            (
                 "settings_analyze_ignore_feedback",
                 Box::new(crate::settings_controls::scenario_settings_analyze_ignore_feedback),
             ),
@@ -3761,12 +3765,20 @@ mod macos {
                 Box::new(crate::compact_layout::popup::scenario_compact_layout_popup),
             ),
             (
+                "compact_layout_content_fit",
+                Box::new(crate::compact_layout::popup::scenario_compact_layout_content_fit),
+            ),
+            (
                 "compact_layout_state",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state),
             ),
             (
                 "compact_layout_state_tall",
                 Box::new(crate::compact_layout::state::scenario_compact_layout_state_tall),
+            ),
+            (
+                "compact_rem_transitions",
+                Box::new(crate::compact_layout::state::scenario_compact_rem_transitions),
             ),
             (
                 "compact_layout_lifecycle",

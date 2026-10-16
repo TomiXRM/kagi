@@ -108,7 +108,7 @@ pub fn scenario_compact_inspector_segment_keys(cx: &mut VisualTestAppContext) {
             .unwrap());
         press_key(cx, win, "shift-tab");
         assert_control_focus(cx, win, "toggle-path");
-        resize(cx, win, (1392., 883.));
+        resize(cx, win, (desktop_width(), 883.));
         assert_control_focus(cx, win, "toggle-path");
         assert_eq!(
             cx.read(|cx| app

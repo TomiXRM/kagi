@@ -56,7 +56,12 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         cx.run_until_parked();
                         draw(cx, window.into(), (width, height));
                     }
-                    if width < 1000. {
+                    let compact = kagi_domain::compact::is_compact(
+                        width,
+                        theme::rem_size_px(),
+                        theme::compact_threshold_rem(),
+                    );
+                    if compact {
                         // Changes is a separate surface. At 167% the pinned
                         // composer's shadow reaches these rows, so dismiss it
                         // through its real control before sampling their rings.
@@ -74,7 +79,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         );
                     }
                     for staged in [false, true] {
-                        check(window.into(), staged, tree, zoom, width < 1000.);
+                        check(window.into(), staged, tree, zoom, compact);
                         if !tree {
                             check_focus_ring(cx, window.into(), staged, (width, height));
                         }

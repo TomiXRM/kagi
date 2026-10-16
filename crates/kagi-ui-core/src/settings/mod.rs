@@ -47,6 +47,8 @@ pub use window_frame::{settings_window_frame, write_settings_window_frame, Setti
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use kagi_domain::compact::{DEFAULT_THRESHOLD_REM, MAX_THRESHOLD_REM, MIN_THRESHOLD_REM};
+
 /// Toolbar caption preference; an unset preference follows the active preset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarDisplay {
@@ -269,6 +271,16 @@ impl Settings {
     /// parsed permille; the caller clamps and divides by 1000.
     pub fn ui_zoom_permille(&self) -> Option<u32> {
         self.raw.get("ui_zoom").and_then(parse_ui_zoom)
+    }
+
+    /// Compact-layout switch width in whole root rem (`"compact_threshold_rem"`).
+    /// Missing, fractional, malformed or out-of-range values use the default;
+    /// tolerate legacy integer JSON scalars as well as the normal string form.
+    pub fn compact_threshold_rem(&self) -> u32 {
+        self.get_str("compact_threshold_rem")
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|value| (MIN_THRESHOLD_REM..=MAX_THRESHOLD_REM).contains(value))
+            .unwrap_or(DEFAULT_THRESHOLD_REM)
     }
 
     /// Compact-graph flag (`"graph_compact"`, `"true"`/`"false"`). `None` when
@@ -559,6 +571,67 @@ mod tests {
             assert_eq!(settings.bottom_panel_height(), None, "{value}");
         }
         assert_eq!(Settings::default().bottom_panel_height(), None);
+    }
+
+    #[test]
+    fn compact_threshold_decodes_whole_rem_strings_and_legacy_integers() {
+        for value in [MIN_THRESHOLD_REM, 70, 80, MAX_THRESHOLD_REM] {
+            for encoded in [format!("\" {value} \""), value.to_string()] {
+                let settings = parse(&format!(r#"{{"compact_threshold_rem":{encoded}}}"#));
+                assert_eq!(settings.compact_threshold_rem(), value, "{encoded}");
+            }
+        }
+    }
+
+    #[test]
+    fn compact_threshold_defaults_for_missing_or_unusable_values() {
+        assert_eq!(
+            Settings::default().compact_threshold_rem(),
+            DEFAULT_THRESHOLD_REM
+        );
+        for value in [
+            "",
+            "invalid",
+            "NaN",
+            "inf",
+            "-inf",
+            "Infinity",
+            "-Infinity",
+            "70.5",
+            "70.0",
+            "7e1",
+            "80.0",
+            "8e1",
+            "-70",
+            "0",
+            "39",
+            "161",
+            "4294967296",
+        ] {
+            let mut settings = Settings::default();
+            settings.set_str("compact_threshold_rem", value);
+            assert_eq!(
+                settings.compact_threshold_rem(),
+                DEFAULT_THRESHOLD_REM,
+                "{value}"
+            );
+        }
+        for encoded in [
+            "null", "true", "false", "[]", "{}", "70.5", "70.0", "80.0", "8e1", "-70", "39", "161",
+        ] {
+            let settings = parse(&format!(r#"{{"compact_threshold_rem":{encoded}}}"#));
+            assert_eq!(
+                settings.compact_threshold_rem(),
+                DEFAULT_THRESHOLD_REM,
+                "{encoded}"
+            );
+        }
+        // A profile predating this preference keeps its other settings.
+        let legacy = parse(r#"{"ui_zoom":"1250","future":{"preserve":true}}"#);
+        assert_eq!(legacy.compact_threshold_rem(), DEFAULT_THRESHOLD_REM);
+        assert_eq!(legacy.ui_zoom_permille(), Some(1250));
+        let saved = serde_json::to_value(&legacy).expect("serialize");
+        assert_eq!(saved["future"]["preserve"], true);
     }
 
     #[test]

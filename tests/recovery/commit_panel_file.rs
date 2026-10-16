@@ -22,6 +22,8 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
         std::fs::write(fixture.path().join(name), "unstaged\n").unwrap();
     }
     for zoom in [1., 1.67] {
+        // Keep the narrow desktop panel (and its clipping oracle) at each zoom.
+        let width = if zoom == 1. { 1392. } else { 2000. };
         for lang in [i18n::Lang::En, i18n::Lang::Ja] {
             for tree in [false, true] {
                 theme::set_zoom(zoom);
@@ -31,7 +33,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 let output = captured.clone();
                 let window = crate::macos::open_offscreen(
                     cx,
-                    size(px(1392.), px(883.)),
+                    size(px(width), px(883.)),
                     move |window, cx| e2e::mount_root(state, window, cx, &output),
                 );
                 // Hidden native windows need the existing activation-input seam
@@ -49,7 +51,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                 .unwrap();
                 for _ in 0..4 {
                     cx.run_until_parked();
-                    draw(cx, window.into(), (1392., 883.));
+                    draw(cx, window.into(), (width, 883.));
                 }
                 for section in ["us", "st"] {
                     for fi in 0..2 {
@@ -66,7 +68,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         );
                         cx.advance_clock(std::time::Duration::from_millis(400));
                         cx.run_until_parked();
-                        draw(cx, window.into(), (1392., 883.));
+                        draw(cx, window.into(), (width, 883.));
                         e2e::text_caps::clear();
                         cx.simulate_mouse_move(
                             window.into(),
@@ -77,7 +79,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         for _ in 0..3 {
                             cx.advance_clock(std::time::Duration::from_millis(400));
                             cx.run_until_parked();
-                            draw(cx, window.into(), (1392., 883.));
+                            draw(cx, window.into(), (width, 883.));
                         }
                         let suffix = if fi == 0 { "alpha" } else { "beta" };
                         let expected = format!("very-long-shared-file-name-for-the-commit-panel-regression-{suffix}.txt");
@@ -92,7 +94,7 @@ pub fn scenario(cx: &mut VisualTestAppContext) {
                         crate::recovery_layout::contained(
                             gpui::Bounds::new(
                                 gpui::point(px(0.), px(0.)),
-                                size(px(1392.), px(883.)),
+                                size(px(width), px(883.)),
                             ),
                             tooltip,
                             "full path tooltip",

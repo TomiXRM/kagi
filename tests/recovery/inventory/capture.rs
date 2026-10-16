@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui::{AnyWindowHandle, AppContext, VisualTestAppContext};
+use gpui::{AnyWindowHandle, VisualTestAppContext};
 use kagi::ui::i18n::Lang;
 
 use super::{Action, Entry, Fixture};
@@ -152,21 +152,6 @@ fn run_entry(entry: &Entry, cx: &mut VisualTestAppContext) {
             );
             let result = shot(cx, window, &out_dir().join(&filename));
             fixture.finish(cx);
-            // TextElement queues strong InputState handles in on_next_frame.
-            // Retire the input tree, then let native frames drain that queue
-            // while its display link still exists (unmount cancels the link).
-            cx.update_window(window, |_, window, cx| {
-                window.replace_root(cx, |window, cx| {
-                    let empty = cx.new(|_| gpui::Empty);
-                    gpui_component::Root::new(empty, window, cx)
-                });
-            })
-            .expect("retire captured root");
-            for _ in 0..30 {
-                crate::gui_evidence::present_windows();
-                crate::macos::drain_native_events();
-                cx.run_until_parked();
-            }
             crate::macos::unmount(cx, app, window);
             match result {
                 Ok(()) => {

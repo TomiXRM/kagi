@@ -2991,6 +2991,19 @@ The parent appends a final failure row for unsuccessful children, including
 timeout, abort/crash, startup and cleanup failures, even if the child could not
 write its own result. A captured image is not proof of successful teardown.
 
+For #1632, run `inventory:01-RemoteBrowse` alone with a fresh output directory,
+then scope neighbors to
+`inventory:01-RemoteBrowse,inventory:02-Clone,inventory:17-RenameBranch,inventory:48-EditorFsPrompt`
+with `KAGI_INVENTORY_LANG=en,ja KAGI_INVENTORY_THEME=dark,light`. Require
+the parent's successful exit and every child's PASS after PNG creation:
+the end-of-context leak detector remains enabled. Record the locked GPUI and
+component revisions alongside the images. Capture now calls the ordinary
+shared `unmount` directly; do not replace the root with `Empty`, retain an
+inputless `Root`, or add entry-specific success/leak exemptions. `shot` still
+presents native frames before photography, and shared `unmount` drains the
+native close callback; these serve screenshot presentation and NSWindow
+closure, not the removed strong-InputState-capture workaround.
+
 Inventory enables `KAGI_GUI_E2E_ONSCREEN` and `KAGI_GUI_E2E_VISIBLE` only for
 its opt-in run, without focusing the window. Native `screencapture` needs Screen
 Recording permission. These are screenshots of the real rendered root under
